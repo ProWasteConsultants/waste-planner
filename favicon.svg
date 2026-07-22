@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="205" fill="#003D3D"/>
+  <text x="500" y="470" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-weight="bold"
+        font-size="471" text-anchor="end" dominant-baseline="central" fill="#008080">W</text>
+  <text x="492" y="470" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-weight="bold"
+        font-size="471" text-anchor="start" dominant-baseline="central" fill="#FFFFFF">P</text>
+  <rect x="276" y="819" width="472" height="56" rx="28" fill="#008080"/>
+</svg>
