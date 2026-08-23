@@ -1463,6 +1463,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="wsl-btn" id="ws-pill-lock" onclick="wsLayoutDo('lock')" title="Lock / unlock (L)" style="padding:4px 8px;">🔒</button>
           <button class="wsl-btn wsl-btn-danger" id="ws-pill-del" onclick="wsLayoutDo('delete')" title="Delete (Del)" style="padding:4px 8px;">✕</button>
         </div>
+        <!-- Room selection pill: name, schedule assignment, stream subset, fill -->
+        <div id="ws-room-pill" onmousedown="event.stopPropagation()"
+             style="display:none;position:absolute;z-index:13;flex-direction:column;gap:4px;padding:6px;background:rgba(20,26,26,0.96);border:1px solid #3a4747;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:340px;"></div>
       </div>
 
       <!-- PAGE THUMBNAIL BAR -->
@@ -12856,6 +12859,7 @@ function wsLayoutSlot() {
   if (!s.chutes) s.chutes = [];
   if (!s.equip) s.equip = [];
   if (!s.markups) s.markups = [];
+  wsEnsureRoomIds(s.rooms);   // legacy saves have rooms without ids
   return s;
 }
 function wsLayoutStatus(t) {
@@ -12906,6 +12910,18 @@ function wsLayoutDo(a) {
       : '🔓 Unlocked — it can be moved and will be repacked by Generate.');
   } else if (a === 'delete') {
     let hit = false, wasLocked = false;
+    // Deleting a room removes the outline only — the bins inside stay on the plan
+    // and are simply untagged, so no work is silently thrown away.
+    const rk = slot.rooms.findIndex(x => x.id === WS_LAYOUT.sel);
+    if (WS_LAYOUT.selKind === 'room' && rk >= 0) {
+      wsLayoutSnapshot();
+      slot.rooms.splice(rk, 1);
+      wsTagBinsToRooms(slot.rooms, slot.bins);
+      WS_LAYOUT.sel = null; WS_LAYOUT.selKind = 'bin';
+      wsLayoutStatus('Room outline deleted — the bins inside it stayed put.');
+      wsRenderLayoutLayer(); wsLayoutAutosave();
+      return;
+    }
     [['bins', slot.bins], ['chutes', slot.chutes], ['equip', slot.equip]].forEach(([, arr]) => {
       if (hit || wasLocked) return;
       const k = arr.findIndex(x => x.id === WS_LAYOUT.sel);
@@ -12976,9 +12992,12 @@ function wsLayoutPlaceAt(x, y) {
   const bt = wsLayoutCurBin();
   const st = (bt.kind === 'equipment') ? WS_STREAMS.find(s => s.id === 'equip') : wsLayoutCurStream();
   wsLayoutSnapshot();
+  const slotA = wsLayoutSlot();
   const cr = wsLayoutCalcRoomAt(x, y) || WS_LAYOUT.activeCalcRoom || null;
-  wsLayoutSlot().bins.push({ id: 'bin_' + Date.now() + '_' + Math.floor(Math.random() * 999),
-    type: bt.id, stream: st.id, x: wsLayoutSnap(x, mpp), y: wsLayoutSnap(y, mpp), rot: 0, calcRoom: cr });
+  const bx = wsLayoutSnap(x, mpp), by = wsLayoutSnap(y, mpp);
+  slotA.bins.push({ id: 'bin_' + Date.now() + '_' + Math.floor(Math.random() * 999),
+    type: bt.id, stream: st.id, x: bx, y: by, rot: 0, calcRoom: cr,
+    roomId: wsBinRoomId(slotA.rooms, { x: bx, y: by }) });
   wsRenderLayoutLayer(); wsLayoutAutosave();
 }
 // Rooms are polygons. Rectangles from earlier saves still work — wsRoomPts
@@ -13007,11 +13026,81 @@ function wsPointInPoly(pts, x, y) {
   }
   return inside;
 }
-function wsRoomAt(x, y) {
-  const rs = wsLayoutSlot().rooms;
-  for (let i = rs.length - 1; i >= 0; i--) if (wsPointInPoly(wsRoomPts(rs[i]), x, y)) return rs[i];
+// ── ROOM ↔ SCHEDULE RECONCILIATION ───────────────────────────────────────────
+// Drawn rooms carry a stable id so bins can be tagged to the room they sit in —
+// the same containment rule equipment already uses for calcRoom, generalised to
+// any drawn polygon. A room may also be assigned a calculator schedule and, on
+// top of that, a stream SUBSET (e.g. the residential streams of a shared card),
+// so two drawn rooms can split one calculator room between them.
+//
+// Everything in this block is pure: geometry and plain objects in, plain objects
+// out, no DOM and no module globals — so it is testable directly.
+let WS_ROOM_SEQ = 0;
+function wsRoomNewId() { return 'room_' + Date.now().toString(36) + '_' + (++WS_ROOM_SEQ); }
+// Legacy saves predate room ids; assign lazily so old plans keep working.
+function wsEnsureRoomIds(rooms) {
+  (rooms || []).forEach(r => { if (!r.id) r.id = wsRoomNewId(); });
+  return rooms;
+}
+// Topmost (last drawn) room containing the point — matching hit-test order elsewhere.
+function wsRoomAtPt(rooms, x, y) {
+  const rs = rooms || [];
+  for (let i = rs.length - 1; i >= 0; i--)
+    if (wsPointInPoly(wsRoomPts(rs[i]), x, y)) return rs[i];
   return null;
 }
+// The room a bin belongs to, by its centre. Null when it sits outside every room.
+function wsBinRoomId(rooms, bin) {
+  if (!bin) return null;
+  const r = wsRoomAtPt(rooms, bin.x, bin.y);
+  return r ? (r.id || null) : null;
+}
+// Retag every bin against the current room outlines. Returns how many changed, so
+// callers can skip a re-render when nothing moved between rooms.
+function wsTagBinsToRooms(rooms, bins) {
+  let changed = 0;
+  (bins || []).forEach(b => {
+    const id = wsBinRoomId(rooms, b);
+    if (b.roomId !== id) { b.roomId = id; changed++; }
+  });
+  return changed;
+}
+// The effective schedule for a room: its assigned calculator room's targets,
+// narrowed to the room's stream subset when one is set.
+function wsRoomTargets(room, calcRooms) {
+  if (!room || !room.calcRoom) return [];
+  const rm = (calcRooms || []).find(r => r.id === room.calcRoom);
+  if (!rm) return [];
+  const subset = Array.isArray(room.streams) && room.streams.length ? room.streams : null;
+  return (rm.targets || []).filter(t => !subset || subset.indexOf(t.stream) >= 0);
+}
+// Placed vs required, per stream, for one room. `bins` is every bin on the page;
+// only those tagged to this room count. A room with no schedule reconciles to
+// nothing (ok:false, rows:[]) so the caller can skip drawing a chip.
+function wsRoomReconcile(roomId, targets, bins) {
+  const req = {}, got = {};
+  (targets || []).forEach(t => { req[t.stream] = (req[t.stream] || 0) + (t.qty || 0); });
+  (bins || []).forEach(b => {
+    if (b.roomId !== roomId || !b.stream || b.stream === 'equip') return;
+    got[b.stream] = (got[b.stream] || 0) + 1;
+  });
+  const order = WS_STREAMS.map(s => s.id);
+  const keys = Object.keys(req).concat(Object.keys(got))
+    .filter((k, i, a) => a.indexOf(k) === i)
+    .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+  const rows = keys.map(s => {
+    const required = req[s] || 0, placed = got[s] || 0;
+    return { stream: s, required, placed, ok: placed >= required, over: placed > required };
+  });
+  return {
+    rows,
+    ok: rows.length > 0 && rows.every(r => r.ok),
+    required: rows.reduce((a, r) => a + r.required, 0),
+    placed: rows.reduce((a, r) => a + r.placed, 0),
+  };
+}
+function wsRoomAt(x, y) { return wsRoomAtPt(wsLayoutSlot().rooms, x, y); }
+function wsRoomById(id) { return wsLayoutSlot().rooms.find(r => r.id === id) || null; }
 function wsLayoutRoomClick(x, y) {
   const mpp = wsLayoutMpp(); if (!mpp) return;
   const p = { x: wsLayoutSnap(x, mpp), y: wsLayoutSnap(y, mpp) };
@@ -13031,11 +13120,15 @@ function wsLayoutRoomFinish() {
   if (pts.length >= 3 && mpp && wsPolyArea(pts, mpp) > 0.3) {
     wsLayoutSnapshot();
     const cr = WS_LAYOUT.activeCalcRoom, rm = WS_CALC_ROOMS.find(r => r.id === cr);
-    wsLayoutSlot().rooms.push({ pts: pts.slice(),
+    const nr = { id: wsRoomNewId(), pts: pts.slice(),
       x1: wsPolyBBox(pts).x1, y1: wsPolyBBox(pts).y1, x2: wsPolyBBox(pts).x2, y2: wsPolyBBox(pts).y2,
       calcRoom: rm ? cr : null, name: rm ? rm.name : null,
-      kind: rm ? rm.kind : null, targetM2: rm ? rm.areaM2 : null });
-    wsLayoutStatus('Room drawn — drag a bin room card into it to lay the bins out inside.');
+      kind: rm ? rm.kind : null, targetM2: rm ? rm.areaM2 : null, streams: null };
+    wsLayoutSlot().rooms.push(nr);
+    // anything already sitting inside the new outline belongs to it
+    wsTagBinsToRooms(wsLayoutSlot().rooms, wsLayoutSlot().bins);
+    WS_LAYOUT.sel = nr.id; WS_LAYOUT.selKind = 'room';
+    wsLayoutStatus('Room drawn — select it to name it, assign a schedule, or fill it from the Bin Calculator.');
       wsLayoutAutosave();
   }
   WS_LAYOUT.roomPts = null;
@@ -13237,7 +13330,72 @@ function wsRotHandleInfo(mpp) {
   const dist = t.d / 2 / mpp + 26;
   return { ...t, hx: t.item.x + Math.sin(a) * dist, hy: t.item.y - Math.cos(a) * dist };
 }
+// The room pill is its own control: a room has no rotation and no footprint to
+// nudge, but it does have a name, a schedule, a stream subset and a fill action.
+function wsUpdateRoomPill() {
+  const pill = document.getElementById('ws-room-pill'); if (!pill) return;
+  const hide = () => { pill.style.display = 'none'; pill.innerHTML = ''; };
+  const tab = document.getElementById('ws-tab-layout');
+  if (!tab || tab.style.display === 'none') return hide();
+  if (typeof wsActiveOverlayIframe === 'function' && wsActiveOverlayIframe()) return hide();
+  if (WS_LAYOUT.selKind !== 'room' || !WS_LAYOUT.sel) return hide();
+  const mpp = wsSweptMpp(); if (!mpp) return hide();
+  const room = wsRoomById(WS_LAYOUT.sel); if (!room) return hide();
+
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const rm = WS_CALC_ROOMS.find(r => r.id === room.calcRoom) || null;
+  const targets = wsRoomTargets(room, WS_CALC_ROOMS);
+  const rec = wsRoomReconcile(room.id, targets, wsLayoutSlot().bins);
+  const allStreams = rm ? (rm.targets || []).map(t => t.stream).filter((s, i, a) => a.indexOf(s) === i) : [];
+  const on = s => !Array.isArray(room.streams) || !room.streams.length || room.streams.indexOf(s) >= 0;
+
+  const opts = ['<option value="">— no schedule —</option>'].concat(WS_CALC_ROOMS.map(c =>
+    `<option value="${esc(c.id)}"${c.id === room.calcRoom ? ' selected' : ''}>${esc(c.name)}</option>`)).join('');
+  const subset = allStreams.length > 1 ? `<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;">
+      <span style="font-size:10px;color:rgba(255,255,255,0.45);">streams</span>` + allStreams.map(s => {
+        const st = WS_STREAMS.find(x => x.id === s) || { col: '#78909C', label: s };
+        return `<button class="wsl-btn" onclick="wsRoomToggleStream('${esc(room.id)}','${esc(s)}')"
+          title="${esc(st.label)} — click to include or exclude"
+          style="padding:2px 6px;font-size:10px;border-color:${st.col};${on(s) ? `background:${st.col};color:${wsPillInk(st.col)};` : 'opacity:0.5;'}">${esc(st.label.slice(0, 3).toUpperCase())}</button>`;
+      }).join('') + '</div>' : '';
+
+  pill.innerHTML = `
+    <div style="display:flex;align-items:center;gap:4px;">
+      <span style="font-size:11.5px;font-weight:700;color:#00d4d4;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(room.name || 'Unnamed room')}</span>
+      <button class="wsl-btn" onclick="wsRoomRename('${esc(room.id)}')" title="Rename room" style="padding:3px 7px;">✏</button>
+      <span style="flex:1"></span>
+      <span style="font-size:10.5px;font-weight:700;color:${rec.rows.length ? (rec.ok ? '#3DD68C' : '#FF8A50') : 'rgba(255,255,255,0.4)'};">${rec.rows.length ? (rec.ok ? '✓ satisfied' : rec.placed + '/' + rec.required) : 'no schedule'}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <select class="wsl-sel" onchange="wsRoomAssignCalc('${esc(room.id)}', this.value)"
+              title="Bin room schedule this room reconciles against"
+              style="flex:1;min-width:0;font-size:10.5px;padding:3px 4px;">${opts}</select>
+      <button class="wsl-btn" onclick="wsRoomFillFromCalc('${esc(room.id)}')"
+              title="Auto-arrange this schedule's bins along the room walls"
+              style="padding:3px 8px;font-size:10.5px;${targets.length ? 'background:#008080;border-color:#00b3b3;color:#fff;' : 'opacity:0.55;'}">⤵ Fill from Bin Calculator</button>
+    </div>
+    ${subset}`;
+
+  const bb = wsPolyBBox(wsRoomPts(room));
+  const area = document.getElementById('ws-canvas-area');
+  const toSX = v => v * WS.scale + WS.panX, toSY = v => v * WS.scale + WS.panY;
+  pill.style.display = 'flex';
+  const pw = pill.offsetWidth || 260, ph = pill.offsetHeight || 60;
+  let px = toSX((bb.x1 + bb.x2) / 2) - pw / 2;
+  let py = toSY(bb.y2) + 12;
+  if (py + ph > area.clientHeight - 6) py = toSY(bb.y1) - ph - 12;
+  if (py < 6) py = 6;
+  px = Math.max(6, Math.min(px, area.clientWidth - pw - 6));
+  pill.style.left = px + 'px'; pill.style.top = py + 'px';
+}
+// Standalone copy of the render layer's ink rule — the pill builds HTML strings
+// outside wsRenderLayoutLayer's scope.
+function wsPillInk(hex) {
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#1A1A1A' : '#FFFFFF';
+}
 function wsUpdateSelPill() {
+  wsUpdateRoomPill();
   const pill = document.getElementById('ws-sel-pill'); if (!pill) return;
   const hide = () => { pill.style.display = 'none'; };
   const tab = document.getElementById('ws-tab-layout');
@@ -13300,6 +13458,18 @@ function wsLayoutSelectAt(x, y) {
     WS_LAYOUT.sel = eq.id; WS_LAYOUT.selKind = 'equip';
     wsRenderLayoutLayer();
     wsLayoutStatus(`Selected ${eq.label} — drag to move, R rotates, Del deletes.`);
+    return;
+  }
+  // Rooms sit under everything else, so they are the last thing tested — clicking
+  // empty floor inside an outline selects the room rather than clearing selection.
+  const rm = wsRoomAt(x, y);
+  if (rm) {
+    WS_LAYOUT.sel = rm.id; WS_LAYOUT.selKind = 'room';
+    wsRenderLayoutLayer();
+    const rec = wsRoomReconcile(rm.id, wsRoomTargets(rm, WS_CALC_ROOMS), wsLayoutSlot().bins);
+    wsLayoutStatus(rec.rows.length
+      ? `Selected ${rm.name || 'room'} — ${rec.placed}/${rec.required} bins placed.`
+      : `Selected ${rm.name || 'room'} — assign a bin room schedule to reconcile it.`);
     return;
   }
   WS_LAYOUT.sel = null; WS_LAYOUT.selKind = 'bin';
@@ -13468,7 +13638,13 @@ function wsLayoutBind() {
         } else {
           b.x = nx; b.y = ny;
         }
-        if (dg.kind === 'bin') { b.calcRoom = wsLayoutCalcRoomAt(b.x, b.y) || b.calcRoom || null; }
+        if (dg.kind === 'bin') {
+          b.calcRoom = wsLayoutCalcRoomAt(b.x, b.y) || b.calcRoom || null;
+          // Drawn-room tag follows the bin live, and CLEARS when dragged out of
+          // every room — otherwise a bin dragged out still counts toward its old
+          // room's reconciliation chip.
+          b.roomId = wsBinRoomId(slot2.rooms, b);
+        }
       }
     } else if (inMode) {
       WS_LAYOUT.hover = p;
@@ -13546,18 +13722,65 @@ function wsRenderLayoutLayer() {
     return;
   }
 
+  // Slightly darker outline so adjacent same-stream bins read as separate
+  const wsShade = (hex) => {
+    const f = (i) => Math.max(0, Math.round(parseInt(hex.slice(i, i + 2), 16) * 0.65)).toString(16).padStart(2, '0');
+    return '#' + f(1) + f(3) + f(5);
+  };
+  // Ink colour that stays readable on a solid stream-coloured body
+  const wsInk = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), bl = parseInt(hex.slice(5, 7), 16);
+    return (0.299 * r + 0.587 * g + 0.114 * bl) > 150 ? '#1A1A1A' : '#FFFFFF';
+  };
+
   slot.rooms.forEach((r, i) => {
     const pts = wsRoomPts(r), bb = wsPolyBBox(pts);
-    mk('polygon', { points: pts.map(p => p.x + ',' + p.y).join(' '), fill: 'rgba(0,128,128,0.07)',
-      stroke: '#008080', 'stroke-width': 2, 'stroke-dasharray': '10 6' });
+    const selRoom = WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel === r.id;
+    mk('polygon', { points: pts.map(p => p.x + ',' + p.y).join(' '),
+      fill: selRoom ? 'rgba(0,212,212,0.13)' : 'rgba(0,128,128,0.07)',
+      stroke: selRoom ? '#00d4d4' : '#008080', 'stroke-width': selRoom ? 3 : 2, 'stroke-dasharray': '10 6' });
     const act = wsPolyArea(pts, mpp);
     const t = mk('text', { x: bb.x1 + 8, y: bb.y1 + 20, fill: r.kind === 'com' ? '#B38600' : '#008080', 'font-size': 14, 'font-weight': 700 });
     const tgt = r.targetM2 ? ` / target ${r.targetM2.toFixed(1)} m²` : '';
     t.textContent = `${r.name || ('Room ' + (i + 1))} — ${act.toFixed(1)} m²${tgt}`;
+    let ly = bb.y1 + 36;
     if (r.targetM2 && act < r.targetM2 * 0.95) {
-      const w2 = mk('text', { x: bb.x1 + 8, y: bb.y1 + 36, fill: '#FF8A50', 'font-size': 12, 'font-weight': 700 });
+      const w2 = mk('text', { x: bb.x1 + 8, y: ly, fill: '#FF8A50', 'font-size': 12, 'font-weight': 700 });
       w2.textContent = `⚠ ${(r.targetM2 - act).toFixed(1)} m² under the recommended area`;
+      ly += 16;
     }
+    // ── reconciliation chip: placed vs required, per stream, from this room's
+    // assigned schedule. Green once every stream is satisfied.
+    const rec = wsRoomReconcile(r.id, wsRoomTargets(r, WS_CALC_ROOMS), slot.bins);
+    if (!rec.rows.length) return;
+    const PADX = 6, CH = 15 * WSF, GAP = 7 * WSF;
+    const cells = rec.rows.map(row => {
+      const st = WS_STREAMS.find(s => s.id === row.stream);
+      return { ...row, col: st ? st.col : '#78909C', label: (st ? st.label : row.stream).slice(0, 3).toUpperCase(),
+               txt: `${row.placed}/${row.required}` };
+    });
+    const wOf = c => (c.label.length + c.txt.length + 1) * 6.1 * WSF + 12;
+    const total = cells.reduce((a, c) => a + wOf(c) + GAP, -GAP) + PADX * 2;
+    const chip = mk('g', { transform: `translate(${(bb.x1 + 8).toFixed(1)},${ly.toFixed(1)})` });
+    mk('rect', { x: 0, y: 0, width: Math.max(total, 40).toFixed(1), height: (CH + 8).toFixed(1), rx: (CH / 2 + 4).toFixed(1),
+      fill: rec.ok ? 'rgba(22,74,44,0.92)' : 'rgba(20,26,26,0.92)',
+      stroke: rec.ok ? '#3DD68C' : '#5a6a6a', 'stroke-width': 1.2 }, chip);
+    let cx2 = PADX;
+    cells.forEach(c => {
+      const w = wOf(c);
+      mk('rect', { x: cx2.toFixed(1), y: 4, width: w.toFixed(1), height: CH.toFixed(1), rx: (CH / 2).toFixed(1),
+        fill: c.ok ? c.col : 'none', stroke: c.col, 'stroke-width': 1.2,
+        opacity: c.ok ? 0.9 : 1 }, chip);
+      const lab = mk('text', { x: (cx2 + w / 2).toFixed(1), y: (4 + CH * 0.74).toFixed(1),
+        'text-anchor': 'middle', 'font-size': 10, 'font-weight': 700,
+        fill: c.ok ? wsInk(c.col) : c.col }, chip);
+      lab.textContent = `${c.label} ${c.txt}`;
+      if (c.over) mk('circle', { cx: (cx2 + w - 3).toFixed(1), cy: 4, r: 2.6, fill: '#FFB74D' }, chip);
+      cx2 += w + GAP;
+    });
+    const tick = mk('text', { x: (Math.max(total, 40) + 7).toFixed(1), y: (4 + CH * 0.74).toFixed(1),
+      'font-size': 12, 'font-weight': 700, fill: rec.ok ? '#3DD68C' : '#FF8A50' }, chip);
+    tick.textContent = rec.ok ? '✓' : `${rec.placed}/${rec.required}`;
   });
 
   // polygon in progress
@@ -13581,16 +13804,6 @@ function wsRenderLayoutLayer() {
   }
 
   const clrOn = document.getElementById('ws-layout-clr')?.checked;
-  // Slightly darker outline so adjacent same-stream bins read as separate
-  const wsShade = (hex) => {
-    const f = (i) => Math.max(0, Math.round(parseInt(hex.slice(i, i + 2), 16) * 0.65)).toString(16).padStart(2, '0');
-    return '#' + f(1) + f(3) + f(5);
-  };
-  // Ink colour that stays readable on a solid stream-coloured body
-  const wsInk = (hex) => {
-    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), bl = parseInt(hex.slice(5, 7), 16);
-    return (0.299 * r + 0.587 * g + 0.114 * bl) > 150 ? '#1A1A1A' : '#FFFFFF';
-  };
   const drawBin = (b, ghost) => {
     const bt = wsBinType(b.type); if (!bt) return;
     const st = WS_STREAMS.find(s => s.id === b.stream) || WS_STREAMS[0];
@@ -14289,7 +14502,7 @@ function wsGenerateLayout() {
       bins = bins.concat(res.placed.map(p => ({
         id: 'bin_' + Date.now() + '_' + seed + '_' + Math.floor(Math.random() * 99999),
         type: p.typeId, stream: p.stream, x: p.x, y: p.y, rot: p.rot,
-        calcRoom: j.room.calcRoom || null })));
+        calcRoom: j.room.calcRoom || null, roomId: j.room.id || null })));
     }
     score -= left * 1e6; // a bin that did not fit costs exactly one bin
     variants.push({ seed, bins, left, score,
@@ -14338,6 +14551,101 @@ function wsGenRenderChips() {
   }).join('') +
   `<button class="wsl-btn" style="padding:4px 8px;font-size:10.5px;" onclick="wsGenDismiss()" title="Put the previous bins back">✕ Revert</button>`;
 }
+// ── FILL A DRAWN ROOM FROM THE BIN CALCULATOR ────────────────────────────────
+// Same engine Generate uses — wsGenRoom packs wall banks along each edge's true
+// angle first, then interior rows, with exact SAT collision, wall clearance,
+// keep-out buffers and the pinch rule — but scoped to one room and driven by that
+// room's assigned schedule (and stream subset). Best of four seeds wins on the
+// same score, so a filled room is indistinguishable from a generated one.
+function wsRoomFillFromCalc(roomId) {
+  const mpp = wsNeedScale(); if (!mpp) return;
+  const slot = wsLayoutSlot();
+  const room = slot.rooms.find(r => r.id === roomId);
+  if (!room) { wsLayoutStatus('Select a room first.'); return; }
+  const targets = wsRoomTargets(room, WS_CALC_ROOMS);
+  if (!targets.length) {
+    wsLayoutStatus(room.calcRoom
+      ? 'That schedule has no bins for the streams assigned to this room.'
+      : 'Assign a bin room schedule to this room first — use the ▦ button on the room pill.');
+    return;
+  }
+  const items = targets.map(t => {
+    const bt = wsBinType(t.typeId);
+    return bt ? { typeId: t.typeId, stream: t.stream, w: bt.w, d: bt.d, n: t.qty } : null;
+  }).filter(Boolean);
+  const pts = wsRoomPts(room);
+  // Locked bins inside the room stay put and net off the requirement, so Fill
+  // only places what is still outstanding.
+  slot.bins.forEach(b => {
+    if (!b.locked || !wsPointInPoly(pts, b.x, b.y)) return;
+    const hit = items.find(i => i.typeId === b.type && i.stream === b.stream && i.n > 0);
+    if (hit) hit.n--;
+  });
+  const live = items.filter(i => i.n > 0);
+  if (!live.length) { wsLayoutStatus(`${room.name || 'Room'} is already satisfied by the locked bins inside it.`); return; }
+  wsLayoutSnapshot();
+  // this room's previous unlocked fill is replaced; everything else is untouched
+  const kept = slot.bins.filter(b => b.locked || !wsPointInPoly(pts, b.x, b.y));
+  const keeps = wsKeepoutFps({ ...slot, bins: kept }, mpp, { locked: true });
+  let best = null;
+  for (let seed = 1; seed <= 4; seed++) {
+    const res = wsGenRoom(pts, live.map(i => ({ ...i })), keeps, mpp, seed);
+    const score = wsScoreVariant(res.placed, pts, keeps, mpp).score - res.left * 1e6;
+    if (!best || score > best.score) best = { score, res };
+  }
+  slot.bins = kept.concat(best.res.placed.map(p => ({
+    id: 'bin_' + Date.now() + '_' + Math.floor(Math.random() * 99999),
+    type: p.typeId, stream: p.stream, x: p.x, y: p.y, rot: p.rot,
+    calcRoom: room.calcRoom || null, roomId: room.id })));
+  wsTagBinsToRooms(slot.rooms, slot.bins);
+  wsRenderLayoutLayer(); wsLayoutAutosave();
+  const rec = wsRoomReconcile(room.id, targets, slot.bins);
+  wsLayoutStatus(best.res.left > 0
+    ? `${room.name || 'Room'} filled — ${best.res.placed.length} placed, ${best.res.left} would not fit. Enlarge the room or clear space.`
+    : `${room.name || 'Room'} filled from the calculator — ${rec.placed}/${rec.required} bins in place.`);
+}
+function wsRoomRename(roomId) {
+  const room = wsRoomById(roomId); if (!room) return;
+  const next = prompt('Room name', room.name || '');
+  if (next === null) return;
+  wsLayoutSnapshot();
+  room.name = next.trim() || null;
+  wsRenderLayoutLayer(); wsLayoutAutosave();
+  wsLayoutStatus(room.name ? `Renamed to ${room.name}.` : 'Room name cleared.');
+}
+// Assigning a schedule also adopts its name and target area when the room has
+// none of its own, matching what dropping a room card does.
+function wsRoomAssignCalc(roomId, calcId) {
+  const room = wsRoomById(roomId); if (!room) return;
+  wsLayoutSnapshot();
+  const rm = WS_CALC_ROOMS.find(r => r.id === calcId) || null;
+  room.calcRoom = rm ? rm.id : null;
+  room.streams = null;                       // subset is per-schedule; reset on change
+  if (rm) {
+    if (!room.name) room.name = rm.name;
+    if (room.targetM2 == null) room.targetM2 = rm.areaM2;
+    if (!room.kind) room.kind = rm.kind;
+  }
+  wsLayoutSlot().bins.forEach(b => { if (b.roomId === room.id) b.calcRoom = room.calcRoom; });
+  wsRenderLayoutLayer(); wsLayoutAutosave();
+  wsLayoutStatus(rm ? `${room.name || 'Room'} assigned to ${rm.name}.` : 'Schedule unassigned.');
+}
+// A room may take only part of its schedule — e.g. the residential streams here,
+// the commercial ones in the room next door. Empty subset = the whole schedule.
+function wsRoomToggleStream(roomId, stream) {
+  const room = wsRoomById(roomId); if (!room) return;
+  const rm = WS_CALC_ROOMS.find(r => r.id === room.calcRoom); if (!rm) return;
+  const all = (rm.targets || []).map(t => t.stream).filter((s, i, a) => a.indexOf(s) === i);
+  const cur = Array.isArray(room.streams) && room.streams.length ? room.streams.slice() : all.slice();
+  const k = cur.indexOf(stream);
+  if (k >= 0) cur.splice(k, 1); else cur.push(stream);
+  wsLayoutSnapshot();
+  // back to "everything" rather than storing a subset that happens to be complete
+  room.streams = (cur.length === 0 || cur.length === all.length) ? null : cur;
+  wsRenderLayoutLayer(); wsLayoutAutosave();
+  const rec = wsRoomReconcile(room.id, wsRoomTargets(room, WS_CALC_ROOMS), wsLayoutSlot().bins);
+  wsLayoutStatus(`${room.name || 'Room'} — ${rec.required} bin${rec.required === 1 ? '' : 's'} required across ${rec.rows.length} stream${rec.rows.length === 1 ? '' : 's'}.`);
+}
 function wsLayoutDropRoom(roomId, x, y) {
   const mpp = wsNeedScale();
   if (!mpp) return;
@@ -14355,9 +14663,10 @@ function wsLayoutDropRoom(roomId, x, y) {
     target = { pts: [{ x: x - w / 2, y: y - d / 2 }, { x: x + w / 2, y: y - d / 2 },
                      { x: x + w / 2, y: y + d / 2 }, { x: x - w / 2, y: y + d / 2 }],
                x1: x - w / 2, y1: y - d / 2, x2: x + w / 2, y2: y + d / 2,
-               calcRoom: roomId, name: rm.name, kind: rm.kind, targetM2: rm.areaM2 };
+               calcRoom: roomId, name: rm.name, kind: rm.kind, targetM2: rm.areaM2, id: wsRoomNewId() };
     slot.rooms.push(target);
   }
+  wsEnsureRoomIds(slot.rooms);
   // replace anything already laid out for this room
   slot.bins = slot.bins.filter(b => b.calcRoom !== roomId);
   slot.equip = slot.equip.filter(e => e.calcRoom !== roomId);
@@ -14366,7 +14675,8 @@ function wsLayoutDropRoom(roomId, x, y) {
   res.placed.forEach(p => {
     if (p.it.kind === 'bin') {
       slot.bins.push({ id: 'bin_' + Date.now() + '_' + Math.floor(Math.random() * 99999),
-        type: p.it.typeId, stream: p.it.stream, x: p.x, y: p.y, rot: 0, calcRoom: roomId });
+        type: p.it.typeId, stream: p.it.stream, x: p.x, y: p.y, rot: 0, calcRoom: roomId,
+        roomId: target.id || null });
     } else {
       slot.equip.push({ id: 'eq_' + Date.now() + '_' + Math.floor(Math.random() * 99999),
         x: p.x, y: p.y, rot: 0, code: p.it.code, label: p.it.label, w: p.it.w, d: p.it.d,

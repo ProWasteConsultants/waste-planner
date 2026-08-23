@@ -10,7 +10,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { scriptBlocks, buildSource, extractBlock, BLOCKS, SOURCE } = require('./extract.js');
+const { scriptBlocks, buildSource, extractBlock, BLOCKS, LAYOUT_BLOCKS, SOURCE } = require('./extract.js');
 
 const ALL = scriptBlocks();
 const INLINE = ALL.filter(b => !b.src && (b.type === '' || b.type === 'text/javascript' || b.type === 'module'));
@@ -57,13 +57,18 @@ test('non-JavaScript <script> payloads contain valid JSON', () => {
   }
 });
 
-test('the extracted swept-path engine parses and evaluates as a unit', () => {
-  const { code } = buildSource();
-  assert.doesNotThrow(() => new vm.Script(code, { filename: 'index.html (extracted engine)' }));
+test('the extracted engines parse as a unit', () => {
+  // Parsed as a function body, which is how loadEngine evaluates them (the
+  // assembled source ends in a `return`, so it is not a valid top-level script).
+  for (const [label, blocks] of [['swept-path', BLOCKS], ['layout rooms', LAYOUT_BLOCKS]]) {
+    const { code } = buildSource(blocks);
+    assert.doesNotThrow(() => new Function('document', 'console', code),
+      `the extracted ${label} engine does not parse`);
+  }
 });
 
 test('every extraction anchor still resolves to exactly one declaration', () => {
-  for (const [name, pattern] of BLOCKS) {
+  for (const [name, pattern] of BLOCKS.concat(LAYOUT_BLOCKS)) {
     const block = extractBlock(pattern);
     assert.ok(block.text.length > 0, `${name}: empty extraction`);
     assert.ok(block.endLine >= block.startLine, `${name}: inverted range`);

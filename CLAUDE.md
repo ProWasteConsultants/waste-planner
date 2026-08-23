@@ -81,6 +81,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/rs-planner.test.js` | `wsRsPlan` Reeds-Shepp property test, 10,000 random poses |
 | `tests/ackermann.test.js` | Ackermann calibration against published turning circles |
 | `tests/refine-pos.test.js` | `wsRefinePos` curvature, length, gear-flag invariants |
+| `tests/layout-rooms.test.js` | Room containment tagging and schedule reconciliation |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -94,6 +95,41 @@ are matched against whole lines and must resolve to exactly one line — extract
 throws on zero or multiple matches, so a rename fails loudly rather than silently
 testing stale code. This means top-level declarations should stay at column 0 with
 their opening brace on the declaration line.
+
+## Layout: rooms, schedules and bins
+
+Three things interact in the layout generator, and the link between them is
+containment:
+
+| Thing | Lives in | Means |
+| --- | --- | --- |
+| Bin-calculator room card | `WS_CALC_ROOMS` | what a room **requires** |
+| Drawn polygon room | `slot.rooms` | where it **is** on the plan |
+| Bin | `slot.bins` | what has been **placed** |
+
+- Every drawn room has a stable `id` (`wsRoomNewId`). Legacy saves predate it, so
+  `wsLayoutSlot()` calls `wsEnsureRoomIds()` on every access — that is the single
+  choke point, don't scatter id assignment.
+- A bin belongs to the drawn room whose polygon contains its **centre**
+  (`bin.roomId`, set by `wsBinRoomId`). This is the same containment rule
+  equipment already used for `calcRoom`, generalised to any polygon. Retag with
+  `wsTagBinsToRooms()` after anything that moves a bin or changes an outline —
+  a stale tag keeps counting toward a room the bin has left.
+- `room.calcRoom` assigns a schedule; `room.streams` optionally narrows it to a
+  subset so two drawn rooms can split one calculator card (residential vs
+  commercial). `null`/`[]` both mean "the whole schedule" — never store a subset
+  that happens to be complete.
+- `wsRoomReconcile(roomId, targets, bins)` is the single source of truth for the
+  chip, the pill and the status line. Green means every stream meets its
+  requirement; surplus satisfies but is flagged `over`.
+
+`wsRoomAtPt`, `wsBinRoomId`, `wsTagBinsToRooms`, `wsRoomTargets` and
+`wsRoomReconcile` are **pure** — geometry and plain objects in, plain objects out,
+no DOM and no globals. Keep them that way; they are what `tests/layout-rooms.test.js`
+covers. Rendering and pill wiring sit on top and are not unit-tested.
+
+Deleting a room removes the outline only — the bins inside stay on the plan and
+are untagged. Never silently discard placed work.
 
 ## Swept-path refinement
 

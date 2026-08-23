@@ -58,6 +58,24 @@ function extractBlock(pattern) {
   throw new Error(`extract: unterminated block starting at index.html:${start + 1}`);
 }
 
+// The layout engine's pure room/schedule core. Kept separate from the swept-path
+// blocks because it has its own dependency set (WS_STREAMS, polygon helpers).
+const LAYOUT_BLOCKS = [
+  ['WS_STREAMS',        /^const WS_STREAMS = \[/],
+  ['wsRoomPts',         /^function wsRoomPts\(/],
+  ['wsPolyArea',        /^function wsPolyArea\(/],
+  ['wsPolyBBox',        /^function wsPolyBBox\(/],
+  ['wsPointInPoly',     /^function wsPointInPoly\(/],
+  ['WS_ROOM_SEQ',       /^let WS_ROOM_SEQ = 0;/],
+  ['wsRoomNewId',       /^function wsRoomNewId\(\)/],
+  ['wsEnsureRoomIds',   /^function wsEnsureRoomIds\(/],
+  ['wsRoomAtPt',        /^function wsRoomAtPt\(/],
+  ['wsBinRoomId',       /^function wsBinRoomId\(/],
+  ['wsTagBinsToRooms',  /^function wsTagBinsToRooms\(/],
+  ['wsRoomTargets',     /^function wsRoomTargets\(/],
+  ['wsRoomReconcile',   /^function wsRoomReconcile\(/],
+];
+
 // The swept-path / Ackermann engine, in source order (declaration order matters
 // for the const/let bindings).
 const BLOCKS = [
@@ -84,14 +102,16 @@ const BLOCKS = [
 
 const EXPORTED = BLOCKS.map(([name]) => name);
 
-function buildSource() {
-  const parts = BLOCKS.map(([name, pattern]) => {
+function buildSource(blocks) {
+  const list = blocks || BLOCKS;
+  const parts = list.map(([name, pattern]) => {
     const b = extractBlock(pattern);
     return { name, ...b };
   });
   parts.sort((a, b) => a.startLine - b.startLine);
   const body = parts.map(p => `/* index.html:${p.startLine}-${p.endLine} */\n${p.text}`).join('\n\n');
-  const epilogue = `\n;globalThis.__WS_EXPORTS = { ${EXPORTED.join(', ')} };\n`;
+  const names = list.map(([name]) => name);
+  const epilogue = `\n;return { ${names.join(', ')} };\n`;
   return { code: body + epilogue, parts };
 }
 
@@ -110,22 +130,29 @@ function createDom(initial = {}) {
 }
 
 /**
- * Evaluate the extracted engine in a fresh vm context.
+ * Evaluate the extracted engine and return its bindings.
+ *
+ * Deliberately `new Function` rather than `vm.runInContext`: a vm context is a
+ * separate realm, so arrays and objects the extracted code builds get that
+ * realm's prototypes and `assert.deepStrictEqual` rejects them as "same
+ * structure but not reference-equal". Running in the host realm keeps the
+ * intrinsics shared. The isolation that matters here is lexical — the function
+ * body's declarations never touch the host global — and that still holds.
+ *
  * @param {object} [opts.elements] id -> stub element, seeds the DOM stub.
+ * @param {Array}  [opts.blocks]   block list to extract (defaults to BLOCKS).
  * @returns {object} the exported bindings plus `dom` (the stub) and `meta`.
  */
 function loadEngine(opts = {}) {
-  const { code, parts } = buildSource();
+  const { code, parts } = buildSource(opts.blocks);
   const dom = createDom(opts.elements);
-  const sandbox = {
-    document: dom,
-    console,
-    globalThis: undefined, // replaced by createContext
-  };
-  vm.createContext(sandbox);
-  sandbox.globalThis = sandbox;
-  vm.runInContext(code, sandbox, { filename: 'index.html (extracted)' });
-  const api = Object.assign({}, sandbox.__WS_EXPORTS);
+  let factory;
+  try {
+    factory = new Function('document', 'console', code);
+  } catch (e) {
+    throw new Error(`extract: the assembled source from index.html does not parse — ${e.message}`);
+  }
+  const api = Object.assign({}, factory(dom, console));
   api.dom = dom;
   api.meta = parts.map(p => ({ name: p.name, startLine: p.startLine, endLine: p.endLine }));
   return api;
@@ -153,4 +180,9 @@ function scriptBlocks() {
   return out;
 }
 
-module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, buildSource, loadEngine, createDom, scriptBlocks, BLOCKS };
+/** The layout room/schedule core, evaluated on its own (no DOM needed). */
+function loadLayout(opts = {}) {
+  return loadEngine({ ...opts, blocks: LAYOUT_BLOCKS });
+}
+
+module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, buildSource, loadEngine, loadLayout, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS };
