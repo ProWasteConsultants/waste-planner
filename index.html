@@ -15721,20 +15721,60 @@ function wsTracksFromPos(pos, v, mpp){
 }
 
 // ── PATH REFINEMENT (AutoTURN-style polish) ──────────────────────────────
-// Removes cursor jitter from driven paths: resamples the rear-axle path, low-passes
-// it, then RE-INTEGRATES through the same bicycle model with curvature and
-// steer-rate limits — so the smoothed path is always physically drivable, never a
-// cosmetic spline. Applied per gear segment; endpoints pinned; raw path retained.
+// Removes cursor jitter from HAND-DRIVEN paths: resamples the rear-axle path,
+// low-passes it, repairs any curvature the low-pass tightened past the vehicle's
+// minimum radius, then RE-INTEGRATES through the same bicycle model with curvature
+// and steer-rate limits — so the smoothed path is always physically drivable, never
+// a cosmetic spline. Endpoints pinned; raw path retained.
+//
+// Planner output is NOT refined: a Reeds-Shepp path is kinematically exact by
+// construction and carries no jitter, so smoothing it can only degrade it. That
+// skip lives at the caller (wsSweptFinalize), which is where the path label is known.
+//
+// Tracking is FEEDFORWARD (the reference's own curvature) plus bounded cross-track
+// and heading feedback. Feedforward is what makes full-lock work: a reference
+// already at the curvature limit leaves a pure-pursuit follower zero authority, so
+// it under-turns at the first sample, drifts inside the arc, and can never recover —
+// which is how the previous version orbited until its 20,000-iteration backstop.
+//
+// Gear segments are CHAINED: each one re-integrates from the previous refined
+// segment's end pose rather than from its own raw start point, so the path stays
+// continuous through a cusp instead of teleporting back to the raw waypoint.
+// Programmatically generated paths (AUTO = Reeds-Shepp auto-path, CAL = full-lock
+// calibration circle) are kinematically exact and jitter-free by construction. They
+// also assume INSTANT steering, which a 6 s lock-to-lock truck cannot reproduce — so
+// re-integrating them under the steer-rate limit moves the truck off a path it was
+// already drawing perfectly. Only hand-driven paths get polished.
+function wsShouldRefine(path){
+  return !!path && path.label !== 'AUTO' && path.label !== 'CAL';
+}
+const WS_REFINE_STEP = 4;      // integration step, canvas px
+const WS_REFINE_SMOOTH = 4;    // low-pass passes
+const WS_REFINE_REPAIR = 24;   // max curvature-repair relaxation passes
 function wsRefinePos(pos, v, mpp){
   if (!pos || pos.length < 8) return pos;
-  const WB = v.wb/mpp, step = 4;
+  const WB = v.wb/mpp, step = WS_REFINE_STEP;
   const deltaMax = wsDeltaMax(v);
+  const kMax = Math.tan(deltaMax)/WB;   // tightest curvature the vehicle can hold, 1/px
+  const rMin = 1/kMax;                  // ...and the matching minimum radius
   const lockLtd = document.getElementById('ws-swept-lock')?.checked !== false;
   const steerRate = lockLtd ? (2*deltaMax)/(WS_LOCK_TO_LOCK_M/mpp) : Infinity;
+  // Feedback settling distance: tracking errors wash out over roughly one wheelbase of
+  // travel. Do not crank these gains up — the steer-rate limit is a lag in the loop, so
+  // a tighter settle makes the follower oscillate and overshoot rather than converge
+  // (measured: halving SETTLE takes endpoint error from 15 px worst case to 214 px).
+  const SETTLE = Math.max(WB, step*10), kHead = 1/SETTLE, kCross = 0.5/(SETTLE*SETTLE);
   const out = [];
+  let chain = null; // end pose of the previous refined segment, for cusp continuity
   wsGearSegments(pos).forEach(seg => {
-    if (seg.pos.length < 8) { seg.pos.forEach(p => out.push(p)); return; }
     const dir = seg.rev ? -1 : 1;
+    // Too short to resample meaningfully — keep the raw poses and carry the chain on.
+    const passthrough = () => {
+      seg.pos.forEach(p => out.push(p));
+      const e = seg.pos[seg.pos.length-1];
+      chain = { rx: e.rx, ry: e.ry, hdg: e.hdg };
+    };
+    if (seg.pos.length < 8) { passthrough(); return; }
     // 1. resample the rear-axle polyline to even spacing
     const pts = seg.pos.map(p => ({x: p.rx, y: p.ry}));
     const rs = [pts[0]];
@@ -15746,43 +15786,77 @@ function wsRefinePos(pos, v, mpp){
       }
     }
     rs.push(pts[pts.length-1]);
-    if (rs.length < 6) { seg.pos.forEach(p => out.push(p)); return; }
+    if (rs.length < 6) { passthrough(); return; }
+    const n = rs.length;
     // 2. low-pass (endpoints pinned) — kills jitter, deviation stays sub-pixel-ish
-    for (let it = 0; it < 4; it++)
-      for (let i = 1; i < rs.length-1; i++)
+    for (let it = 0; it < WS_REFINE_SMOOTH; it++)
+      for (let i = 1; i < n-1; i++)
         rs[i] = { x: rs[i].x*0.5 + (rs[i-1].x + rs[i+1].x)*0.25,
                   y: rs[i].y*0.5 + (rs[i-1].y + rs[i+1].y)*0.25 };
-    // 3. re-integrate: rear axle follows the smoothed line under vehicle limits.
-    // Seed steering from the segment's entry curvature so mid-manoeuvre segments
-    // don't start at zero lock and drift.
-    let delta = 0;
-    if (seg.pos.length > 3) {
-      const p0 = seg.pos[0], p3 = seg.pos[3];
-      const d03 = Math.hypot(p3.rx-p0.rx, p3.ry-p0.ry);
-      if (d03 > 1) {
-        const k0 = wsNormA(p3.hdg - p0.hdg) / d03;
-        delta = Math.max(-wsDeltaMax(v), Math.min(wsDeltaMax(v), Math.atan(dir*k0*WB)));
+    // 3. curvature repair. A Laplacian pass scales a circular arc by cos²(Δθ/2), so
+    // low-passing a full-lock turn hands the follower a reference tighter than the
+    // truck can physically hold. Cap each triple's sagitta instead — for three points
+    // spaced h on a radius-R arc the sagitta is d ≈ h²/2R, so capping d at h²/2·rMin
+    // caps curvature at the vehicle limit. Endpoints stay pinned.
+    for (let it = 0; it < WS_REFINE_REPAIR; it++) {
+      let fixed = 0;
+      for (let i = 1; i < n-1; i++) {
+        const a = rs[i-1], b = rs[i], c = rs[i+1];
+        const h = (Math.hypot(b.x-a.x, b.y-a.y) + Math.hypot(c.x-b.x, c.y-b.y))/2;
+        if (h < 1e-9) continue;
+        const mx = (a.x+c.x)/2, my = (a.y+c.y)/2;
+        const dx = b.x-mx, dy = b.y-my, d = Math.hypot(dx, dy), dMax = h*h/(2*rMin);
+        if (d > dMax) { const t = dMax/d; rs[i] = { x: mx+dx*t, y: my+dy*t }; fixed++; }
       }
+      if (!fixed) break;
     }
-    let hdg = seg.pos[0].hdg, rx = rs[0].x, ry = rs[0].y, ti = 1, guard = 0;
+    // 4. reference tangents and curvature. The polyline runs in TRAVEL order, so its
+    // tangent is the direction of travel — heading for a forward segment, heading+π
+    // for a reverse one.
+    const refTh = new Array(n-1), refH = new Array(n-1), refK = new Array(n-1).fill(0);
+    for (let i = 0; i < n-1; i++) {
+      const dx = rs[i+1].x-rs[i].x, dy = rs[i+1].y-rs[i].y;
+      refH[i] = Math.hypot(dx, dy);
+      refTh[i] = refH[i] > 1e-9 ? Math.atan2(dy, dx) : (i ? refTh[i-1] : 0);
+    }
+    for (let i = 1; i < n-1; i++)
+      refK[i] = refH[i] > 1e-9 ? wsNormA(refTh[i]-refTh[i-1])/refH[i] : 0;
+    refK[0] = n > 2 ? refK[1] : 0;
+    // 5. re-integrate under the vehicle limits, chaining from the previous segment.
+    let rx, ry, hdg;
+    if (chain) ({ rx, ry, hdg } = chain);
+    else { rx = rs[0].x; ry = rs[0].y; hdg = seg.pos[0].hdg; }
+    // Seed the wheels at the reference's entry curvature so the segment doesn't start
+    // at zero lock and drift out of a turn it is already committed to.
+    let delta = Math.max(-deltaMax, Math.min(deltaMax, Math.atan(dir*refK[0]*WB)));
+    let i = 0;
     out.push({ rx, ry, fx: rx+WB*Math.cos(hdg), fy: ry+WB*Math.sin(hdg), hdg, rev: seg.rev });
-    while (guard++ < 20000) {
-      const travelAxis = hdg + (dir < 0 ? Math.PI : 0);
-      // Advance the target by PROGRESS along the path: skip points that are within the
-      // lookahead OR behind the direction of travel. (Proximity-only advance stalled on
-      // loops — the follower cuts inside a curve, the target sits beside it forever,
-      // and closed circles truncated to a hook.)
-      const LTGT = Math.max(WB*0.35, step*3);
-      while (ti < rs.length-1) {
-        const adx = rs[ti].x-rx, ady = rs[ti].y-ry;
-        const ahead = adx*Math.cos(travelAxis) + ady*Math.sin(travelAxis);
-        if (Math.hypot(adx, ady) < LTGT || ahead <= 0) ti++; else break;
+    // Bounded: feedforward tracking advances ~one reference index per step, so this
+    // exits on progress long before the cap. The cap only exists so the loop can
+    // never run away regardless of input.
+    const maxIter = 2*n + 200;
+    for (let it = 0; it < maxIter; it++) {
+      // Advance along the reference by PROJECTION, monotonically — the index never
+      // moves backwards, so progress is guaranteed and the follower cannot orbit.
+      let t = 0;
+      while (i < n-2) {
+        const ax = rs[i+1].x-rs[i].x, ay = rs[i+1].y-rs[i].y, l2 = ax*ax+ay*ay;
+        if (l2 < 1e-12) { i++; continue; }
+        t = ((rx-rs[i].x)*ax + (ry-rs[i].y)*ay)/l2;
+        if (t >= 1) i++; else break;
       }
-      const t = rs[ti], dx = t.x-rx, dy = t.y-ry, dist = Math.hypot(dx, dy);
-      const aheadT = dx*Math.cos(travelAxis) + dy*Math.sin(travelAxis);
-      if (ti >= rs.length-1 && (dist < step*1.2 || aheadT <= 0)) break; // arrived / endpoint behind
-      const alpha = wsNormA(Math.atan2(dy, dx) - travelAxis);
-      const kappa = 2*Math.sin(alpha)/Math.max(dist, step);
+      const ax = rs[i+1].x-rs[i].x, ay = rs[i+1].y-rs[i].y, l2 = ax*ax+ay*ay;
+      t = l2 > 1e-12 ? ((rx-rs[i].x)*ax + (ry-rs[i].y)*ay)/l2 : 1;
+      if (i >= n-2 && t >= 1) break;   // past the final reference point — arrived
+      const tc = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = rs[i].x + ax*tc, py = rs[i].y + ay*tc;
+      const travel = hdg + (dir < 0 ? Math.PI : 0);
+      const eHead = wsNormA(refTh[i] - travel);
+      // lateral offset of the truck from the reference, positive to the left of travel
+      const eLat = -Math.sin(refTh[i])*(rx-px) + Math.cos(refTh[i])*(ry-py);
+      let kappa = refK[i] + kHead*eHead - kCross*eLat;
+      if (kappa >  kMax) kappa =  kMax;
+      if (kappa < -kMax) kappa = -kMax;
       let dDes = Math.atan(dir*kappa*WB);
       if (dDes >  deltaMax) dDes =  deltaMax;
       if (dDes < -deltaMax) dDes = -deltaMax;
@@ -15792,6 +15866,7 @@ function wsRefinePos(pos, v, mpp){
       hdg = wsNormA(hdg + (dir*step/WB)*Math.tan(delta));
       out.push({ rx, ry, fx: rx+WB*Math.cos(hdg), fy: ry+WB*Math.sin(hdg), hdg, rev: seg.rev });
     }
+    chain = { rx, ry, hdg };
   });
   return out.length > 4 ? out : pos;
 }
@@ -15804,7 +15879,7 @@ function wsSweptFinalize(){
   const v = wsVehById(path.vehicleId);
   if (!path.pos || path.pos.length < 3) { alert('Drive a path first.'); return; }
   const smoothOn = document.getElementById('ws-swept-smooth')?.checked !== false;
-  const usePos = smoothOn ? wsRefinePos(path.pos, v, mpp) : path.pos;
+  const usePos = (smoothOn && wsShouldRefine(path)) ? wsRefinePos(path.pos, v, mpp) : path.pos;
   path.result = wsTracksFromPos(usePos, v, mpp);
   // 300mm clearance envelope — body inflated 0.3m each side and each end
   const vc = { ...v, bw: v.bw + 0.6, fo: v.fo + 0.3, ro: v.ro + 0.3 };

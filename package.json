@@ -1,0 +1,17 @@
+{
+  "name": "waste-planner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WastePlanner — single-file waste management SaaS (Supabase + canvas layout and swept path tools)",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "test:watch": "node --test --watch \"tests/**/*.test.js\"",
+    "test:rs": "node --test tests/rs-planner.test.js",
+    "test:ackermann": "node --test tests/ackermann.test.js",
+    "test:refine": "node --test tests/refine-pos.test.js",
+    "test:syntax": "node --test tests/syntax.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
