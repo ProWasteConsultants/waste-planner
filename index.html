@@ -30,8 +30,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .fade{animation:fadeIn 0.2s ease;}
 
 /* ── WORKSPACE ── */
-.ws-shell{display:flex;flex-direction:column;flex:1;min-height:0;width:100%;overflow:hidden;background:#2a2a2a;}
-.ws-float-bar{position:absolute;top:10px;left:10px;z-index:12;align-items:center;gap:10px;background:rgba(26,26,26,0.92);border:1px solid #333;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px);}
+.ws-shell{display:flex;flex-direction:row;flex:1;min-height:0;width:100%;overflow:hidden;background:#2a2a2a;position:relative;--ws-panel-w:501px;}
+.ws-float-bar{position:absolute;bottom:12px;top:auto;left:58px;z-index:12;align-items:center;gap:10px;background:rgba(26,26,26,0.92);border:1px solid #333;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px);}
 .ws-float-bar .ws-project-name{display:none;}
 .ws-project-name{font-size:12px;color:rgba(255,255,255,0.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;}
 .ws-page-nav{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06);border-radius:6px;padding:3px 8px;}
@@ -51,7 +51,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-upload-zone-title{font-size:14px;color:rgba(255,255,255,0.7);margin-bottom:6px;}
 .ws-upload-zone-sub{font-size:11px;color:rgba(255,255,255,0.35);}
 .ws-upload-zone-btn{margin-top:14px;padding:8px 20px;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:12px;cursor:pointer;font-family:inherit;}
-.ws-layer-panel{position:absolute;top:10px;right:10px;z-index:12;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;min-width:140px;}
+.ws-layer-panel{position:absolute;top:10px;left:58px;z-index:12;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;min-width:140px;}
+.ws-layer-panel.min .ws-layer-row{display:none;}
+.ws-layer-panel.min{min-width:0;}
+.ws-layer-panel.min .ws-layer-title{margin-bottom:0;}
 .ws-layer-title{font-size:10px;font-weight:600;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;}
 .ws-layer-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
 .ws-layer-label{display:flex;align-items:center;gap:6px;font-size:11px;color:rgba(255,255,255,0.6);}
@@ -64,7 +67,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-zoom-btn{width:28px;height:28px;border-radius:6px;background:#1a1a1a;border:1px solid #333;color:rgba(255,255,255,0.6);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
 .ws-zoom-btn:hover{background:#2a2a2a;}
 .ws-zoom-level{width:28px;height:24px;background:#1a1a1a;border:1px solid #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:rgba(255,255,255,0.4);}
-.ws-tool-panel{height:180px;flex-shrink:0;background:#1a1a1a;border-top:1px solid #333;display:flex;flex-direction:column;transition:height 0.2s ease;}
+.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:column;transition:width 0.2s ease;position:relative;padding-left:5px;min-height:0;}
 .wsl-groups{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
 .wsl-group{border:1px solid #2f3a3a;border-radius:7px;background:#1c2222;padding:4px 7px 5px;min-width:0;}
 .wsl-group-hd{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,0.32);margin-bottom:5px;}
@@ -101,7 +104,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-tool-tab{flex:1 1 0;padding:8px 16px;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.4);border-bottom:2px solid transparent;white-space:nowrap;border:none;background:none;font-family:inherit;text-align:center;}
 .ws-tool-tab:hover{color:rgba(255,255,255,0.7);}
 .ws-tool-tab.active{color:var(--teal);border-bottom:2px solid var(--teal);}
-.ws-tool-body{flex:1;display:flex;overflow:hidden;min-height:0;}
+.ws-tool-body{flex:1;display:flex;overflow:auto;min-height:0;}
 .ws-tool-col{flex:1;padding:12px 14px;border-right:1px solid #333;overflow-y:auto;min-width:0;}
 .ws-tool-col:last-child{border-right:none;}
 .ws-field-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;gap:8px;}
@@ -122,7 +125,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-extract-drop{border:2px dashed #333;border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:border-color 0.2s;}
 .ws-extract-drop:hover{border-color:var(--teal);}
 .ws-extract-drop p{font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px;}
-.ws-page-thumb-bar{display:flex;gap:4px;padding:6px 8px;background:#111;border-top:1px solid #333;overflow-x:auto;flex-shrink:0;height:52px;align-items:center;}
+.ws-page-thumb-bar{position:absolute;left:0;top:0;bottom:0;z-index:11;display:flex;flex-direction:column;gap:4px;padding:8px 6px;background:rgba(17,17,17,0.94);border-right:1px solid #333;overflow-y:auto;width:50px;align-items:center;}
 .ws-thumb{width:36px;height:36px;border-radius:3px;border:1px solid #444;background:#333;cursor:pointer;flex-shrink:0;object-fit:cover;display:flex;align-items:center;justify-content:center;font-size:9px;color:rgba(255,255,255,0.3);}
 .ws-thumb.active{border-color:var(--teal);}
 
@@ -1367,6 +1370,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                  ondblclick="wsOnCanvasDblClick(event)">
               <g id="ws-layer-dxf"></g>
               <g id="ws-layer-binroom"></g>
+              <g id="ws-layer-waste"></g>
               <g id="ws-layer-markups"></g>
               <g id="ws-layer-swept"></g>
               <g id="ws-layer-dims"></g>
@@ -1376,7 +1380,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
         <!-- Layer panel -->
         <div class="ws-layer-panel" id="ws-layer-panel" style="display:none;">
-          <div class="ws-layer-title">Layers</div>
+          <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Layers <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
           <div class="ws-layer-row">
             <div class="ws-layer-label"><div class="ws-layer-dot" style="background:#7f97a8;"></div>DXF underlay</div>
             <div style="display:flex;gap:4px;align-items:center;">
@@ -1390,6 +1394,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div class="ws-layer-row">
             <div class="ws-layer-label"><div class="ws-layer-dot" style="background:#167E7E;"></div>Bin room</div>
             <button class="ws-layer-toggle on" id="ws-toggle-binroom" onclick="wsToggleLayer('binroom',this)"></button>
+          </div>
+          <div class="ws-layer-row">
+            <div class="ws-layer-label"><div class="ws-layer-dot" style="background:#F5B400;"></div>Waste layout</div>
+            <button class="ws-layer-toggle on" id="ws-toggle-waste" onclick="wsToggleLayer('waste',this)"></button>
           </div>
           <div class="ws-layer-row">
             <div class="ws-layer-label"><div class="ws-layer-dot" style="background:#E65100;"></div>Swept path</div>
@@ -1445,6 +1453,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="ws-zoom-btn" onclick="wsFitPage()" style="font-size:10px;">⊡</button>
         </div>
 
+        <!-- floating status strip: mirrors tool status so it survives panel collapse -->
+        <div id="ws-float-status" style="display:none;position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:12;background:rgba(20,26,26,0.92);border:1px solid #333;border-radius:8px;padding:5px 14px;font-size:11.5px;color:rgba(255,255,255,0.75);max-width:56%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;"></div>
+
         <!-- floating selection pill: verbs travel with the selected item -->
         <div id="ws-sel-pill" onmousedown="event.stopPropagation()"
              style="display:none;position:absolute;z-index:13;align-items:center;gap:2px;padding:3px;background:rgba(20,26,26,0.95);border:1px solid #3a4747;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.45);">
@@ -1467,7 +1478,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
       <!-- TOOL PANEL -->
       <div class="ws-tool-panel" id="ws-tool-panel">
-        <div id="ws-resize-handle" style="height:5px;background:#2a2a2a;cursor:ns-resize;flex-shrink:0;border-top:1px solid #444;" onmousedown="wsStartResize(event)"></div>        <div class="ws-tool-tabs">
+        <div id="ws-resize-handle" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:#2a2a2a;cursor:ew-resize;border-right:1px solid #444;z-index:2;" onmousedown="wsStartResize(event)"></div>
+        <button id="ws-panel-expand" onclick="wsPanelToggle()" title="Expand tools" style="display:none;position:absolute;inset:0;background:#1a1a1a;border:none;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;font-family:inherit;writing-mode:vertical-rl;letter-spacing:1px;">◀ &nbsp;T O O L S</button>
+        <button id="ws-panel-collapse" onclick="wsPanelToggle()" title="Collapse tools panel" style="position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:15px;height:62px;background:#1a1a1a;border:1px solid #444;border-right:none;border-radius:8px 0 0 8px;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;z-index:3;padding:0;">▸</button>        <div class="ws-tool-tabs" style="flex-wrap:wrap;row-gap:4px;">
           <button class="ws-tool-tab active" onclick="wsShowTab('calculator',this)">Bin Calculator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('layout',this)">Waste Layout Generator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('swept',this)">Swept Path Generator</button>
@@ -1476,7 +1489,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="ws-mini-btn" id="ws-export-btn" onclick="wsExportDXF()" style="display:none;">⬇ Export DXF</button>
             <button class="ws-mini-btn" id="ws-exportpdf-btn" onclick="wsExportPDF()" style="display:none;">⬇ Export PDF</button>
           </span>
-          <button id="ws-panel-toggle" onclick="wsPanelToggle()" style="flex:0 0 auto;padding:4px 10px;background:none;border:none;color:rgba(255,255,255,0.35);cursor:pointer;font-size:11px;font-family:inherit;" title="Collapse/expand panel">▼ Hide</button>
         </div>
         <div class="ws-tool-body">
 
@@ -11943,7 +11955,7 @@ const WS = {
   isPanning: false,
   panStartX: 0, panStartY: 0,
   panOriginX: 0, panOriginY: 0,
-  layers: { binroom: true, swept: true, dims: true, markups: true },
+  layers: { binroom: true, waste: true, swept: true, dims: true, markups: true },
   extractData: null,
   projectId: null,
 };
@@ -12305,12 +12317,10 @@ function wsShowTab(name, btn) {
     if (scaleWrap) scaleWrap.style.display = 'none';
   }
 
-  // Set panel height per tab
-  const heights = { calculator: 220, layout: 240, swept: 180 };
-  _wsCurrentPanelHeight = heights[name] || 180;
+  // Side panel: width persists across tabs; just ensure the body is visible when expanded
   if (!_wsPanelCollapsed) {
     const panel = document.querySelector('.ws-tool-panel');
-    if (panel) panel.style.height = _wsCurrentPanelHeight + 'px';
+    if (panel) panel.style.width = _wsCurrentPanelWidth + 'px';
     const body = document.querySelector('.ws-tool-body');
     if (body) body.style.display = '';
   }
@@ -12848,7 +12858,15 @@ function wsLayoutSlot() {
   if (!s.markups) s.markups = [];
   return s;
 }
-function wsLayoutStatus(t) { const el = document.getElementById('ws-layout-status'); if (el) el.textContent = t; }
+function wsLayoutStatus(t) {
+  const el = document.getElementById('ws-layout-status'); if (el) el.textContent = t;
+  wsFloatStatus(t);
+}
+function wsFloatStatus(t) {
+  const fs = document.getElementById('ws-float-status');
+  if (!fs) return;
+  if (t && String(t).trim()) { fs.textContent = t; fs.style.display = ''; }
+}
 function wsLayoutAutosave() { if (typeof wsScheduleAutosave === 'function') wsScheduleAutosave(); }
 function wsLayoutSnap(v, mpp) { const g = 0.025 / mpp; return Math.round(v / g) * g; }
 function wsLayoutSnapshot() {
@@ -13490,13 +13508,23 @@ function wsRenderLayoutLayer() {
   const g = document.getElementById('ws-layer-binroom');
   if (!g) return;
   g.innerHTML = '';
+  const gW = document.getElementById('ws-layer-waste');
+  if (gW) gW.innerHTML = '';
+  // mutable default parent: room shell (rooms, doors, columns) vs waste layout
+  // (bins, waste equipment, aisles, chutes) — separately toggleable layers
+  let tgt = g;
   const NS = 'http://www.w3.org/2000/svg';
   const mpp = wsSweptMpp();
   const slot = wsLayoutSlot();
+  const WSF = wsLblF();   // plan-proportional label scaling
   const mk = (tag, attrs, parent) => {
     const el = document.createElementNS(NS, tag);
     for (const k in attrs) el.setAttribute(k, attrs[k]);
-    (parent || g).appendChild(el); return el;
+    if (tag === 'text' && attrs['font-size']) {
+      const fs = parseFloat(attrs['font-size']);
+      if (fs) el.setAttribute('font-size', (fs * WSF).toFixed(1));
+    }
+    (parent || tgt).appendChild(el); return el;
   };
   if (!mpp) {
     // Everything on this layer is dimensioned, so nothing can be drawn until the
@@ -13606,6 +13634,7 @@ function wsRenderLayoutLayer() {
   };
   // ── chutes, receivers and keepouts ──
   const keepouts = [];
+  tgt = gW || g;   // waste layout layer: chutes, equipment, bins
   slot.chutes.forEach(ch => {
     const cs = WS_CHUTE_SPECS[ch.type] || WS_CHUTE_SPECS.SINGLE;
     const a = (ch.rot || 0) * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
@@ -13657,6 +13686,7 @@ function wsRenderLayoutLayer() {
 
   // ── equipment ──
   slot.equip.forEach(e => {
+    tgt = e.fixture ? g : (gW || g);   // doors/columns belong to the room shell layer
     const selected = WS_LAYOUT.sel === e.id;
     const hw = e.w / 2 / mpp, hd = e.d / 2 / mpp;
     if (e.aisle) {
@@ -13721,6 +13751,7 @@ function wsRenderLayoutLayer() {
     keepouts.push({ kind: 'rect', x: e.x, y: e.y, w: e.w, d: e.d, rot: e.rot || 0, why: e.label });
   });
 
+  tgt = gW || g;
   slot.bins.forEach(b => drawBin(b, false));
 
   // padlocks on locked equipment and chute shafts (locked bins get theirs in drawBin)
@@ -14516,7 +14547,8 @@ function wsLayoutHitCallout(x, y) {
     if (m.pts.length >= 2 && Math.hypot(x - m.pts[0].x, y - m.pts[0].y) <= 10)
       return { id: m.id, part: 'tip', px: m.pts[0].x, py: m.pts[0].y };
     const box = m.pts[1] || m.pts[0];
-    const bw = Math.max(46, (m.text || '').length * 7.4 + 14), bh = 22;
+    const F = wsLblF();
+    const bw = Math.max(46 * F, (m.text || '').length * 7.4 * F + 14 * F), bh = 22 * F;
     if (Math.abs(x - box.x) <= bw/2 + 2 && Math.abs(y - box.y) <= bh/2 + 2)
       return { id: m.id, part: 'box', px: box.x, py: box.y };
   }
@@ -14535,7 +14567,8 @@ function wsRenderMarkups(mk, mpp) {
       const CALLOUT_BLUE = '#1976D2', CALLOUT_FILL = '#FFF9C4', CALLOUT_TEXT = '#111';
       const target = pts[0], box = pts.length >= 2 ? pts[1] : pts[0];
       const label = text || '';
-      const bw = Math.max(46, label.length * 7.4 + 14), bh = 22;
+      const F = wsLblF();
+      const bw = Math.max(46 * F, label.length * 7.4 * F + 14 * F), bh = 22 * F;
       const bx = box.x - bw/2, by = box.y - bh/2;
       if (live) { // placement preview: crosshair at target, rubber leader to cursor
         mk('circle', { cx: target.x, cy: target.y, r: 4, fill: 'none', stroke: CALLOUT_BLUE, 'stroke-width': 2 });
@@ -14551,7 +14584,7 @@ function wsRenderMarkups(mk, mpp) {
         const tEdge = Math.min(1, Math.min(tx, ty));
         const sx = box.x + dx * tEdge, sy = box.y + dy * tEdge;
         mk('polyline', { points: `${sx},${sy} ${target.x},${target.y}`, stroke: CALLOUT_BLUE, 'stroke-width': 2, fill: 'none' });
-        const ang = Math.atan2(target.y - sy, target.x - sx), ah = 10;
+        const ang = Math.atan2(target.y - sy, target.x - sx), ah = 10 * F;
         mk('polygon', { points: [[target.x, target.y],
           [target.x - ah*Math.cos(ang - 0.42), target.y - ah*Math.sin(ang - 0.42)],
           [target.x - ah*Math.cos(ang + 0.42), target.y - ah*Math.sin(ang + 0.42)]].map(p => p.join(',')).join(' '),
@@ -14559,7 +14592,7 @@ function wsRenderMarkups(mk, mpp) {
       }
       mk('rect', { x: bx, y: by, width: bw, height: bh, rx: 3,
         fill: CALLOUT_FILL, stroke: CALLOUT_BLUE, 'stroke-width': 1.5 });
-      const t = mk('text', { x: box.x, y: box.y + 4.5, fill: CALLOUT_TEXT, 'font-size': 13,
+      const t = mk('text', { x: box.x, y: box.y + 4.5 * F, fill: CALLOUT_TEXT, 'font-size': 13,
         'font-weight': 600, 'text-anchor': 'middle' });
       t.textContent = label;
       return;
@@ -15145,6 +15178,12 @@ function wsSweptGear() {
   wsRenderSweptLayer();
 }
 (function(){  // attach immediately — DOMContentLoaded has already fired by now
+  // mirror swept status into the floating strip (it survives panel collapse)
+  const sw = document.getElementById('ws-swept-status');
+  if (sw && window.MutationObserver) {
+    new MutationObserver(() => { if (typeof wsFloatStatus === 'function') wsFloatStatus(sw.textContent); })
+      .observe(sw, { childList: true, characterData: true, subtree: true });
+  }
   const svg = document.getElementById('ws-overlay-svg');
   if (svg) svg.addEventListener('mousemove', wsSweptDriveMove);
   const area = document.getElementById('ws-canvas-area');
@@ -15590,6 +15629,14 @@ function wsSweptMpp() {
 }
 
 function wsNormA(a){ while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; }
+// Label scale factor: keeps annotation text proportional to the drawn plan.
+// 1.0 at ~1:100 (mpp ≈ 0.026 m/px); smaller-scale plans (1:500) get proportionally
+// smaller labels, detail plans larger — clamped so text never becomes unusable.
+function wsLblF(){
+  const mpp = wsSweptMpp();
+  if (!mpp) return 1;
+  return Math.max(0.5, Math.min(3, 0.026 / mpp));
+}
 function wsCatmull(pts, steps){
   if(pts.length<2)return[...pts];
   const out=[],n=pts.length;
@@ -16254,44 +16301,51 @@ function wsOpenProject(project) {
   }
 }
 let _wsPanelCollapsed = false;
+function wsPanelSetW(w) {
+  const shell = document.querySelector('.ws-shell');
+  if (shell) shell.style.setProperty('--ws-panel-w', (w + 1) + 'px');
+}
 function wsPanelToggle() {
   const panel = document.getElementById('ws-tool-panel');
-  const btn = document.getElementById('ws-panel-toggle');
   const body = document.querySelector('.ws-tool-body');
+  const tabs = document.querySelector('.ws-tool-tabs');
+  const exp = document.getElementById('ws-panel-expand');
+  const col = document.getElementById('ws-panel-collapse');
+  const handle = document.getElementById('ws-resize-handle');
   _wsPanelCollapsed = !_wsPanelCollapsed;
   if (_wsPanelCollapsed) {
-    panel.style.height = '36px';
+    panel.style.width = '26px';
     if (body) body.style.display = 'none';
-    btn.textContent = '▲ Show';
+    if (tabs) tabs.style.display = 'none';
+    if (handle) handle.style.display = 'none';
+    if (col) col.style.display = 'none';
+    if (exp) exp.style.display = '';
+    wsPanelSetW(26);
   } else {
-    body.style.display = '';
-    panel.style.height = _wsCurrentPanelHeight + 'px';
-    btn.textContent = '▼ Hide';
+    if (body) body.style.display = '';
+    if (tabs) tabs.style.display = '';
+    if (handle) handle.style.display = '';
+    if (col) col.style.display = '';
+    if (exp) exp.style.display = 'none';
+    panel.style.width = _wsCurrentPanelWidth + 'px';
+    wsPanelSetW(_wsCurrentPanelWidth);
   }
 }
 
-let _wsCurrentPanelHeight = 180;
+let _wsCurrentPanelWidth = 500;
 
 function wsStartResize(e) {
   e.preventDefault();
   const panel = document.getElementById('ws-tool-panel');
-  const startY = e.clientY;
-  const startH = panel.offsetHeight;
+  const startX = e.clientX;
+  const startW = panel.offsetWidth;
   function onMove(ev) {
-    const delta = startY - ev.clientY;
-    const newH = Math.max(36, Math.min(window.innerHeight * 0.8, startH + delta));
-    panel.style.height = newH + 'px';
+    // handle sits on the panel's LEFT edge: dragging left widens the panel
+    const newW = Math.max(300, Math.min(window.innerWidth * 0.7, startW + (startX - ev.clientX)));
+    panel.style.width = newW + 'px';
     panel.style.transition = 'none';
-    _wsCurrentPanelHeight = newH;
-    if (newH <= 40) {
-      _wsPanelCollapsed = true;
-      document.querySelector('.ws-tool-body').style.display = 'none';
-      document.getElementById('ws-panel-toggle').textContent = '▲ Show';
-    } else if (_wsPanelCollapsed) {
-      _wsPanelCollapsed = false;
-      document.querySelector('.ws-tool-body').style.display = '';
-      document.getElementById('ws-panel-toggle').textContent = '▼ Hide';
-    }
+    _wsCurrentPanelWidth = newW;
+    wsPanelSetW(newW);
   }
   function onUp() {
     panel.style.transition = '';
