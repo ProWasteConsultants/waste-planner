@@ -1590,7 +1590,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                       <option value="soft">Soft Plastics</option>
                     </select>
                     <span id="ws-bin-thumb" style="display:inline-flex;align-items:center;"></span>
-                    <button class="wsl-btn" onclick="wsLayoutPlaceMode()">Place bin</button>
+                    <button class="wsl-btn" onclick="wsLayoutPlaceMode()" title="Places whichever bin OR equipment item is selected above — the list holds both">Place on plan</button>
                   </div>
                 </div>
                 <div class="wsl-group" style="flex:1;">
@@ -12648,6 +12648,40 @@ const WS_STREAMS = [
   { id: 'soft',      label: 'Soft Plastics', col: '#06B6D4', aci: 4 },
   { id: 'equip',     label: 'Equipment',  col: '#607D8B', aci: 8 },
 ];
+// `equipment.streams` rows were written from three vocabularies over the life of
+// this table: canonical ids (`paper`), WS_STREAMS labels (`Paper/Card`), and the
+// bin calculator’s own display names (`Paper & cardboard`, `General waste`,
+// `Commingled recycling`). A stored value must therefore be RESOLVED, not matched.
+//
+// A bare indexOf treated every calculator-vocabulary name as "serves no stream",
+// which made wsEquipAssignStream return null and silently REFUSED placement of
+// those items — the row was in the picker but nothing happened on click.
+const WS_STREAM_ALIAS = {
+  garbage:   ['gw', 'general waste', 'general', 'residual', 'mixed waste', 'putrescible'],
+  recycling: ['cr', 'commingled recycling', 'commingled', 'co-mingled', 'recyclables', 'mixed recycling'],
+  fogo:      ['fogo', 'food organics', 'garden organics', 'food and garden organics',
+              'organics', 'food waste', 'green waste'],
+  glass:     ['glass'],
+  paper:     ['card', 'cardboard', 'paper and cardboard', 'cardboard and paper', 'paper card'],
+  soft:      ['soft', 'soft plastics', 'soft plastic'],
+  equip:     ['equipment', 'plant'],
+};
+// Case, punctuation and "&" vs "and" are noise — strip them all so the three
+// vocabularies collapse onto one key.
+function wsStreamKey(v) {
+  return String(v == null ? '' : v).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '');
+}
+// The canonical stream id for any of those spellings, or null when the value is
+// genuinely unintelligible.
+function wsStreamId(v) {
+  const k = wsStreamKey(v);
+  if (!k) return null;
+  const hit = WS_STREAMS.find(x => wsStreamKey(x.id) === k || wsStreamKey(x.label) === k);
+  if (hit) return hit.id;
+  for (const id in WS_STREAM_ALIAS)
+    if (WS_STREAM_ALIAS[id].some(a => wsStreamKey(a) === k)) return id;
+  return null;
+}
 // The admin equipment editor lives in a DIFFERENT script block, which cannot
 // see this const. Export it rather than duplicating the list — two copies of the
 // canonical streams would drift.
@@ -13045,9 +13079,20 @@ function wsEquipLibrary(db) {
 // unrestricted, so every calculator stream is offered.
 function wsEquipAllowedStreams(rec, allStreams) {
   const all = (allStreams || []).filter(x => x !== 'equip');
-  const allow = (rec && Array.isArray(rec.streams) ? rec.streams : []).filter(Boolean);
-  if (!allow.length) return all.slice();
-  return all.filter(x => allow.indexOf(x) >= 0);
+  const raw = (rec && Array.isArray(rec.streams) ? rec.streams : []).filter(Boolean);
+  if (!raw.length) return all.slice();          // empty = unrestricted
+  const want = raw.map(wsStreamId).filter(Boolean);
+  // Every entry was unintelligible. That is corrupt metadata, not a physical
+  // restriction, and refusing on it is what made these rows unplaceable — so
+  // fall back to unrestricted and let wsEquipStreamIssues() surface the values.
+  if (!want.length) return all.slice();
+  return all.filter(x => want.indexOf(x) >= 0);
+}
+// The stored stream values that resolve to nothing, so the UI can name them
+// instead of leaving the user to guess why an item behaves oddly.
+function wsEquipStreamIssues(rec) {
+  return (rec && Array.isArray(rec.streams) ? rec.streams : [])
+    .filter(v => v && !wsStreamId(v));
 }
 // The stream a newly placed instance takes: the user’s current choice when the
 // item allows it, otherwise the item’s first allowable stream. Returns null when
@@ -13361,6 +13406,12 @@ function wsLayoutPlaceAt(x, y) {
   }
   if (libRec && assigned !== st.id)
     wsLayoutStatus(`${bt.label} only serves ${assigned} — assigned to that stream.`);
+  // Placed, but the library row needs fixing — said last so it is the message
+  // left on screen.
+  const badS = libRec ? wsEquipStreamIssues(libRec) : [];
+  if (badS.length)
+    wsLayoutStatus(`${bt.label}: the equipment library lists ${badS.map(v => '“' + v + '”').join(', ')}, ` +
+      'which is not a stream this app knows — placed unrestricted. Fix the row’s Streams field in admin.');
   slotA.bins.push({ id: 'bin_' + Date.now() + '_' + Math.floor(Math.random() * 999),
     type: bt.id, stream: libRec ? assigned : st.id, x: bx, y: by, rot: 0, calcRoom: cr,
     equipmentId: libRec ? libRec.id : null,
@@ -18455,13 +18506,30 @@ function wsSheetCropPx(denom, viewMm, mpp, centre, canvasSize) {
 }
 
 // ── SHEET SETTINGS (per project, remembered) ─────────────────────────────────
+// The base plan is SCREENED BACK on export so the waste layout, markups and
+// swept paths read as the primary content — the standard drafting convention for
+// an overlay issued on someone else’s drawing. Screening is composited against
+// white, so it lightens every tone toward paper rather than washing to grey, and
+// it applies to the raster underlay ONLY: the vector annotation on top is never
+// faded. Screen editing stays at full contrast — this is an export concern.
+// 100 = the plan exactly as supplied.
+const WS_PLAN_SCREEN_DEFAULT = 60;
+function wsPlanScreenAlpha(pct) {
+  // null and '' must land on the DEFAULT, not on Number(null) === 0, which would
+  // clamp to near-invisible and quietly drop the base plan off the sheet.
+  if (pct == null || pct === '') return WS_PLAN_SCREEN_DEFAULT / 100;
+  const n = Number(pct);
+  if (!isFinite(n)) return WS_PLAN_SCREEN_DEFAULT / 100;
+  // never fully transparent: a blank underlay would silently drop the base plan
+  return Math.max(0.05, Math.min(1, n / 100));
+}
 function wsSheetDefaults() {
   return {
     title: 'Waste Management Layout',
     drawingNo: '', rev: 'A', sheet: '1 of 1',
     projectName: '', projectAddress: '',
     notes: 'Base plan prepared by others.\nPRELIMINARY — NOT FOR CONSTRUCTION.',
-    north: 0, credit: true, legend: true, scale: null,
+    north: 0, credit: true, legend: true, scale: null, planScreen: WS_PLAN_SCREEN_DEFAULT,
     mode: 'full', target: null, showScale: true,
   };
 }
@@ -18611,6 +18679,9 @@ function wsSheetDlgRender() {
   const fl = wsFullSheetLayout(d.srcMm, s.target || null);
   const tOpts = d.targets.map(t =>
     `<option value="${esc(t.target || '')}"${(s.target || '') === (t.target || '') ? ' selected' : ''}>${esc(t.label)}</option>`).join('');
+  const scr = s.planScreen == null ? WS_PLAN_SCREEN_DEFAULT : s.planScreen;
+  const screenOpts = [100, 80, 70, 60, 50, 40, 25].map(v =>
+    `<option value="${v}"${v === scr ? ' selected' : ''}>${v}%${v === 100 ? ' — as supplied' : ''}</option>`).join('');
   const modeBtn = (v, lbl, sub) =>
     `<button onclick="wsSheetDlgSet('mode','${v}')" style="flex:1;text-align:left;padding:8px 10px;border-radius:7px;cursor:pointer;border:1px solid ${s.mode === v ? '#00b3b3' : '#3a4747'};background:${s.mode === v ? 'rgba(0,128,128,0.28)' : 'none'};color:#fff;">` +
     `<div style="font-size:11.5px;font-weight:600;">${esc(lbl)}</div>` +
@@ -18636,6 +18707,8 @@ function wsSheetDlgRender() {
             <select id="shd-target" onchange="wsSheetDlgSet('target', this.value || null)" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;">${tOpts}</select></label>`}
       <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);">North arrow (° clockwise from up)
         <input id="shd-north" type="number" value="${esc(s.north)}" step="5" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;"></label>
+      <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);" title="Fades the base plan so the waste layout, markups and swept paths stand out. Annotation is never faded.">Base plan screening
+        <select id="shd-screen" onchange="wsSheetDlgSet('planScreen', parseInt(this.value,10))" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;">${screenOpts}</select></label>
     </div>
     ${crop
       ? `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:${fits ? 'rgba(22,74,44,0.5)' : 'rgba(90,50,20,0.5)'};border:1px solid ${fits ? '#3DD68C' : '#FFB74D'};font-size:11px;line-height:1.5;color:rgba(255,255,255,0.85);">
@@ -18672,6 +18745,9 @@ function wsSheetLayerSummary() {
 }
 function wsSheetDlgSet(k, v) {
   if (!WS_SHEET_DLG) return;
+  // Re-rendering rebuilds every input, so harvest what is typed FIRST —
+  // otherwise touching any control silently discards the title and notes.
+  try { wsSheetDlgCollect(); } catch (e) {}
   WS_SHEET_DLG.settings[k] = v;
   wsSheetDlgRender();
 }
@@ -18679,7 +18755,7 @@ function wsSheetDlgSet(k, v) {
 // Re-render the plan page at export DPI, crop to the scaled window, then lay the
 // vector annotation overlay on top at exactly the same rect. Nothing is fitted:
 // the crop window is derived from the scale, not the other way round.
-async function wsSheetRenderUnderlay(crop, targetPx) {
+async function wsSheetRenderUnderlay(crop, targetPx, screenPct) {
   const page = await WS.pdfDoc.getPage(WS.currentPage || 1);
   const live = document.getElementById('ws-pdf-canvas');
   // the live canvas is rendered at pdf.js scale 2; match its coordinate space
@@ -18693,8 +18769,11 @@ async function wsSheetRenderUnderlay(crop, targetPx) {
   out.height = Math.max(1, Math.round(crop.h * k));
   const cx = out.getContext('2d');
   cx.fillStyle = '#fff'; cx.fillRect(0, 0, out.width, out.height);
+  // alpha over that white ground IS the screening — no filter, no second canvas
+  cx.globalAlpha = wsPlanScreenAlpha(screenPct);
   cx.drawImage(full, Math.round(crop.x * k), Math.round(crop.y * k),
                out.width, out.height, 0, 0, out.width, out.height);
+  cx.globalAlpha = 1;
   void live;
   return out;
 }
@@ -18758,7 +18837,7 @@ async function wsSheetExport() {
                                 unit: 'mm', format: [page.w, page.h], compress: true });
     doc.setFont('helvetica', 'normal');
     // plan underlay — raster at export DPI (the base plan IS a raster page)
-    const px = await wsSheetRenderUnderlay(crop, 4200);
+    const px = await wsSheetRenderUnderlay(crop, 4200, s.planScreen);
     doc.addImage(px.toDataURL('image/jpeg', 0.92), 'JPEG', viewMm.x, viewMm.y, viewMm.w, viewMm.h, undefined, 'FAST');
     // annotation overlay — vector where svg2pdf can manage it
     const clone = wsSheetOverlayClone(crop);
@@ -18979,6 +19058,8 @@ function wsSheetDlgCollect() {
   if (notesEl) s.notes = notesEl.value;
   const northEl = g('shd-north');
   if (northEl) s.north = parseFloat(northEl.value) || 0;
+  const screenEl = g('shd-screen');
+  if (screenEl) s.planScreen = parseInt(screenEl.value, 10) || WS_PLAN_SCREEN_DEFAULT;
   s.credit = chk('shd-credit', s.credit);
   s.legend = chk('shd-legend', s.legend !== false);
   // Mode-specific controls are only in the DOM for their own mode, so read them

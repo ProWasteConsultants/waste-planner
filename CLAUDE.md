@@ -242,6 +242,21 @@ disagreeing with its own drawing. The WMP links rooms by **calculator room id**
 Volumes reach the layout as **data only**. The panel shows counts; a test asserts no
 volume key reaches the room view.
 
+**Stream values must be resolved, never matched.** `equipment.streams` has been
+written in three vocabularies over the life of the table: canonical ids (`paper`),
+`WS_STREAMS` labels (`Paper/Card`), and the bin calculator’s display names
+(`Paper & cardboard`, `General waste`, `Commingled recycling`). `wsStreamId()`
+collapses all three onto the canonical id — case, punctuation and `&` vs `and` are
+noise. A bare `indexOf` against the id list reads every calculator-vocabulary name
+as "serves no stream", which is what silently made three live rows **unplaceable**:
+they appeared in the picker and clicking the plan did nothing.
+
+That is also why **a restriction nobody can read is not a restriction.** When every
+stored value fails to resolve, the item falls back to *unrestricted* and the bad
+values are reported by `wsEquipStreamIssues()` at placement time. Refusing on
+unreadable metadata blocks real work over a data-entry error. This does not weaken
+the invariant — populated **and readable** still restricts, and that is tested.
+
 Legacy instances (no `equipmentId`) are mapped by code where one matches and
 otherwise **preserved and flagged `legacy`** — guessing at the nearest record would
 silently change what an old drawing says.
@@ -294,6 +309,25 @@ says so before export.
   otherwise the most detailed standard that does. 1:50 is not offered, so a plan
   set to it falls through to 1:100 — stating a coarser scale is always safe,
   stating a finer one never is.
+
+**The base plan is screened back to 60% on export.** The sheet is an overlay on
+someone else’s drawing, so the waste layout, markups and swept paths have to be
+the figure and the architect’s linework the ground. `wsPlanScreenAlpha()` bounds
+it to `[0.05, 1]` — never fully transparent, because a blank underlay would drop
+the base plan with no error at all — and `null`/`''` fall back to the default
+rather than to `Number(null) === 0`.
+
+Two things about how it is applied:
+
+- It is composited **against white**, inside `wsSheetRenderUnderlay()`. Alpha over
+  a white ground lightens every tone toward paper, which is what "screened" means
+  on a drawing. Alpha over whatever happens to be behind it would just make the
+  plan translucent.
+- It touches the **raster underlay only**. Annotation is the thing screening exists
+  to make readable, so fading it too would be self-defeating. A test asserts the
+  vector path never passes through that canvas.
+
+Screen editing stays at full contrast — this is an export concern, not a view mode.
 
 The DXF export is a separate path and is unaffected by any of this.
 
