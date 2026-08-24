@@ -78,6 +78,8 @@ const LAYOUT_BLOCKS = [
   ['wsRoomEnsurePts',   /^function wsRoomEnsurePts\(/],
   ['wsRoomTranslate',   /^function wsRoomTranslate\(/],
   ['wsRoomMoveVertex',  /^function wsRoomMoveVertex\(/],
+  ['wsRoomRemovableCorner', /^function wsRoomRemovableCorner\(/],
+  ['wsRoomRemoveCornerAt', /^function wsRoomRemoveCornerAt\(/],
   ['wsRoomNearestVertex', /^function wsRoomNearestVertex\(/],
   ['wsRoomEdgeMidpoints', /^function wsRoomEdgeMidpoints\(/],
   ['wsRoomInsertVertex', /^function wsRoomInsertVertex\(/],

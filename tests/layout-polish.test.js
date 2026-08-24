@@ -516,22 +516,41 @@ test('wsRoomNearestVertex: the radius is a parameter, so it can track zoom', () 
   assert.equal(ws.wsRoomNearestVertex(r, 3, 3, undefined), 0, 'defaults to something usable');
 });
 
-test('Alt+click removes a corner, and both routes share one lookup', () => {
+test('a corner can be removed without the keyboard, and every route shares one helper', () => {
+  // Alt+click alone was not enough: Windows and Chrome both claim Alt, so it
+  // never reached the page. Right-click is modifier-free and is the standard
+  // gesture for removing a vertex in map and CAD editors.
   const bind = SOURCE.slice(SOURCE.indexOf('function wsLayoutBind'), SOURCE.indexOf("area.addEventListener('mousemove'"));
-  assert.match(bind, /if \(h\.type === 'vertex' && e\.altKey\)/, 'Alt over a corner must remove it');
-  assert.match(bind, /wsRoomDeleteVertex\(room, h\.vi\)/);
-  assert.match(bind, /A room needs at least three corners\./, 'the floor must be explained, not silent');
-  // the Backspace fallback uses the shared helper with a zoom-aware radius
-  assert.match(SOURCE, /const bi = wsRoomNearestVertex\(room, hv\.x, hv\.y, wsHandleHitR\(\)\);/);
+  assert.ok(bind.includes("area.addEventListener('contextmenu'"), 'right-click must be handled');
+  assert.ok(bind.includes('if (!hit) return;'), 'the browser menu must survive off a corner');
+  assert.ok(bind.includes('e.altKey || e.button === 2'), 'Alt still works where it survives');
+  const calls = SOURCE.split('wsRoomRemoveCornerAt(').length - 1;
+  assert.ok(calls >= 3, 'each route should call the shared helper, found ' + calls);
+  assert.ok(SOURCE.includes('const bi = wsRoomNearestVertex(room, hv.x, hv.y, wsHandleHitR());'));
   assert.equal(SOURCE.includes('let bi = -1, bd = 14;'), false, 'the fixed 14 px radius is gone');
-  // and the gesture is advertised rather than hidden
-  assert.match(SOURCE, /Alt\+click a corner removes it/);
-  assert.match(SOURCE, /Alt\+click or Backspace removes it/);
+  assert.ok(SOURCE.includes('right-click a corner removes it'), 'the working gesture must be advertised');
 });
 
-test('removing a corner retags the room contents, like every other room edit', () => {
-  const bind = SOURCE.slice(SOURCE.indexOf("if (h.type === 'vertex' && e.altKey)"), SOURCE.indexOf("if (h.type === 'vertex') {", SOURCE.indexOf("e.altKey")));
-  assert.match(bind, /wsTagBinsToRooms\(sD\.rooms, sD\.bins\)/);
-  assert.match(bind, /wsTagBinsToRooms\(sD\.rooms, sD\.equip\)/);
-  assert.match(bind, /wsLayoutSnapshot\(\);/, 'it must be undoable');
+test('wsRoomRemovableCorner: encodes the removal rules, purely', () => {
+  const quad = { id: 'Q', pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }] };
+  assert.equal(ws.wsRoomRemovableCorner(quad, 98, 3, 14), 1, 'the corner under the point');
+  assert.equal(ws.wsRoomRemovableCorner(quad, 500, 500, 14), -1, 'a miss');
+  // -2 is the floor, kept distinct from a miss so the caller can explain it
+  const tri = { id: 'T', pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 80 }] };
+  assert.equal(ws.wsRoomRemovableCorner(tri, 0, 0, 14), -2, 'a triangle is the floor');
+  const locked = { id: 'L', locked: true, pts: quad.pts.slice() };
+  assert.equal(ws.wsRoomRemovableCorner(locked, 0, 0, 14), -1, 'a locked room is not editable');
+  assert.equal(ws.wsRoomRemovableCorner(null, 0, 0, 14), -1);
+});
+
+test('wsRoomRemovableCorner: the floor is checked before the hit test', () => {
+  // Otherwise clicking nowhere near a triangle would report a miss and the user
+  // would never learn why the corner will not go.
+  const tri = { id: 'T', pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 80 }] };
+  assert.equal(ws.wsRoomRemovableCorner(tri, 9999, 9999, 14), -2);
+});
+
+test('the shared helper reports the floor rather than failing silently', () => {
+  assert.ok(SOURCE.includes("if (vi === -2) { wsLayoutStatus('A room needs at least three corners.'); return false; }"),
+    'the floor must be explained to the user');
 });

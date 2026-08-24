@@ -13365,6 +13365,28 @@ function wsRoomNearestVertex(room, x, y, radius) {
   });
   return bi;
 }
+// Remove one corner, with the guard, retag and autosave every route needs.
+// Returns true when a corner actually went.
+// Pure: WHICH corner a removal gesture would take, or -1. Encodes the rules —
+// a locked room is not editable and a polygon never drops below three corners —
+// so every gesture and the tests agree on them without touching the DOM.
+function wsRoomRemovableCorner(room, x, y, radius) {
+  if (!room || room.locked) return -1;
+  if (wsRoomPts(room).length <= 3) return -2;   // -2 = at the floor, distinct from a miss
+  return wsRoomNearestVertex(room, x, y, radius);
+}
+function wsRoomRemoveCornerAt(room, x, y, radius) {
+  const vi = wsRoomRemovableCorner(room, x, y, radius);
+  if (vi === -2) { wsLayoutStatus('A room needs at least three corners.'); return false; }
+  if (vi < 0) return false;
+  wsLayoutSnapshot();
+  wsRoomDeleteVertex(room, vi);
+  const sD = wsLayoutSlot();
+  wsTagBinsToRooms(sD.rooms, sD.bins); wsTagBinsToRooms(sD.rooms, sD.equip);
+  wsLayoutStatus('Corner removed.');
+  wsRenderLayoutLayer(); wsLayoutAutosave();
+  return true;
+}
 function wsRoomEdgeMidpoints(room) {
   const pts = wsRoomPts(room);
   return pts.map((p, i) => {
@@ -14001,26 +14023,16 @@ function wsLayoutBind() {
       WS.isPanning = false;
       // Alt turns the corner handle into a REMOVE handle — the inverse of the
       // "+" midpoint that adds one, and reachable without the keyboard.
-      if (h.type === 'vertex' && e.altKey) {
-        if (wsRoomPts(room).length <= 3) {
-          wsLayoutStatus('A room needs at least three corners.');
-        } else {
-          wsLayoutSnapshot();
-          wsRoomDeleteVertex(room, h.vi);
-          const sD = wsLayoutSlot();
-          wsTagBinsToRooms(sD.rooms, sD.bins); wsTagBinsToRooms(sD.rooms, sD.equip);
-          wsLayoutStatus('Corner removed.');
-          wsLayoutAutosave();
-        }
+      if (h.type === 'vertex' && (e.altKey || e.button === 2)) {
+        wsRoomRemoveCornerAt(room, p.x, p.y, wsHandleHitR());
         WS_LAYOUT.drag = null;
-        wsRenderLayoutLayer();
         e.preventDefault();
         return;
       }
       if (h.type === 'vertex') {
         wsRoomEnsurePts(room);
         WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi: h.vi, moved: false };
-        wsLayoutStatus('Reshaping the room \u2014 drag the corner, release to set. Alt+click or Backspace removes it.');
+        wsLayoutStatus('Reshaping the room \u2014 drag the corner, release to set. Right-click it (or Backspace) removes it.');
       } else {
         wsLayoutSnapshot();
         const vi = wsRoomInsertVertex(room, h.edge, h.x, h.y);
@@ -14094,7 +14106,7 @@ function wsLayoutBind() {
           : { kind: 'room', id: room.id, lastX: p.x, lastY: p.y, startX: p.x, startY: p.y, moved: false };
         wsLayoutStatus(room.locked
           ? '🔒 Room locked — press L to unlock before moving it.'
-          : `${room.name || 'Room'} \u2014 drag to move it and everything inside; corners reshape, + adds a corner, Alt+click a corner removes it.`);
+          : `${room.name || 'Room'} \u2014 drag to move it and everything inside; corners reshape, + adds a corner, right-click a corner removes it.`);
         wsRenderLayoutLayer();
         e.preventDefault();
         return;
@@ -14117,6 +14129,22 @@ function wsLayoutBind() {
       wsRenderLayoutLayer();
       e.preventDefault();
     }
+  });
+  area.addEventListener('contextmenu', e => {
+    if (!WS_LAYOUT.tabActive || WS._mode) return;
+    const p = wsLayoutEvt(e);
+    const slotC = wsLayoutSlot();
+    // the selected room first, then any room, matching the handle hit order
+    let room = WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel ? wsRoomById(WS_LAYOUT.sel) : null;
+    let hit = room && wsRoomNearestVertex(room, p.x, p.y, wsHandleHitR()) >= 0;
+    if (!hit) {
+      const any = wsAnyRoomHandleAt(slotC.rooms, p.x, p.y);
+      if (any && any.handle.type === 'vertex') { room = any.room; hit = true; }
+    }
+    if (!hit) return;                       // not on a corner — leave the menu alone
+    e.preventDefault();
+    wsSelSet([room.id], 'room');
+    wsRoomRemoveCornerAt(room, p.x, p.y, wsHandleHitR());
   });
   area.addEventListener('mousemove', e => {
     const inMode = WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark';
