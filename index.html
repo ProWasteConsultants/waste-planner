@@ -1618,6 +1618,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                   <button class="wsl-btn" onclick="wsAisleMode()" title="Keep-clear access aisle — bins and auto-layout stay out. Drag the end handles to set its length.">▨ Place aisle</button>
                 </div>
                 <div class="wsl-group-body" id="ws-layout-fixtures" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:stretch;"></div>
+                <div class="wsl-group-hd" style="margin-top:8px;">Zones</div>
+                <div class="wsl-group-body" id="ws-layout-zones" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:stretch;"></div>
               </div>
 
             </div>
@@ -12340,7 +12342,7 @@ function wsShowTab(name, btn) {
 
   const tab = document.getElementById('ws-tab-' + name);
   tab.style.display = 'flex';
-  if (name === 'layout') { wsRenderFixturePalette(); wsWireCanvasDrop(); wsRenderBinThumb(); }
+  if (name === 'layout') { wsRenderFixturePalette(); wsRenderZonePalette(); wsWireCanvasDrop(); wsRenderBinThumb(); }
 
   const sweptOverlay = document.getElementById('ws-swept-overlay');
   const scaleWrap = document.getElementById('ws-scale-wrap');
@@ -16172,6 +16174,34 @@ function wsRenderFixturePalette() {
     `<span class="wsl-fx-nm">${f.label}</span><span class="wsl-fx-dim">${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)}</span></button>`
   ).join('');
 }
+// A zone is a floor-area claim, so its palette swatch is the hatch it draws in
+// rather than a shape outline — the colour IS the identity.
+function wsRenderZonePalette() {
+  const el = document.getElementById('ws-layout-zones'); if (!el) return;
+  const esc = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  el.innerHTML = Object.keys(WS_ZONE_TYPES).map(k => {
+    const t = WS_ZONE_TYPES[k];
+    const dim = Math.round(t.w * 1000) + '×' + Math.round(t.d * 1000);
+    return `<button class="wsl-fx" onclick="wsZoneMode('${k}')" title="${esc(t.label)} — ${dim} mm default, drag an edge handle to resize">` +
+      `<span style="display:block;height:14px;border-radius:3px;border:1.5px dashed ${t.col};background:${t.col}22;"></span>` +
+      `<span class="wsl-fx-nm">${esc(t.label)}</span><span class="wsl-fx-dim">${dim}</span></button>`;
+  }).join('');
+}
+// Zones ride the fixture placement pipeline: same mode, same Esc, same
+// single-shot hand-back. Only the item they create differs.
+function wsZoneMode(typeId) {
+  const t = WS_ZONE_TYPES[typeId];
+  if (!t) return;
+  if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
+  if (!wsNeedScale()) return;
+  WS_LAYOUT._fixture = { code: 'ZONE_' + t.id, label: t.label, w: t.w, d: t.d,
+                         round: false, aisle: false, zoneType: t.id,
+                         provisionStream: t.provision || null, col: t.col };
+  WS._mode = 'layoutfixture';
+  document.getElementById('ws-canvas-area').style.cursor = 'crosshair';
+  document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
+  wsLayoutStatus(`Click to place the ${t.label}. Drag its end handles to resize once placed. Esc to stop.`);
+}
 function wsRenderBinThumb() {
   const el = document.getElementById('ws-bin-thumb'); if (!el) return;
   const bt = wsBinType(document.getElementById('ws-layout-bin')?.value) || null;
@@ -16211,6 +16241,11 @@ function wsFixtureAt(x, y) {
   wsLayoutSlot().equip.push({ id, x, y, rot: 0, code: f.code, label: f.label,
     w: f.w, d: f.d, known: true, fixture: !f.aisle, aisle: !!f.aisle, round: !!f.round,
     door: f.door || null,
+    // a zone is a floor-area claim: type, colour and any provision link travel
+    // with it, and it is never an equipment record
+    zoneType: f.zoneType || null,
+    provisionStream: f.provisionStream || null,
+    col: f.col || null,
     calcRoom: wsLayoutCalcRoomAt(x, y) || null,
     roomId: wsBinRoomId(wsLayoutSlot().rooms, { x, y }) });
   wsLayoutEndMode();

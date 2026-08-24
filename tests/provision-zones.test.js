@@ -197,3 +197,35 @@ test('the WMP room link uses the calculator room id, not the room name', () => {
   assert.ok(SOURCE.includes('(!room.srcId && x.roomName && room.name &&'),
     'a manually added room with no srcId still falls back to the name');
 });
+
+// ── surface 1: the zone tool ────────────────────────────────────────────
+test('every zone type has a palette entry that arms placement', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsRenderZonePalette'), SOURCE.indexOf('function wsZoneMode'));
+  assert.ok(fn.includes("Object.keys(WS_ZONE_TYPES).map(k =>"),
+    'the palette must be generated from the type table, not hand-listed');
+  assert.ok(fn.includes("wsZoneMode('${k}')"), 'each entry arms the placement mode');
+  // the swatch is the hatch the zone draws in — for a zone, the colour IS the identity
+  assert.ok(fn.includes('border:1.5px dashed ${t.col}'));
+});
+
+test('zone placement rides the existing fixture pipeline', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsZoneMode'), SOURCE.indexOf('function wsRenderBinThumb'));
+  assert.ok(fn.includes("WS._mode = 'layoutfixture';"),
+    'same mode as every other placement, so Esc and single-shot hand-back come free');
+  assert.ok(fn.includes('zoneType: t.id'), 'the placed item must carry its type');
+  assert.ok(fn.includes("provisionStream: t.provision || null"), 'and any provision link');
+  assert.ok(fn.includes('if (!wsNeedScale()) return;'), 'a zone is dimensioned, so it needs a scale');
+});
+
+test('a placed zone carries type, colour and provision link', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsFixtureAt'), SOURCE.indexOf('// ── MARKUPS'));
+  assert.ok(fn.includes('zoneType: f.zoneType || null,'));
+  assert.ok(fn.includes('provisionStream: f.provisionStream || null,'));
+  assert.ok(fn.includes('col: f.col || null,'));
+});
+
+test('the zone palette is rendered whenever the layout tab opens', () => {
+  assert.ok(SOURCE.includes('wsRenderFixturePalette(); wsRenderZonePalette();'),
+    'the zone palette must appear alongside the fixtures, not only on demand');
+  assert.ok(SOURCE.includes('id="ws-layout-zones"'), 'and it needs somewhere to render');
+});
