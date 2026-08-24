@@ -54,6 +54,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* Left-hand floating stack: Layers card, then the Markups card beneath it. */
 .ws-side-stack{position:absolute;top:10px;left:58px;z-index:12;display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
 .ws-layer-panel{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;min-width:140px;}
+#ws-markup-panel{min-width:172px;}
+/* Collapse to the title alone, exactly like the Layers card. */
+#ws-markup-panel.min{min-width:0;}
+.ws-layer-panel.min .ws-mark-body{display:none;}
 .ws-mark-btn{display:flex;align-items:center;gap:7px;width:100%;background:none;border:1px solid #333;border-radius:6px;color:rgba(255,255,255,0.72);font-size:11px;padding:5px 8px;cursor:pointer;text-align:left;margin-bottom:4px;}
 .ws-mark-btn:hover{border-color:#4a5a5a;background:rgba(255,255,255,0.04);color:#fff;}
 .ws-mark-btn.on{border-color:var(--teal);background:rgba(0,128,128,0.22);color:#fff;}
@@ -1438,9 +1442,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         </div>
 
         <!-- Markups card — available from any tab, not just Layout -->
-        <div class="ws-layer-panel" id="ws-markup-panel" style="display:none;min-width:172px;">
+        <!-- No inline min-width or display here: inline styles outrank the
+             .ws-layer-panel.min rules, which is what stopped this card collapsing. -->
+        <div class="ws-layer-panel" id="ws-markup-panel" style="display:none;">
           <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Markups <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
-          <div class="ws-layer-row" style="display:block;margin:0;">
+          <div class="ws-mark-body">
             <button class="ws-mark-btn" id="ws-mark-btn-text"     onclick="wsMarkMode('text')"><span class="ws-mark-swatch" style="background:#ECEFF1;"></span>T Callout</button>
             <button class="ws-mark-btn" id="ws-mark-btn-measure"  onclick="wsMarkMode('measure')"><span class="ws-mark-swatch" style="background:#00E5FF;"></span>↔ Measure length</button>
             <button class="ws-mark-btn" id="ws-mark-btn-area"     onclick="wsMarkMode('area')"><span class="ws-mark-swatch" style="background:#7FD8D8;"></span>⬠ Area</button>
@@ -13615,6 +13621,73 @@ function wsLayoutEvt(e) {
   return { x: (e.clientX - rect.left) * (canvas.width / rect.width),
            y: (e.clientY - rect.top) * (canvas.height / rect.height) };
 }
+// ── ZOOM-AWARE HANDLES ───────────────────────────────────────────────────────
+// Everything on the overlay is in CANVAS pixels, but the plan renders zoomed —
+// at 53% zoom a 10-canvas-px handle is 5 screen px, and an 8-canvas-px hit radius
+// is 4 screen px under the pointer, which is why room handles felt unreliable.
+// Convert through here so handles keep a constant SCREEN size at any zoom.
+function wsCanvasPerScreen() {
+  const canvas = document.getElementById('ws-pdf-canvas');
+  if (!canvas || !canvas.width) return 1;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) return 1;
+  return canvas.width / rect.width;
+}
+const WS_HANDLE_SCREEN_R = 10;   // screen px — generous grab radius
+function wsHandleHitR() { return WS_HANDLE_SCREEN_R * wsCanvasPerScreen(); }
+// Inline cursor, which beats both .ws-canvas-area{cursor:grab} and its :active
+// grabbing rule — that :active is why the pan hand used to flash mid-drag.
+// Reads the live value rather than caching — other tools set the cursor directly
+// (crosshair for placement modes), and a cache would desync from them.
+function wsLayoutSetCursor(c) {
+  const area = document.getElementById('ws-canvas-area');
+  if (!area) return;
+  const want = c || '';
+  if (area.style.cursor !== want) area.style.cursor = want;
+}
+// What the pointer is over, expressed as a cursor. Rooms only: everything else
+// keeps the existing default.
+function wsRoomCursorAt(rooms, selId, x, y, radius) {
+  const sel = (rooms || []).find(r => r.id === selId && selId);
+  if (sel && !sel.locked) {
+    const h = wsRoomHandleAt(sel, x, y, radius);
+    if (h) return h.type === 'vertex' ? 'pointer' : 'crosshair';
+  }
+  const any = wsAnyRoomHandleAt(rooms, x, y, radius);
+  if (any) return any.handle.type === 'vertex' ? 'pointer' : 'crosshair';
+  // A locked room cannot be dragged, so never promise 'move' over one.
+  if (sel && !sel.locked && wsPointInPoly(wsRoomPts(sel), x, y)) return 'move';
+  return null;
+}
+// Which room handle, if any, sits under a canvas-space point. Vertices win over
+// edge midpoints because they overlap at short edges and moving beats adding.
+function wsRoomHandleAt(room, x, y, radius) {
+  const R = radius == null ? wsHandleHitR() : radius;
+  const pts = wsRoomPts(room);
+  let best = null, bd = R;
+  for (let i = 0; i < pts.length; i++) {
+    const d = Math.hypot(x - pts[i].x, y - pts[i].y);
+    if (d <= bd) { bd = d; best = { type: 'vertex', vi: i, dist: d }; }
+  }
+  if (best) return best;
+  bd = R;
+  for (const m of wsRoomEdgeMidpoints(room)) {
+    const d = Math.hypot(x - m.x, y - m.y);
+    if (d <= bd) { bd = d; best = { type: 'edge', edge: m.edge, x: m.x, y: m.y, dist: d }; }
+  }
+  return best;
+}
+// Same test across every room, topmost first — lets a corner be grabbed without
+// selecting its room first.
+function wsAnyRoomHandleAt(rooms, x, y, radius) {
+  const rs = rooms || [];
+  for (let i = rs.length - 1; i >= 0; i--) {
+    if (rs[i].locked) continue;
+    const h = wsRoomHandleAt(rs[i], x, y, radius);
+    if (h) return { room: rs[i], handle: h };
+  }
+  return null;
+}
 function wsLayoutBind() {
   if (WS_LAYOUT._bound) return;
   WS_LAYOUT._bound = true;
@@ -13649,34 +13722,31 @@ function wsLayoutBind() {
         }
       }
     }
+    // Start a corner drag / corner insert. Shared by the two entry points below.
+    const startRoomHandle = (room, h) => {
+      WS_LAYOUT.sel = room.id; WS_LAYOUT.selKind = 'room';
+      WS.isPanning = false;
+      if (h.type === 'vertex') {
+        wsRoomEnsurePts(room);
+        WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi: h.vi, moved: false };
+        wsLayoutStatus('Reshaping the room — drag the corner, release to set. Backspace removes it.');
+      } else {
+        wsLayoutSnapshot();
+        const vi = wsRoomInsertVertex(room, h.edge, h.x, h.y);
+        WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi, moved: true };
+        wsLayoutStatus('Corner added — drag to position it.');
+      }
+      wsLayoutSetCursor('pointer');
+      wsRenderLayoutLayer();
+      e.preventDefault();
+    };
     // Selected room's edit handles, tested before contents (same convention as the
-    // aisle end handles above): corners reshape, edge midpoints add a vertex.
+    // aisle end handles above): corners reshape, edge midpoints add a corner.
     if (WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel) {
       const room = wsRoomById(WS_LAYOUT.sel);
       if (room && !room.locked) {
-        const rpts = wsRoomPts(room);
-        for (let vi = 0; vi < rpts.length; vi++) {
-          if (Math.hypot(p.x - rpts[vi].x, p.y - rpts[vi].y) <= 8) {
-            wsRoomEnsurePts(room);
-            WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi, moved: false };
-            WS.isPanning = false;
-            wsLayoutStatus('Reshaping the room — drag the corner, release to set. Backspace removes it.');
-            e.preventDefault();
-            return;
-          }
-        }
-        for (const m of wsRoomEdgeMidpoints(room)) {
-          if (Math.hypot(p.x - m.x, p.y - m.y) <= 8) {
-            wsLayoutSnapshot();
-            const vi = wsRoomInsertVertex(room, m.edge, m.x, m.y);
-            WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi, moved: true };
-            WS.isPanning = false;
-            wsLayoutStatus('Corner added — drag to position it.');
-            wsRenderLayoutLayer();
-            e.preventDefault();
-            return;
-          }
-        }
+        const h = wsRoomHandleAt(room, p.x, p.y);
+        if (h) { startRoomHandle(room, h); return; }
       }
     }
     const hit = wsLayoutHit(p.x, p.y, mpp);
@@ -13704,6 +13774,12 @@ function wsLayoutBind() {
         e.preventDefault();
         return;
       }
+    }
+    // An UNSELECTED room's corner can be grabbed directly, without selecting the
+    // room first — but only after contents, so a bin sitting on a corner still wins.
+    if (!grabbed) {
+      const any = wsAnyRoomHandleAt(wsLayoutSlot().rooms, p.x, p.y);
+      if (any) { startRoomHandle(any.room, any.handle); return; }
     }
     // Room interior — LAST, so bins, equipment, chutes and callouts always win the
     // grab. Dragging the interior moves the whole polygon and everything tagged to it.
@@ -13741,6 +13817,9 @@ function wsLayoutBind() {
     if (WS_LAYOUT.drag) {
       const mpp = wsSweptMpp(); if (!mpp) return;
       const dg = WS_LAYOUT.drag, slot2 = wsLayoutSlot();
+      // Hold the edit cursor for the whole drag so the pan hand never flashes.
+      if (dg.kind === 'room') wsLayoutSetCursor('move');
+      else if (dg.kind === 'roomvert') wsLayoutSetCursor('pointer');
       if (dg.kind === 'room') {
         const room = slot2.rooms.find(x => x.id === dg.id);
         if (room) {
@@ -13852,6 +13931,11 @@ function wsLayoutBind() {
       // Track the pointer even outside a placement mode — Backspace-to-drop-a-corner
       // needs to know which corner is under the cursor. No re-render on plain hover.
       WS_LAYOUT.hover = p;
+      // Hover affordance: corners point, edge midpoints crosshair, the selected
+      // room's floor shows move. Anything else falls back to the pan hand.
+      wsLayoutSetCursor(WS_LAYOUT.tabActive
+        ? wsRoomCursorAt(wsLayoutSlot().rooms, WS_LAYOUT.selKind === 'room' ? WS_LAYOUT.sel : null, p.x, p.y)
+        : null);
       return;
     }
     if (!WS_LAYOUT._raf) {
@@ -13874,6 +13958,8 @@ function wsLayoutBind() {
         WS_LAYOUT._justDragged = true;
         wsLayoutAutosave();
       }
+      // release the held edit cursor; the next mousemove re-derives it from hover
+      if (dg.kind === 'room' || dg.kind === 'roomvert') wsLayoutSetCursor(null);
       WS_LAYOUT.drag = null;
     }
   };
@@ -13981,17 +14067,25 @@ function wsRenderLayoutLayer() {
     mk('polygon', { points: pts.map(p => p.x + ',' + p.y).join(' '),
       fill: 'rgba(255,255,255,0.6)',
       stroke: selRoom ? '#00d4d4' : wsRoomStroke(r), 'stroke-width': selRoom ? 2.5 : 1.5 });
-    // edit handles: corners drag, edge midpoints add a vertex
+    // Edit handles: corners drag, edge midpoints add a corner. Sized in SCREEN px
+    // (HS converts) so they stay grabbable at any zoom, and drawn to the same
+    // radius the hit test uses — what you see is what you can grab.
     if (selRoom) {
+      const HS = wsCanvasPerScreen();
       wsRoomEdgeMidpoints(r).forEach(m => {
-        mk('circle', { cx: m.x.toFixed(1), cy: m.y.toFixed(1), r: 4.5,
-          fill: 'rgba(13,51,51,0.9)', stroke: '#00d4d4', 'stroke-width': 1.4, 'stroke-dasharray': '2 2' });
-        const pl = mk('text', { x: m.x.toFixed(1), y: (m.y + 3.2).toFixed(1), 'text-anchor': 'middle',
-          'font-size': 9, 'font-weight': 700, fill: '#00d4d4' });
-        pl.textContent = '+';
+        const rr = 5 * HS, arm = 2.6 * HS;
+        mk('circle', { cx: m.x.toFixed(1), cy: m.y.toFixed(1), r: rr.toFixed(1),
+          fill: 'rgba(13,51,51,0.92)', stroke: '#00d4d4', 'stroke-width': (1.4 * HS).toFixed(2) });
+        // drawn as strokes, not text — a "+" glyph would vanish with the Labels layer
+        mk('line', { x1: (m.x - arm).toFixed(1), y1: m.y.toFixed(1), x2: (m.x + arm).toFixed(1), y2: m.y.toFixed(1),
+          stroke: '#00d4d4', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' });
+        mk('line', { x1: m.x.toFixed(1), y1: (m.y - arm).toFixed(1), x2: m.x.toFixed(1), y2: (m.y + arm).toFixed(1),
+          stroke: '#00d4d4', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' });
       });
-      pts.forEach(p => mk('rect', { x: (p.x - 5).toFixed(1), y: (p.y - 5).toFixed(1), width: 10, height: 10,
-        rx: 2, fill: '#0d3333', stroke: '#00d4d4', 'stroke-width': 2 }));
+      const hs = 5.5 * HS;
+      pts.forEach(p => mk('rect', { x: (p.x - hs).toFixed(1), y: (p.y - hs).toFixed(1),
+        width: (hs * 2).toFixed(1), height: (hs * 2).toFixed(1),
+        rx: (2 * HS).toFixed(1), fill: '#0d3333', stroke: '#00d4d4', 'stroke-width': (2 * HS).toFixed(2) }));
     }
     const act = wsPolyArea(pts, mpp);
     const t = mk('text', { x: bb.x1 + 8, y: bb.y1 + 20, fill: r.kind === 'com' ? '#B38600' : '#008080', 'font-size': 14, 'font-weight': 700 });

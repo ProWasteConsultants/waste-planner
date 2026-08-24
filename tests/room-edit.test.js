@@ -349,17 +349,135 @@ test('DXF room polylines carry no linetype, so the screen dash change does not r
   assert.doesNotMatch(fn, /DASHED/i);
 });
 
+// ── zoom-aware handle hit-testing ───────────────────────────────────────
+test('wsRoomHandleAt: finds the corner under the point', () => {
+  const r = square('A');
+  assert.deepEqual(ws.wsRoomHandleAt(r, 3, 3, 10).type, 'vertex');
+  assert.equal(ws.wsRoomHandleAt(r, 3, 3, 10).vi, 0);
+  assert.equal(ws.wsRoomHandleAt(r, 98, 102, 10).vi, 2);
+  assert.equal(ws.wsRoomHandleAt(r, 50, 50, 10), null, 'the room middle is not a handle');
+});
+
+test('wsRoomHandleAt: finds an edge midpoint, and corners win ties', () => {
+  const r = square('A');
+  const e = ws.wsRoomHandleAt(r, 50, 4, 10);
+  assert.equal(e.type, 'edge');
+  assert.equal(e.edge, 0);
+  assert.deepEqual([e.x, e.y], [50, 0]);
+  // a short edge puts its midpoint within reach of a corner — moving beats adding
+  const tiny = { id: 'T', pts: [{ x: 0, y: 0 }, { x: 8, y: 0 }, { x: 4, y: 40 }] };
+  assert.equal(ws.wsRoomHandleAt(tiny, 3, 0, 10).type, 'vertex');
+});
+
+test('wsRoomHandleAt: the radius is the whole point — it scales with zoom', () => {
+  const r = square('A');
+  // 6 canvas px from the corner: missed at a 4px radius (what 8 canvas px becomes
+  // at ~53% zoom), caught at the zoom-corrected radius.
+  assert.equal(ws.wsRoomHandleAt(r, 6, 0, 4), null);
+  assert.ok(ws.wsRoomHandleAt(r, 6, 0, 10), 'a generous radius must catch it');
+  // at 53% zoom, 10 screen px is ~18.9 canvas px
+  const atZoom = 10 * (1 / 0.53);
+  assert.ok(ws.wsRoomHandleAt(r, 15, 0, atZoom), 'zoom-corrected radius must reach further in canvas px');
+});
+
+test('wsHandleHitR converts a screen radius into canvas px', () => {
+  // No DOM canvas in the harness, so the conversion falls back to 1:1 — the
+  // contract under test is that the screen constant is what feeds it.
+  assert.match(SOURCE, /const WS_HANDLE_SCREEN_R = 10;/);
+  assert.match(SOURCE, /function wsHandleHitR\(\) \{ return WS_HANDLE_SCREEN_R \* wsCanvasPerScreen\(\); \}/);
+  assert.match(SOURCE, /return canvas\.width \/ rect\.width;/,
+    'wsCanvasPerScreen must derive from the live canvas rect, like wsLayoutEvt');
+});
+
+test('wsAnyRoomHandleAt: grabs a corner without the room being selected, topmost first', () => {
+  const a = square('A', 0, 0, 100, 100);
+  const b = square('B', 90, 90, 200, 200);
+  const hit = ws.wsAnyRoomHandleAt([a, b], 92, 92, 10);
+  assert.equal(hit.room.id, 'B', 'the room drawn last wins an overlapping corner');
+  assert.equal(hit.handle.type, 'vertex');
+  assert.equal(ws.wsAnyRoomHandleAt([a, b], 500, 500, 10), null);
+  assert.equal(ws.wsAnyRoomHandleAt([], 0, 0, 10), null);
+  assert.equal(ws.wsAnyRoomHandleAt(null, 0, 0, 10), null);
+});
+
+test('wsAnyRoomHandleAt: locked rooms offer no handles', () => {
+  const locked = square('L', 0, 0, 100, 100, { locked: true });
+  assert.equal(ws.wsAnyRoomHandleAt([locked], 0, 0, 10), null);
+  const open = square('O', 0, 0, 100, 100);
+  assert.ok(ws.wsAnyRoomHandleAt([locked, open], 0, 0, 10));
+});
+
+// ── cursor feedback ─────────────────────────────────────────────────────
+test('wsRoomCursorAt: corners point, edge midpoints crosshair, floor moves', () => {
+  const r = square('A');
+  assert.equal(ws.wsRoomCursorAt([r], 'A', 2, 2, 10), 'pointer', 'corner');
+  assert.equal(ws.wsRoomCursorAt([r], 'A', 50, 2, 10), 'crosshair', 'edge midpoint');
+  assert.equal(ws.wsRoomCursorAt([r], 'A', 50, 50, 10), 'move', 'selected room interior');
+  assert.equal(ws.wsRoomCursorAt([r], 'A', 500, 500, 10), null, 'empty canvas keeps the default');
+});
+
+test('wsRoomCursorAt: an unselected room offers handles but not the move cursor', () => {
+  const r = square('A');
+  assert.equal(ws.wsRoomCursorAt([r], null, 2, 2, 10), 'pointer',
+    'a bare corner is grabbable, so it must say so');
+  assert.equal(ws.wsRoomCursorAt([r], null, 50, 50, 10), null,
+    'only the SELECTED room shows move on its floor');
+});
+
+test('wsRoomCursorAt: a locked selected room shows no edit cursors', () => {
+  const r = square('A', 0, 0, 100, 100, { locked: true });
+  assert.equal(ws.wsRoomCursorAt([r], 'A', 2, 2, 10), null);
+  assert.equal(ws.wsRoomCursorAt([r], 'A', 50, 50, 10), null, 'a locked room cannot be moved');
+});
+
+test('the pan cursor is suppressed for the whole room drag', () => {
+  // .ws-canvas-area:active{cursor:grabbing} is why the pan hand flashed mid-drag;
+  // an inline cursor outranks it, so the drag must set one and clear it on release.
+  assert.match(SOURCE, /if \(dg\.kind === 'room'\) wsLayoutSetCursor\('move'\);/);
+  assert.match(SOURCE, /else if \(dg\.kind === 'roomvert'\) wsLayoutSetCursor\('pointer'\);/);
+  assert.match(SOURCE, /if \(dg\.kind === 'room' \|\| dg\.kind === 'roomvert'\) wsLayoutSetCursor\(null\);/,
+    'the held cursor is never released on drag end');
+  assert.match(SOURCE, /function wsLayoutSetCursor\(c\)[\s\S]{0,220}area\.style\.cursor !== want/,
+    'wsLayoutSetCursor must write inline style to outrank the :active rule');
+});
+
+test('hover derives the cursor from the room under the pointer', () => {
+  assert.match(SOURCE, /wsLayoutSetCursor\(WS_LAYOUT\.tabActive[\s\S]{0,200}wsRoomCursorAt\(/,
+    'plain hover does not update the cursor');
+});
+
+// ── markups card collapse ───────────────────────────────────────────────
+test('the markups card collapses exactly like the layers card', () => {
+  assert.match(SOURCE, /#ws-markup-panel\{min-width:172px;\}/, 'min-width must live in CSS, not inline');
+  assert.match(SOURCE, /#ws-markup-panel\.min\{min-width:0;\}/, 'collapsed card must release its min-width');
+  assert.match(SOURCE, /\.ws-layer-panel\.min \.ws-mark-body\{display:none;\}/, 'collapsed card must hide its body');
+  // the inline styles that outranked the .min rules are gone
+  const card = SOURCE.slice(SOURCE.indexOf('id="ws-markup-panel"'), SOURCE.indexOf('ws-mark-btn-transfer'));
+  assert.doesNotMatch(card, /style="[^"]*min-width/, 'inline min-width defeats .min');
+  assert.doesNotMatch(card, /class="ws-layer-row" style="display:block/, 'inline display defeats .min');
+  assert.match(card, /class="ws-mark-body"/);
+  // same toggle handler as the layers card
+  const layers = SOURCE.slice(SOURCE.indexOf('id="ws-layer-panel"'), SOURCE.indexOf('DXF underlay'));
+  const toggle = /classList\.toggle\('min'\)/;
+  assert.match(layers, toggle);
+  assert.match(card, toggle);
+});
+
 // ── wiring guards ───────────────────────────────────────────────────────
 test('room interior grab is tested after bins, chutes, equipment and callouts', () => {
   const bind = SOURCE.slice(SOURCE.indexOf('function wsLayoutBind'), SOURCE.indexOf("area.addEventListener('mousemove'"));
-  const iRoomHandles = bind.indexOf("kind: 'roomvert'");
+  const iSelHandles = bind.indexOf('const h = wsRoomHandleAt(room, p.x, p.y);');
   const iBin = bind.indexOf('const hit = wsLayoutHit(');
   const iCallout = bind.indexOf('wsLayoutHitCallout(');
+  const iAnyHandle = bind.indexOf('wsAnyRoomHandleAt(wsLayoutSlot().rooms');
   const iRoomBody = bind.indexOf('const room = wsRoomAt(p.x, p.y);');
-  assert.ok(iRoomHandles > 0 && iBin > 0 && iCallout > 0 && iRoomBody > 0, 'hit-test order markers missing');
-  assert.ok(iRoomHandles < iBin, 'selected-room handles must be grabbed before contents');
+  assert.ok(iSelHandles > 0 && iBin > 0 && iCallout > 0 && iAnyHandle > 0 && iRoomBody > 0,
+    'hit-test order markers missing');
+  assert.ok(iSelHandles < iBin, 'selected-room handles must be grabbed before contents');
+  assert.ok(iAnyHandle > iCallout, 'an unselected room corner must not outrank a bin or callout');
   assert.ok(iRoomBody > iBin, 'bins take priority over the room interior');
   assert.ok(iRoomBody > iCallout, 'callouts take priority over the room interior');
+  assert.ok(iRoomBody > iAnyHandle, 'a corner is grabbed before the interior it sits on');
   assert.match(bind.slice(iRoomBody), /WS\.isPanning = false;/, 'a room grab must stop the pan');
 });
 
