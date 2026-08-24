@@ -16,7 +16,11 @@ check this list before widening who can use the app.
 | 4 | **`pdf_rev` column** for cross-device plan freshness. | Multi-device use of one project. | Nothing currently tells a second device that the stored plan PDF changed, so it can serve a stale page under a current layout. |
 | 5 | **Swept-path title block panel** (vehicle diagram + spec table). | Issuing swept-path sheets as standalone drawings. | Swept linework already exports on a layout sheet; it just has no dedicated panel stating the design vehicle and its dimensions. |
 | 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
-| 7 | **`equipment.streams` column.** Stream association per record. | B2 (stream badges, equipment-aware reconciliation). | `EQUIP_LIB` in the calculator already reads `r.streams` and falls back to inferring from the label; the column does not exist yet, so the fallback is always what runs. Needs a migration plus the admin editor field. |
+
+**Closed:** `equipment.streams` (gate 7). The column is migrated, the admin table
+edits it, and placement assigns from it. `inferStreams()` in the calculator is now
+a fallback for rows that predate the column — not the live path. Do not reintroduce
+inference anywhere: stream association decides bin counts on issued drawings.
 
 **Bin types are a closed list by design.** There is no custom-bin path and none
 is planned: a bin schedule is only defensible if every container maps to a real
@@ -108,7 +112,9 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/layout-rooms.test.js` | Room containment tagging and schedule reconciliation |
 | `tests/room-edit.test.js` | Room vertex/drag operations, chip placement and visibility |
 | `tests/sheet-export.test.js` | Sheet scale selection, card layout, legend content |
-| `tests/layout-polish.test.js` | Shift-snap maths, room dimensions, door geometry |
+| `tests/layout-polish.test.js` | Shift-snap maths, room dimensions, door geometry, selection |
+| `tests/reconcile-equipment.test.js` | Compaction maths, invariants, snapshot, WMP obligations |
+| `tests/provision-zones.test.js` | Provision streams, zone types, and their four UI surfaces |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -183,6 +189,73 @@ and `#ws-overlay-svg.ws-hide-labels .ws-chip` hides the whole group with the
 Labels layer. Room line style is *not* exported to DXF (the entity writer emits
 layer and colour only, no linetype group code), so screen styling is free to
 change — a test guards that assumption.
+
+## Equipment, compaction and reconciliation
+
+A placed item references the equipment library **by id** (`equipmentId`) and carries
+the stream it was assigned **at placement**. Both matter:
+
+- **By id, never by name.** Name-keyed lookup was the workbook’s approach; a rename
+  silently repointed a record. `wsEquipLibrary()` keys on id.
+- **Assigned once, explicitly.** `wsEquipAssignStream()` resolves the user’s current
+  stream against the record’s allowable set at placement time. It is never re-derived
+  later, and `inferStreams()` is not consulted in this path. Library `streams[]` is
+  picker metadata: **empty = unrestricted, populated = physically restricted**.
+
+Two pairing kinds, and the difference is not cosmetic:
+
+| | Means | Effect |
+| --- | --- | --- |
+| `densify` | same container, less volume in it | bin count drops, stream survives |
+| `convert` | material leaves the stream in a new form | input volume removed, paired output emitted with its own footprint and collection line |
+
+**The two invariants are refusals, not warnings.** A ratio that fires without its
+counterpart silently destroys material on a compliance drawing:
+
+- **A** — `convert` must resolve its paired output. If it cannot, the ratio does
+  **not** apply and the reason is reported.
+- **B** — a chute compactor must have a `receiver` allocated in the same room. Same
+  rule: no receiver, no ratio, and say so.
+
+Three deliberate refusals to guess, all tested:
+
+- A ratio ≤ 1 is ignored, never applied — it would *inflate* a requirement.
+- Missing bin capacity or frequency returns **null, not 0**. "No bins required" and
+  "nobody filled this in" must not print the same.
+- A target with no volume basis is **never compacted**; the row is flagged
+  `needsVolume`. A count approximation double-rounds and would disagree with the
+  calculator and the WMP.
+
+`wsRoomReconcileLive()` is the single entry point. The room pill, the project
+snapshot and the WMP generator all read it, so they cannot drift apart — three
+callers each computing the number slightly differently is how a document ends up
+disagreeing with its own drawing. The WMP links rooms by **calculator room id**
+(`room.srcId` ↔ `room.calcRoom`), never by name.
+
+Volumes reach the layout as **data only**. The panel shows counts; a test asserts no
+volume key reaches the room view.
+
+Legacy instances (no `equipmentId`) are mapped by code where one matches and
+otherwise **preserved and flagged `legacy`** — guessing at the nearest record would
+silently change what an old drawing says.
+
+## Provision streams and zones
+
+**Provision streams** are things a development must provide for but which have no
+generation rate — you cannot compute litres of e-waste per dwelling per week. They
+are therefore absent from the bin calculator by design (a test asserts no provision
+id is ever a calculator stream) and reconcile as a **presence check**, never a count.
+Custom ids are namespaced `custom:` so a future predefined stream can never be
+shadowed. Assignment and management both live in the **room side panel** — never on
+the canvas; a presence check is a checklist, not a drawing.
+
+**Zones** are floor-area *claims*, not equipment records: no capacity, no compaction
+ratio, never in a collection table. They are placeable from the Zones palette, share
+the aisle end-handle drag (the claimed area is the point), and export to their own
+DXF layer — stable per type, or derived from the label for a custom zone, truncated
+on word boundaries.
+
+A zone and an access aisle can **never** share a colour. One expression decides it.
 
 ## Sheet export
 
