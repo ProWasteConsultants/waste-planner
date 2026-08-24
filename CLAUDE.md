@@ -82,6 +82,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/ackermann.test.js` | Ackermann calibration against published turning circles |
 | `tests/refine-pos.test.js` | `wsRefinePos` curvature, length, gear-flag invariants |
 | `tests/layout-rooms.test.js` | Room containment tagging and schedule reconciliation |
+| `tests/room-edit.test.js` | Room vertex/drag operations, chip placement and visibility |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -130,6 +131,46 @@ covers. Rendering and pill wiring sit on top and are not unit-tested.
 
 Deleting a room removes the outline only — the bins inside stay on the plan and
 are untagged. Never silently discard placed work.
+
+### Editing rooms
+
+Rooms are editable polygons. The pure operations (`wsRoomTranslate`,
+`wsRoomMoveVertex`, `wsRoomInsertVertex`, `wsRoomDeleteVertex`, `wsRoomDragMove`)
+keep `pts` and the derived `x1/y1/x2/y2` box in sync via `wsRoomSyncBBox` — older
+code still reads the box, so never move points without resyncing.
+
+- **Hit-test order is load-bearing.** A selected room's corner and edge-midpoint
+  handles are grabbed *before* contents (same convention as the aisle end handles);
+  the room *interior* is grabbed *last*, after bins, chutes, equipment and
+  callouts. A room grab sets `WS.isPanning = false` like every other grab.
+- A whole-room drag translates what is **tagged** to the room, not what currently
+  falls inside it — a bin deliberately parked outside stays put.
+- Any room edit retags on drag end (`wsTagBinsToRooms` for both bins and equip)
+  and re-renders, so reconciliation needs no separate bookkeeping.
+- A polygon never drops below three corners.
+
+Chips are placed by `wsRoomChipAnchor` (outside the outline — above the top edge,
+flipping below when the room is hard against the top of the sheet) and gated by
+`wsRoomChipState`, which returns the CSS classes. **The class names and the CSS
+must agree**: `.ws-chip.ok` collapses to a ✓ badge, `:hover`/`.sel` expands it,
+and `#ws-overlay-svg.ws-hide-labels .ws-chip` hides the whole group with the
+Labels layer. Room line style is *not* exported to DXF (the entity writer emits
+layer and colour only, no linetype group code), so screen styling is free to
+change — a test guards that assumption.
+
+## Markups
+
+Markup tools live in a floating collapsible card (`#ws-markup-panel`) below the
+Layers card, both inside `#ws-side-stack`. They work from **any** tab, which is
+why:
+
+- `wsMarkSuspend()` parks the currently armed tool (`WS._mode` plus its
+  in-progress state) and `wsMarkExit()` puts it back. Markup finish, callout
+  finish and Escape all route through `wsMarkExit`, never `wsLayoutEndMode` —
+  ending the mode outright is what discards the parked tool.
+- The layout keydown handler bails on `!WS_LAYOUT.tabActive` *unless* the mode is
+  `layoutmark`, so Enter/Escape still close a markup started from another tab.
+- The pan guard keys off `#ws-side-stack`, so clicks on either card never pan.
 
 ## Swept-path refinement
 

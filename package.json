@@ -10,6 +10,7 @@
     "test:ackermann": "node --test tests/ackermann.test.js",
     "test:refine": "node --test tests/refine-pos.test.js",
     "test:layout": "node --test tests/layout-rooms.test.js",
+    "test:roomedit": "node --test tests/room-edit.test.js",
     "test:syntax": "node --test tests/syntax.test.js"
   },
   "engines": {

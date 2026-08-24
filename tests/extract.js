@@ -74,6 +74,18 @@ const LAYOUT_BLOCKS = [
   ['wsTagBinsToRooms',  /^function wsTagBinsToRooms\(/],
   ['wsRoomTargets',     /^function wsRoomTargets\(/],
   ['wsRoomReconcile',   /^function wsRoomReconcile\(/],
+  ['wsRoomSyncBBox',    /^function wsRoomSyncBBox\(/],
+  ['wsRoomEnsurePts',   /^function wsRoomEnsurePts\(/],
+  ['wsRoomTranslate',   /^function wsRoomTranslate\(/],
+  ['wsRoomMoveVertex',  /^function wsRoomMoveVertex\(/],
+  ['wsRoomEdgeMidpoints', /^function wsRoomEdgeMidpoints\(/],
+  ['wsRoomInsertVertex', /^function wsRoomInsertVertex\(/],
+  ['wsRoomDeleteVertex', /^function wsRoomDeleteVertex\(/],
+  ['wsRoomAttached',    /^function wsRoomAttached\(/],
+  ['wsRoomDragMove',    /^function wsRoomDragMove\(/],
+  ['wsRoomChipAnchor',  /^function wsRoomChipAnchor\(/],
+  ['wsRoomChipState',   /^function wsRoomChipState\(/],
+  ['wsRoomStroke',      /^function wsRoomStroke\(/],
 ];
 
 // The swept-path / Ackermann engine, in source order (declaration order matters

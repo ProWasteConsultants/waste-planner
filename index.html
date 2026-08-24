@@ -51,7 +51,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-upload-zone-title{font-size:14px;color:rgba(255,255,255,0.7);margin-bottom:6px;}
 .ws-upload-zone-sub{font-size:11px;color:rgba(255,255,255,0.35);}
 .ws-upload-zone-btn{margin-top:14px;padding:8px 20px;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:12px;cursor:pointer;font-family:inherit;}
-.ws-layer-panel{position:absolute;top:10px;left:58px;z-index:12;background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;min-width:140px;}
+/* Left-hand floating stack: Layers card, then the Markups card beneath it. */
+.ws-side-stack{position:absolute;top:10px;left:58px;z-index:12;display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+.ws-layer-panel{background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:10px 12px;min-width:140px;}
+.ws-mark-btn{display:flex;align-items:center;gap:7px;width:100%;background:none;border:1px solid #333;border-radius:6px;color:rgba(255,255,255,0.72);font-size:11px;padding:5px 8px;cursor:pointer;text-align:left;margin-bottom:4px;}
+.ws-mark-btn:hover{border-color:#4a5a5a;background:rgba(255,255,255,0.04);color:#fff;}
+.ws-mark-btn.on{border-color:var(--teal);background:rgba(0,128,128,0.22);color:#fff;}
+.ws-mark-swatch{width:12px;height:3px;border-radius:2px;flex-shrink:0;}
 .ws-layer-panel.min .ws-layer-row{display:none;}
 .ws-layer-panel.min{min-width:0;}
 .ws-layer-panel.min .ws-layer-title{margin-bottom:0;}
@@ -131,6 +137,19 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ── WORKSPACE CANVAS SVG LAYERS ── */
 #ws-overlay-svg.ws-hide-labels text{display:none;}
+/* Reconciliation chips are annotation: they go with the Labels layer, and the
+   whole group hides (not just its text) so no orphan pills are left behind. */
+#ws-overlay-svg.ws-hide-labels .ws-chip{display:none;}
+/* A satisfied room collapses to a ✓ badge; hovering it, or selecting the room,
+   expands it back to the per-stream breakdown. Pure CSS so peeking at a chip
+   never costs a re-render. */
+.ws-chip{pointer-events:all;}
+.ws-chip .ws-chip-badge{display:none;}
+.ws-chip .ws-chip-full{display:inline;}
+.ws-chip.ok .ws-chip-badge{display:inline;}
+.ws-chip.ok .ws-chip-full{display:none;}
+.ws-chip.ok:hover .ws-chip-badge,.ws-chip.ok.sel .ws-chip-badge{display:none;}
+.ws-chip.ok:hover .ws-chip-full,.ws-chip.ok.sel .ws-chip-full{display:inline;}
 #ws-layer-binroom{pointer-events:none;}
 #ws-layer-swept{pointer-events:none;}
 #ws-layer-dims{pointer-events:none;}
@@ -1378,7 +1397,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
         </div>
 
-        <!-- Layer panel -->
+        <!-- Layer panel + Markups card -->
+        <div class="ws-side-stack" id="ws-side-stack">
         <div class="ws-layer-panel" id="ws-layer-panel" style="display:none;">
           <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Layers <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
           <div class="ws-layer-row">
@@ -1415,6 +1435,19 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <div class="ws-layer-label"><div class="ws-layer-dot" style="background:#B9C4C4;"></div>Labels</div>
             <button class="ws-layer-toggle on" id="ws-toggle-labels" onclick="this.classList.toggle('on');document.getElementById('ws-overlay-svg').classList.toggle('ws-hide-labels', !this.classList.contains('on'));"></button>
           </div>
+        </div>
+
+        <!-- Markups card — available from any tab, not just Layout -->
+        <div class="ws-layer-panel" id="ws-markup-panel" style="display:none;min-width:172px;">
+          <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Markups <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
+          <div class="ws-layer-row" style="display:block;margin:0;">
+            <button class="ws-mark-btn" id="ws-mark-btn-text"     onclick="wsMarkMode('text')"><span class="ws-mark-swatch" style="background:#ECEFF1;"></span>T Callout</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-measure"  onclick="wsMarkMode('measure')"><span class="ws-mark-swatch" style="background:#00E5FF;"></span>↔ Measure length</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-area"     onclick="wsMarkMode('area')"><span class="ws-mark-swatch" style="background:#7FD8D8;"></span>⬠ Area</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-disposal" onclick="wsMarkMode('disposal')"><span class="ws-mark-swatch" style="background:#4BED12;"></span>→ Disposal route</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-transfer" onclick="wsMarkMode('transfer')" style="margin-bottom:0;"><span class="ws-mark-swatch" style="background:#008080;"></span>⇢ Transfer route</button>
+          </div>
+        </div>
         </div>
 
         <!-- Zoom controls -->
@@ -1563,17 +1596,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                   <button class="wsl-btn" onclick="wsAisleMode()" title="Keep-clear access aisle — bins and auto-layout stay out. Drag the end handles to set its length.">▨ Place aisle</button>
                 </div>
                 <div class="wsl-group-body" id="ws-layout-fixtures" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;align-items:stretch;"></div>
-              </div>
-
-              <div class="wsl-group" style="flex:1 1 190px;">
-                <div class="wsl-group-hd">Markups</div>
-                <div class="wsl-group-body">
-                  <button class="wsl-btn" onclick="wsMarkMode('measure')">↔ Measure length</button>
-                  <button class="wsl-btn" onclick="wsMarkMode('area')">⬠ Area</button>
-                  <button class="wsl-btn" onclick="wsMarkMode('disposal')">→ Waste disposal route</button>
-                  <button class="wsl-btn" onclick="wsMarkMode('transfer')">⇢ Waste transfer route</button>
-                  <button class="wsl-btn" onclick="wsMarkMode('text')">T Text callout</button>
-                </div>
               </div>
 
             </div>
@@ -12130,6 +12152,8 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   document.getElementById('ws-empty-state').style.display = 'none';
   document.getElementById('ws-canvas-wrap').style.display = '';
   document.getElementById('ws-layer-panel').style.display = '';
+  const mkp = document.getElementById('ws-markup-panel');
+  if (mkp) mkp.style.display = '';   // markups are available from every tab
   document.getElementById('ws-page-nav').style.display = WS.totalPages > 1 ? 'flex' : 'none';
   ['ws-save-btn', 'ws-export-btn', 'ws-exportpdf-btn'].forEach(id => {
     const b = document.getElementById(id); if (b) b.style.display = '';
@@ -12231,7 +12255,7 @@ function wsOnWheel(e) {
 }
 
 function wsOnMouseDown(e) {
-  if (e.target.closest('#ws-layer-panel') || e.target.closest('.ws-zoom-ctrl')) return;
+  if (e.target.closest('#ws-side-stack') || e.target.closest('.ws-zoom-ctrl')) return;
   if (WS._mode) return;   // drawing/drive modes own the pointer — no panning
   WS.isPanning = true;
   WS.panStartX = e.clientX;
@@ -12781,6 +12805,8 @@ function wsRecvDims(recvKey, fpM2) {
 }
 const WS_LAYOUT = { byPage: {}, sel: null, selKind: 'bin', undo: [], redo: [], roomStart: null, activeCalcRoom: null,
                     hover: null, drag: null, tabActive: false, _bound: false, _raf: false, _justDragged: false };
+// Tool state parked while a markup is being drawn — see wsMarkSuspend / wsMarkExit.
+let WS_MARK_SUSPEND = null;
 
 // ── Bin & equipment palettes fed from the `equipment` DB table (WS_BIN_TYPES = offline fallback) ──
 // item_kind 'Bin' → bin palette (incl. zones like hard waste — placeable areas with footprints);
@@ -12982,6 +13008,8 @@ function wsLayoutRoomMode() {
 function wsLayoutEndMode() {
   WS._mode = null; WS_LAYOUT.roomStart = null; WS_LAYOUT.hover = null; WS_LAYOUT._equipPend = null;
   WS_LAYOUT.roomPts = null; WS_LAYOUT._mark = null; WS_LAYOUT._fixture = null;
+  WS_MARK_SUSPEND = null;   // an explicit end-of-mode discards any parked tool
+  if (typeof wsMarkSyncButtons === 'function') wsMarkSyncButtons();
   const area = document.getElementById('ws-canvas-area');
   if (area) area.style.cursor = '';
   wsRenderLayoutLayer();
@@ -13099,8 +13127,114 @@ function wsRoomReconcile(roomId, targets, bins) {
     placed: rows.reduce((a, r) => a + r.placed, 0),
   };
 }
+// ── ROOM EDITING (pure data operations) ──────────────────────────────────────
+// Rooms are editable polygons: drag the interior to move the whole thing, drag a
+// vertex to reshape, click an edge midpoint to add a vertex. Every operation here
+// is pure geometry on plain objects — the pointer plumbing lives in wsLayoutBind.
+//
+// x1/y1/x2/y2 is a derived bounding box kept in sync with pts, because older code
+// (stats, DXF text placement, the calc-room rect test) still reads it.
+function wsRoomSyncBBox(room) {
+  const bb = wsPolyBBox(wsRoomPts(room));
+  room.x1 = bb.x1; room.y1 = bb.y1; room.x2 = bb.x2; room.y2 = bb.y2;
+  return room;
+}
+// Rooms saved as bare rectangles gain an explicit pts list the moment they are
+// edited, so vertex handles have something to move.
+function wsRoomEnsurePts(room) {
+  if (!room.pts || room.pts.length < 3) room.pts = wsRoomPts(room).map(p => ({ x: p.x, y: p.y }));
+  return room;
+}
+function wsRoomTranslate(room, dx, dy) {
+  wsRoomEnsurePts(room);
+  room.pts = room.pts.map(p => ({ x: p.x + dx, y: p.y + dy }));
+  return wsRoomSyncBBox(room);
+}
+function wsRoomMoveVertex(room, i, x, y) {
+  wsRoomEnsurePts(room);
+  if (i < 0 || i >= room.pts.length) return room;
+  room.pts[i] = { x, y };
+  return wsRoomSyncBBox(room);
+}
+// Midpoint of every edge, used both to draw the "+" handles and to hit-test them.
+function wsRoomEdgeMidpoints(room) {
+  const pts = wsRoomPts(room);
+  return pts.map((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, edge: i };
+  });
+}
+// Split edge `edge` by inserting a vertex after it. Returns the new vertex index
+// so the caller can start dragging it immediately.
+function wsRoomInsertVertex(room, edge, x, y) {
+  wsRoomEnsurePts(room);
+  const n = room.pts.length;
+  if (!(edge >= 0 && edge < n)) return -1;
+  const at = edge + 1;
+  const mid = wsRoomEdgeMidpoints(room)[edge];
+  room.pts.splice(at, 0, { x: x == null ? mid.x : x, y: y == null ? mid.y : y });
+  wsRoomSyncBBox(room);
+  return at;
+}
+// A polygon needs three corners; refuse to drop below that rather than corrupting it.
+function wsRoomDeleteVertex(room, i) {
+  wsRoomEnsurePts(room);
+  if (room.pts.length <= 3 || i < 0 || i >= room.pts.length) return false;
+  room.pts.splice(i, 1);
+  wsRoomSyncBBox(room);
+  return true;
+}
+// Everything that travels with a whole-room drag: the bins and equipment tagged
+// to it. Tagging (not live containment) is what moves, so an item that was
+// dragged out earlier stays where the user put it.
+function wsRoomAttached(roomId, bins, equip) {
+  const pick = arr => (arr || []).filter(it => it && it.roomId === roomId);
+  return pick(bins).concat(pick(equip));
+}
+function wsRoomDragMove(room, dx, dy, bins, equip) {
+  const moved = wsRoomAttached(room.id, bins, equip);
+  wsRoomTranslate(room, dx, dy);
+  moved.forEach(it => { it.x += dx; it.y += dy; });
+  return moved.length;
+}
+
+// ── RECONCILIATION CHIP PLACEMENT AND VISIBILITY ─────────────────────────────
+// The chip sits OUTSIDE the room outline so it can never cover bins. Above the
+// top edge by default; below the bottom edge when there is no room above (the
+// room is hard against the top of the sheet).
+function wsRoomChipAnchor(bb, chipW, chipH, opts) {
+  const o = opts || {};
+  const margin = o.margin == null ? 6 : o.margin;
+  const above = bb.y1 - chipH - margin;
+  const placement = above >= (o.minY == null ? 0 : o.minY) ? 'above' : 'below';
+  return {
+    x: bb.x1,
+    y: placement === 'above' ? above : bb.y2 + margin,
+    placement,
+    width: chipW,
+    height: chipH,
+  };
+}
+// What the chip should render as. A satisfied room collapses to a ✓ badge so a
+// finished plan is not cluttered; hover or selecting the room expands it again
+// (both handled in CSS, so no re-render is needed to peek at one).
+function wsRoomChipState(rec, selected, labelsOn) {
+  const hasRows = !!(rec && rec.rows && rec.rows.length);
+  if (!hasRows || labelsOn === false) return { render: false, collapsed: false, cls: '' };
+  const ok = !!rec.ok;
+  const collapsed = ok && !selected;
+  return {
+    render: true,
+    ok,
+    collapsed,
+    cls: 'ws-chip' + (ok ? ' ok' : '') + (selected ? ' sel' : ''),
+  };
+}
 function wsRoomAt(x, y) { return wsRoomAtPt(wsLayoutSlot().rooms, x, y); }
 function wsRoomById(id) { return wsLayoutSlot().rooms.find(r => r.id === id) || null; }
+// Room outline colour: commercial rooms read gold, residential teal, matching the
+// room label. The fill is deliberately NOT stream-coloured — see wsRenderLayoutLayer.
+function wsRoomStroke(room) { return room && room.kind === 'com' ? '#B38600' : '#008080'; }
 function wsLayoutRoomClick(x, y) {
   const mpp = wsLayoutMpp(); if (!mpp) return;
   const p = { x: wsLayoutSnap(x, mpp), y: wsLayoutSnap(y, mpp) };
@@ -13515,6 +13649,36 @@ function wsLayoutBind() {
         }
       }
     }
+    // Selected room's edit handles, tested before contents (same convention as the
+    // aisle end handles above): corners reshape, edge midpoints add a vertex.
+    if (WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel) {
+      const room = wsRoomById(WS_LAYOUT.sel);
+      if (room && !room.locked) {
+        const rpts = wsRoomPts(room);
+        for (let vi = 0; vi < rpts.length; vi++) {
+          if (Math.hypot(p.x - rpts[vi].x, p.y - rpts[vi].y) <= 8) {
+            wsRoomEnsurePts(room);
+            WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi, moved: false };
+            WS.isPanning = false;
+            wsLayoutStatus('Reshaping the room — drag the corner, release to set. Backspace removes it.');
+            e.preventDefault();
+            return;
+          }
+        }
+        for (const m of wsRoomEdgeMidpoints(room)) {
+          if (Math.hypot(p.x - m.x, p.y - m.y) <= 8) {
+            wsLayoutSnapshot();
+            const vi = wsRoomInsertVertex(room, m.edge, m.x, m.y);
+            WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi, moved: true };
+            WS.isPanning = false;
+            wsLayoutStatus('Corner added — drag to position it.');
+            wsRenderLayoutLayer();
+            e.preventDefault();
+            return;
+          }
+        }
+      }
+    }
     const hit = wsLayoutHit(p.x, p.y, mpp);
     let grabbed = null;
     if (hit) {
@@ -13541,6 +13705,24 @@ function wsLayoutBind() {
         return;
       }
     }
+    // Room interior — LAST, so bins, equipment, chutes and callouts always win the
+    // grab. Dragging the interior moves the whole polygon and everything tagged to it.
+    if (!grabbed) {
+      const room = wsRoomAt(p.x, p.y);
+      if (room) {
+        WS_LAYOUT.sel = room.id;
+        WS_LAYOUT.selKind = 'room';
+        WS.isPanning = false;
+        WS_LAYOUT.drag = room.locked ? null
+          : { kind: 'room', id: room.id, lastX: p.x, lastY: p.y, moved: false };
+        wsLayoutStatus(room.locked
+          ? '🔒 Room locked — press L to unlock before moving it.'
+          : `${room.name || 'Room'} — drag to move it and everything inside, corners reshape, + adds a corner.`);
+        wsRenderLayoutLayer();
+        e.preventDefault();
+        return;
+      }
+    }
     if (grabbed) {
       WS_LAYOUT.sel = grabbed.id;
       WS_LAYOUT.selKind = grabbed.kind;
@@ -13559,7 +13741,24 @@ function wsLayoutBind() {
     if (WS_LAYOUT.drag) {
       const mpp = wsSweptMpp(); if (!mpp) return;
       const dg = WS_LAYOUT.drag, slot2 = wsLayoutSlot();
-      if (dg.kind === 'rotate') {
+      if (dg.kind === 'room') {
+        const room = slot2.rooms.find(x => x.id === dg.id);
+        if (room) {
+          if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
+          // incremental delta: the polygon has no single anchor point to offset from
+          wsRoomDragMove(room, p.x - dg.lastX, p.y - dg.lastY, slot2.bins, slot2.equip);
+          dg.lastX = p.x; dg.lastY = p.y;
+        }
+      } else if (dg.kind === 'roomvert') {
+        const room = slot2.rooms.find(x => x.id === dg.id);
+        if (room) {
+          if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
+          wsRoomMoveVertex(room, dg.vi, wsLayoutSnap(p.x, mpp), wsLayoutSnap(p.y, mpp));
+          // reshaping can push a bin outside the outline, or pull a loose one in
+          wsTagBinsToRooms(slot2.rooms, slot2.bins);
+          wsTagBinsToRooms(slot2.rooms, slot2.equip);
+        }
+      } else if (dg.kind === 'rotate') {
         const t = dg.targKind === 'bin' ? slot2.bins.find(x => x.id === dg.id)
                 : dg.targKind === 'equip' ? slot2.equip.find(x => x.id === dg.id)
                 : slot2.chutes.find(x => x.id === dg.id);
@@ -13638,6 +13837,7 @@ function wsLayoutBind() {
         } else {
           b.x = nx; b.y = ny;
         }
+        if (dg.kind === 'equip') b.roomId = wsBinRoomId(slot2.rooms, b);
         if (dg.kind === 'bin') {
           b.calcRoom = wsLayoutCalcRoomAt(b.x, b.y) || b.calcRoom || null;
           // Drawn-room tag follows the bin live, and CLEARS when dragged out of
@@ -13648,7 +13848,12 @@ function wsLayoutBind() {
       }
     } else if (inMode) {
       WS_LAYOUT.hover = p;
-    } else return;
+    } else {
+      // Track the pointer even outside a placement mode — Backspace-to-drop-a-corner
+      // needs to know which corner is under the cursor. No re-render on plain hover.
+      WS_LAYOUT.hover = p;
+      return;
+    }
     if (!WS_LAYOUT._raf) {
       WS_LAYOUT._raf = true;
       requestAnimationFrame(() => { WS_LAYOUT._raf = false; wsRenderLayoutLayer(); });
@@ -13656,16 +13861,48 @@ function wsLayoutBind() {
   });
   const endDrag = () => {
     if (WS_LAYOUT.drag) {
-      if (WS_LAYOUT.drag.moved) { WS_LAYOUT._justDragged = true; wsLayoutAutosave(); }
+      const dg = WS_LAYOUT.drag;
+      if (dg.moved) {
+        // A room edit changes what sits inside it, so tags (and therefore every
+        // reconciliation chip) are recomputed once the drag settles.
+        if (dg.kind === 'room' || dg.kind === 'roomvert') {
+          const slot3 = wsLayoutSlot();
+          wsTagBinsToRooms(slot3.rooms, slot3.bins);
+          wsTagBinsToRooms(slot3.rooms, slot3.equip);
+          wsRenderLayoutLayer();
+        }
+        WS_LAYOUT._justDragged = true;
+        wsLayoutAutosave();
+      }
       WS_LAYOUT.drag = null;
     }
   };
   area.addEventListener('mouseup', endDrag);
   area.addEventListener('mouseleave', endDrag);
   document.addEventListener('keydown', e => {
-    if (!WS_LAYOUT.tabActive) return;
+    // A markup can be armed from any tab, so its Enter/Esc must work there too.
+    if (!WS_LAYOUT.tabActive && WS._mode !== 'layoutmark') return;
     const tag = (document.activeElement?.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    // Backspace on a selected room drops the corner nearest the pointer, so a
+    // vertex added by mistake can be taken straight back out.
+    if (e.key === 'Backspace' && WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel && !WS._mode) {
+      const room = wsRoomById(WS_LAYOUT.sel), hv = WS_LAYOUT.hover;
+      if (room && hv && wsRoomPts(room).length > 3) {
+        const pts = wsRoomPts(room);
+        let bi = -1, bd = 14;
+        pts.forEach((pt, i) => { const d = Math.hypot(hv.x - pt.x, hv.y - pt.y); if (d < bd) { bd = d; bi = i; } });
+        if (bi >= 0) {
+          wsLayoutSnapshot();
+          wsRoomDeleteVertex(room, bi);
+          const s4 = wsLayoutSlot();
+          wsTagBinsToRooms(s4.rooms, s4.bins); wsTagBinsToRooms(s4.rooms, s4.equip);
+          wsRenderLayoutLayer(); wsLayoutAutosave();
+          wsLayoutStatus('Corner removed.');
+          e.preventDefault(); return;
+        }
+      }
+    }
     if (e.key === 'Enter') {
       if (WS._mode === 'layoutroom' && WS_LAYOUT.roomPts && WS_LAYOUT.roomPts.length >= 3) { wsLayoutRoomFinish(); return; }
       if (WS._mode === 'layoutmark' && WS_LAYOUT._mark) { wsMarkFinish(); return; }
@@ -13673,7 +13910,10 @@ function wsLayoutBind() {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { wsLayoutDo(e.shiftKey ? 'redo' : 'undo'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) { wsLayoutDo('redo'); e.preventDefault(); return; }
     if (e.ctrlKey || e.metaKey) return;   // don't hijack browser shortcuts (Ctrl+R etc.)
-    if (e.key === 'Escape') { if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark') wsLayoutEndMode(); }
+    if (e.key === 'Escape') {
+      if (WS._mode === 'layoutmark') { wsMarkExit(); return; }   // restores the parked tool
+      if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture') wsLayoutEndMode();
+    }
     else if (e.key === 'r' || e.key === 'R') { wsLayoutDo('rotate'); }
     else if (e.key === 'l' || e.key === 'L') { wsLayoutDo('lock'); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { wsLayoutDo('delete'); e.preventDefault(); }
@@ -13736,9 +13976,23 @@ function wsRenderLayoutLayer() {
   slot.rooms.forEach((r, i) => {
     const pts = wsRoomPts(r), bb = wsPolyBBox(pts);
     const selRoom = WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel === r.id;
+    // Flat white floor for every room — the plan underneath is a printed drawing, so
+    // an opaque floor is what makes bins read. The outline keeps the room's colour.
     mk('polygon', { points: pts.map(p => p.x + ',' + p.y).join(' '),
-      fill: selRoom ? 'rgba(0,212,212,0.13)' : 'rgba(0,128,128,0.07)',
-      stroke: selRoom ? '#00d4d4' : '#008080', 'stroke-width': selRoom ? 3 : 2, 'stroke-dasharray': '10 6' });
+      fill: 'rgba(255,255,255,0.6)',
+      stroke: selRoom ? '#00d4d4' : wsRoomStroke(r), 'stroke-width': selRoom ? 2.5 : 1.5 });
+    // edit handles: corners drag, edge midpoints add a vertex
+    if (selRoom) {
+      wsRoomEdgeMidpoints(r).forEach(m => {
+        mk('circle', { cx: m.x.toFixed(1), cy: m.y.toFixed(1), r: 4.5,
+          fill: 'rgba(13,51,51,0.9)', stroke: '#00d4d4', 'stroke-width': 1.4, 'stroke-dasharray': '2 2' });
+        const pl = mk('text', { x: m.x.toFixed(1), y: (m.y + 3.2).toFixed(1), 'text-anchor': 'middle',
+          'font-size': 9, 'font-weight': 700, fill: '#00d4d4' });
+        pl.textContent = '+';
+      });
+      pts.forEach(p => mk('rect', { x: (p.x - 5).toFixed(1), y: (p.y - 5).toFixed(1), width: 10, height: 10,
+        rx: 2, fill: '#0d3333', stroke: '#00d4d4', 'stroke-width': 2 }));
+    }
     const act = wsPolyArea(pts, mpp);
     const t = mk('text', { x: bb.x1 + 8, y: bb.y1 + 20, fill: r.kind === 'com' ? '#B38600' : '#008080', 'font-size': 14, 'font-weight': 700 });
     const tgt = r.targetM2 ? ` / target ${r.targetM2.toFixed(1)} m²` : '';
@@ -13749,37 +14003,54 @@ function wsRenderLayoutLayer() {
       w2.textContent = `⚠ ${(r.targetM2 - act).toFixed(1)} m² under the recommended area`;
       ly += 16;
     }
+    void ly;
     // ── reconciliation chip: placed vs required, per stream, from this room's
-    // assigned schedule. Green once every stream is satisfied.
+    // assigned schedule. Anchored OUTSIDE the outline so it can never sit over
+    // bins, scaled by wsLblF() like every other annotation, and collapsed to a ✓
+    // badge once satisfied (CSS expands it on hover or when the room is selected).
     const rec = wsRoomReconcile(r.id, wsRoomTargets(r, WS_CALC_ROOMS), slot.bins);
-    if (!rec.rows.length) return;
-    const PADX = 6, CH = 15 * WSF, GAP = 7 * WSF;
+    const st8 = wsRoomChipState(rec, selRoom, true);
+    if (!st8.render) return;
+    const PADX = 6 * WSF, CH = 15 * WSF, GAP = 7 * WSF, TOPPAD = 4 * WSF;
     const cells = rec.rows.map(row => {
       const st = WS_STREAMS.find(s => s.id === row.stream);
       return { ...row, col: st ? st.col : '#78909C', label: (st ? st.label : row.stream).slice(0, 3).toUpperCase(),
                txt: `${row.placed}/${row.required}` };
     });
-    const wOf = c => (c.label.length + c.txt.length + 1) * 6.1 * WSF + 12;
-    const total = cells.reduce((a, c) => a + wOf(c) + GAP, -GAP) + PADX * 2;
-    const chip = mk('g', { transform: `translate(${(bb.x1 + 8).toFixed(1)},${ly.toFixed(1)})` });
-    mk('rect', { x: 0, y: 0, width: Math.max(total, 40).toFixed(1), height: (CH + 8).toFixed(1), rx: (CH / 2 + 4).toFixed(1),
+    const wOf = c => (c.label.length + c.txt.length + 1) * 6.1 * WSF + 12 * WSF;
+    const fullW = Math.max(cells.reduce((a, c) => a + wOf(c) + GAP, -GAP) + PADX * 2 + 20 * WSF, 40 * WSF);
+    const badgeW = 22 * WSF, chipH = CH + TOPPAD * 2;
+    const anchor = wsRoomChipAnchor(bb, fullW, chipH, { margin: 6 * WSF, minY: 2 });
+    const chip = mk('g', { transform: `translate(${anchor.x.toFixed(1)},${anchor.y.toFixed(1)})`,
+      class: st8.cls });
+
+    // collapsed badge — shown by CSS only while .ok and not hovered/selected
+    const badge = mk('g', { class: 'ws-chip-badge' }, chip);
+    mk('rect', { x: 0, y: 0, width: badgeW.toFixed(1), height: chipH.toFixed(1), rx: (chipH / 2).toFixed(1),
+      fill: 'rgba(22,74,44,0.92)', stroke: '#3DD68C', 'stroke-width': 1.2 }, badge);
+    const bt = mk('text', { x: (badgeW / 2).toFixed(1), y: (TOPPAD + CH * 0.74).toFixed(1),
+      'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, fill: '#3DD68C' }, badge);
+    bt.textContent = '✓';
+
+    const full = mk('g', { class: 'ws-chip-full' }, chip);
+    mk('rect', { x: 0, y: 0, width: fullW.toFixed(1), height: chipH.toFixed(1), rx: (chipH / 2).toFixed(1),
       fill: rec.ok ? 'rgba(22,74,44,0.92)' : 'rgba(20,26,26,0.92)',
-      stroke: rec.ok ? '#3DD68C' : '#5a6a6a', 'stroke-width': 1.2 }, chip);
+      stroke: rec.ok ? '#3DD68C' : '#5a6a6a', 'stroke-width': 1.2 }, full);
     let cx2 = PADX;
     cells.forEach(c => {
       const w = wOf(c);
-      mk('rect', { x: cx2.toFixed(1), y: 4, width: w.toFixed(1), height: CH.toFixed(1), rx: (CH / 2).toFixed(1),
+      mk('rect', { x: cx2.toFixed(1), y: TOPPAD.toFixed(1), width: w.toFixed(1), height: CH.toFixed(1), rx: (CH / 2).toFixed(1),
         fill: c.ok ? c.col : 'none', stroke: c.col, 'stroke-width': 1.2,
-        opacity: c.ok ? 0.9 : 1 }, chip);
-      const lab = mk('text', { x: (cx2 + w / 2).toFixed(1), y: (4 + CH * 0.74).toFixed(1),
+        opacity: c.ok ? 0.9 : 1 }, full);
+      const lab = mk('text', { x: (cx2 + w / 2).toFixed(1), y: (TOPPAD + CH * 0.74).toFixed(1),
         'text-anchor': 'middle', 'font-size': 10, 'font-weight': 700,
-        fill: c.ok ? wsInk(c.col) : c.col }, chip);
+        fill: c.ok ? wsInk(c.col) : c.col }, full);
       lab.textContent = `${c.label} ${c.txt}`;
-      if (c.over) mk('circle', { cx: (cx2 + w - 3).toFixed(1), cy: 4, r: 2.6, fill: '#FFB74D' }, chip);
+      if (c.over) mk('circle', { cx: (cx2 + w - 3 * WSF).toFixed(1), cy: TOPPAD.toFixed(1), r: 2.6 * WSF, fill: '#FFB74D' }, full);
       cx2 += w + GAP;
     });
-    const tick = mk('text', { x: (Math.max(total, 40) + 7).toFixed(1), y: (4 + CH * 0.74).toFixed(1),
-      'font-size': 12, 'font-weight': 700, fill: rec.ok ? '#3DD68C' : '#FF8A50' }, chip);
+    const tick = mk('text', { x: (cx2 + 2 * WSF).toFixed(1), y: (TOPPAD + CH * 0.74).toFixed(1),
+      'font-size': 12, 'font-weight': 700, fill: rec.ok ? '#3DD68C' : '#FF8A50' }, full);
     tick.textContent = rec.ok ? '✓' : `${rec.placed}/${rec.required}`;
   });
 
@@ -14794,7 +15065,8 @@ function wsFixtureAt(x, y) {
   wsLayoutSnapshot();
   wsLayoutSlot().equip.push({ id: 'fx_' + Date.now(), x, y, rot: 0, code: f.code, label: f.label,
     w: f.w, d: f.d, known: true, fixture: !f.aisle, aisle: !!f.aisle, round: !!f.round,
-    calcRoom: wsLayoutCalcRoomAt(x, y) || null });
+    calcRoom: wsLayoutCalcRoomAt(x, y) || null,
+    roomId: wsBinRoomId(wsLayoutSlot().rooms, { x, y }) });
   wsLayoutAutosave(); wsRenderLayoutLayer();
 }
 
@@ -14806,13 +15078,59 @@ const WS_MARK_STYLE = {
   transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true },
   text:     { col: '#ECEFF1', label: 'Note',           closed: false, arrow: false },
 };
+// ── MARKUP MODE SUSPEND / RESTORE ────────────────────────────────────────────
+// Markups are reachable from any tab, so starting one must not destroy whatever
+// tool the user already had armed (placing bins, drawing a room, driving a swept
+// path). The prior mode and its in-progress state are parked in WS_MARK_SUSPEND
+// (declared with the rest of the layout state) and put back when the markup
+// finishes or is cancelled.
+function wsMarkSuspend() {
+  if (WS._mode === 'layoutmark') return;            // already in a markup — nothing new to park
+  const area = document.getElementById('ws-canvas-area');
+  const ov = document.getElementById('ws-overlay-svg');
+  WS_MARK_SUSPEND = {
+    mode: WS._mode || null,
+    roomPts: WS_LAYOUT.roomPts, equipPend: WS_LAYOUT._equipPend, fixture: WS_LAYOUT._fixture,
+    cursor: area ? area.style.cursor : '', pe: ov ? ov.style.pointerEvents : '',
+    tabActive: WS_LAYOUT.tabActive,
+  };
+}
+// Restore, or fall back to the normal end-of-mode cleanup when nothing was armed.
+function wsMarkExit() {
+  const s = WS_MARK_SUSPEND;
+  WS_MARK_SUSPEND = null;
+  WS_LAYOUT._mark = null;
+  if (!s || !s.mode) { wsLayoutEndMode(); wsMarkSyncButtons(); return; }
+  const area = document.getElementById('ws-canvas-area');
+  const ov = document.getElementById('ws-overlay-svg');
+  WS._mode = s.mode;
+  WS_LAYOUT.roomPts = s.roomPts;
+  WS_LAYOUT._equipPend = s.equipPend;
+  WS_LAYOUT._fixture = s.fixture;
+  if (area) area.style.cursor = s.cursor || 'crosshair';
+  if (ov) ov.style.pointerEvents = s.pe || 'all';
+  wsMarkSyncButtons();
+  wsRenderLayoutLayer();
+  wsLayoutStatus('Markup done — back to the tool you had open.');
+}
+function wsMarkSyncButtons() {
+  const kind = WS._mode === 'layoutmark' && WS_LAYOUT._mark ? WS_LAYOUT._mark.kind : null;
+  Object.keys(WS_MARK_STYLE).forEach(k => {
+    const b = document.getElementById('ws-mark-btn-' + k);
+    if (b) b.classList.toggle('on', k === kind);
+  });
+}
 function wsMarkMode(kind) {
   if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
   if (kind !== 'text' && !wsNeedScale()) return;
+  // clicking the armed tool again turns it off and restores what was underneath
+  if (WS._mode === 'layoutmark' && WS_LAYOUT._mark && WS_LAYOUT._mark.kind === kind) { wsMarkExit(); return; }
+  wsMarkSuspend();
   WS_LAYOUT._mark = { kind, pts: [] };
   WS._mode = 'layoutmark';
   document.getElementById('ws-canvas-area').style.cursor = 'crosshair';
   document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
+  wsMarkSyncButtons();
   wsLayoutStatus(kind === 'text'
     ? 'Callout: click what the arrow should POINT AT.'
     : `${WS_MARK_STYLE[kind].label}: click each point, then press Enter or double-click to finish. Esc cancels.`);
@@ -14832,7 +15150,7 @@ function wsMarkClick(x, y) {
       wsLayoutSlot().markups.push({ id: 'mk_' + Date.now(), kind: 'text', pts: m.pts.slice(0, 2), text: t.trim() });
       wsLayoutAutosave();
     }
-    wsLayoutEndMode(); wsRenderLayoutLayer(); return;
+    wsMarkExit(); wsRenderLayoutLayer(); return;
   }
   m.pts.push({ x, y });
   wsLayoutStatus(`${WS_MARK_STYLE[m.kind].label}: ${m.pts.length} point${m.pts.length === 1 ? '' : 's'} — Enter or double-click to finish.`);
@@ -14845,8 +15163,7 @@ function wsMarkFinish() {
     wsLayoutSlot().markups.push({ id: 'mk_' + Date.now(), kind: m.kind, pts: m.pts.slice(), text: '' });
     wsLayoutAutosave();
   }
-  WS_LAYOUT._mark = null;
-  wsLayoutEndMode(); wsRenderLayoutLayer();
+  wsMarkExit(); wsRenderLayoutLayer();
 }
 function wsLayoutHitCallout(x, y) {
   const mks = (wsLayoutSlot().markups || []);
