@@ -12849,6 +12849,9 @@ const WS_LAYOUT = { byPage: {}, sel: null, selKind: 'bin', undo: [], redo: [], r
 let WS_MARK_SUSPEND = null;
 // Layout clipboard: detached copies of the selected items, in memory only.
 let WS_LAYOUT_CLIP = null;
+// User-defined provision streams, per project. The predefined five are in
+// WS_PROVISION_STREAMS; these are additions, saved on the draft.
+let WS_PROVISION_CUSTOM = [];
 // Space held = temporary pan mode, so a left-drag pans instead of marquee-selecting.
 let WS_SPACE_PAN = false;
 
@@ -14366,6 +14369,38 @@ function wsUpdateRoomPill() {
   const allStreams = rm ? (rm.targets || []).map(t => t.stream).filter((s, i, a) => a.indexOf(s) === i) : [];
   const on = s => !Array.isArray(room.streams) || !room.streams.length || room.streams.indexOf(s) >= 0;
 
+  // Provision streams: a checklist, not a count. Placed or not placed.
+  const provAll = wsProvisionList(WS_PROVISION_CUSTOM);
+  const provOn = Array.isArray(room.provisions) ? room.provisions : [];
+  const provRec = wsProvisionReconcile(room.id, provOn, wsProvisionItems());
+  const provState = {};
+  provRec.rows.forEach(r => { provState[r.provision] = r.placed; });
+  const provBtns = provAll.map(p => {
+    const on = provOn.indexOf(p.id) >= 0;
+    const placed = !!provState[p.id];
+    // assigned + provided = solid; assigned + missing = outlined amber; not
+    // assigned = quiet. The tick means "one was found", not "a box was ticked".
+    const style = !on ? 'opacity:0.45;border-color:#3a4747;color:rgba(255,255,255,0.6);'
+      : placed ? 'background:' + p.col + ';border-color:' + p.col + ';color:' + wsPillInk(p.col) + ';'
+               : 'border-color:#FFB74D;color:#FFB74D;';
+    const why = on ? (placed ? ' — provided in this room' : ' — required but not placed')
+                   : ' — not required here';
+    const mark = on ? (placed ? '✓ ' : '! ') : '';
+    return '<button onclick="wsRoomToggleProvision(\'' + esc(room.id) + '\',\'' + esc(p.id) + '\')"' +
+      ' title="' + esc(p.label + why) + '"' +
+      ' style="background:none;border:1px solid;border-radius:11px;font-size:10px;padding:2px 8px;cursor:pointer;' + style + '">' +
+      mark + esc(p.label) + '</button>';
+  }).join('');
+  const provStatus = provOn.length
+    ? '<span style="font-size:9.5px;font-weight:700;color:' + (provRec.ok ? '#3DD68C' : '#FF8A50') + ';">' +
+      (provRec.ok ? '✓ all provided' : provRec.missing.length + ' missing') + '</span>'
+    : '';
+  const provisionBlock =
+    '<div style="margin-top:9px;border-top:1px solid #2c3636;padding-top:8px;">' +
+    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">' +
+    '<span style="font-size:10px;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:0.4px;">Provision streams</span>' +
+    '<span style="flex:1"></span>' + provStatus + '</div>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + provBtns + '</div></div>';
   const opts = ['<option value="">— no schedule —</option>'].concat(WS_CALC_ROOMS.map(c =>
     `<option value="${esc(c.id)}"${c.id === room.calcRoom ? ' selected' : ''}>${esc(c.name)}</option>`)).join('');
   const subset = allStreams.length > 1 ? `<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;">
@@ -14396,6 +14431,7 @@ function wsUpdateRoomPill() {
         + rec.problems.map(p => esc(p.message)).join('<br>') + `</div>` : ''}
     ${(rec.outputs || []).length ? `<div style="margin-top:6px;font-size:10px;color:rgba(255,255,255,0.55);">Produces: `
         + rec.outputs.map(o => esc((o.qty == null ? '?' : o.qty) + ' × ' + (o.label || o.equipmentId))).join(', ') + `</div>` : ''}
+    ${provisionBlock}
     ${subset}`;
 
   const bb = wsPolyBBox(wsRoomPts(room));
@@ -16014,6 +16050,27 @@ function wsRoomFillFromCalc(roomId) {
   wsLayoutStatus(best.res.left > 0
     ? `${room.name || 'Room'} filled — ${best.res.placed.length} placed, ${best.res.left} would not fit. Enlarge the room or clear space.`
     : `${room.name || 'Room'} filled from the calculator — ${rec.placed}/${rec.required} bins in place.`);
+}
+// Provision streams are assigned to a ROOM, in the side panel. They never get a
+// canvas overlay: a presence check is a checklist, not a drawing.
+function wsRoomToggleProvision(roomId, provisionId) {
+  const room = wsRoomById(roomId); if (!room) return;
+  const cur = Array.isArray(room.provisions) ? room.provisions.slice() : [];
+  const i = cur.indexOf(provisionId);
+  wsLayoutSnapshot();
+  if (i >= 0) cur.splice(i, 1); else cur.push(provisionId);
+  room.provisions = cur;
+  wsRenderLayoutLayer(); wsLayoutAutosave();
+  const p = wsProvisionById(provisionId, WS_PROVISION_CUSTOM);
+  const rec = wsProvisionReconcile(room.id, cur, wsProvisionItems());
+  wsLayoutStatus((p ? p.label : provisionId) + (i >= 0 ? ' no longer required in ' : ' required in ') +
+    (room.name || 'this room') + (rec.missing.length
+      ? ' \u2014 ' + rec.missing.length + ' still unprovided.' : ' \u2014 all provided.'));
+}
+// Anything that can satisfy a provision: zones and equipment alike.
+function wsProvisionItems() {
+  const slot = wsLayoutSlot();
+  return (slot.equip || []).concat(slot.bins || []);
 }
 function wsRoomRename(roomId) {
   const room = wsRoomById(roomId); if (!room) return;
@@ -18881,6 +18938,7 @@ function wsOpenProject(project) {
     WS_LAYOUT.sel = null; WS_LAYOUT.gen = null;
     if (typeof WS_SWEPT !== 'undefined') WS_SWEPT.byPage = (st && st.sweptByPage) || {};
     if (st && st.calcTargets && typeof WS_CALC_TARGETS !== 'undefined') WS_CALC_TARGETS = st.calcTargets;
+    WS_PROVISION_CUSTOM = (st && st.provisionCustom) || [];
     if (st && st.currentPage) WS.currentPage = st.currentPage;
     if (typeof wsRenderLayoutLayer === 'function') setTimeout(wsRenderLayoutLayer, 50);
     if (typeof wsRenderSweptLayer === 'function') setTimeout(wsRenderSweptLayer, 50);
@@ -18977,6 +19035,7 @@ function wsBuildDraft() {
     layoutData: WS_LAYOUT?.byPage || {},
     calcTargets: (typeof WS_CALC_TARGETS !== 'undefined' ? WS_CALC_TARGETS : []),
     sweptByPage: WS_SWEPT?.byPage || {},
+    provisionCustom: (typeof WS_PROVISION_CUSTOM !== 'undefined' ? WS_PROVISION_CUSTOM : []),
     // B3: the reconciled view the WMP generator reads. Written from the same
     // functions the plan draws from, so the document cannot diverge from it.
     reconciliation: (() => {

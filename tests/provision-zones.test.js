@@ -229,3 +229,45 @@ test('the zone palette is rendered whenever the layout tab opens', () => {
     'the zone palette must appear alongside the fixtures, not only on demand');
   assert.ok(SOURCE.includes('id="ws-layout-zones"'), 'and it needs somewhere to render');
 });
+
+// ── surface 2: provision assignment in the room panel ───────────────────
+test('provisions are assigned in the SIDE PANEL, never on the canvas', () => {
+  const pill = SOURCE.slice(SOURCE.indexOf('function wsUpdateRoomPill'), SOURCE.indexOf('function wsPillInk'));
+  assert.ok(pill.includes('Provision streams'), 'the checklist belongs in the room pill');
+  assert.ok(pill.includes('wsRoomToggleProvision('), 'and each entry toggles');
+  // no new canvas overlay: the renderer must not learn about provisions
+  const render = SOURCE.slice(SOURCE.indexOf('function wsRenderLayoutLayer'), SOURCE.indexOf('function wsLayoutUpdateStats'));
+  assert.equal(/provision/i.test(render), false, 'a presence check is a checklist, not a drawing');
+});
+
+test('toggling a provision is undoable and persists', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsRoomToggleProvision'), SOURCE.indexOf('function wsProvisionItems'));
+  assert.ok(fn.includes('wsLayoutSnapshot();'), 'must be undoable like every other room edit');
+  assert.ok(fn.includes('wsLayoutAutosave();'));
+  assert.ok(fn.includes('cur.splice(i, 1)'), 'clicking an assigned stream removes it again');
+});
+
+test('zones AND equipment can satisfy a provision', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsProvisionItems'), SOURCE.indexOf('function wsRoomRename'));
+  assert.ok(fn.includes('(slot.equip || []).concat(slot.bins || [])'),
+    'a UCO vessel zone and a linked equipment record both count');
+});
+
+test('the tick means "one was found", not "a box was ticked"', () => {
+  // Three states: assigned+provided, assigned+missing, not assigned. The middle
+  // one is the whole point — it is the thing a reviewer needs to see.
+  const pill = SOURCE.slice(SOURCE.indexOf('const provBtns'), SOURCE.indexOf('const provStatus'));
+  assert.ok(pill.includes("const on = provOn.indexOf(p.id) >= 0;"));
+  assert.ok(pill.includes('const placed = !!provState[p.id];'));
+  assert.ok(pill.includes("'border-color:#FFB74D;color:#FFB74D;'"), 'assigned but missing must stand out');
+  // the room-level summary counts the gap, and lives just after the buttons
+  assert.ok(SOURCE.includes("provRec.missing.length + ' missing'"),
+    'the panel must say how many are unprovided, not just colour them');
+});
+
+test('custom provisions survive a save and reload', () => {
+  assert.ok(SOURCE.includes("provisionCustom: (typeof WS_PROVISION_CUSTOM !== 'undefined' ? WS_PROVISION_CUSTOM : []),"),
+    'the draft must carry them');
+  assert.ok(SOURCE.includes('WS_PROVISION_CUSTOM = (st && st.provisionCustom) || [];'),
+    'and restore them');
+});
