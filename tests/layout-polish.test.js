@@ -493,3 +493,45 @@ test('click selection honours the selection set and shift', () => {
   assert.match(fn, /if \(additive\) return;/);
   assert.match(SOURCE, /wsLayoutSelectAt\(x, y, e\.shiftKey\);/, 'the router must pass shift through');
 });
+
+// ── removing a room corner ──────────────────────────────────────────────
+test('wsRoomNearestVertex: finds the corner under a point, within radius', () => {
+  const r = { id: 'A', pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }] };
+  assert.equal(ws.wsRoomNearestVertex(r, 3, 3, 14), 0);
+  assert.equal(ws.wsRoomNearestVertex(r, 98, 102, 14), 2);
+  assert.equal(ws.wsRoomNearestVertex(r, 50, 50, 14), -1, 'the middle is not a corner');
+  assert.equal(ws.wsRoomNearestVertex(r, 20, 0, 14), -1, 'outside the radius');
+});
+
+test('wsRoomNearestVertex: picks the CLOSEST when two are in range', () => {
+  const r = { id: 'A', pts: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 40 }] };
+  assert.equal(ws.wsRoomNearestVertex(r, 4, 0, 14), 0, '4 px from corner 0, 6 from corner 1');
+  assert.equal(ws.wsRoomNearestVertex(r, 7, 0, 14), 1);
+});
+
+test('wsRoomNearestVertex: the radius is a parameter, so it can track zoom', () => {
+  const r = { id: 'A', pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 50, y: 80 }] };
+  assert.equal(ws.wsRoomNearestVertex(r, 18, 0, 14), -1, 'too far at a small radius');
+  assert.equal(ws.wsRoomNearestVertex(r, 18, 0, 25), 0, 'caught once the radius grows');
+  assert.equal(ws.wsRoomNearestVertex(r, 3, 3, undefined), 0, 'defaults to something usable');
+});
+
+test('Alt+click removes a corner, and both routes share one lookup', () => {
+  const bind = SOURCE.slice(SOURCE.indexOf('function wsLayoutBind'), SOURCE.indexOf("area.addEventListener('mousemove'"));
+  assert.match(bind, /if \(h\.type === 'vertex' && e\.altKey\)/, 'Alt over a corner must remove it');
+  assert.match(bind, /wsRoomDeleteVertex\(room, h\.vi\)/);
+  assert.match(bind, /A room needs at least three corners\./, 'the floor must be explained, not silent');
+  // the Backspace fallback uses the shared helper with a zoom-aware radius
+  assert.match(SOURCE, /const bi = wsRoomNearestVertex\(room, hv\.x, hv\.y, wsHandleHitR\(\)\);/);
+  assert.equal(SOURCE.includes('let bi = -1, bd = 14;'), false, 'the fixed 14 px radius is gone');
+  // and the gesture is advertised rather than hidden
+  assert.match(SOURCE, /Alt\+click a corner removes it/);
+  assert.match(SOURCE, /Alt\+click or Backspace removes it/);
+});
+
+test('removing a corner retags the room contents, like every other room edit', () => {
+  const bind = SOURCE.slice(SOURCE.indexOf("if (h.type === 'vertex' && e.altKey)"), SOURCE.indexOf("if (h.type === 'vertex') {", SOURCE.indexOf("e.altKey")));
+  assert.match(bind, /wsTagBinsToRooms\(sD\.rooms, sD\.bins\)/);
+  assert.match(bind, /wsTagBinsToRooms\(sD\.rooms, sD\.equip\)/);
+  assert.match(bind, /wsLayoutSnapshot\(\);/, 'it must be undoable');
+});

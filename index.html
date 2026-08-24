@@ -13353,6 +13353,18 @@ function wsRoomMoveVertex(room, i, x, y) {
   return wsRoomSyncBBox(room);
 }
 // Midpoint of every edge, used both to draw the "+" handles and to hit-test them.
+// The corner nearest a point, within `radius`, or -1. Shared by the Alt+click
+// gesture and the Backspace fallback so the two can never disagree about which
+// corner is under the pointer.
+function wsRoomNearestVertex(room, x, y, radius) {
+  const pts = wsRoomPts(room);
+  let bi = -1, bd = radius == null ? 14 : radius;
+  pts.forEach((p, i) => {
+    const d = Math.hypot(x - p.x, y - p.y);
+    if (d <= bd) { bd = d; bi = i; }
+  });
+  return bi;
+}
 function wsRoomEdgeMidpoints(room) {
   const pts = wsRoomPts(room);
   return pts.map((p, i) => {
@@ -13985,12 +13997,30 @@ function wsLayoutBind() {
     }
     // Start a corner drag / corner insert. Shared by the two entry points below.
     const startRoomHandle = (room, h) => {
-      WS_LAYOUT.sel = room.id; WS_LAYOUT.selKind = 'room';
+      wsSelSet([room.id], 'room');
       WS.isPanning = false;
+      // Alt turns the corner handle into a REMOVE handle — the inverse of the
+      // "+" midpoint that adds one, and reachable without the keyboard.
+      if (h.type === 'vertex' && e.altKey) {
+        if (wsRoomPts(room).length <= 3) {
+          wsLayoutStatus('A room needs at least three corners.');
+        } else {
+          wsLayoutSnapshot();
+          wsRoomDeleteVertex(room, h.vi);
+          const sD = wsLayoutSlot();
+          wsTagBinsToRooms(sD.rooms, sD.bins); wsTagBinsToRooms(sD.rooms, sD.equip);
+          wsLayoutStatus('Corner removed.');
+          wsLayoutAutosave();
+        }
+        WS_LAYOUT.drag = null;
+        wsRenderLayoutLayer();
+        e.preventDefault();
+        return;
+      }
       if (h.type === 'vertex') {
         wsRoomEnsurePts(room);
         WS_LAYOUT.drag = { kind: 'roomvert', id: room.id, vi: h.vi, moved: false };
-        wsLayoutStatus('Reshaping the room — drag the corner, release to set. Backspace removes it.');
+        wsLayoutStatus('Reshaping the room \u2014 drag the corner, release to set. Alt+click or Backspace removes it.');
       } else {
         wsLayoutSnapshot();
         const vi = wsRoomInsertVertex(room, h.edge, h.x, h.y);
@@ -14064,7 +14094,7 @@ function wsLayoutBind() {
           : { kind: 'room', id: room.id, lastX: p.x, lastY: p.y, startX: p.x, startY: p.y, moved: false };
         wsLayoutStatus(room.locked
           ? '🔒 Room locked — press L to unlock before moving it.'
-          : `${room.name || 'Room'} — drag to move it and everything inside, corners reshape, + adds a corner.`);
+          : `${room.name || 'Room'} \u2014 drag to move it and everything inside; corners reshape, + adds a corner, Alt+click a corner removes it.`);
         wsRenderLayoutLayer();
         e.preventDefault();
         return;
@@ -14318,9 +14348,7 @@ function wsLayoutBind() {
     if (e.key === 'Backspace' && WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel && !WS._mode) {
       const room = wsRoomById(WS_LAYOUT.sel), hv = WS_LAYOUT.hover;
       if (room && hv && wsRoomPts(room).length > 3) {
-        const pts = wsRoomPts(room);
-        let bi = -1, bd = 14;
-        pts.forEach((pt, i) => { const d = Math.hypot(hv.x - pt.x, hv.y - pt.y); if (d < bd) { bd = d; bi = i; } });
+        const bi = wsRoomNearestVertex(room, hv.x, hv.y, wsHandleHitR());
         if (bi >= 0) {
           wsLayoutSnapshot();
           wsRoomDeleteVertex(room, bi);
