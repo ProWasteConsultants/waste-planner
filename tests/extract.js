@@ -88,7 +88,43 @@ const LAYOUT_BLOCKS = [
   ['wsRoomCursorAt',    /^function wsRoomCursorAt\(/],
   ['wsRoomChipAnchor',  /^function wsRoomChipAnchor\(/],
   ['wsRoomChipState',   /^function wsRoomChipState\(/],
+  ['wsSnapVertexOrtho', /^function wsSnapVertexOrtho\(/],
+  ['wsSnapAxis',        /^function wsSnapAxis\(/],
+  ['wsDimText',         /^function wsDimText\(/],
+  ['wsRoomDimEdges',    /^function wsRoomDimEdges\(/],
+  ['WS_DOOR_KINDS',     /^const WS_DOOR_KINDS = \{/],
+  ['wsDoorGeometry',    /^function wsDoorGeometry\(/],
+  ['WS_ZONE_PURPLE',    /^const WS_ZONE_PURPLE = /],
+  ['wsIsHardWasteZone', /^function wsIsHardWasteZone\(/],
   ['wsRoomStroke',      /^function wsRoomStroke\(/],
+];
+
+// Sheet export: scale selection and legend content. Pure maths and data, no PDF
+// library involved — the jsPDF drawing calls sit on top of these.
+const SHEET_BLOCKS = [
+  ['WS_STREAMS',           /^const WS_STREAMS = \[/],
+  ['WS_BRAND',             /^const WS_BRAND = \{/],
+  ['WS_SHEET',             /^const WS_SHEET = \{ w: 420/],
+  ['WS_STD_SCALES',        /^const WS_STD_SCALES = \[/],
+  ['wsSheetViewportMm',    /^function wsSheetViewportMm\(/],
+  ['wsRequiredScaleDenom', /^function wsRequiredScaleDenom\(/],
+  ['wsScaleFits',          /^function wsScaleFits\(/],
+  ['wsPickExportScale',    /^function wsPickExportScale\(/],
+  ['wsCropExtentM',        /^function wsCropExtentM\(/],
+  ['wsVisibleCanvasRect',  /^function wsVisibleCanvasRect\(/],
+  ['wsSheetCropPx',        /^function wsSheetCropPx\(/],
+  ['wsSheetContent',       /^function wsSheetContent\(/],
+  ['wsLegendItems',        /^function wsLegendItems\(/],
+  ['WS_PAPER_SIZES',       /^const WS_PAPER_SIZES = \[/],
+  ['wsMatchPaper',         /^function wsMatchPaper\(/],
+  ['wsFullSheetLayout',    /^function wsFullSheetLayout\(/],
+  ['wsFullSheetTargets',   /^function wsFullSheetTargets\(/],
+  ['wsPtToMm',             /^function wsPtToMm\(/],
+  ['wsSheetScaleLine',     /^function wsSheetScaleLine\(/],
+  ['WS_SHEET_CARDS',       /^const WS_SHEET_CARDS = \{/],
+  ['wsRectsOverlap',       /^function wsRectsOverlap\(/],
+  ['wsSheetCardRects',     /^function wsSheetCardRects\(/],
+  ['wsSheetCardCollisions',/^function wsSheetCardCollisions\(/],
 ];
 
 // The swept-path / Ackermann engine, in source order (declaration order matters
@@ -200,4 +236,9 @@ function loadLayout(opts = {}) {
   return loadEngine({ ...opts, blocks: LAYOUT_BLOCKS });
 }
 
-module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, buildSource, loadEngine, loadLayout, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS };
+/** The sheet-export scale and legend core (no PDF library involved). */
+function loadSheet(opts = {}) {
+  return loadEngine({ ...opts, blocks: SHEET_BLOCKS });
+}
+
+module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, buildSource, loadEngine, loadLayout, loadSheet, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS, SHEET_BLOCKS };

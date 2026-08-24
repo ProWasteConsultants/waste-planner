@@ -346,7 +346,8 @@ test('DXF room polylines carry no linetype, so the screen dash change does not r
   assert.ok(fn.length > 0, 'could not locate wsLayoutDXFEntities');
   assert.match(fn, /0\\nPOLYLINE\\n8\\n\$\{layer\}\\n62\\n\$\{aci\}/, 'DXF polyline preamble changed');
   assert.doesNotMatch(fn, /\\n6\\n/, 'a linetype group code appeared — room line style now IS exported, so it must track the screen style');
-  assert.doesNotMatch(fn, /DASHED/i);
+  // a named DXF linetype would have to be declared in the LTYPE table first
+  assert.doesNotMatch(fn, /'DASHED'|"DASHED"/, 'a DXF linetype name appeared in the entity writer');
 });
 
 // ── zoom-aware handle hit-testing ───────────────────────────────────────

@@ -547,6 +547,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 </style>
 <script src="https://js.stripe.com/v3/"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Sheet export. jsPDF places content at exact millimetres on a real A3 page,
+     which is the only way to guarantee the stated scale is physically true —
+     window.print() hands paper size, margins and "fit to printable area" to the
+     browser, and Chrome's default silently rescales. svg2pdf converts the
+     annotation overlay to vector linework and text. Both are optional at run
+     time: wsSheetExport reports a clear error if they failed to load. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/svg2pdf.js/2.2.3/svg2pdf.umd.min.js"></script>
 </head>
 <body>
 <div id="app-content" style="display:none;width:100%;height:100%;"><div class="app">
@@ -1398,6 +1406,24 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
               <g id="ws-layer-swept"></g>
               <g id="ws-layer-dims"></g>
             </svg>
+          </div>
+        </div>
+
+        <!-- Sheet export dialog -->
+        <div id="ws-sheet-modal" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;padding:20px;" onmousedown="if(event.target===this)wsSheetDlgClose()">
+          <div style="background:#1a1a1a;border:1px solid #3a4747;border-radius:11px;width:min(680px,100%);max-height:90vh;overflow:auto;box-shadow:0 18px 50px rgba(0,0,0,0.6);">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #2c3636;">
+              <div>
+                <div style="font-size:14px;font-weight:700;color:#fff;">Export sheet — A3 landscape</div>
+                <div style="font-size:10.5px;color:rgba(255,255,255,0.45);margin-top:2px;">Layout sheet at a true, stated scale</div>
+              </div>
+              <button onclick="wsSheetDlgClose()" style="background:none;border:1px solid #3a4747;border-radius:6px;color:rgba(255,255,255,0.6);font-size:13px;padding:3px 9px;cursor:pointer;">✕</button>
+            </div>
+            <div id="ws-sheet-body" style="padding:14px 16px;"></div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid #2c3636;">
+              <button onclick="wsSheetDlgClose()" style="background:none;border:1px solid #3a4747;border-radius:7px;color:rgba(255,255,255,0.7);font-size:12px;padding:7px 14px;cursor:pointer;">Cancel</button>
+              <button id="ws-sheet-go" onclick="wsSheetExportSafe()" style="background:var(--teal);border:1px solid #00b3b3;border-radius:7px;color:#fff;font-size:12px;font-weight:600;padding:7px 16px;cursor:pointer;">⬇ Export sheet</button>
+            </div>
           </div>
         </div>
 
@@ -13236,6 +13262,114 @@ function wsRoomChipState(rec, selected, labelsOn) {
     cls: 'ws-chip' + (ok ? ' ok' : '') + (selected ? ' sel' : ''),
   };
 }
+// ── SHIFT CONSTRAINTS ────────────────────────────────────────────────────────
+// Holding Shift while dragging a corner snaps it square to whichever neighbour
+// it is closest to squaring with, so an orthogonal room stays orthogonal. Four
+// candidates: share X or Y with the previous corner, or with the next one.
+function wsSnapVertexOrtho(pt, prev, next) {
+  const cands = [];
+  [prev, next].forEach(n => {
+    if (!n) return;
+    cands.push({ x: n.x, y: pt.y });   // edge to this neighbour becomes vertical
+    cands.push({ x: pt.x, y: n.y });   // ...or horizontal
+  });
+  if (!cands.length) return { x: pt.x, y: pt.y };
+  let best = cands[0], bd = Infinity;
+  cands.forEach(c => {
+    const d = Math.hypot(c.x - pt.x, c.y - pt.y);
+    if (d < bd) { bd = d; best = c; }
+  });
+  return { x: best.x, y: best.y };
+}
+// Shift during a whole-room drag locks the translation to the dominant axis.
+function wsSnapAxis(dx, dy) {
+  return Math.abs(dx) >= Math.abs(dy) ? { dx, dy: 0 } : { dx: 0, dy };
+}
+
+// ── ROOM DIMENSIONS (the Dimensions layer) ───────────────────────────────────
+// Edge lengths in metres to one decimal — the drafting convention for a room
+// plan. Rooms only; bins and equipment are dimensioned by their schedule, not
+// by a string on the drawing.
+function wsDimText(lenPx, mpp) { return (lenPx * mpp).toFixed(1) + ' m'; }
+// One entry per edge long enough to letter, with the text position pushed to the
+// OUTSIDE of the polygon and the angle kept upright.
+function wsRoomDimEdges(room, mpp, opts) {
+  const o = opts || {};
+  const minPx = o.minPx == null ? 22 : o.minPx;
+  const off = o.offset == null ? 9 : o.offset;
+  const pts = wsRoomPts(room);
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < minPx) continue;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    // unit normal, flipped to point out of the room
+    let nx = -dy / len, ny = dx / len;
+    if (wsPointInPoly(pts, mx + nx * 4, my + ny * 4)) { nx = -nx; ny = -ny; }
+    // Text angle normalised into (-90, 90] so a dimension is never upside-down
+    // and a reversed edge reads 0°, not 360°.
+    let deg = Math.atan2(dy, dx) * 180 / Math.PI;
+    if (deg > 90 || deg <= -90) deg += 180;
+    if (deg > 180) deg -= 360;
+    if (deg <= -180) deg += 360;
+    out.push({ edge: i, a, b, len, mx, my, nx, ny,
+               tx: mx + nx * off, ty: my + ny * off, deg,
+               text: wsDimText(len, mpp), metres: len * mpp });
+  }
+  return out;
+}
+
+// ── DOOR SYMBOLS ─────────────────────────────────────────────────────────────
+// Plan-convention door symbols in METRES, in local coordinates: the wall runs
+// along X centred on the origin, the leaf swings toward −Y (into the room).
+// Returned geometry is shared by the screen renderer and the DXF writer so the
+// two can never drift.
+const WS_DOOR_KINDS = {
+  SINGLE: { label: 'Door — single', leaf: 0.92, leaves: 1, swing: true },
+  DOUBLE: { label: 'Door — double', leaf: 0.92, leaves: 2, swing: true },
+  ROLLER: { label: 'Roller door',   leaf: 2.40, leaves: 1, swing: false },
+};
+function wsDoorGeometry(kind, widthM, wallM) {
+  const spec = WS_DOOR_KINDS[kind] || WS_DOOR_KINDS.SINGLE;
+  const W = widthM > 0 ? widthM : (spec.leaves === 2 ? spec.leaf * 2 : spec.leaf);
+  const t = wallM > 0 ? wallM : 0.10;
+  const hw = W / 2, ht = t / 2;
+  const g = { kind: spec === WS_DOOR_KINDS.ROLLER ? 'ROLLER' : kind, width: W, wall: t,
+              jambs: [], leaves: [], arcs: [], panels: [], opening: [[-hw, 0], [hw, 0]] };
+  // reveals either side of the opening
+  g.jambs.push([[-hw, -ht], [-hw, ht]], [[hw, -ht], [hw, ht]]);
+  if (!spec.swing) {
+    // Roller: panel sitting in the wall, dashed line showing the curtain roll.
+    g.panels.push([[-hw, -ht], [hw, -ht], [hw, ht], [-hw, ht]]);
+    g.rollDashed = [[-hw, 0], [hw, 0]];
+    return g;
+  }
+  const leafLen = spec.leaves === 2 ? W / 2 : W;
+  const hinges = spec.leaves === 2 ? [{ x: -hw, dir: 1 }, { x: hw, dir: -1 }] : [{ x: -hw, dir: 1 }];
+  hinges.forEach(h => {
+    // leaf drawn open at 90°: from the hinge, perpendicular to the wall
+    g.leaves.push([[h.x, 0], [h.x, -leafLen]]);
+    // swing arc from the open leaf tip round to the closed position
+    g.arcs.push({ cx: h.x, cy: 0, r: leafLen,
+                  a0: -90, a1: h.dir > 0 ? 0 : 180, dir: h.dir });
+  });
+  return g;
+}
+// ── HARD WASTE ZONE ──────────────────────────────────────────────────────────
+// A placeable AREA rather than a container, so it reads like the keep-clear
+// aisle convention — hatch plus dashed outline — but purple, so it can never be
+// mistaken for a red access aisle. Identified by code or label because the item
+// comes from the equipment table, not a hard-coded fixture.
+const WS_ZONE_PURPLE = '#7B1FA2';
+function wsIsHardWasteZone(item) {
+  if (!item) return false;
+  const s = (String(item.code || '') + ' ' + String(item.label || '')).toLowerCase();
+  // ALLOW_HARD is the calculator's own allowance code for a hard waste area, and
+  // carries no "waste" in the string — match it explicitly.
+  return /hard.?waste|bulky|allow_hard/.test(s);
+}
 function wsRoomAt(x, y) { return wsRoomAtPt(wsLayoutSlot().rooms, x, y); }
 function wsRoomById(id) { return wsLayoutSlot().rooms.find(r => r.id === id) || null; }
 // Room outline colour: commercial rooms read gold, residential teal, matching the
@@ -13712,7 +13846,7 @@ function wsLayoutBind() {
       for (const end of [0, 1]) {
         const sgn = end === 0 ? -1 : 1;
         const hx = selAisle.x + Math.cos(a) * hw * sgn, hy = selAisle.y + Math.sin(a) * hw * sgn;
-        if (Math.hypot(p.x - hx, p.y - hy) <= 11) {
+        if (Math.hypot(p.x - hx, p.y - hy) <= wsHandleHitR()) {
           // the OPPOSITE end stays fixed; dragging moves this one
           const fx = selAisle.x - Math.cos(a) * hw * sgn, fy = selAisle.y - Math.sin(a) * hw * sgn;
           WS_LAYOUT.drag = { kind: 'aisleend', id: selAisle.id, fx, fy, sgn, ang: a, moved: false };
@@ -13790,7 +13924,7 @@ function wsLayoutBind() {
         WS_LAYOUT.selKind = 'room';
         WS.isPanning = false;
         WS_LAYOUT.drag = room.locked ? null
-          : { kind: 'room', id: room.id, lastX: p.x, lastY: p.y, moved: false };
+          : { kind: 'room', id: room.id, lastX: p.x, lastY: p.y, startX: p.x, startY: p.y, moved: false };
         wsLayoutStatus(room.locked
           ? '🔒 Room locked — press L to unlock before moving it.'
           : `${room.name || 'Room'} — drag to move it and everything inside, corners reshape, + adds a corner.`);
@@ -13825,14 +13959,29 @@ function wsLayoutBind() {
         if (room) {
           if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
           // incremental delta: the polygon has no single anchor point to offset from
-          wsRoomDragMove(room, p.x - dg.lastX, p.y - dg.lastY, slot2.bins, slot2.equip);
-          dg.lastX = p.x; dg.lastY = p.y;
+          // Shift axis-locks the translation against the drag ORIGIN, not the last
+          // frame, so the lock cannot drift as the pointer wanders.
+          let tx = p.x - dg.lastX, ty = p.y - dg.lastY;
+          if (e.shiftKey) {
+            const lock = wsSnapAxis(p.x - dg.startX, p.y - dg.startY);
+            tx = (dg.startX + lock.dx) - dg.lastX;
+            ty = (dg.startY + lock.dy) - dg.lastY;
+          }
+          wsRoomDragMove(room, tx, ty, slot2.bins, slot2.equip);
+          dg.lastX += tx; dg.lastY += ty;
         }
       } else if (dg.kind === 'roomvert') {
         const room = slot2.rooms.find(x => x.id === dg.id);
         if (room) {
           if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
-          wsRoomMoveVertex(room, dg.vi, wsLayoutSnap(p.x, mpp), wsLayoutSnap(p.y, mpp));
+          let vx = wsLayoutSnap(p.x, mpp), vy = wsLayoutSnap(p.y, mpp);
+          if (e.shiftKey) {
+            const rp = wsRoomPts(room), n = rp.length;
+            const sn = wsSnapVertexOrtho({ x: vx, y: vy },
+              rp[(dg.vi - 1 + n) % n], rp[(dg.vi + 1) % n]);
+            vx = sn.x; vy = sn.y;
+          }
+          wsRoomMoveVertex(room, dg.vi, vx, vy);
           // reshaping can push a bin outside the outline, or pull a loose one in
           wsTagBinsToRooms(slot2.rooms, slot2.bins);
           wsTagBinsToRooms(slot2.rooms, slot2.equip);
@@ -14148,6 +14297,31 @@ function wsRenderLayoutLayer() {
     tick.textContent = rec.ok ? '✓' : `${rec.placed}/${rec.required}`;
   });
 
+  // ── Dimensions layer: room edge lengths. Rooms only — bins and equipment are
+  // dimensioned by the schedule, not by strings on the drawing. The existing
+  // Dimensions toggle drives the group's visibility.
+  const gd = document.getElementById('ws-layer-dims');
+  if (gd) {
+    gd.innerHTML = '';
+    slot.rooms.forEach(r => {
+      wsRoomDimEdges(r, mpp, { offset: 9 * WSF, minPx: 26 }).forEach(e => {
+        const tick = 3.2 * WSF;
+        // extension ticks at each end, perpendicular to the edge
+        [[e.a, 1], [e.b, 1]].forEach(([p]) => mk('line', {
+          x1: (p.x + e.nx * 2).toFixed(1), y1: (p.y + e.ny * 2).toFixed(1),
+          x2: (p.x + e.nx * (9 * WSF + tick)).toFixed(1), y2: (p.y + e.ny * (9 * WSF + tick)).toFixed(1),
+          stroke: '#9AA6A6', 'stroke-width': (0.9 * WSF).toFixed(2) }, gd));
+        mk('line', { x1: (e.a.x + e.nx * 9 * WSF).toFixed(1), y1: (e.a.y + e.ny * 9 * WSF).toFixed(1),
+                     x2: (e.b.x + e.nx * 9 * WSF).toFixed(1), y2: (e.b.y + e.ny * 9 * WSF).toFixed(1),
+                     stroke: '#9AA6A6', 'stroke-width': (0.9 * WSF).toFixed(2) }, gd);
+        const t = mk('text', { x: e.tx.toFixed(1), y: e.ty.toFixed(1), fill: '#C7D2D2',
+          'font-size': 10, 'font-weight': 600, 'text-anchor': 'middle',
+          transform: `rotate(${e.deg.toFixed(1)} ${e.tx.toFixed(1)} ${e.ty.toFixed(1)})` }, gd);
+        t.textContent = e.text;
+      });
+    });
+  }
+
   // polygon in progress
   if (WS._mode === 'layoutroom' && WS_LAYOUT.roomPts && WS_LAYOUT.roomPts.length) {
     const pts = WS_LAYOUT.roomPts.slice();
@@ -14184,14 +14358,14 @@ function wsRenderLayoutLayer() {
     let body;
     if (shp && shp.outline) {
       body = mk('path', { d: wsShapeSvgPath(shp.outline, bt.w, bt.d, mpp),
-        fill: ghost ? st.col + '33' : st.col, stroke: ghost ? st.col : wsShade(st.col), 'stroke-width': ghost ? 1.5 : 2 }, grp);
+        fill: ghost ? st.col + '33' : st.col, stroke: ghost ? st.col : wsShade(st.col), 'stroke-width': ghost ? 1 : 1 }, grp);
       if (shp.detail && !ghost && wsShowDetail(bt.w, mpp)) {
         mk('path', { d: wsShapeSvgPath(shp.detail, bt.w, bt.d, mpp), fill: 'none',
           stroke: ink, 'stroke-width': 1.1, opacity: 0.55 }, grp);
       }
     } else {
       body = mk('rect', { x: -hw, y: -hd, width: 2 * hw, height: 2 * hd, rx: Math.min(4, hw * 0.15),
-        fill: ghost ? st.col + '33' : st.col, stroke: ghost ? st.col : wsShade(st.col), 'stroke-width': ghost ? 1.5 : 2 }, grp);
+        fill: ghost ? st.col + '33' : st.col, stroke: ghost ? st.col : wsShade(st.col), 'stroke-width': ghost ? 1 : 1 }, grp);
       mk('rect', { x: -hw, y: -hd, width: 2 * hw, height: Math.max(3, hd * 0.28),
         fill: ghost ? st.col : ink, opacity: ghost ? 0.35 : 0.25 }, grp);
     }
@@ -14262,17 +14436,47 @@ function wsRenderLayoutLayer() {
     t.textContent = cs.label + (ch.roomName ? ' — ' + ch.roomName : '');
   });
 
+  // Architectural door symbol in plan convention: opening in the wall, leaf(s)
+  // drawn open at 90 deg, quarter-circle swing arc. Roller doors get a panel and a
+  // dashed curtain line instead of an arc.
+  const drawDoor = (e, kind) => {
+    const g2 = mk('g', { transform: `translate(${e.x.toFixed(1)},${e.y.toFixed(1)}) rotate(${e.rot || 0})` });
+    const sel = WS_LAYOUT.sel === e.id;
+    const col = sel ? '#FFD54F' : '#B9C4C4', lw = sel ? 2 : 1.2;
+    const G = wsDoorGeometry(kind, e.w, e.d);
+    const P = v => (v / mpp);
+    G.jambs.forEach(j => mk('line', { x1: P(j[0][0]), y1: P(j[0][1]), x2: P(j[1][0]), y2: P(j[1][1]),
+      stroke: col, 'stroke-width': lw + 0.4 }, g2));
+    G.panels.forEach(pl => mk('polygon', { points: pl.map(p => P(p[0]) + ',' + P(p[1])).join(' '),
+      fill: 'rgba(185,196,196,0.18)', stroke: col, 'stroke-width': lw }, g2));
+    if (G.rollDashed) mk('line', { x1: P(G.rollDashed[0][0]), y1: P(G.rollDashed[0][1]),
+      x2: P(G.rollDashed[1][0]), y2: P(G.rollDashed[1][1]), stroke: col, 'stroke-width': lw,
+      'stroke-dasharray': '5 4' }, g2);
+    G.leaves.forEach(l => mk('line', { x1: P(l[0][0]), y1: P(l[0][1]), x2: P(l[1][0]), y2: P(l[1][1]),
+      stroke: col, 'stroke-width': lw + 0.6 }, g2));
+    G.arcs.forEach(a => {
+      const r = P(a.r), cx = P(a.cx), cy = P(a.cy);
+      const x0 = cx + r * Math.cos(a.a0 * Math.PI / 180), y0 = cy + r * Math.sin(a.a0 * Math.PI / 180);
+      const x1 = cx + r * Math.cos(a.a1 * Math.PI / 180), y1 = cy + r * Math.sin(a.a1 * Math.PI / 180);
+      mk('path', { d: `M${x0.toFixed(1)},${y0.toFixed(1)} A${r.toFixed(1)},${r.toFixed(1)} 0 0 ${a.dir > 0 ? 1 : 0} ${x1.toFixed(1)},${y1.toFixed(1)}`,
+        fill: 'none', stroke: col, 'stroke-width': lw, 'stroke-dasharray': '4 3' }, g2);
+    });
+  };
   // ── equipment ──
   slot.equip.forEach(e => {
     tgt = e.fixture ? g : (gW || g);   // doors/columns belong to the room shell layer
     const selected = WS_LAYOUT.sel === e.id;
     const hw = e.w / 2 / mpp, hd = e.d / 2 / mpp;
-    if (e.aisle) {
+    const doorKind = e.door || (WS_DOOR_KINDS[e.code] ? e.code : null);
+    if (doorKind && !e.aisle) { drawDoor(e, doorKind); return; }
+    if (e.aisle || wsIsHardWasteZone(e)) {
+      const zone = !e.aisle;                       // hard waste zone vs access aisle
+      const zc = zone ? '123,31,162' : '220,70,70';
       // Keep-clear aisle: red dashed boundary + 45° hatch, drawn in local
       // coords inside a rotated group so the hatch clips itself by geometry.
       const g2 = mk('g', { transform: `translate(${e.x.toFixed(1)},${e.y.toFixed(1)}) rotate(${e.rot || 0})` });
-      mk('rect', { x: -hw, y: -hd, width: hw * 2, height: hd * 2, fill: 'rgba(200,40,40,0.07)',
-        stroke: selected ? '#FFD54F' : 'rgba(220,70,70,0.85)', 'stroke-width': selected ? 3 : 2,
+      mk('rect', { x: -hw, y: -hd, width: hw * 2, height: hd * 2, fill: `rgba(${zc},0.10)`,
+        stroke: selected ? '#FFD54F' : `rgba(${zc},0.85)`, 'stroke-width': selected ? 3 : 2,
         'stroke-dasharray': '7 5' }, g2);
       const step = Math.max(14, hd * 0.9);
       for (let t = -hw - hd * 2; t < hw; t += step) {
@@ -14280,17 +14484,24 @@ function wsRenderLayoutLayer() {
         let x1 = t, y1 = -hd, x2 = t + hd * 2, y2 = hd;
         if (x1 < -hw) { y1 += (-hw - x1); x1 = -hw; }
         if (x2 > hw)  { y2 -= (x2 - hw);  x2 = hw; }
-        if (x2 > x1) mk('line', { x1, y1, x2, y2, stroke: 'rgba(220,70,70,0.35)', 'stroke-width': 1.2 }, g2);
+        if (x2 > x1) mk('line', { x1, y1, x2, y2, stroke: `rgba(${zc},0.40)`, 'stroke-width': 1.2 }, g2);
       }
-      const tl = mk('text', { x: 0, y: 4, fill: '#EF9A9A', 'font-size': 10, 'font-weight': 700,
+      const tl = mk('text', { x: 0, y: 4, fill: zone ? '#CE93D8' : '#EF9A9A', 'font-size': 10, 'font-weight': 700,
         'text-anchor': 'middle' }, g2);
-      tl.textContent = `Aisle ${Math.round(e.d * 1000)}mm × ${(e.w).toFixed(1)}m`;
+      tl.textContent = zone ? `${e.label || 'Hard waste zone'} ${(e.w * e.d).toFixed(1)}m²`
+                            : `Aisle ${Math.round(e.d * 1000)}mm × ${(e.w).toFixed(1)}m`;
       // end handles: grab to stretch the aisle along its axis
-      if (selected && !WS_LAYOUT.drag) {
+      // End handles are shown whenever the aisle is selected — including mid-drag,
+      // so the grip stays visible while the length is being stretched — and are
+      // sized in SCREEN px so they are grabbable at any zoom.
+      if (selected && e.aisle) {
+        const HS = wsCanvasPerScreen();
         [-hw, hw].forEach(hx => {
-          mk('circle', { cx: hx, cy: 0, r: 7, fill: 'rgba(220,70,70,0.25)', stroke: '#FF8A80', 'stroke-width': 2 }, g2);
-          const ht = mk('text', { x: hx, y: 3.5, fill: '#FF8A80', 'font-size': 9, 'font-weight': 700, 'text-anchor': 'middle' }, g2);
-          ht.textContent = '↔';
+          mk('circle', { cx: hx, cy: 0, r: (8 * HS).toFixed(1), fill: 'rgba(220,70,70,0.35)', stroke: '#FF8A80', 'stroke-width': (2 * HS).toFixed(2) }, g2);
+          const arm = 3.4 * HS;
+          mk('line', { x1: hx - arm, y1: 0, x2: hx + arm, y2: 0, stroke: '#FFD1CC', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' }, g2);
+          mk('line', { x1: hx - arm, y1: 0, x2: hx - arm + 1.8 * HS, y2: -1.8 * HS, stroke: '#FFD1CC', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' }, g2);
+          mk('line', { x1: hx + arm, y1: 0, x2: hx + arm - 1.8 * HS, y2: -1.8 * HS, stroke: '#FFD1CC', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' }, g2);
         });
       }
       keepouts.push({ kind: 'rect', x: e.x, y: e.y, w: e.w, d: e.d, rot: e.rot || 0, why: 'aisle clearance' });
@@ -14490,6 +14701,17 @@ function wsLayoutDXFEntities(mpp) {
     const nm = (r.name || ('Room ' + (i + 1))) + ' - ' + wsPolyArea(pts, mpp).toFixed(1) + ' m2';
     d += text('BINROOM', 4, bb.x1 + 0.15 / mpp, bb.y1 + 0.45 / mpp, 250, nm);
   });
+  // Room dimensions — same geometry the Dimensions layer draws on screen, so CAD
+  // and the plan can never disagree. Written only when the layer is visible.
+  if (WS.layers.dims !== false) slot.rooms.forEach(r => {
+    wsRoomDimEdges(r, mpp, { offset: 9, minPx: 26 }).forEach(e => {
+      const off = (p, k) => [p.x + e.nx * k, p.y + e.ny * k];
+      d += poly('A-ANNO-DIMS', 8, [off(e.a, 9), off(e.b, 9)]);
+      d += poly('A-ANNO-DIMS', 8, [off(e.a, 2), off(e.a, 12)]);
+      d += poly('A-ANNO-DIMS', 8, [off(e.b, 2), off(e.b, 12)]);
+      d += text('A-ANNO-DIMS', 8, e.tx, e.ty, 180, e.text);
+    });
+  });
   // markups
   (slot.markups || []).forEach(m => {
     const layer = m.kind === 'text' ? 'A-ANNO-TEXT'
@@ -14533,9 +14755,33 @@ function wsLayoutDXFEntities(mpp) {
     });
   });
   slot.equip.forEach(e => {
-    if (e.aisle) {
-      // Boundary + 45° hatch lines so the keep-clear intent survives into CAD
-      d += rect('A-WASTE-AISLES', 1, e.x, e.y, e.w, e.d, e.rot || 0);
+    // Door symbols: same wsDoorGeometry the screen uses, so the linework matches.
+    const dk = e.door || (WS_DOOR_KINDS[e.code] ? e.code : null);
+    if (dk && !e.aisle) {
+      const G = wsDoorGeometry(dk, e.w, e.d);
+      const a0 = (e.rot || 0) * Math.PI / 180, ca = Math.cos(a0), sa = Math.sin(a0);
+      const loc = (lx, ly) => [e.x + (lx / mpp) * ca - (ly / mpp) * sa, e.y + (lx / mpp) * sa + (ly / mpp) * ca];
+      G.jambs.concat(G.leaves).forEach(seg => d += poly('A-DOOR', 8, [loc(seg[0][0], seg[0][1]), loc(seg[1][0], seg[1][1])]));
+      G.panels.forEach(pl => d += poly('A-DOOR', 8, pl.map(p => loc(p[0], p[1])).concat([loc(pl[0][0], pl[0][1])])));
+      if (G.rollDashed) d += poly('A-DOOR', 8, [loc(G.rollDashed[0][0], G.rollDashed[0][1]), loc(G.rollDashed[1][0], G.rollDashed[1][1])]);
+      G.arcs.forEach(arc => {
+        // arcs are chorded so no LTYPE or ARC bulge handling is needed
+        const steps = 16, seq = [];
+        for (let k = 0; k <= steps; k++) {
+          const t = (arc.a0 + (arc.a1 - arc.a0) * k / steps) * Math.PI / 180;
+          seq.push(loc(arc.cx + arc.r * Math.cos(t), arc.cy + arc.r * Math.sin(t)));
+        }
+        d += poly('A-DOOR', 8, seq);
+      });
+      return;
+    }
+    const zone = wsIsHardWasteZone(e) && !e.aisle;
+    if (e.aisle || zone) {
+      // Boundary + 45° hatch lines so the keep-clear intent survives into CAD.
+      // Hard waste zones get their own layer and colour (magenta, ACI 6) so they
+      // are never confused with a red access aisle.
+      const zl = zone ? 'A-WASTE-ZONE' : 'A-WASTE-AISLES', zc = zone ? 6 : 1;
+      d += rect(zl, zc, e.x, e.y, e.w, e.d, e.rot || 0);
       const hw = e.w / 2 / mpp, hd = e.d / 2 / mpp, a = (e.rot || 0) * Math.PI / 180;
       const cos = Math.cos(a), sin = Math.sin(a);
       const loc = (lx, ly) => [e.x + lx * cos - ly * sin, e.y + lx * sin + ly * cos];
@@ -14544,9 +14790,11 @@ function wsLayoutDXFEntities(mpp) {
         let x1 = t, y1 = -hd, x2 = t + hd * 2, y2 = hd;
         if (x1 < -hw) { y1 += (-hw - x1); x1 = -hw; }
         if (x2 > hw)  { y2 -= (x2 - hw);  x2 = hw; }
-        if (x2 > x1) d += poly('A-WASTE-AISLES', 1, [loc(x1, y1), loc(x2, y2)]);
+        if (x2 > x1) d += poly(zl, zc, [loc(x1, y1), loc(x2, y2)]);
       }
-      d += text('A-WASTE-AISLES', 1, e.x, e.y, 150, `AISLE ${Math.round(e.d * 1000)}mm CLEAR`);
+      d += text(zl, zc, e.x, e.y, 150, zone
+        ? `${(e.label || 'HARD WASTE ZONE').toUpperCase()} ${(e.w * e.d).toFixed(1)}m2`
+        : `AISLE ${Math.round(e.d * 1000)}mm CLEAR`);
       return;
     }
     const layer = e.fixture ? 'A-WASTE-FIXTURE' : (e.compactor ? 'E-COMPACTOR' : 'A-WASTE-EQUIPMENT');
@@ -15093,7 +15341,9 @@ function wsCanvasXY(e) {
 // ── OBSTACLES & FIXTURES ─────────────────────────────────────────────────────
 const WS_FIXTURES = [
   { code: 'COLUMN',   label: 'Column',          w: 0.40, d: 0.40 },
-  { code: 'DOOR',     label: 'Door 900',        w: 0.90, d: 0.10 },
+  { code: 'DOOR',     label: 'Door — single 920', w: 0.92, d: 0.10, door: 'SINGLE' },
+  { code: 'DOOR2',    label: 'Door — double 1840', w: 1.84, d: 0.10, door: 'DOUBLE' },
+  { code: 'ROLLER',   label: 'Roller door 2400', w: 2.40, d: 0.15, door: 'ROLLER' },
   { code: 'TAP',      label: 'Tap / hose point', w: 0.30, d: 0.30 },
   { code: 'DRAIN',    label: 'Floor waste',     w: 0.30, d: 0.30, round: true },
   { code: 'HOSEREEL', label: 'Fire hose reel',  w: 0.70, d: 0.30 },
@@ -15159,12 +15409,18 @@ function wsFixtureAt(x, y) {
   wsLayoutSnapshot();
   wsLayoutSlot().equip.push({ id: 'fx_' + Date.now(), x, y, rot: 0, code: f.code, label: f.label,
     w: f.w, d: f.d, known: true, fixture: !f.aisle, aisle: !!f.aisle, round: !!f.round,
+    door: f.door || null,
     calcRoom: wsLayoutCalcRoomAt(x, y) || null,
     roomId: wsBinRoomId(wsLayoutSlot().rooms, { x, y }) });
   wsLayoutAutosave(); wsRenderLayoutLayer();
 }
 
 // ── MARKUPS ──────────────────────────────────────────────────────────────────
+// Callout text has its own, higher floor than wsLblF()'s general 0.5 clamp:
+// a note is unreadable long before a bin label is. Used on screen and, because
+// the PDF export renders the same SVG, on the exported sheet too.
+const WS_CALLOUT_MIN_F = 0.85;
+function wsCalloutF(){ return Math.max(WS_CALLOUT_MIN_F, wsLblF()); }
 const WS_MARK_STYLE = {
   measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false },
   area:     { col: '#7FD8D8', label: 'Area',           closed: true,  arrow: false },
@@ -15268,7 +15524,7 @@ function wsLayoutHitCallout(x, y) {
     if (m.pts.length >= 2 && Math.hypot(x - m.pts[0].x, y - m.pts[0].y) <= 10)
       return { id: m.id, part: 'tip', px: m.pts[0].x, py: m.pts[0].y };
     const box = m.pts[1] || m.pts[0];
-    const F = wsLblF();
+    const F = wsCalloutF();
     const bw = Math.max(46 * F, (m.text || '').length * 7.4 * F + 14 * F), bh = 22 * F;
     if (Math.abs(x - box.x) <= bw/2 + 2 && Math.abs(y - box.y) <= bh/2 + 2)
       return { id: m.id, part: 'box', px: box.x, py: box.y };
@@ -15288,7 +15544,11 @@ function wsRenderMarkups(mk, mpp) {
       const CALLOUT_BLUE = '#1976D2', CALLOUT_FILL = '#FFF9C4', CALLOUT_TEXT = '#111';
       const target = pts[0], box = pts.length >= 2 ? pts[1] : pts[0];
       const label = text || '';
-      const F = wsLblF();
+      // Callouts carry the reader's instructions, so they get a HIGHER floor than
+      // the general label clamp — at 1:500 wsLblF() bottoms out at 0.5 and the box
+      // becomes unreadable. `fs` cancels the render helper's own wsLblF scaling so
+      // the glyphs land on the callout floor rather than being scaled twice.
+      const F = wsCalloutF(), base = wsLblF() || 1, fs = v => v * F / base;
       const bw = Math.max(46 * F, label.length * 7.4 * F + 14 * F), bh = 22 * F;
       const bx = box.x - bw/2, by = box.y - bh/2;
       if (live) { // placement preview: crosshair at target, rubber leader to cursor
@@ -15304,16 +15564,16 @@ function wsRenderMarkups(mk, mpp) {
         const ty = Math.abs(dy) > 1e-6 ? (bh/2) / Math.abs(dy) : Infinity;
         const tEdge = Math.min(1, Math.min(tx, ty));
         const sx = box.x + dx * tEdge, sy = box.y + dy * tEdge;
-        mk('polyline', { points: `${sx},${sy} ${target.x},${target.y}`, stroke: CALLOUT_BLUE, 'stroke-width': 2, fill: 'none' });
+        mk('polyline', { points: `${sx},${sy} ${target.x},${target.y}`, stroke: CALLOUT_BLUE, 'stroke-width': (1.6 * F).toFixed(2), fill: 'none' });
         const ang = Math.atan2(target.y - sy, target.x - sx), ah = 10 * F;
         mk('polygon', { points: [[target.x, target.y],
           [target.x - ah*Math.cos(ang - 0.42), target.y - ah*Math.sin(ang - 0.42)],
           [target.x - ah*Math.cos(ang + 0.42), target.y - ah*Math.sin(ang + 0.42)]].map(p => p.join(',')).join(' '),
           fill: CALLOUT_BLUE });
       }
-      mk('rect', { x: bx, y: by, width: bw, height: bh, rx: 3,
-        fill: CALLOUT_FILL, stroke: CALLOUT_BLUE, 'stroke-width': 1.5 });
-      const t = mk('text', { x: box.x, y: box.y + 4.5 * F, fill: CALLOUT_TEXT, 'font-size': 13,
+      mk('rect', { x: bx, y: by, width: bw, height: bh, rx: (3 * F).toFixed(2),
+        fill: CALLOUT_FILL, stroke: CALLOUT_BLUE, 'stroke-width': (1.4 * F).toFixed(2) });
+      const t = mk('text', { x: box.x, y: box.y + 4.5 * F, fill: CALLOUT_TEXT, 'font-size': fs(13),
         'font-weight': 600, 'text-anchor': 'middle' });
       t.textContent = label;
       return;
@@ -17014,34 +17274,735 @@ async function wsSaveProject() {
 
 // Print-to-PDF of the current sheet: the browser's own print pipeline keeps the
 // PDF vector where the source is vector, and needs no extra library.
+// ═══ SHEET EXPORT ════════════════════════════════════════════════════════════
+// A3 landscape LAYOUT sheets at a TRUE, stated scale. The swept-path title block
+// panel (vehicle diagram + spec table) is deliberately not built yet — a swept
+// path still exports as linework, it just gets no dedicated panel.
+
+// ── BRANDING ─────────────────────────────────────────────────────────────────
+// Every exported sheet reads its identity from this ONE object. Do not scatter
+// these literals through the export code.
+//
+// PRE-LAUNCH GATE: hard-coded is fine while WastePlanner is single-tenant. Before
+// ANY external organisation exports a sheet this must become organisation-level
+// settings — a row per org, editable in-app — or every firm's drawings will go
+// out branded Pro Waste Consultants. See "Known deferrals / pre-launch gates" in
+// CLAUDE.md.
+//
+// Blank fields are omitted from the title block rather than printed empty. The
+// ABN, street address and phone are left blank on purpose: they belong on a
+// legal drawing and must be entered by someone who knows them, not guessed.
+const WS_BRAND = {
+  company: 'Pro Waste Consultants',
+  abn: '',                       // TODO: fill before the first external-facing export
+  address: '',                   // TODO
+  phone: '',                     // TODO
+  email: '',                     // TODO
+  web: 'prowaste.au',
+  logoW: 770, logoH: 206,        // native pixels, for aspect ratio
+  // Embedded so an exported sheet never depends on a network fetch. Source file:
+  // assets/pwc-logo.png (770x206). Re-embed from that file if the logo changes.
+  logoDataUrl: 'data:image/png;base64,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',
+  credit: 'Prepared using WastePlanner (wasteplanner.au)',
+};
+
+// ── SHEET GEOMETRY (millimetres) ─────────────────────────────────────────────
+// The plan gets the whole page. Identity, issue and legend float as small cards
+// over it; notes and the credit run along the bottom edge as bare text. Nothing
+// is reserved for a title strip — a bottom band that wide cost more plan area
+// than it was worth.
+const WS_SHEET = { w: 420, h: 297, margin: 6, bottomText: 7 };  // A3 landscape
+
+// ── FULL-SHEET MODE (the default) ────────────────────────────────────────────
+// Reproduce the architect's page 1:1 — same paper size, edge to edge, ZERO added
+// margin — and lay our layers over it. The base plan already carries its own
+// scale bar and title block, so we never restate a scale we did not set: the
+// card reads "Scale: refer base plan".
+const WS_PAPER_SIZES = [
+  { name: 'A0', a: 1189, b: 841 }, { name: 'A1', a: 841, b: 594 },
+  { name: 'A2', a: 594, b: 420 },  { name: 'A3', a: 420, b: 297 },
+  { name: 'A4', a: 297, b: 210 },
+];
+// Which standard sheet a source page is, in either orientation. Null when the
+// page is a non-standard size — then we simply output its exact dimensions.
+function wsMatchPaper(mm, tolMm) {
+  if (!mm || !(mm.w > 0) || !(mm.h > 0)) return null;
+  const tol = tolMm == null ? 6 : tolMm;
+  const lo = Math.min(mm.w, mm.h), hi = Math.max(mm.w, mm.h);
+  for (const p of WS_PAPER_SIZES)
+    if (Math.abs(hi - p.a) <= tol && Math.abs(lo - p.b) <= tol) return p;
+  return null;
+}
+// Where the source page lands on the output sheet.
+//   target omitted  → output the source size exactly: factor 1, zero margin.
+//   target given    → reduce to that sheet, centred, with a "reduced from" note.
+function wsFullSheetLayout(srcMm, target) {
+  const src = { w: Math.max(1e-6, srcMm && srcMm.w), h: Math.max(1e-6, srcMm && srcMm.h) };
+  const match = wsMatchPaper(src);
+  const landscape = src.w >= src.h;
+  let page = { w: src.w, h: src.h }, format = match ? match.name : 'custom';
+  const t = target && WS_PAPER_SIZES.find(p => p.name === target);
+  if (t) { page = landscape ? { w: t.a, h: t.b } : { w: t.b, h: t.a }; format = t.name; }
+  const factor = Math.min(page.w / src.w, page.h / src.h);
+  const pw = src.w * factor, ph = src.h * factor;
+  return {
+    page, format, factor,
+    // centred; identical sizes give exactly {0,0,page.w,page.h}
+    plan: { x: (page.w - pw) / 2, y: (page.h - ph) / 2, w: pw, h: ph },
+    reduced: factor < 1 - 1e-9,
+    sourceFormat: match ? match.name : null,
+    note: (factor < 1 - 1e-9 && match) ? `REDUCED FROM ${match.name} — REFER BASE PLAN SCALE BAR` : '',
+  };
+}
+// Output sizes offered for a given source page: its own size first, then any
+// smaller standard sheet (a reduction), never an enlargement.
+function wsFullSheetTargets(srcMm) {
+  const match = wsMatchPaper(srcMm);
+  const out = [{ name: match ? match.name : 'source', label: match ? match.name + ' (as base plan)' : 'Source size (as base plan)', target: null }];
+  if (!match) return out;
+  const i = WS_PAPER_SIZES.findIndex(p => p.name === match.name);
+  for (let k = i + 1; k < WS_PAPER_SIZES.length; k++)
+    out.push({ name: WS_PAPER_SIZES[k].name, label: WS_PAPER_SIZES[k].name + ' (reduced from ' + match.name + ')', target: WS_PAPER_SIZES[k].name });
+  return out;
+}
+// PDF points → millimetres. pdf.js reports page boxes at 72 dpi.
+function wsPtToMm(pt) { return pt * 25.4 / 72; }
+// Export scales offered. Deliberately excludes 1:50 — a plan set to 1:50 falls
+// through to the smallest standard that fits, which is always safe (a drawing can
+// be stated smaller than it needs, never larger).
+const WS_STD_SCALES = [100, 200, 250, 400, 500, 750, 1000];
+
+// The plan viewport: the whole sheet inside the margin, less the bottom text band.
+function wsSheetViewportMm(sheet) {
+  const s = sheet || WS_SHEET;
+  return { x: s.margin, y: s.margin, w: s.w - 2 * s.margin,
+           h: s.h - 2 * s.margin - s.bottomText };
+}
+// ── FLOATING CARDS ───────────────────────────────────────────────────────────
+// Corner cards over a full-bleed plan. The BOTTOM-CENTRE region is deliberately
+// left clear: it is reserved for the swept-path vehicle panel (design vehicle
+// diagram + spec table), which is NOT built yet — see the deferrals list in
+// CLAUDE.md. Do not put anything else there.
+// ONE consolidated title card, top-left. Identity, project, drawing title and a
+// compact issue row (date / no. / rev / sheet / scale) with a north arrow in the
+// corner — there is no separate bottom-right card.
+const WS_SHEET_CARDS = { pad: 4, idW: 112, idH: 40, legendW: 60, rowH: 4.4, legendHdr: 7.5, cardPad: 3 };
+function wsRectsOverlap(a, b) {
+  return !!a && !!b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+// Card rectangles for a given viewport. `opts.legendRows` sizes the legend;
+// `opts.legend === false` drops it entirely. Cards OVERLAY the plan — they never
+// reserve page space, so the viewport is unaffected by what is on them.
+function wsSheetCardRects(viewMm, opts) {
+  const o = opts || {}, C = WS_SHEET_CARDS, p = C.pad;
+  const out = {};
+  out.id = { x: viewMm.x + p, y: viewMm.y + p, w: C.idW, h: C.idH };
+  const rows = Math.max(0, o.legendRows || 0);
+  if (o.legend !== false && rows > 0) {
+    out.legend = { x: viewMm.x + viewMm.w - p - C.legendW, y: viewMm.y + p,
+                   w: C.legendW, h: C.cardPad * 2 + C.legendHdr + rows * C.rowH };
+  }
+  // Reserved, never drawn: the swept-path vehicle panel (design vehicle diagram
+  // + spec table) goes bottom-centre when it is built. Returned so collision
+  // checks account for it. See the deferrals list in CLAUDE.md.
+  out.sweptReserved = { x: viewMm.x + viewMm.w / 2 - 60, y: viewMm.y + viewMm.h - p - 46, w: 120, h: 46 };
+  return out;
+}
+// Every visible card pair must be disjoint. Returns the offending pairs.
+function wsSheetCardCollisions(rects) {
+  const keys = Object.keys(rects || {}).filter(k => k !== 'sweptReserved' && rects[k]);
+  const bad = [];
+  for (let i = 0; i < keys.length; i++)
+    for (let j = i + 1; j < keys.length; j++)
+      if (wsRectsOverlap(rects[keys[i]], rects[keys[j]])) bad.push([keys[i], keys[j]]);
+  return bad;
+}
+// The smallest scale DENOMINATOR that fits `extentM` {w,h} metres into `viewMm`.
+// A real number — callers snap it up to a standard scale.
+function wsRequiredScaleDenom(extentM, viewMm) {
+  if (!extentM || !viewMm || !(viewMm.w > 0) || !(viewMm.h > 0)) return Infinity;
+  if (!(extentM.w > 0) && !(extentM.h > 0)) return 0;
+  return Math.max((extentM.w * 1000) / viewMm.w, (extentM.h * 1000) / viewMm.h);
+}
+function wsScaleFits(extentM, viewMm, denom) {
+  return denom >= wsRequiredScaleDenom(extentM, viewMm) - 1e-9;
+}
+// Default export scale. The plan's own scale when the visible extent fits at it,
+// otherwise the most detailed standard scale that does fit. When nothing fits
+// (the extent is enormous), the coarsest standard is used and the sheet crops —
+// which is stated, never silently fitted.
+function wsPickExportScale(extentM, viewMm, planScale, standards) {
+  const list = (standards || WS_STD_SCALES).slice().sort((a, b) => a - b);
+  const need = wsRequiredScaleDenom(extentM, viewMm);
+  if (planScale && list.indexOf(planScale) >= 0 && wsScaleFits(extentM, viewMm, planScale))
+    return { scale: planScale, source: 'plan', required: need, fits: true };
+  const fit = list.find(s => wsScaleFits(extentM, viewMm, s));
+  if (fit) return { scale: fit, source: 'fit', required: need, fits: true };
+  return { scale: list[list.length - 1], source: 'crop', required: need, fits: false };
+}
+// Real-world extent one sheet viewport covers at 1:denom.
+function wsCropExtentM(denom, viewMm) {
+  return { w: viewMm.w * denom / 1000, h: viewMm.h * denom / 1000 };
+}
+// Canvas-pixel rectangle currently visible in the workspace viewport, clamped to
+// the page. `view` is {scale, panX, panY, areaW, areaH}.
+function wsVisibleCanvasRect(view, canvasSize) {
+  const sc = (view && view.scale) || 1;
+  const x1 = Math.max(0, -view.panX / sc);
+  const y1 = Math.max(0, -view.panY / sc);
+  const x2 = Math.min(canvasSize.w, (view.areaW - view.panX) / sc);
+  const y2 = Math.min(canvasSize.h, (view.areaH - view.panY) / sc);
+  return { x1, y1, x2: Math.max(x1, x2), y2: Math.max(y1, y2),
+           w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
+}
+// The canvas-pixel window a sheet at 1:denom covers, centred on the visible
+// extent and clamped to the page so the crop never runs off the drawing.
+function wsSheetCropPx(denom, viewMm, mpp, centre, canvasSize) {
+  const ext = wsCropExtentM(denom, viewMm);
+  const w = ext.w / mpp, h = ext.h / mpp;
+  let x = centre.x - w / 2, y = centre.y - h / 2;
+  if (canvasSize) {
+    if (w <= canvasSize.w) x = Math.max(0, Math.min(x, canvasSize.w - w));
+    if (h <= canvasSize.h) y = Math.max(0, Math.min(y, canvasSize.h - h));
+  }
+  return { x, y, w, h };
+}
+
+// ── SHEET SETTINGS (per project, remembered) ─────────────────────────────────
+function wsSheetDefaults() {
+  return {
+    title: 'Waste Management Layout',
+    drawingNo: '', rev: 'A', sheet: '1 of 1',
+    projectName: '', projectAddress: '',
+    notes: 'Base plan prepared by others.\nPRELIMINARY — NOT FOR CONSTRUCTION.',
+    north: 0, credit: true, legend: true, scale: null,
+    mode: 'full', target: null, showScale: true,
+  };
+}
+function wsSheetKey() { return 'ws_sheet_' + (WS.projectId || 'draft'); }
+function wsSheetLoad() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(wsSheetKey()) || 'null'); } catch (e) {}
+  const d = Object.assign(wsSheetDefaults(), saved || {});
+  // Project record fills identity fields the user has not overridden. There is no
+  // `projects` global — every caller goes through getProjects().
+  let p = null;
+  try { p = (getProjects() || []).find(x => x.id === WS.projectId) || null; } catch (e) {}
+  if (!d.projectName) d.projectName = (p && p.name) || (document.getElementById('ws-project-name')?.textContent || '').trim();
+  if (!d.projectAddress) d.projectAddress = (p && p.address) || (WS.extractData && WS.extractData.address) || '';
+  return d;
+}
+function wsSheetSave(s) {
+  try { localStorage.setItem(wsSheetKey(), JSON.stringify(s)); } catch (e) {}
+}
+
+// ── LEGEND ───────────────────────────────────────────────────────────────────
+// What is actually ON the page, so an unused stream never gets a swatch.
+function wsSheetContent(slot, sweptSlot) {
+  const bins = (slot && slot.bins) || [], rooms = (slot && slot.rooms) || [];
+  const equip = (slot && slot.equip) || [], marks = (slot && slot.markups) || [];
+  const order = WS_STREAMS.map(s => s.id);
+  const streams = [];
+  bins.forEach(b => { if (b.stream && b.stream !== 'equip' && streams.indexOf(b.stream) < 0) streams.push(b.stream); });
+  streams.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const has = k => marks.some(m => m.kind === k);
+  return {
+    rooms: rooms.length > 0,
+    comRoom: rooms.some(r => r.kind === 'com'),
+    streams,
+    equip: equip.some(e => !e.aisle),
+    aisle: equip.some(e => !!e.aisle),
+    disposal: has('disposal'), transfer: has('transfer'), callout: has('text'),
+    measure: has('measure'), area: has('area'),
+    swept: !!(sweptSlot && (sweptSlot.paths || []).some(p => p.result)),
+  };
+}
+// Legend rows for the styles of VISIBLE layers only. Pure: layer flags and a
+// content summary in, rows out.
+function wsLegendItems(layers, content) {
+  const L = layers || {}, c = content || {};
+  const on = k => L[k] !== false;
+  const out = [];
+  if (on('binroom') && c.rooms) {
+    out.push({ key: 'room', label: 'Bin room outline', style: 'line', col: '#008080' });
+    if (c.comRoom) out.push({ key: 'room-com', label: 'Commercial bin room', style: 'line', col: '#B38600' });
+  }
+  if (on('waste')) {
+    (c.streams || []).forEach(id => {
+      const st = WS_STREAMS.find(s => s.id === id);
+      if (st) out.push({ key: 'stream-' + id, label: st.label + ' bin', style: 'swatch', col: st.col });
+    });
+    if (c.equip) out.push({ key: 'equip', label: 'Equipment / fixture', style: 'swatch', col: '#607D8B' });
+    if (c.aisle) out.push({ key: 'aisle', label: 'Access aisle — keep clear', style: 'hatch', col: '#F5B400' });
+  }
+  if (on('markups')) {
+    if (c.disposal) out.push({ key: 'disposal', label: 'Waste disposal route', style: 'arrow', col: '#4BED12' });
+    if (c.transfer) out.push({ key: 'transfer', label: 'Waste transfer route', style: 'arrow', col: '#008080' });
+    if (c.callout) out.push({ key: 'callout', label: 'Callout / note', style: 'leader', col: '#8A8A8A' });
+    if (c.measure) out.push({ key: 'measure', label: 'Measured dimension', style: 'dim', col: '#00A0B0' });
+    if (c.area) out.push({ key: 'area', label: 'Measured area', style: 'poly', col: '#4FA3A3' });
+  }
+  if (on('swept') && c.swept) {
+    out.push({ key: 'swept', label: 'Swept path envelope', style: 'line', col: '#00A651' });
+    out.push({ key: 'swept-clr', label: '300 mm clearance envelope', style: 'dash', col: '#E08A00' });
+    out.push({ key: 'swept-wheel', label: 'Wheel path', style: 'dash', col: '#2E6BD6' });
+  }
+  return out;
+}
+
+// ── EXPORT DIALOG ────────────────────────────────────────────────────────────
+// The chosen scale is always shown BEFORE export, with what it means. Manual
+// override to any standard scale is allowed; when the override is tighter than
+// the content needs, the sheet crops and says so.
+let WS_SHEET_DLG = null;
+// Button entry point. An async handler that throws produces an unhandled rejection
+// and, from the user's side, absolutely nothing — so every failure is surfaced.
 function wsExportPDF() {
+  wsExportPDFAsync().catch(e => {
+    console.error(e);
+    alert('Could not open the export dialog: ' + (e && e.message ? e.message : e));
+  });
+}
+async function wsExportPDFAsync() {
   if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
+  // Full-sheet mode needs no plan scale — it reproduces the base plan, which
+  // carries its own. Only the viewport-crop mode has to state a true scale.
+  const mpp = wsSweptMpp();
   const canvas = document.getElementById('ws-pdf-canvas');
-  const svg = document.getElementById('ws-overlay-svg');
-  if (!canvas || !svg) return;
-  const name = (document.getElementById('ws-project-name')?.textContent || 'Waste Planner').trim();
-  const page = (typeof WS.pageNum !== 'undefined') ? WS.pageNum : 1;
-  let svgStr = '';
+  const area = document.getElementById('ws-canvas-area');
+  const mppOrEst = mpp || 0.05;
+  const vis = wsVisibleCanvasRect({ scale: WS.scale, panX: WS.panX, panY: WS.panY,
+                                    areaW: area.clientWidth, areaH: area.clientHeight },
+                                  { w: canvas.width, h: canvas.height });
+  const viewMm = wsSheetViewportMm();
+  const extentM = { w: vis.w * mppOrEst, h: vis.h * mppOrEst };
+  const planScale = parseFloat(document.getElementById('ws-scale-sel')?.value) || null;
+  const pick = wsPickExportScale(extentM, viewMm, planScale);
+  const s = wsSheetLoad();
+  // source page size, for the 1:1 full-sheet reproduction
+  let srcMm = null;
   try {
-    const clone = svg.cloneNode(true);
-    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-    clone.setAttribute('width', canvas.width);
-    clone.setAttribute('height', canvas.height);
-    svgStr = new XMLSerializer().serializeToString(clone);
-  } catch (e) { svgStr = ''; }
-  const w = window.open('', '_blank');
-  if (!w) { alert('Allow pop-ups to export a PDF.'); return; }
-  w.document.write(
-    '<!doctype html><title>' + name + ' — page ' + page + '</title>' +
-    '<style>@page{size:auto;margin:8mm;}body{margin:0;font-family:-apple-system,Segoe UI,sans-serif;}' +
-    '.hd{font-size:11px;color:#444;padding:0 0 6px;display:flex;justify-content:space-between;}' +
-    '.wrap{position:relative;width:100%;}img,svg{width:100%;display:block;}' +
-    'svg{position:absolute;inset:0;}</style>' +
-    '<div class="hd"><b>' + name + '</b><span>Page ' + page + ' · ' + new Date().toLocaleDateString() + '</span></div>' +
-    '<div class="wrap"><img src="' + canvas.toDataURL('image/png') + '">' + svgStr + '</div>');
-  w.document.close();
-  w.focus();
-  setTimeout(() => { w.print(); }, 400);
+    const pg = await WS.pdfDoc.getPage(WS.currentPage || 1);
+    const vp1 = pg.getViewport({ scale: 1 });
+    srcMm = { w: wsPtToMm(vp1.width), h: wsPtToMm(vp1.height) };
+  } catch (e) { srcMm = { w: WS_SHEET.w, h: WS_SHEET.h }; }
+  const srcMatch = wsMatchPaper(srcMm);
+  WS_SHEET_DLG = { mpp: mppOrEst, hasScale: !!mpp, vis, viewMm, extentM, planScale, pick, srcMm,
+                   srcFormat: srcMatch ? srcMatch.name : null,
+                   targets: wsFullSheetTargets(srcMm),
+                   centre: { x: vis.x1 + vis.w / 2, y: vis.y1 + vis.h / 2 },
+                   canvasSize: { w: canvas.width, h: canvas.height },
+                   settings: s };
+  s.scale = (s.scale && WS_STD_SCALES.indexOf(s.scale) >= 0) ? s.scale : pick.scale;
+  wsSheetDlgRender();
+  document.getElementById('ws-sheet-modal').style.display = 'flex';
+}
+function wsSheetDlgClose() {
+  const m = document.getElementById('ws-sheet-modal');
+  if (m) m.style.display = 'none';
+}
+function wsSheetDlgRender() {
+  const d = WS_SHEET_DLG; if (!d) return;
+  const s = d.settings;
+  const esc = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const body = document.getElementById('ws-sheet-body'); if (!body) return;
+  const opts = WS_STD_SCALES.map(v =>
+    `<option value="${v}"${v === s.scale ? ' selected' : ''}>1:${v}${v === d.pick.scale ? ' (recommended)' : ''}</option>`).join('');
+  const fits = wsScaleFits(d.extentM, d.viewMm, s.scale);
+  const covers = wsCropExtentM(s.scale, d.viewMm);
+  const why = d.pick.source === 'plan' ? 'the plan’s own scale — the visible extent fits'
+            : d.pick.source === 'fit' ? 'the most detailed standard scale the visible extent fits at'
+            : 'the coarsest standard scale — the visible extent does not fit on A3, so the sheet crops';
+  const fld = (id, label, val, ph) =>
+    `<label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);">${esc(label)}
+      <input id="${id}" value="${esc(val)}" placeholder="${esc(ph || '')}" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;"></label>`;
+  const crop = s.mode === 'crop';
+  const fl = wsFullSheetLayout(d.srcMm, s.target || null);
+  const tOpts = d.targets.map(t =>
+    `<option value="${esc(t.target || '')}"${(s.target || '') === (t.target || '') ? ' selected' : ''}>${esc(t.label)}</option>`).join('');
+  const modeBtn = (v, lbl, sub) =>
+    `<button onclick="wsSheetDlgSet('mode','${v}')" style="flex:1;text-align:left;padding:8px 10px;border-radius:7px;cursor:pointer;border:1px solid ${s.mode === v ? '#00b3b3' : '#3a4747'};background:${s.mode === v ? 'rgba(0,128,128,0.28)' : 'none'};color:#fff;">` +
+    `<div style="font-size:11.5px;font-weight:600;">${esc(lbl)}</div>` +
+    `<div style="font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;">${esc(sub)}</div></button>`;
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:11px;">
+      ${modeBtn('full', 'Full sheet (as base plan)', 'Reproduces the architect’s page 1:1, edge to edge')}
+      ${modeBtn('crop', 'Viewport crop', 'Current extent at a true stated scale')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;">
+      ${fld('shd-title', 'Drawing title', s.title)}
+      ${fld('shd-sheet', 'Sheet number', s.sheet, '1 of 1')}
+      ${fld('shd-no', 'Drawing number', s.drawingNo, 'WMP-001')}
+      ${fld('shd-rev', 'Revision', s.rev, 'A')}
+      ${fld('shd-pname', 'Project name', s.projectName)}
+      ${fld('shd-paddr', 'Project address', s.projectAddress)}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:9px;align-items:end;">
+      ${crop
+        ? `<label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);">Scale (true on the printed sheet)
+            <select id="shd-scale" onchange="wsSheetDlgSet('scale', parseInt(this.value,10))" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;">${opts}</select></label>`
+        : `<label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);">Output paper
+            <select id="shd-target" onchange="wsSheetDlgSet('target', this.value || null)" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;">${tOpts}</select></label>`}
+      <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);">North arrow (° clockwise from up)
+        <input id="shd-north" type="number" value="${esc(s.north)}" step="5" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;"></label>
+    </div>
+    ${crop
+      ? `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:${fits ? 'rgba(22,74,44,0.5)' : 'rgba(90,50,20,0.5)'};border:1px solid ${fits ? '#3DD68C' : '#FFB74D'};font-size:11px;line-height:1.5;color:rgba(255,255,255,0.85);">
+          <b>${s.showScale === false ? 'NOT TO SCALE' : '1:' + s.scale + '@A3'}</b> — ${fits ? 'the visible extent fits.' : 'tighter than the visible extent: the sheet will CROP to the centre.'}<br>
+          Sheet covers <b>${covers.w.toFixed(1)} × ${covers.h.toFixed(1)} m</b>; visible extent is ${d.extentM.w.toFixed(1)} × ${d.extentM.h.toFixed(1)} m.
+          Recommended 1:${d.pick.scale} — ${why}.<br>
+          ${d.hasScale ? '<span style="color:rgba(255,255,255,0.5);">The drawing is never fitted to the page; 1 mm on paper is exactly ' + s.scale + ' mm on site.</span>'
+                       : '<span style="color:#FFB74D;">The plan scale is not set, so a true scale cannot be guaranteed — tick NOT TO SCALE or set Scale and Paper first.</span>'}
+        </div>
+        <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:rgba(255,255,255,0.7);margin-top:8px;">
+          <input type="checkbox" id="shd-showscale" ${s.showScale !== false ? 'checked' : ''} onchange="wsSheetDlgSet('showScale', this.checked)"> State the scale on the sheet (unticked prints “NOT TO SCALE”)</label>`
+      : `<div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(22,74,44,0.5);border:1px solid #3DD68C;font-size:11px;line-height:1.5;color:rgba(255,255,255,0.85);">
+          Base plan page is <b>${d.srcFormat || 'a non-standard size'}</b> (${d.srcMm.w.toFixed(0)} × ${d.srcMm.h.toFixed(0)} mm).
+          Output <b>${fl.format}</b> ${fl.page.w.toFixed(0)} × ${fl.page.h.toFixed(0)} mm${fl.reduced ? ` at ${(fl.factor * 100).toFixed(0)}%` : ' at 1:1'}.<br>
+          ${fl.reduced ? '<span style="color:#FFB74D;">' + esc(fl.note) + '</span>'
+                       : '<span style="color:rgba(255,255,255,0.5);">The architect’s page is reproduced exactly, edge to edge, with no added margin.</span>'}<br>
+          <span style="color:rgba(255,255,255,0.5);">Scale line reads “Refer base plan” — we never restate a scale we did not set.</span>
+        </div>`}
+    <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);margin-top:9px;">Drawing notes
+      <textarea id="shd-notes" rows="3" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:6px 7px;font-size:11.5px;border-radius:5px;resize:vertical;">${esc(s.notes)}</textarea></label>
+    <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:rgba(255,255,255,0.7);margin-top:9px;">
+      <input type="checkbox" id="shd-legend"${s.legend !== false ? ' checked' : ''}> Show the legend card (top-right)</label>
+    <label style="display:flex;align-items:center;gap:7px;font-size:11px;color:rgba(255,255,255,0.7);margin-top:5px;">
+      <input type="checkbox" id="shd-credit"${s.credit ? ' checked' : ''}> Include “${esc(WS_BRAND.credit)}” in the bottom-edge fine print</label>
+    <div style="margin-top:8px;font-size:10.5px;color:rgba(255,255,255,0.4);">Layers exported: ${wsSheetLayerSummary()}</div>`;
+  const sel = document.getElementById('shd-scale'); if (sel) sel.value = String(s.scale);
+}
+function wsSheetLayerSummary() {
+  const names = { binroom: 'Bin room', waste: 'Waste layout', swept: 'Swept path', markups: 'Markups', dims: 'Dimensions' };
+  const on = Object.keys(names).filter(k => WS.layers[k] !== false).map(k => names[k]);
+  const labels = document.getElementById('ws-toggle-labels');
+  if (labels && labels.classList.contains('on')) on.push('Labels');
+  return on.length ? on.join(' · ') : 'plan underlay only';
+}
+function wsSheetDlgSet(k, v) {
+  if (!WS_SHEET_DLG) return;
+  WS_SHEET_DLG.settings[k] = v;
+  wsSheetDlgRender();
+}
+// ── SHEET BUILDER ────────────────────────────────────────────────────────────
+// Re-render the plan page at export DPI, crop to the scaled window, then lay the
+// vector annotation overlay on top at exactly the same rect. Nothing is fitted:
+// the crop window is derived from the scale, not the other way round.
+async function wsSheetRenderUnderlay(crop, targetPx) {
+  const page = await WS.pdfDoc.getPage(WS.currentPage || 1);
+  const live = document.getElementById('ws-pdf-canvas');
+  // the live canvas is rendered at pdf.js scale 2; match its coordinate space
+  const k = Math.max(1, Math.min(8, targetPx / Math.max(1, crop.w)));
+  const vp = page.getViewport({ scale: 2 * k });
+  const full = document.createElement('canvas');
+  full.width = Math.round(vp.width); full.height = Math.round(vp.height);
+  await page.render({ canvasContext: full.getContext('2d'), viewport: vp }).promise;
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(crop.w * k));
+  out.height = Math.max(1, Math.round(crop.h * k));
+  const cx = out.getContext('2d');
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, out.width, out.height);
+  cx.drawImage(full, Math.round(crop.x * k), Math.round(crop.y * k),
+               out.width, out.height, 0, 0, out.width, out.height);
+  void live;
+  return out;
+}
+// A clone of the live overlay, cropped by viewBox, with anything that is
+// editing chrome rather than drawing content removed.
+function wsSheetOverlayClone(crop) {
+  const svg = document.getElementById('ws-overlay-svg');
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('viewBox', `${crop.x} ${crop.y} ${crop.w} ${crop.h}`);
+  clone.setAttribute('width', crop.w);
+  clone.setAttribute('height', crop.h);
+  clone.classList.remove('ws-hide-labels');
+  if (document.getElementById('ws-toggle-labels') &&
+      !document.getElementById('ws-toggle-labels').classList.contains('on'))
+    clone.classList.add('ws-hide-labels');
+  // hidden layers are dropped outright rather than relying on inherited styles
+  ['dxf', 'binroom', 'waste', 'markups', 'swept', 'dims'].forEach(n => {
+    const g = clone.querySelector('#ws-layer-' + n);
+    if (!g) return;
+    const off = (n === 'dxf') ? (WS_DXF && WS_DXF.on === false) : (WS.layers[n] === false);
+    if (off && g.parentNode) g.parentNode.removeChild(g);
+  });
+  return clone;
+}
+function wsSheetExportSafe() {
+  wsSheetExport().catch(e => {
+    console.error(e);
+    const b = document.getElementById('ws-sheet-go');
+    if (b) { b.disabled = false; b.textContent = '⬇ Export sheet'; }
+    alert('Sheet export failed: ' + (e && e.message ? e.message : e));
+  });
+}
+async function wsSheetExport() {
+  const d = WS_SHEET_DLG; if (!d) return;
+  const s = wsSheetDlgCollect(); if (!s) return;
+  const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+  if (!jsPDFCtor) { alert('The PDF library did not load — check the connection and reload, then try again.'); return; }
+  const btn = document.getElementById('ws-sheet-go');
+  if (btn) { btn.disabled = true; btn.textContent = 'Building sheet…'; }
+  // Editing chrome must not print: drop the selection, render, restore after.
+  const selWas = WS_LAYOUT.sel, kindWas = WS_LAYOUT.selKind;
+  WS_LAYOUT.sel = null; WS_LAYOUT.selKind = 'bin';
+  wsRenderLayoutLayer();
+  try {
+    // ── mode decides the page and what part of the plan lands on it ──
+    let page, viewMm, crop;
+    if (s.mode === 'crop') {
+      page = { w: WS_SHEET.w, h: WS_SHEET.h };
+      viewMm = d.viewMm;
+      crop = wsSheetCropPx(s.scale, viewMm, d.mpp, d.centre, d.canvasSize);
+    } else {
+      // Full sheet: the architect's page, 1:1, edge to edge, zero added margin.
+      const fl = wsFullSheetLayout(d.srcMm, s.target || null);
+      page = fl.page;
+      viewMm = fl.plan;                       // the whole page when not reduced
+      crop = { x: 0, y: 0, w: d.canvasSize.w, h: d.canvasSize.h };   // the entire page
+      s._fullNote = fl.note;
+    }
+    const doc = new jsPDFCtor({ orientation: page.w >= page.h ? 'landscape' : 'portrait',
+                                unit: 'mm', format: [page.w, page.h], compress: true });
+    doc.setFont('helvetica', 'normal');
+    // plan underlay — raster at export DPI (the base plan IS a raster page)
+    const px = await wsSheetRenderUnderlay(crop, 4200);
+    doc.addImage(px.toDataURL('image/jpeg', 0.92), 'JPEG', viewMm.x, viewMm.y, viewMm.w, viewMm.h, undefined, 'FAST');
+    // annotation overlay — vector where svg2pdf can manage it
+    const clone = wsSheetOverlayClone(crop);
+    let vector = false;
+    if (typeof doc.svg === 'function') {
+      try {
+        await doc.svg(clone, { x: viewMm.x, y: viewMm.y, width: viewMm.w, height: viewMm.h });
+        vector = true;
+      } catch (e) { console.warn('svg2pdf failed, falling back to raster overlay', e); }
+    }
+    if (!vector) await wsSheetRasterOverlay(doc, clone, crop, viewMm);
+    // A crop is a window onto a bigger drawing, so it gets a border. A full sheet
+    // reproduces the architect's page, which has its own — adding one would print
+    // a second frame inside theirs.
+    if (s.mode === 'crop') { doc.setDrawColor(30); doc.setLineWidth(0.3); doc.rect(viewMm.x, viewMm.y, viewMm.w, viewMm.h); }
+    // floating cards over a full-bleed plan
+    const legendItems = s.legend === false ? [] : wsLegendItems(WS.layers,
+      wsSheetContent(wsLayoutSlot(), (typeof wsSweptSlot === 'function') ? wsSweptSlot() : null));
+    const cards = wsSheetCardRects(viewMm, { legendRows: legendItems.length, legend: s.legend !== false });
+    const clash = wsSheetCardCollisions(cards);
+    if (clash.length) console.warn('sheet cards overlap', clash);
+    wsSheetIdCard(doc, cards.id, s);
+    if (cards.legend) wsSheetLegend(doc, cards.legend, legendItems);
+    wsSheetBottomText(doc, s, page);
+    const fname = [s.projectName || 'wasteplanner', s.drawingNo || s.title, 'rev' + (s.rev || 'A')]
+      .join('-').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').toLowerCase() + '.pdf';
+    doc.save(fname);
+    const blob = doc.output('blob');
+    if (currentProjectId && typeof docStore === 'function')
+      blob.arrayBuffer().then(buf => docStore(currentProjectId, buf, fname, 'Export')).catch(() => {});
+    wsSheetDlgClose();
+    wsLayoutStatus('Sheet exported — ' + (s.mode === 'crop'
+      ? 'viewport crop at ' + wsSheetScaleLine(s)
+      : 'full sheet ' + (s.target || d.srcFormat || 'source size') + ' (as base plan)') +
+      (vector ? '' : ' · overlay rasterised, vector conversion unavailable') + '.');
+  } catch (e) {
+    console.error(e);
+    alert('Sheet export failed: ' + (e && e.message ? e.message : e));
+  } finally {
+    WS_LAYOUT.sel = selWas; WS_LAYOUT.selKind = kindWas;
+    wsRenderLayoutLayer();
+    if (btn) { btn.disabled = false; btn.textContent = '⬇ Export sheet'; }
+  }
+}
+// Fallback when svg2pdf is unavailable or chokes: high-DPI raster of the overlay.
+// Geometry stays exact; only the crispness of the linework is lost.
+function wsSheetRasterOverlay(doc, clone, crop, viewMm) {
+  return new Promise(resolve => {
+    try {
+      const str = new XMLSerializer().serializeToString(clone);
+      const img = new Image();
+      const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str);
+      img.onload = () => {
+        const k = Math.max(1, Math.min(6, 4200 / Math.max(1, crop.w)));
+        const c = document.createElement('canvas');
+        c.width = Math.round(crop.w * k); c.height = Math.round(crop.h * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        doc.addImage(c.toDataURL('image/png'), 'PNG', viewMm.x, viewMm.y, viewMm.w, viewMm.h, undefined, 'FAST');
+        resolve();
+      };
+      img.onerror = () => resolve();
+      img.src = url;
+    } catch (e) { resolve(); }
+  });
+}
+function wsSheetHex(doc, hex) {
+  const h = String(hex || '#000').replace('#', '');
+  return [parseInt(h.slice(0, 2), 16) || 0, parseInt(h.slice(2, 4), 16) || 0, parseInt(h.slice(4, 6), 16) || 0];
+}
+// Legend box, top-right inside the plan viewport — only the visible styles.
+// Legend — floating card, top-right of the plan. Only visible-layer styles.
+function wsSheetLegend(doc, rect, items) {
+  if (!rect || !items || !items.length) return;
+  const C = WS_SHEET_CARDS, pad = C.cardPad;
+  doc.setFillColor(255, 255, 255); doc.setDrawColor(60); doc.setLineWidth(0.25);
+  doc.rect(rect.x, rect.y, rect.w, rect.h, 'FD');
+  doc.setFontSize(6.4); doc.setTextColor(20); doc.setFont('helvetica', 'bold');
+  doc.text('LEGEND', rect.x + pad, rect.y + pad + 2.6);
+  doc.setFont('helvetica', 'normal');
+  items.forEach((it, i) => {
+    const ry = rect.y + pad + C.legendHdr + i * C.rowH + C.rowH / 2 - 0.6;
+    const c = wsSheetHex(doc, it.col), sx = rect.x + pad, sw = 7;
+    doc.setDrawColor(c[0], c[1], c[2]); doc.setFillColor(c[0], c[1], c[2]);
+    if (it.style === 'swatch') { doc.setLineWidth(0.2); doc.rect(sx, ry - 1.3, sw, 2.6, 'FD'); }
+    else if (it.style === 'hatch') {
+      doc.setLineWidth(0.2); doc.rect(sx, ry - 1.3, sw, 2.6);
+      for (let k = 0; k < 4; k++) doc.line(sx + k * 1.9, ry + 1.3, sx + k * 1.9 + 1.3, ry - 1.3);
+    } else if (it.style === 'dash' || it.style === 'dim') {
+      doc.setLineWidth(0.35);
+      for (let k = 0; k < 3; k++) doc.line(sx + k * 2.6, ry, sx + k * 2.6 + 1.6, ry);
+    } else if (it.style === 'arrow') {
+      doc.setLineWidth(0.45); doc.line(sx, ry, sx + sw - 1.6, ry);
+      doc.triangle(sx + sw, ry, sx + sw - 1.8, ry - 1, sx + sw - 1.8, ry + 1, 'F');
+    } else if (it.style === 'leader') {
+      doc.setLineWidth(0.3); doc.line(sx, ry + 1.2, sx + 3, ry - 1.2); doc.line(sx + 3, ry - 1.2, sx + sw, ry - 1.2);
+    } else if (it.style === 'poly') { doc.setLineWidth(0.3); doc.rect(sx, ry - 1.3, sw, 2.6); }
+    else { doc.setLineWidth(0.5); doc.line(sx, ry, sx + sw, ry); }
+    doc.setTextColor(25); doc.setFontSize(5.9);
+    doc.text(String(it.label), sx + sw + 2.2, ry + 0.85);
+  });
+}
+// North arrow, drawn inside the issue card.
+function wsSheetNorth(doc, cx, cy, r, deg) {
+  const a = ((deg || 0) - 90) * Math.PI / 180;
+  doc.setDrawColor(60); doc.setLineWidth(0.25);
+  doc.setFillColor(255, 255, 255); doc.circle(cx, cy, r, 'FD');
+  const tip = { x: cx + Math.cos(a) * r * 0.92, y: cy + Math.sin(a) * r * 0.92 };
+  const bl = { x: cx + Math.cos(a + 2.5) * r * 0.6, y: cy + Math.sin(a + 2.5) * r * 0.6 };
+  const br = { x: cx + Math.cos(a - 2.5) * r * 0.6, y: cy + Math.sin(a - 2.5) * r * 0.6 };
+  doc.setFillColor(20, 20, 20); doc.triangle(tip.x, tip.y, bl.x, bl.y, cx, cy, 'F');
+  doc.setFillColor(165, 165, 165); doc.triangle(tip.x, tip.y, br.x, br.y, cx, cy, 'F');
+  doc.setFontSize(5.4); doc.setTextColor(20); doc.setFont('helvetica', 'bold');
+  doc.text('N', cx - 0.8, cy - r - 0.9);
+  doc.setFont('helvetica', 'normal');
+}
+// TOP-LEFT identity card: logo, company, project, drawing title.
+// The scale line, per mode. Full-sheet defers to the base plan; viewport-crop
+// states a true scale, or says NOT TO SCALE — never nothing, never a guess.
+function wsSheetScaleLine(s) {
+  if (s.mode === 'crop') {
+    if (s.showScale === false) return 'NOT TO SCALE';
+    return '1:' + s.scale + '@A3';
+  }
+  return 'Refer base plan';
+}
+// ONE consolidated title card, top-left.
+function wsSheetIdCard(doc, rect, s) {
+  const pad = WS_SHEET_CARDS.cardPad;
+  doc.setFillColor(255, 255, 255); doc.setDrawColor(60); doc.setLineWidth(0.3);
+  doc.rect(rect.x, rect.y, rect.w, rect.h, 'FD');
+  const lx = rect.x + pad, rw = rect.w - pad * 2;
+  const nr = 6.2;                                  // north arrow radius
+  const textW = rw - nr * 2 - 3;                   // keep text clear of the arrow
+  let y = rect.y + pad;
+  const lh = 6.6, lw = lh * (WS_BRAND.logoW / Math.max(1, WS_BRAND.logoH));
+  let tx = lx;
+  if (WS_BRAND.logoDataUrl) {
+    try { doc.addImage(WS_BRAND.logoDataUrl, 'PNG', lx, y, lw, lh); tx = lx + lw + 2.5; }
+    catch (e) { tx = lx; }
+  }
+  if (tx === lx) {                                 // logo unavailable
+    doc.setFontSize(8.4); doc.setFont('helvetica', 'bold'); doc.setTextColor(15);
+    doc.text(WS_BRAND.company, tx, y + 4.6);
+  } else {
+    doc.setFontSize(5.4); doc.setFont('helvetica', 'normal'); doc.setTextColor(95);
+    doc.text(WS_BRAND.web, tx, y + 4.6);
+  }
+  // north arrow tucked into the card's top-right corner
+  wsSheetNorth(doc, rect.x + rect.w - pad - nr, rect.y + pad + nr, nr, s.north);
+  y += lh + 2;
+  doc.setDrawColor(195); doc.setLineWidth(0.2); doc.line(lx, y, lx + rw, y);
+  y += 0.6;
+  doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(15);
+  doc.text(doc.splitTextToSize(s.projectName || '—', textW)[0], lx, y + 3.4);
+  y += 5;
+  if (s.projectAddress) {
+    doc.setFontSize(5.9); doc.setFont('helvetica', 'normal'); doc.setTextColor(75);
+    doc.splitTextToSize(s.projectAddress, textW).slice(0, 2)
+      .forEach((t, i) => doc.text(t, lx, y + 2.3 + i * 2.8));
+    y += 5.4;
+  }
+  doc.setFontSize(6.8); doc.setFont('helvetica', 'bold'); doc.setTextColor(35);
+  doc.text(doc.splitTextToSize(s.title || '—', rw)[0], lx, y + 2.9);
+  y += 4.6;
+  doc.setDrawColor(195); doc.setLineWidth(0.2); doc.line(lx, y, lx + rw, y);
+  // compact issue row: date / no. / rev / sheet / scale, evenly divided
+  const cells = [
+    ['DATE', new Date().toLocaleDateString('en-AU')],
+    ['DWG No.', s.drawingNo || '—'],
+    ['REV', s.rev || '—'],
+    ['SHEET', s.sheet || '—'],
+    ['SCALE', wsSheetScaleLine(s)],
+  ];
+  // the scale cell carries the longest string, so give it the slack
+  const unit = rw / 6, xs = [0, unit, unit * 2, unit * 2.8, unit * 3.7].map(v => lx + v);
+  cells.forEach((c, i) => {
+    doc.setFontSize(4.9); doc.setTextColor(125); doc.setFont('helvetica', 'normal');
+    doc.text(c[0], xs[i], y + 3);
+    doc.setFontSize(i === 4 ? 6.6 : 6.2); doc.setTextColor(15); doc.setFont('helvetica', 'bold');
+    doc.text(String(c[1]), xs[i], y + 6.6);
+  });
+  doc.setFont('helvetica', 'normal');
+}
+// Notes in small caps along the bottom edge; credit fine print at bottom-left.
+function wsSheetBottomText(doc, s, page) {
+  const S = page || WS_SHEET, M = WS_SHEET.margin, y = S.h - 2.6;
+  doc.setFont('helvetica', 'normal');
+  if (s.credit) {
+    doc.setFontSize(4.6); doc.setTextColor(140);
+    doc.text(WS_BRAND.credit, M, y);
+  }
+  const notes = String(s.notes || '').split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+  // a reduced full sheet must say so on the drawing, not only in the dialog
+  if (s._fullNote) notes.unshift(s._fullNote);
+  if (!notes.length) return;
+  doc.setFontSize(5.6); doc.setTextColor(45);
+  // "small caps" in a core PDF font: upper-cased and letter-spaced
+  const line = notes.join('   ·   ').toUpperCase();
+  const maxW = S.w - M * 2 - 60;
+  const fitted = doc.splitTextToSize(line, maxW)[0];
+  doc.text(fitted, S.w - M, y, { align: 'right', charSpace: 0.22 });
+}
+function wsSheetDlgCollect() {
+  const d = WS_SHEET_DLG; if (!d) return null;
+  const s = d.settings;
+  // Read every field defensively. Controls differ per mode, and a single missing
+  // element used to throw here and kill the export with no visible error at all.
+  const g = id => document.getElementById(id);
+  const str = (id, fallback) => { const el = g(id); return el ? String(el.value).trim() : (fallback || ''); };
+  const chk = (id, fallback) => { const el = g(id); return el ? !!el.checked : !!fallback; };
+  s.title = str('shd-title', s.title);
+  s.sheet = str('shd-sheet', s.sheet);
+  s.drawingNo = str('shd-no', s.drawingNo);
+  s.rev = str('shd-rev', s.rev);
+  s.projectName = str('shd-pname', s.projectName);
+  s.projectAddress = str('shd-paddr', s.projectAddress);
+  const notesEl = g('shd-notes');
+  if (notesEl) s.notes = notesEl.value;
+  const northEl = g('shd-north');
+  if (northEl) s.north = parseFloat(northEl.value) || 0;
+  s.credit = chk('shd-credit', s.credit);
+  s.legend = chk('shd-legend', s.legend !== false);
+  // Mode-specific controls are only in the DOM for their own mode, so read them
+  // defensively rather than assuming the whole form is present.
+  const scaleEl = g('shd-scale');
+  if (scaleEl) s.scale = parseInt(scaleEl.value, 10) || d.pick.scale;
+  else if (!s.scale) s.scale = d.pick.scale;
+  const targetEl = g('shd-target');
+  if (targetEl) s.target = targetEl.value || null;
+  const showEl = g('shd-showscale');
+  if (showEl) s.showScale = !!showEl.checked;
+  // A crop cannot claim a true scale when the plan scale was never set.
+  if (s.mode === 'crop' && !d.hasScale) s.showScale = false;
+  wsSheetSave(s);
+  return s;
 }
 function wsExportDXF() {
   const slot = (typeof wsLayoutSlot === 'function') ? wsLayoutSlot() : null;

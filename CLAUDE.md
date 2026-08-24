@@ -3,6 +3,30 @@
 Waste management SaaS: Supabase backend, canvas-based bin-room layout and
 Austroads swept-path tooling.
 
+## Known deferrals / pre-launch gates
+
+Deliberate omissions, not oversights. Each one blocks a specific milestone —
+check this list before widening who can use the app.
+
+| # | Gate | Blocks | Why it matters |
+| --- | --- | --- | --- |
+| 1 | **Org-level title block branding.** `WS_BRAND` in `index.html` is a hard-coded constant for Pro Waste Consultants. | Any **external organisation** exporting a sheet. | Every firm's drawings would go out branded Pro Waste Consultants. Needs a row per org, editable in-app. The gate is restated at the constant itself. |
+| 2 | **Private repository.** | **Launch.** | The repo is public and `index.html` carries the Supabase URL and anon key. The anon key is designed to be public and RLS is the real boundary, but the repo should be private before launch regardless. |
+| 3 | **Supabase backup / PITR check.** | **Real customer data.** | Confirm point-in-time recovery is enabled and a restore has actually been rehearsed — not just that backups appear in the dashboard. |
+| 4 | **`pdf_rev` column** for cross-device plan freshness. | Multi-device use of one project. | Nothing currently tells a second device that the stored plan PDF changed, so it can serve a stale page under a current layout. |
+| 5 | **Swept-path title block panel** (vehicle diagram + spec table). | Issuing swept-path sheets as standalone drawings. | Swept linework already exports on a layout sheet; it just has no dedicated panel stating the design vehicle and its dimensions. |
+| 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
+| 7 | **`equipment.streams` column.** Stream association per record. | B2 (stream badges, equipment-aware reconciliation). | `EQUIP_LIB` in the calculator already reads `r.streams` and falls back to inferring from the label; the column does not exist yet, so the fallback is always what runs. Needs a migration plus the admin editor field. |
+
+**Bin types are a closed list by design.** There is no custom-bin path and none
+is planned: a bin schedule is only defensible if every container maps to a real
+collectable product. Custom *equipment* is gate 6; custom *bins* are a no.
+
+Unknown branding fields (`abn`, `address`, `phone`, `email`) are intentionally
+**blank**, and the title block omits blank lines rather than printing them. An ABN
+and street address are legal identifiers on an issued drawing — they get entered
+by someone who knows them, never guessed.
+
 ## Architecture
 
 **Single file.** `index.html` is the entire application — markup, styles, and all
@@ -83,6 +107,8 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/refine-pos.test.js` | `wsRefinePos` curvature, length, gear-flag invariants |
 | `tests/layout-rooms.test.js` | Room containment tagging and schedule reconciliation |
 | `tests/room-edit.test.js` | Room vertex/drag operations, chip placement and visibility |
+| `tests/sheet-export.test.js` | Sheet scale selection, card layout, legend content |
+| `tests/layout-polish.test.js` | Shift-snap maths, room dimensions, door geometry |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -158,6 +184,39 @@ Labels layer. Room line style is *not* exported to DXF (the entity writer emits
 layer and colour only, no linetype group code), so screen styling is free to
 change — a test guards that assumption.
 
+## Sheet export
+
+`wsExportPDF()` opens the export dialog; `wsSheetExport()` builds an A3 landscape
+sheet — plan viewport above a title block strip.
+
+**The stated scale must be physically true.** "1:200@A3" means 1 mm of paper is
+exactly 200 mm on site. That only holds because the crop window is derived *from*
+the scale (`wsSheetCropPx`), never the drawing fitted to the page. Do not add a
+fit-to-page path; if the content does not fit, the sheet crops and the dialog
+says so before export.
+
+- `window.print()` is **not** viable for this. Paper size, margins and Chrome's
+  default "fit to printable area" belong to the browser, which silently rescales.
+  jsPDF places content at exact millimetres; svg2pdf converts the overlay to
+  vector. Both load from CDN and are optional at run time — export reports a
+  clear error rather than producing a wrong sheet.
+- The plan underlay is a rendered PDF page, so it exports as high-DPI raster
+  (re-rendered through pdf.js at export DPI, not upscaled from the screen canvas).
+  Annotation is vector, with a raster fallback if svg2pdf chokes — the fallback is
+  reported in the status line, never silent.
+- Export renders **currently visible layers**. Hidden layer groups are removed
+  from the overlay clone outright rather than relied upon to stay styled off.
+- Editing chrome must never print: the selection is cleared and re-rendered before
+  export and restored in a `finally`.
+- `wsLegendItems` lists only styles that are both on a visible layer and actually
+  present on the page — an unplaced stream gets no swatch.
+- Default scale: the plan's own scale when the visible extent fits at it,
+  otherwise the most detailed standard that does. 1:50 is not offered, so a plan
+  set to it falls through to 1:100 — stating a coarser scale is always safe,
+  stating a finer one never is.
+
+The DXF export is a separate path and is unaffected by any of this.
+
 ## Markups
 
 Markup tools live in a floating collapsible card (`#ws-markup-panel`) below the
@@ -205,3 +264,25 @@ The test corpora mirror this split: `drivenPath()` in `tests/helpers.js` generat
 hand-driven input and carries the full contract (length, endpoint, continuity);
 Reeds-Shepp paths are kept as a deliberately untrackable reference that must still
 satisfy the safety invariants (bounded curvature, preserved gears, termination).
+
+## Layout drawing conventions
+
+- **Callouts have their own scale floor.** `wsCalloutF()` is `max(0.85, wsLblF())`
+  — a note is unreadable long before a bin label is, and `wsLblF()` bottoms out at
+  0.5. Both the renderer and the callout hit-test must use it, or the box and its
+  clickable area disagree. The PDF export inherits it for free (same SVG).
+- **Bin outlines are 1 px.** The shaded-outline colour logic (`wsShade`) is what
+  separates adjacent same-stream bins, not stroke weight.
+- **Zones vs aisles.** Hard waste zones (`wsIsHardWasteZone`) use the keep-clear
+  hatch convention in **purple**; access aisles stay red. They must never share a
+  colour — one is a storage allowance, the other is circulation that must stay
+  empty. DXF puts them on separate layers (`A-WASTE-ZONE` / `A-WASTE-AISLES`).
+- **Dimensions are rooms only.** `wsRoomDimEdges` letters each room edge in metres
+  to one decimal, offset outside the polygon, angle normalised into (-90°, 90°] so
+  nothing reads upside-down. Bins and equipment are dimensioned by the schedule.
+- **Door symbols come from `wsDoorGeometry`**, in metres, and are shared by the
+  screen renderer and the DXF writer so the linework can never drift. Arcs are
+  chorded for DXF rather than emitting an LTYPE.
+- **Handles are sized in screen pixels.** Anything grabbable — room corners, edge
+  midpoints, aisle ends — converts through `wsCanvasPerScreen()`. A fixed
+  canvas-pixel radius becomes a sub-pixel target at 53% zoom.

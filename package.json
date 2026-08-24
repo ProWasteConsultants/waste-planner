@@ -11,7 +11,9 @@
     "test:refine": "node --test tests/refine-pos.test.js",
     "test:layout": "node --test tests/layout-rooms.test.js",
     "test:roomedit": "node --test tests/room-edit.test.js",
-    "test:syntax": "node --test tests/syntax.test.js"
+    "test:sheet": "node --test tests/sheet-export.test.js",
+    "test:syntax": "node --test tests/syntax.test.js",
+    "test:polish": "node --test tests/layout-polish.test.js"
   },
   "engines": {
     "node": ">=20"
