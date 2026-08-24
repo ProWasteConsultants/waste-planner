@@ -13644,6 +13644,124 @@ function wsRoomEquipInstances(roomId, equip, library) {
 }
 // The room chip/pill view: reconciled REQUIRED counts against placed bins.
 // Counts only — no litres reach the layout panel.
+// The room reconciliation as the rest of the app should ask for it: reads the
+// live slot and library so pill, snapshot and WMP generator cannot drift apart.
+// ── PROJECT SNAPSHOT ─────────────────────────────────────────────────────────
+// The WMP generator must see the SAME numbers the plan shows, or the document
+// and the drawing disagree. This is that hand-off: reconciled counts, receiver
+// allocations and paired outputs, per (component, room) — the workbook’s
+// organising unit — with the raw requirement kept alongside so the document can
+// show what the plant bought.
+// ── WMP TEXT OBLIGATIONS ─────────────────────────────────────────────────────
+// Paragraphs the document MUST carry when certain plant is present, generated
+// from the reconciliation record so the words and the numbers come from one
+// place. Returns [] when nothing applies — in particular, a room with no
+// compaction gets no compaction language at all, rather than a paragraph
+// hedged with "if applicable".
+function wsWmpEquipmentText(roomRec, library) {
+  const out = [];
+  if (!roomRec) return out;
+  const lib = library || {};
+  const storage = roomRec.storage || [];
+  const outputs = roomRec.outputs || [];
+
+  // A baler is a convert pairing: its bales are stored and collected separately.
+  const balers = storage.filter(r => {
+    const rec = lib[r.equipmentId] || {};
+    return rec.pairingType === 'convert';
+  });
+  if (balers.length) {
+    const bale = outputs[0] || null;
+    const maxBales = bale && bale.qty != null ? bale.qty : null;
+    const where = roomRec.roomName || 'the waste room';
+    out.push(
+      (balers.length === 1 ? 'A ' + (balers[0].label || 'baler') : balers.length + ' balers') +
+      ' is provided within ' + where + '. ' +
+      (maxBales != null
+        ? 'A maximum of ' + maxBales + ' bale' + (maxBales === 1 ? '' : 's') + ' will be stored at any time'
+        : 'Bales will be stored') +
+      ' in the bale storage area shown on the layout plan, and collected by a dedicated recycler — ' +
+      'baled material is not presented with the general waste or commingled recycling services.');
+  }
+
+  // Receivers are fixed allocations, not part of the collection schedule.
+  const receivers = roomRec.receivers || [];
+  if (receivers.length) {
+    const names = receivers.map(r => (r.qty > 1 ? r.qty + ' × ' : '') + (r.label || 'receiver'));
+    out.push(
+      'The ' + names.join(' and ') + ' position' + (receivers.length === 1 && receivers[0].qty === 1 ? ' is' : 's are') +
+      ' permanently allocated beneath the chute and ' +
+      'excluded from the collection schedule — the position is held at all times so the chute is never left unserved.');
+  }
+
+  // Compaction language only where compaction actually happens.
+  const compacted = (roomRec.streams || []).filter(r => r.compacted);
+  if (compacted.length) {
+    const list = compacted.map(r => r.stream + (r.via ? ' (' + r.via + ')' : ''));
+    out.push('Compaction is provided for ' + list.join(', ') + '. Bin numbers shown in the ' +
+      'schedule are the compacted requirement; the uncompacted figure is retained in the ' +
+      'calculations for reference.');
+  }
+  return out;
+}
+// The workbook drops the compaction column when a room has none. Same question,
+// asked of a snapshot record rather than reconciler rows.
+function wsWmpShowCompaction(roomRec) {
+  return !!(roomRec && (roomRec.streams || []).some(r => r.compacted));
+}
+function wsReconcileSnapshot(rooms, calcRooms, slot, library, opts) {
+  const lib = library || {};
+  const placed = ((slot && slot.bins) || []).concat((slot && slot.equip) || []);
+  const out = [];
+  (rooms || []).forEach(room => {
+    if (!room || !room.id) return;
+    const targets = wsRoomTargets(room, calcRooms);
+    if (!targets.length) return;
+    const rec = wsRoomReconcileWithEquipment(room.id, targets, (slot && slot.bins) || [],
+                                             placed, lib, opts);
+    const insts = wsRoomEquipInstances(room.id, placed, lib);
+    const tables = wsRoomTables(insts, lib);
+    const calcRoom = (calcRooms || []).find(c => c.id === room.calcRoom) || null;
+    out.push({
+      roomId: room.id,
+      roomName: room.name || (calcRoom ? calcRoom.name : null),
+      component: calcRoom ? (calcRoom.component || calcRoom.kind || null) : null,
+      calcRoomId: room.calcRoom || null,
+      streams: rec.rows.map(r => ({
+        stream: r.stream,
+        required: r.required,
+        rawRequired: r.rawRequired == null ? r.required : r.rawRequired,
+        placed: r.placed,
+        compacted: !!r.compacted,
+        via: r.via || null,
+        needsVolume: !!r.needsVolume,
+      })),
+      // fixed allocations: counted and floored, never in the collection table
+      receivers: insts.filter(i => i.receiver).map(i => ({
+        instanceId: i.id, equipmentId: i.equipmentId,
+        label: i.label || (lib[i.equipmentId] || {}).label || i.equipmentId,
+        qty: i.qty == null ? 1 : i.qty,
+      })),
+      outputs: rec.outputs,
+      storage: tables.storage,
+      collection: tables.collection,
+      footprintM2: tables.footprintM2,
+      showCompactionColumn: wsShowCompactionColumn(rec.rows.map(r => ({
+        compacted: r.compacted,
+        removed: r.required === 0 && (r.rawRequired || 0) > 0,
+      }))),
+      problems: rec.problems,
+    });
+  });
+  return out;
+}
+function wsRoomReconcileLive(room) {
+  const slot = wsLayoutSlot();
+  const lib = wsEquipLibrary(WS_EQUIP_DB);
+  const targets = wsRoomTargets(room, WS_CALC_ROOMS);
+  const placed = (slot.bins || []).concat(slot.equip || []);
+  return wsRoomReconcileWithEquipment(room.id, targets, slot.bins, placed, lib);
+}
 function wsRoomReconcileWithEquipment(roomId, targets, bins, equip, library, opts) {
   const base = wsRoomReconcile(roomId, targets, bins);
   const insts = wsRoomEquipInstances(roomId, equip, library);
@@ -14148,7 +14266,7 @@ function wsUpdateRoomPill() {
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const rm = WS_CALC_ROOMS.find(r => r.id === room.calcRoom) || null;
   const targets = wsRoomTargets(room, WS_CALC_ROOMS);
-  const rec = wsRoomReconcile(room.id, targets, wsLayoutSlot().bins);
+  const rec = wsRoomReconcileLive(room);
   const allStreams = rm ? (rm.targets || []).map(t => t.stream).filter((s, i, a) => a.indexOf(s) === i) : [];
   const on = s => !Array.isArray(room.streams) || !room.streams.length || room.streams.indexOf(s) >= 0;
 
@@ -14167,6 +14285,7 @@ function wsUpdateRoomPill() {
       <span style="font-size:11.5px;font-weight:700;color:#00d4d4;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(room.name || 'Unnamed room')}</span>
       <button class="wsl-btn" onclick="wsRoomRename('${esc(room.id)}')" title="Rename room" style="padding:3px 7px;">✏</button>
       <span style="flex:1"></span>
+      ${rec.reconciled ? `<span title="Compaction plant in this room reduces the requirement" style="font-size:9px;font-weight:700;color:#7EB3F5;border:1px solid #3a5a7a;border-radius:4px;padding:1px 5px;margin-right:5px;">⇊</span>` : ''}
       <span style="font-size:10.5px;font-weight:700;color:${rec.rows.length ? (rec.ok ? '#3DD68C' : '#FF8A50') : 'rgba(255,255,255,0.4)'};">${rec.rows.length ? (rec.ok ? '✓ satisfied' : rec.placed + '/' + rec.required) : 'no schedule'}</span>
     </div>
     <div style="display:flex;align-items:center;gap:4px;">
@@ -14177,6 +14296,10 @@ function wsUpdateRoomPill() {
               title="Auto-arrange this schedule's bins along the room walls"
               style="padding:3px 8px;font-size:10.5px;${targets.length ? 'background:#008080;border-color:#00b3b3;color:#fff;' : 'opacity:0.55;'}">⤵ Fill from Bin Calculator</button>
     </div>
+    ${(rec.problems || []).length ? `<div style="margin-top:7px;padding:6px 8px;border-radius:5px;background:rgba(90,50,20,0.5);border:1px solid #FFB74D;font-size:10px;line-height:1.45;color:rgba(255,255,255,0.85);">`
+        + rec.problems.map(p => esc(p.message)).join('<br>') + `</div>` : ''}
+    ${(rec.outputs || []).length ? `<div style="margin-top:6px;font-size:10px;color:rgba(255,255,255,0.55);">Produces: `
+        + rec.outputs.map(o => esc((o.qty == null ? '?' : o.qty) + ' × ' + (o.label || o.equipmentId))).join(', ') + `</div>` : ''}
     ${subset}`;
 
   const bb = wsPolyBBox(wsRoomPts(room));
@@ -18710,6 +18833,14 @@ function wsBuildDraft() {
     layoutData: WS_LAYOUT?.byPage || {},
     calcTargets: (typeof WS_CALC_TARGETS !== 'undefined' ? WS_CALC_TARGETS : []),
     sweptByPage: WS_SWEPT?.byPage || {},
+    // B3: the reconciled view the WMP generator reads. Written from the same
+    // functions the plan draws from, so the document cannot diverge from it.
+    reconciliation: (() => {
+      try {
+        return wsReconcileSnapshot(wsLayoutSlot().rooms, WS_CALC_ROOMS, wsLayoutSlot(),
+                                   wsEquipLibrary(WS_EQUIP_DB));
+      } catch (e) { console.warn('reconciliation snapshot skipped', e); return []; }
+    })(),
   };
 }
 function wsFlushState() {
@@ -20799,6 +20930,14 @@ function wmpgDocModel() {
       `Waste will be collected by ${room.collection.provider || 'council'} using a ${room.collection.vehicle || '[vehicle]'}.${room.collection.street ? ' The vehicle will stop on ' + room.collection.street + ' to service the presented bins.' : ''}`,
       'Transfer will be undertaken outside peak hours to minimise disruption, and is estimated to take 10 to 15 minutes per collection. Minimal disruption is therefore expected.'
     ].join('\n\n') });
+    // B3: obligations that follow from the plant actually placed in this room.
+    // Silent when nothing applies, so a simple room reads exactly as before.
+    try {
+      const snap = (d.reconciliation || []).find(x =>
+        x.roomName && room.name && x.roomName.toLowerCase() === room.name.toLowerCase());
+      wsWmpEquipmentText(snap, wsEquipLibrary(WS_EQUIP_DB))
+        .forEach(t => M.push({ k:'p', t }));
+    } catch (e) { /* the document must still build without the layout */ }
   });
   M.push({ k:'p', t:'Waste service providers', b:true });
   M.push({ k:'p', t:'The ongoing management of waste services may involve a range of specialist contractors, including waste collection providers, bin washing services, and independent auditors. The following contractors can provide these services to support the effective operation and maintenance of the proposed waste management system.' });

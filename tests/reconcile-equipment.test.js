@@ -549,3 +549,139 @@ test('placement records library identity and an explicit stream', () => {
   assert.match(SOURCE, /receiver: libRec \? !!libRec\.receiver : false,/);
   assert.match(SOURCE, /if \(libRec && !assigned\)/, 'an unassignable item must be refused, not guessed');
 });
+
+// ── snapshot for the WMP generator ──────────────────────────────────────
+const SLIB = {
+  tp:    { code: 'tp', label: 'Transpacker', pairingType: 'densify', compactionRatio: 4,
+           footprintM2: 15.5, collectable: true },
+  baler: { code: 'baler', label: 'Cardboard baler', pairingType: 'convert', compactionRatio: 6,
+           outputEquipmentId: 'bale', footprintM2: 1.8, collectable: false },
+  bale:  { code: 'bale', label: 'Bale storage', capacityL: 500, footprintM2: 1.2, collectable: true },
+  spare: { code: 'spare', label: 'Spare 1100L bin', capacityL: 1100, footprintM2: 1.47, collectable: true },
+};
+const sRoom = (id, name, calcRoom) => ({ id, name, calcRoom });
+const sTarget = (stream, qty, sizeL, volL) =>
+  ({ stream, typeId: 'b' + sizeL, sizeL, qty, weeklyVolL: volL, perWeek: 1 });
+
+test('wsReconcileSnapshot: one record per room, with reconciled and raw counts', () => {
+  const rooms = [sRoom('A', 'Residential bin room', 'R1')];
+  const calc = [{ id: 'R1', name: 'Residential bin room', kind: 'res',
+                  targets: [sTarget('garbage', 11, 1100, 12000)] }];
+  const slot = { bins: [], equip: [{ id: 'e1', roomId: 'A', equipmentId: 'tp', stream: 'garbage' }] };
+  const snap = ws.wsReconcileSnapshot(rooms, calc, slot, SLIB);
+  assert.equal(snap.length, 1);
+  const r = snap[0];
+  assert.equal(r.roomId, 'A');
+  assert.equal(r.roomName, 'Residential bin room');
+  assert.equal(r.streams[0].required, 3, 'the document must see the reconciled count');
+  assert.equal(r.streams[0].rawRequired, 11, 'and the figure it replaced');
+  assert.equal(r.streams[0].compacted, true);
+  assert.equal(r.showCompactionColumn, true);
+  assert.ok(Math.abs(r.footprintM2 - 15.5) < 1e-9);
+});
+
+test('wsReconcileSnapshot: paired outputs and receivers are carried, not implied', () => {
+  const rooms = [sRoom('A', 'Bin room', 'R1')];
+  const calc = [{ id: 'R1', name: 'Bin room', targets: [sTarget('paper', 6, 1100, 6000)] }];
+  const slot = { bins: [], equip: [
+    { id: 'e1', roomId: 'A', equipmentId: 'baler', stream: 'paper' },
+    { id: 'e2', roomId: 'A', equipmentId: 'spare', stream: 'garbage', receiver: true },
+  ] };
+  const snap = ws.wsReconcileSnapshot(rooms, calc, slot, SLIB)[0];
+  assert.equal(snap.outputs.length, 1, 'the bales must reach the document');
+  assert.equal(snap.outputs[0].label, 'Bale storage');
+  assert.equal(snap.receivers.length, 1);
+  assert.equal(snap.receivers[0].label, 'Spare 1100L bin');
+  // the receiver is in storage but never in the collection table
+  assert.ok(snap.storage.some(x => x.instanceId === 'e2'));
+  assert.equal(snap.collection.some(x => x.instanceId === 'e2'), false);
+});
+
+test('wsReconcileSnapshot: a room with no schedule is omitted entirely', () => {
+  const snap = ws.wsReconcileSnapshot([sRoom('A', 'Unassigned room', null)], [], { bins: [], equip: [] }, SLIB);
+  assert.deepEqual(snap, [], 'nothing to reconcile means nothing to hand over');
+  assert.deepEqual(ws.wsReconcileSnapshot(null, null, null, null), []);
+});
+
+test('wsReconcileSnapshot: invariant breaches travel with the record', () => {
+  const rooms = [sRoom('A', 'Bin room', 'R1')];
+  const calc = [{ id: 'R1', name: 'Bin room', targets: [sTarget('paper', 6, 1100, 6000)] }];
+  const lib = { ...SLIB, orphan: { code: 'orphan', label: 'Unpaired baler',
+                                   pairingType: 'convert', compactionRatio: 6 } };
+  const slot = { bins: [], equip: [{ id: 'e1', roomId: 'A', equipmentId: 'orphan', stream: 'paper' }] };
+  const snap = ws.wsReconcileSnapshot(rooms, calc, slot, lib)[0];
+  assert.equal(snap.streams[0].required, 6, 'nothing reduced');
+  assert.equal(snap.problems.length, 1);
+  assert.equal(snap.problems[0].code, 'A');
+});
+
+// ── WMP text obligations ────────────────────────────────────────────────
+test('wsWmpEquipmentText: a baler earns its paragraph, with the bale count', () => {
+  const rooms = [sRoom('A', 'Bin room', 'R1')];
+  const calc = [{ id: 'R1', name: 'Bin room', targets: [sTarget('paper', 6, 1100, 6000)] }];
+  const slot = { bins: [], equip: [{ id: 'e1', roomId: 'A', equipmentId: 'baler', stream: 'paper' }] };
+  const snap = ws.wsReconcileSnapshot(rooms, calc, slot, SLIB)[0];
+  const text = ws.wsWmpEquipmentText(snap, SLIB);
+  const baler = text.find(t => /baler/i.test(t));
+  assert.ok(baler, 'the baler paragraph is an obligation, not an option');
+  assert.match(baler, /maximum of 2 bales/, 'the stored quantity comes from the reconciliation');
+  assert.match(baler, /Bin room/, 'and says where');
+  assert.match(baler, /dedicated recycler/i);
+  assert.match(baler, /not presented with the general waste/i, 'the separation must be explicit');
+});
+
+test('wsWmpEquipmentText: a receiver earns the permanent-allocation note', () => {
+  const rooms = [sRoom('A', 'Bin room', 'R1')];
+  const calc = [{ id: 'R1', name: 'Bin room', targets: [sTarget('garbage', 4, 1100, 4000)] }];
+  const slot = { bins: [], equip: [
+    { id: 'e2', roomId: 'A', equipmentId: 'spare', stream: 'garbage', receiver: true }] };
+  const snap = ws.wsReconcileSnapshot(rooms, calc, slot, SLIB)[0];
+  const note = ws.wsWmpEquipmentText(snap, SLIB).find(t => /permanently allocated/i.test(t));
+  assert.ok(note);
+  assert.match(note, /excluded from the collection schedule/i);
+});
+
+test('wsWmpEquipmentText: no compaction means NO compaction language at all', () => {
+  // The workbook drops the column; the narrative must drop the sentence, rather
+  // than hedging with "compaction, if provided...".
+  const rooms = [sRoom('A', 'Bin room', 'R1')];
+  const calc = [{ id: 'R1', name: 'Bin room', targets: [sTarget('garbage', 4, 1100, 4000)] }];
+  const snap = ws.wsReconcileSnapshot(rooms, calc, { bins: [], equip: [] }, SLIB)[0];
+  const text = ws.wsWmpEquipmentText(snap, SLIB);
+  assert.deepEqual(text, [], 'a plain room reads exactly as it did before');
+  assert.equal(ws.wsWmpShowCompaction(snap), false);
+});
+
+test('wsWmpEquipmentText: compaction language appears only for compacted streams', () => {
+  const rooms = [sRoom('A', 'Bin room', 'R1')];
+  const calc = [{ id: 'R1', name: 'Bin room',
+                  targets: [sTarget('garbage', 11, 1100, 12000), sTarget('glass', 3, 240, 700)] }];
+  const slot = { bins: [], equip: [{ id: 'e1', roomId: 'A', equipmentId: 'tp', stream: 'garbage' }] };
+  const snap = ws.wsReconcileSnapshot(rooms, calc, slot, SLIB)[0];
+  const line = ws.wsWmpEquipmentText(snap, SLIB).find(t => /Compaction is provided/i.test(t));
+  assert.ok(line);
+  assert.match(line, /garbage/);
+  assert.equal(/glass/.test(line), false, 'an uncompacted stream must not be claimed as compacted');
+  assert.match(line, /Transpacker/, 'the unit doing the work is named');
+  assert.equal(ws.wsWmpShowCompaction(snap), true);
+});
+
+test('wsWmpEquipmentText: tolerates a missing record without breaking the document', () => {
+  assert.deepEqual(ws.wsWmpEquipmentText(null, SLIB), []);
+  assert.deepEqual(ws.wsWmpEquipmentText({}, null), []);
+});
+
+test('the WMP narrative only speaks when the layout has something to say', () => {
+  const { SOURCE } = require('./extract.js');
+  assert.match(SOURCE, /wsWmpEquipmentText\(snap, wsEquipLibrary\(WS_EQUIP_DB\)\)/,
+    'the obligations must be generated from the reconciliation, not retyped');
+  assert.match(SOURCE, /catch \(e\) \{ \/\* the document must still build without the layout \*\//,
+    'a missing layout must never block the document');
+});
+
+test('the project snapshot publishes the reconciliation for the generator', () => {
+  const { SOURCE } = require('./extract.js');
+  assert.match(SOURCE, /reconciliation: \(\(\) => \{/, 'the draft must carry it');
+  assert.match(SOURCE, /wsReconcileSnapshot\(wsLayoutSlot\(\)\.rooms, WS_CALC_ROOMS/);
+  assert.match(SOURCE, /reconciliation snapshot skipped/, 'and must never break saving if it fails');
+});

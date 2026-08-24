@@ -247,7 +247,8 @@ test('the room label and reconciliation chip are off the canvas', () => {
   assert.equal(SOURCE.includes('.ws-chip{'), false, 'the chip CSS should have gone with it');
   // ...but the reconciliation itself still drives the selection pill
   const pill = SOURCE.slice(SOURCE.indexOf('function wsUpdateRoomPill'), SOURCE.indexOf('function wsPillInk'));
-  assert.match(pill, /wsRoomReconcile\(/, 'the counts must still reach the selection pill');
+  assert.match(pill, /wsRoomReconcileLive\(room\)/,
+    'the counts must still reach the selection pill, now equipment-aware');
 });
 
 // ── room outline style ──────────────────────────────────────────────────
