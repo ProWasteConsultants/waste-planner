@@ -406,3 +406,146 @@ test('the layout panel gets counts only — no litres leak into the room view', 
     for (const k of Object.keys(row))
       assert.equal(/vol|litre|weekly/i.test(k), false, 'row exposes ' + k + ' to the panel');
 });
+
+// ── B1/B2: stream association and the picker ────────────────────────────
+const ALL = ['garbage', 'recycling', 'fogo', 'glass', 'paper', 'soft'];
+const rec = (id, extra = {}) => ({ id, code: id, label: id, kind: 'equipment', ...extra });
+
+test('wsEquipAllowedStreams: an empty set is unrestricted, a populated one restricts', () => {
+  // Semantic agreed with the migration: [] = generic, populated = physically limited.
+  assert.deepEqual(ws.wsEquipAllowedStreams(rec('generic', { streams: [] }), ALL), ALL);
+  assert.deepEqual(ws.wsEquipAllowedStreams(rec('generic'), ALL), ALL, 'missing is the same as empty');
+  assert.deepEqual(ws.wsEquipAllowedStreams(rec('baler', { streams: ['paper', 'soft'] }), ALL),
+    ['paper', 'soft']);
+  // the equipment pseudo-stream is never assignable
+  assert.equal(ws.wsEquipAllowedStreams(rec('x'), ALL.concat('equip')).includes('equip'), false);
+});
+
+test('wsEquipAllowedStreams: an allowable stream that is not a calculator stream is dropped', () => {
+  assert.deepEqual(ws.wsEquipAllowedStreams(rec('odd', { streams: ['paper', 'unobtainium'] }), ALL),
+    ['paper'], 'only real streams survive');
+});
+
+test('wsEquipAssignStream: the user choice wins when the item allows it', () => {
+  const baler = rec('baler', { streams: ['paper', 'soft'] });
+  assert.equal(ws.wsEquipAssignStream(baler, 'paper', ALL), 'paper');
+  assert.equal(ws.wsEquipAssignStream(baler, 'soft', ALL), 'soft');
+});
+
+test('wsEquipAssignStream: an impossible choice falls back, it never silently accepts', () => {
+  const baler = rec('baler', { streams: ['paper', 'soft'] });
+  assert.equal(ws.wsEquipAssignStream(baler, 'glass', ALL), 'paper',
+    'a baler cannot serve glass, so it takes its first allowable stream instead');
+  // an unrestricted item takes whatever was asked for
+  assert.equal(ws.wsEquipAssignStream(rec('bin', { streams: [] }), 'glass', ALL), 'glass');
+  // nothing assignable at all is null, so the caller can refuse
+  assert.equal(ws.wsEquipAssignStream(rec('weird', { streams: ['unobtainium'] }), 'glass', ALL), null);
+});
+
+test('wsEquipLibrary: keyed by id, so a rename cannot break a reference', () => {
+  const lib = ws.wsEquipLibrary([rec('a'), rec('b'), null, { label: 'no id' }]);
+  assert.deepEqual(Object.keys(lib).sort(), ['a', 'b']);
+  assert.equal(lib.a.id, 'a');
+  assert.deepEqual(ws.wsEquipLibrary(null), {});
+});
+
+test('wsEquipPickerGroups: grouped by category, with dimensions and stream badges', () => {
+  const db = [
+    rec('baler', { category: 'Compaction', label: 'Baler', w: 1.8, d: 1.0,
+                   streams: ['paper', 'soft'], pairingType: 'convert' }),
+    rec('tp', { category: 'Compaction', label: 'Transpacker', w: 6.2, d: 2.4, pairingType: 'densify' }),
+    rec('cage', { category: 'Storage', label: 'Cage', w: 1.2, d: 1.0 }),
+    { id: 'bin', kind: 'bin', label: 'A bin', category: 'Bins' },
+  ];
+  const g = ws.wsEquipPickerGroups(db, ALL);
+  assert.deepEqual(g.map(x => x.category), ['Compaction', 'Storage'], 'sorted, bins excluded');
+  const baler = g[0].items.find(i => i.id === 'baler');
+  assert.equal(baler.dims, '1800×1000');
+  assert.deepEqual(baler.streams, ['paper', 'soft']);
+  assert.equal(baler.restricted, true, 'a badge is warranted');
+  assert.equal(baler.pairingType, 'convert');
+  const tp = g[0].items.find(i => i.id === 'tp');
+  assert.equal(tp.restricted, false, 'unrestricted items get no badge');
+  assert.deepEqual(tp.streams, ALL);
+});
+
+test('wsEquipPickerGroups: an item with no dimensions still lists', () => {
+  const g = ws.wsEquipPickerGroups([rec('x', { category: 'Compaction', label: 'X' })], ALL);
+  assert.equal(g[0].items[0].dims, null, 'no size rather than a fabricated one');
+  assert.deepEqual(ws.wsEquipPickerGroups(null, ALL), []);
+});
+
+// ── B5: legacy migration ────────────────────────────────────────────────
+test('wsMigrateEquipInstance: maps a legacy fixture code onto its library record', () => {
+  const db = [rec('eq_baler', { code: 'BALER', label: 'Baler' })];
+  const item = { id: 'i1', code: 'BALER', label: 'Baler' };
+  ws.wsMigrateEquipInstance(item, db);
+  assert.equal(item.equipmentId, 'eq_baler');
+  assert.equal(item.legacy, undefined, 'a mapped item is not legacy');
+});
+
+test('wsMigrateEquipInstance: an unmatched code is PRESERVED and flagged, never re-pointed', () => {
+  // The alternative, guessing at the nearest record, would silently change what
+  // an old drawing says. Keeping it as-is is the only safe answer.
+  const db = [rec('eq_baler', { code: 'BALER' })];
+  const item = { id: 'i1', code: 'ANCIENT_THING', label: 'Ancient thing', w: 1, d: 1 };
+  ws.wsMigrateEquipInstance(item, db);
+  assert.equal(item.equipmentId, undefined, 'not pointed at anything');
+  assert.equal(item.legacy, true);
+  assert.equal(item.label, 'Ancient thing', 'and still draws exactly as before');
+  assert.equal(item.w, 1);
+});
+
+test('wsMigrateEquipInstance: an already-migrated item is left alone', () => {
+  const db = [rec('eq_other', { code: 'BALER' })];
+  const item = { id: 'i1', code: 'BALER', equipmentId: 'eq_original' };
+  ws.wsMigrateEquipInstance(item, db);
+  assert.equal(item.equipmentId, 'eq_original', 'migration must be idempotent');
+});
+
+test('wsMigrateEquipInstance: matching is case-insensitive on the code', () => {
+  const db = [rec('eq_baler', { code: 'baler' })];
+  const item = { id: 'i1', code: 'BALER' };
+  ws.wsMigrateEquipInstance(item, db);
+  assert.equal(item.equipmentId, 'eq_baler');
+});
+
+test('wsMigrateEquipList: reports what it mapped and what it kept', () => {
+  const db = [rec('eq_baler', { code: 'BALER' })];
+  const list = [
+    { id: 'a', code: 'BALER' },
+    { id: 'b', code: 'MYSTERY' },
+    { id: 'c', equipmentId: 'eq_baler' },
+    { id: 'd' },
+  ];
+  const r = ws.wsMigrateEquipList(list, db);
+  assert.equal(r.mapped, 1);
+  assert.equal(r.legacy, 1);
+  assert.equal(list[3].legacy, undefined, 'an item with no code at all is plain, not legacy');
+  // running it twice changes nothing
+  assert.deepEqual(ws.wsMigrateEquipList(list, db), { mapped: 0, legacy: 1 });
+  assert.deepEqual(ws.wsMigrateEquipList(null, db), { mapped: 0, legacy: 0 });
+});
+
+test('a migrated instance is immediately usable by the reconciler', () => {
+  // The point of B5: an old plan starts reconciling once the library loads.
+  const db = [rec('eq_tp', { code: 'TRANSPACKER', label: 'Transpacker',
+                             pairingType: 'densify', compactionRatio: 4 })];
+  const item = { id: 'i1', code: 'TRANSPACKER', roomId: 'A', stream: 'garbage' };
+  ws.wsMigrateEquipList([item], db);
+  const lib = ws.wsEquipLibrary(db);
+  const insts = ws.wsRoomEquipInstances('A', [item], lib);
+  assert.equal(insts.length, 1, 'the reconciler can see it now');
+  const r = ws.wsReconcileRoomEquipment(
+    [{ stream: 'garbage', weeklyVolL: 12000, binCapacityL: 1100, perWeek: 1 }], insts, lib);
+  assert.equal(r.rows[0].calcQty, 3);
+});
+
+test('placement records library identity and an explicit stream', () => {
+  const { SOURCE } = require('./extract.js');
+  assert.match(SOURCE, /const assigned = libRec \? wsEquipAssignStream\(libRec, st\.id, order\) : st\.id;/,
+    'the stream must be resolved against the allowable set at placement time');
+  assert.match(SOURCE, /equipmentId: libRec \? libRec\.id : null,/, 'identity by id, never by name');
+  assert.match(SOURCE, /receiver: libRec \? !!libRec\.receiver : false,/);
+  assert.match(SOURCE, /if \(libRec && !assigned\)/, 'an unassignable item must be refused, not guessed');
+});

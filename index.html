@@ -12959,6 +12959,13 @@ async function wsLoadEquipmentDB() {
         // carried through for the calculator's compaction layer — a compactor
         // row often has no width/depth, so it must not be filtered out here
         compactionRatio: +r.compaction_ratio || null,
+        // B2/B3 pairing metadata. `streams` is the ALLOWABLE set for the picker,
+        // never a runtime inference source: an empty array means unrestricted
+        // (generic bins), a populated one means physically restricted.
+        streams: Array.isArray(r.streams) ? r.streams.filter(Boolean) : [],
+        pairingType: r.pairing_type || null,
+        outputEquipmentId: r.output_equipment_id || null,
+        receiver: r.receiver === true,
         // plan-view geometry, drawn in a 0..1 unit box — see WS_SHAPES
         outlineSvg: r.outline_svg || null,
         detailSvg: r.detail_svg || null,
@@ -12972,6 +12979,17 @@ async function wsLoadEquipmentDB() {
     console.warn('Equipment DB load failed — using built-in bin presets.', e?.message || e);
     WS_EQUIP_DB = [];
   }
+  // B5: old saves reference fixtures by code only. Point them at library records
+  // where one matches; otherwise leave them exactly as they are, flagged legacy.
+  try {
+    let mapped = 0, legacy = 0;
+    Object.values(WS_LAYOUT.byPage || {}).forEach(sl => {
+      const a = wsMigrateEquipList(sl.equip, WS_EQUIP_DB);
+      const b = wsMigrateEquipList(sl.bins, WS_EQUIP_DB);
+      mapped += a.mapped + b.mapped; legacy += a.legacy + b.legacy;
+    });
+    if (mapped || legacy) console.info('layout equipment migration:', mapped, 'mapped,', legacy, 'kept as legacy');
+  } catch (e) { console.warn('equipment migration skipped', e); }
   wsLayoutPopulateBins();
 }
 function wsPushEquipToCalc() {
@@ -12988,6 +13006,71 @@ function wsLayoutBinList() {
   const db = (WS_EQUIP_DB || []).filter(x => x.kind === 'bin' && x.placeable !== false);
   return db.length ? db : WS_BIN_TYPES.map(b => ({ ...b, kind: 'bin', collectable: true, capacityL: parseInt(b.label) || 0 }));
 }
+// The equipment library as an id -> record map, which is what the reconciler
+// wants. Keyed by the DB id so a rename can never break a reference.
+function wsEquipLibrary(db) {
+  const out = {};
+  (db || []).forEach(r => { if (r && r.id) out[r.id] = r; });
+  return out;
+}
+// Which streams an item may be assigned to. An empty allowable set means
+// unrestricted, so every calculator stream is offered.
+function wsEquipAllowedStreams(rec, allStreams) {
+  const all = (allStreams || []).filter(x => x !== 'equip');
+  const allow = (rec && Array.isArray(rec.streams) ? rec.streams : []).filter(Boolean);
+  if (!allow.length) return all.slice();
+  return all.filter(x => allow.indexOf(x) >= 0);
+}
+// The stream a newly placed instance takes: the user’s current choice when the
+// item allows it, otherwise the item’s first allowable stream. Returns null when
+// nothing fits, so the caller can refuse rather than guess.
+function wsEquipAssignStream(rec, wanted, allStreams) {
+  const allowed = wsEquipAllowedStreams(rec, allStreams);
+  if (!allowed.length) return null;
+  return allowed.indexOf(wanted) >= 0 ? wanted : allowed[0];
+}
+// Picker rows grouped by category, each carrying its dimensions and the stream
+// badges the brief asks for.
+function wsEquipPickerGroups(db, allStreams) {
+  const groups = {};
+  (db || []).filter(r => r && r.kind === 'equipment').forEach(r => {
+    const cat = r.category || 'Other equipment';
+    (groups[cat] = groups[cat] || []).push({
+      id: r.id, label: r.label,
+      dims: (r.w > 0 && r.d > 0) ? Math.round(r.w * 1000) + '×' + Math.round(r.d * 1000) : null,
+      streams: wsEquipAllowedStreams(r, allStreams),
+      restricted: !!(r.streams && r.streams.length),
+      pairingType: r.pairingType || null,
+      receiver: !!r.receiver,
+    });
+  });
+  return Object.keys(groups).sort().map(k => ({ category: k, items: groups[k] }));
+}
+
+// ── B5: LEGACY MIGRATION ─────────────────────────────────────────────────────
+// Placed equipment saved before the library existed carries a fixture `code` and
+// no `equipmentId`. Map it onto a library record where one matches by code;
+// otherwise keep it exactly as it is and mark it legacy, so an old plan still
+// draws and is never silently re-pointed at the wrong record.
+function wsMigrateEquipInstance(item, db) {
+  if (!item || item.equipmentId) return item;
+  const code = String(item.code || '').toLowerCase();
+  const rec = (db || []).find(r => r && String(r.code || '').toLowerCase() === code);
+  if (rec) { item.equipmentId = rec.id; delete item.legacy; }
+  else if (code) item.legacy = true;
+  return item;
+}
+function wsMigrateEquipList(equip, db) {
+  let mapped = 0, legacy = 0;
+  (equip || []).forEach(it => {
+    const had = !!it.equipmentId;
+    wsMigrateEquipInstance(it, db);
+    if (!had && it.equipmentId) mapped++;
+    if (it.legacy) legacy++;
+  });
+  return { mapped, legacy };
+}
+
 function wsLayoutEquipList() {
   return (WS_EQUIP_DB || []).filter(x => x.kind === 'equipment');
 }
@@ -13001,9 +13084,24 @@ function wsLayoutPopulateBins() {
   const prev = sel.value;
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const opt = t => `<option value="${esc(t.id)}">${esc(t.label)}</option>`;
-  const bins = wsLayoutBinList(), equip = wsLayoutEquipList();
+  const bins = wsLayoutBinList();
   let html = `<optgroup label="Bins">${bins.map(opt).join('')}</optgroup>`;
-  if (equip.length) html += `<optgroup label="Equipment">${equip.map(opt).join('')}</optgroup>`;
+  // Equipment is grouped by category and labelled with its size and the streams
+  // it may serve, so the right unit can be picked without opening the admin table.
+  const order = WS_STREAMS.map(x => x.id);
+  wsEquipPickerGroups(WS_EQUIP_DB, order).forEach(g => {
+    html += `<optgroup label="${esc(g.category)}">` + g.items.map(it => {
+      const badge = it.restricted && it.streams.length
+        ? ' [' + it.streams.map(sid => {
+            const st = WS_STREAMS.find(x => x.id === sid);
+            return (st ? st.label : sid).slice(0, 3).toUpperCase();
+          }).join('/') + ']'
+        : '';
+      const dims = it.dims ? ' · ' + it.dims : '';
+      const tag = it.receiver ? ' · receiver' : it.pairingType ? ' · ' + it.pairingType : '';
+      return `<option value="${esc(it.id)}">${esc(it.label + dims + badge + tag)}</option>`;
+    }).join('') + '</optgroup>';
+  });
   sel.innerHTML = html;
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
   else { const def = bins.find(b => b.capacityL === 240) || bins[0]; if (def) sel.value = def.id; }
@@ -13224,8 +13322,21 @@ function wsLayoutPlaceAt(x, y) {
   const slotA = wsLayoutSlot();
   const cr = wsLayoutCalcRoomAt(x, y) || WS_LAYOUT.activeCalcRoom || null;
   const bx = wsLayoutSnap(x, mpp), by = wsLayoutSnap(y, mpp);
+  // A library item records its identity by ID and the stream the user assigned
+  // when the row was added. The stream is never inferred from the label later.
+  const libRec = (WS_EQUIP_DB || []).find(r => r.id === bt.id) || null;
+  const order = WS_STREAMS.map(x => x.id);
+  const assigned = libRec ? wsEquipAssignStream(libRec, st.id, order) : st.id;
+  if (libRec && !assigned) {
+    wsLayoutStatus(`${bt.label} cannot serve any calculator stream — check its allowable streams in the equipment library.`);
+    return;
+  }
+  if (libRec && assigned !== st.id)
+    wsLayoutStatus(`${bt.label} only serves ${assigned} — assigned to that stream.`);
   slotA.bins.push({ id: 'bin_' + Date.now() + '_' + Math.floor(Math.random() * 999),
-    type: bt.id, stream: st.id, x: bx, y: by, rot: 0, calcRoom: cr,
+    type: bt.id, stream: libRec ? assigned : st.id, x: bx, y: by, rot: 0, calcRoom: cr,
+    equipmentId: libRec ? libRec.id : null,
+    receiver: libRec ? !!libRec.receiver : false,
     roomId: wsBinRoomId(slotA.rooms, { x: bx, y: by }) });
   wsRenderLayoutLayer(); wsLayoutAutosave();
 }
