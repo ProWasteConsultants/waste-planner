@@ -3194,8 +3194,12 @@ function rebuildRoomCards(){
         if(sec==='r')anyRes=true;else anyCom=true;
         fp+=n*binFP(sz);
         const key=s+'_'+sz;
-        bins[key]=bins[key]||{stream:s,count:0,size:sz};
+        bins[key]=bins[key]||{stream:s,count:0,size:sz,vol:0,cw:cw};
         bins[key].count+=n;
+        // weekly litres and collections/week ride along so the layout side can
+        // apply compaction ratios with the SAME maths, not a count approximation
+        bins[key].vol+=(vols[s]||0);
+        if(cw&gt;(bins[key].cw||0))bins[key].cw=cw;
         sizes[s]=sz;
       });
     });
@@ -3582,7 +3586,8 @@ function wsUpdateVolumes() {
       const roomsOut = ((typeof lastResults !== 'undefined' &amp;&amp; lastResults) ? lastResults.rooms : []).map(r =&gt; ({
         id: r.id, name: r.name, kind: r.kind, component: r.component,
         fpM2: r.fpM2, areaM2: r.areaM2, chute: r.chute || null, units: r.units || [],
-        bins: Object.values(r.bins).map(b =&gt; ({ stream: b.stream, sizeL: b.size, qty: b.count })),
+        bins: Object.values(r.bins).map(b =&gt; ({ stream: b.stream, sizeL: b.size, qty: b.count,
+                                                weeklyVolL: b.vol || 0, perWeek: b.cw || 1 })),
       }));
       window.parent.postMessage({ type: 'ws-calc-results', volumes: vols, schedule: schedule, rooms: roomsOut, summary: summary }, '*');
     }
@@ -13301,6 +13306,181 @@ function wsRoomTargets(room, calcRooms) {
 // Placed vs required, per stream, for one room. `bins` is every bin on the page;
 // only those tagged to this room count. A room with no schedule reconciles to
 // nothing (ok:false, rows:[]) so the caller can skip drawing a chip.
+// ══ B3: EQUIPMENT-AWARE RECONCILIATION ══════════════════════════════════════
+// Compaction plant changes how many bins a room actually needs. The maths is the
+// bin calculator’s, not a second implementation: volume in, ratio applied,
+// containers out. Everything in this block is PURE — plain objects in, plain
+// objects out, no DOM, no globals — because it decides numbers that end up on an
+// issued drawing.
+//
+// Two pairing kinds, and the difference matters:
+//   densify  — same container, less volume in it (transpacker, bin press,
+//               beneath-chute compactor). The bin count drops.
+//   convert  — the material leaves the stream in a different form (a baler makes
+//               bales). The input volume is REMOVED and the paired output record
+//               is emitted at its own converted volume, with its own footprint
+//               and its own collection line.
+
+// Volume after compaction. A ratio at or below 1 is not compaction and is ignored
+// rather than silently inflating the requirement.
+function wsCompactedVolume(weeklyVolL, ratio) {
+  const v = Number(weeklyVolL) || 0;
+  const r = Number(ratio);
+  if (!(r > 1)) return v;
+  return v / r;
+}
+// Containers needed for a weekly volume at a given collection frequency.
+function wsBinCount(weeklyVolL, binCapacityL, perWeek) {
+  const v = Number(weeklyVolL) || 0;
+  const cap = Number(binCapacityL) || 0;
+  const f = Number(perWeek) || 0;
+  if (v <= 0) return 0;
+  if (cap <= 0 || f <= 0) return null;      // unanswerable, not zero
+  return Math.ceil(v / (cap * f));
+}
+// Paired output units for a convert pairing. `buffer` covers the collection
+// interval — bales accumulate between pickups.
+function wsPairedOutputQty(weeklyVolL, ratio, outputCapacityL, buffer) {
+  const converted = wsCompactedVolume(weeklyVolL, ratio);
+  const cap = Number(outputCapacityL) || 0;
+  if (converted <= 0) return 0;
+  if (cap <= 0) return null;                // unanswerable without an output capacity
+  const b = Number(buffer) > 0 ? Number(buffer) : 1;
+  return Math.ceil(converted / cap * b);
+}
+
+// ── INVARIANTS ───────────────────────────────────────────────────────────────
+// These are refusals, not warnings. A ratio that fires without its counterpart
+// silently destroys material on a compliance drawing, so the rule is: if the
+// invariant fails, the ratio is NOT applied and the reason is reported.
+//   A — convert must resolve its paired output record.
+//   B — a chute compactor must have a receiver allocated in the same room.
+function wsEquipInvariants(inst, lib, roomInstances) {
+  const out = [];
+  if (!inst || !lib) return out;
+  if (lib.pairingType === 'convert') {
+    const outId = lib.outputEquipmentId;
+    if (!outId) out.push({ code: 'A', instanceId: inst.id, severity: 'error',
+      message: (lib.label || lib.code) + ': convert pairing has no output equipment set — compaction not applied.' });
+  }
+  if (lib.receiverRequired) {
+    const hasReceiver = (roomInstances || []).some(x => x && x.receiver === true);
+    if (!hasReceiver) out.push({ code: 'B', instanceId: inst.id, severity: 'error',
+      message: (lib.label || lib.code) + ': no receiver allocated in this room — compaction not applied.' });
+  }
+  return out;
+}
+
+// ── ROOM RECONCILIATION ──────────────────────────────────────────────────────
+// demand:    [{stream, weeklyVolL, binCapacityL, perWeek}] — the raw requirement.
+// instances: equipment placed in THIS room, each {id, equipmentId, stream, qty,
+//            collectable?, receiver?, label?}. `stream` is assigned explicitly
+//            when the row is added — never inferred from a name.
+// library:   id -> record {pairingType, compactionRatio, outputEquipmentId,
+//            capacityL, footprintM2, receiverRequired, collectable, label}.
+//
+// Returns per-stream rows carrying BOTH the raw and the reconciled requirement,
+// the equipment that acted on them, any paired outputs, and every invariant
+// breach. Nothing is rounded away silently.
+function wsReconcileRoomEquipment(demand, instances, library, opts) {
+  const o = opts || {};
+  const lib = library || {};
+  const insts = (instances || []).filter(Boolean);
+  const problems = [];
+  const outputs = [];
+  const rows = (demand || []).map(d => {
+    const raw = Number(d.weeklyVolL) || 0;
+    const acting = insts.filter(i => i.stream === d.stream && lib[i.equipmentId] &&
+                                     lib[i.equipmentId].pairingType);
+    let vol = raw, applied = null, removed = false;
+    for (const inst of acting) {
+      const rec = lib[inst.equipmentId];
+      const bad = wsEquipInvariants(inst, rec, insts);
+      if (bad.length) { bad.forEach(b => problems.push(b)); continue; }   // ratio NOT applied
+      if (rec.pairingType === 'densify') {
+        vol = wsCompactedVolume(vol, rec.compactionRatio);
+        applied = { kind: 'densify', ratio: rec.compactionRatio, instanceId: inst.id, label: rec.label };
+      } else if (rec.pairingType === 'convert') {
+        const outRec = lib[rec.outputEquipmentId];
+        if (!outRec) {
+          problems.push({ code: 'A', instanceId: inst.id, severity: 'error',
+            message: (rec.label || rec.code) + ': output equipment record not found — compaction not applied.' });
+          continue;
+        }
+        const qty = wsPairedOutputQty(vol, rec.compactionRatio, outRec.capacityL, o.buffer);
+        outputs.push({ equipmentId: rec.outputEquipmentId, label: outRec.label,
+                       fromStream: d.stream, fromInstanceId: inst.id,
+                       qty, footprintM2: outRec.footprintM2 || null,
+                       collectable: outRec.collectable !== false });
+        vol = 0;                       // the material has left this stream
+        removed = true;
+        applied = { kind: 'convert', ratio: rec.compactionRatio, instanceId: inst.id, label: rec.label };
+      }
+    }
+    const calcQty = wsBinCount(vol, d.binCapacityL, d.perWeek);
+    return {
+      stream: d.stream,
+      rawWeeklyVolL: raw,
+      weeklyVolL: vol,
+      compacted: vol !== raw,
+      removed,
+      applied,
+      calcQty,
+      binCapacityL: d.binCapacityL,
+      perWeek: d.perWeek,
+    };
+  });
+  return { rows, outputs, problems };
+}
+
+// ── CALC vs ADOPTED ──────────────────────────────────────────────────────────
+// The document prints the ADOPTED quantity; the UI shows the calculated one as
+// guidance. A recalculation never overwrites an adopted value — it reports the
+// divergence so a person decides.
+function wsAdoptedQty(row) {
+  if (!row) return null;
+  return row.adoptedQty == null ? row.calcQty : row.adoptedQty;
+}
+function wsQtyDivergence(row) {
+  if (!row || row.adoptedQty == null || row.calcQty == null) return null;
+  if (row.adoptedQty === row.calcQty) return null;
+  return { stream: row.stream, calcQty: row.calcQty, adoptedQty: row.adoptedQty,
+           delta: row.adoptedQty - row.calcQty };
+}
+
+// ── OUTPUT TABLES ────────────────────────────────────────────────────────────
+// Two tables per room, per the workbook. Table 1 is everything placed, including
+// non-collectable plant and receivers, with a footprint total. Table 2 is only
+// what actually gets collected. The include-filter has exactly TWO tiers:
+// instance override, then the library default — there is no keyword fallback.
+function wsInstanceCollectable(inst, lib) {
+  if (!inst) return false;
+  if (inst.collectable !== undefined && inst.collectable !== null) return inst.collectable === true;
+  const rec = (lib || {})[inst.equipmentId];
+  return !!rec && rec.collectable !== false;
+}
+// Receivers are fixed allocations: they occupy floor and appear in the storage
+// table, but they are never collected, so they never reach the collection table.
+function wsRoomTables(instances, library) {
+  const lib = library || {};
+  const storage = (instances || []).filter(Boolean).map(i => {
+    const rec = lib[i.equipmentId] || {};
+    return { instanceId: i.id, equipmentId: i.equipmentId,
+             label: i.label || rec.label || i.equipmentId,
+             stream: i.stream || null, qty: i.qty == null ? 1 : i.qty,
+             footprintM2: rec.footprintM2 || 0,
+             receiver: i.receiver === true,
+             collectable: wsInstanceCollectable(i, lib) };
+  });
+  const collection = storage.filter(r => r.collectable && !r.receiver);
+  const footprintM2 = storage.reduce((a, r) => a + (r.footprintM2 || 0) * (r.qty || 1), 0);
+  return { storage, collection, footprintM2 };
+}
+// The workbook drops the "weekly volume after compaction" column entirely when
+// nothing in the room is compacted, rather than printing a column of N/A.
+function wsShowCompactionColumn(rows) {
+  return (rows || []).some(r => r && (r.compacted || r.removed));
+}
 function wsRoomReconcile(roomId, targets, bins) {
   const req = {}, got = {};
   (targets || []).forEach(t => { req[t.stream] = (req[t.stream] || 0) + (t.qty || 0); });
@@ -13323,6 +13503,71 @@ function wsRoomReconcile(roomId, targets, bins) {
     placed: rows.reduce((a, r) => a + r.placed, 0),
   };
 }
+// ── TARGETS → DEMAND ─────────────────────────────────────────────────────────
+// Calculator targets carry the volume basis (weeklyVolL / perWeek) so compaction
+// uses the calculator’s own maths rather than a count approximation. When a
+// target predates that — an older saved project — there is no volume to work
+// from, and `basis` says so rather than inventing one.
+function wsTargetsToDemand(targets) {
+  const by = {};
+  (targets || []).forEach(t => {
+    const k = t.stream;
+    const row = by[k] || (by[k] = { stream: k, weeklyVolL: 0, binCapacityL: 0, perWeek: 0,
+                                    qty: 0, basis: 'volume' });
+    row.qty += t.qty || 0;
+    row.weeklyVolL += t.weeklyVolL || 0;
+    row.binCapacityL = Math.max(row.binCapacityL, t.sizeL || 0);
+    row.perWeek = Math.max(row.perWeek, t.perWeek || 0);
+    if (!(t.weeklyVolL > 0)) row.basis = 'count';
+  });
+  return Object.values(by);
+}
+// Equipment instances placed in one room, in the shape the reconciler wants.
+// The assigned stream is explicit on the item; it is never inferred from a label.
+function wsRoomEquipInstances(roomId, equip, library) {
+  const lib = library || {};
+  return (equip || []).filter(e => e && e.roomId === roomId && e.equipmentId && lib[e.equipmentId])
+    .map(e => ({ id: e.id, equipmentId: e.equipmentId, stream: e.stream || null,
+                 qty: e.qty == null ? 1 : e.qty, label: e.label,
+                 collectable: e.collectable, receiver: e.receiver === true }));
+}
+// The room chip/pill view: reconciled REQUIRED counts against placed bins.
+// Counts only — no litres reach the layout panel.
+function wsRoomReconcileWithEquipment(roomId, targets, bins, equip, library, opts) {
+  const base = wsRoomReconcile(roomId, targets, bins);
+  const insts = wsRoomEquipInstances(roomId, equip, library);
+  if (!insts.length) return { ...base, equipment: [], outputs: [], problems: [], reconciled: false };
+  const demand = wsTargetsToDemand(targets);
+  const res = wsReconcileRoomEquipment(demand, insts, library, opts);
+  // basis must be attached BEFORE the rows are built — the compaction guard
+  // reads it, and setting it afterwards silently disabled the guard.
+  const demandByStream = {};
+  demand.forEach(d => { demandByStream[d.stream] = d; });
+  res.rows.forEach(r => { r.basis = (demandByStream[r.stream] || {}).basis || 'volume'; });
+  const byStream = {};
+  res.rows.forEach(r => { byStream[r.stream] = r; });
+  const rows = base.rows.map(row => {
+    const r = byStream[row.stream];
+    if (!r || !r.applied) return row;
+    // Only a volume basis can be compacted honestly. Without it the requirement
+    // is left alone and flagged, rather than quietly halving a bin count.
+    if (r.basis === 'count' || r.calcQty == null) return { ...row, needsVolume: true };
+    const required = r.calcQty;
+    return { ...row, required, rawRequired: row.required, ok: row.placed >= required,
+             over: row.placed > required, compacted: true, via: r.applied.label || null };
+  });
+  return {
+    rows,
+    ok: rows.length > 0 && rows.every(r => r.ok),
+    required: rows.reduce((a, r) => a + r.required, 0),
+    placed: rows.reduce((a, r) => a + r.placed, 0),
+    equipment: insts,
+    outputs: res.outputs,
+    problems: res.problems,
+    reconciled: rows.some(r => r.compacted),
+  };
+}
+
 // ── ROOM EDITING (pure data operations) ──────────────────────────────────────
 // Rooms are editable polygons: drag the interior to move the whole thing, drag a
 // vertex to reshape, click an edge midpoint to add a vertex. Every operation here
@@ -15041,21 +15286,24 @@ function wsLayoutBestBin(sizeL) {
 // room's bins and footprint can be placed — and checked off — on its own.
 function wsLayoutSetTargets(schedule, rooms) {
   const byRoom = {};
-  const add = (roomId, name, kind, streamRaw, sizeL, qty) => {
+  const add = (roomId, name, kind, streamRaw, sizeL, qty, volL, perWeek) => {
     const stream = WS_STREAM_KEYMAP[String(streamRaw).toUpperCase()] || 'garbage';
     const best = wsLayoutBestBin(sizeL);
     const r = byRoom[roomId] || (byRoom[roomId] = { id: roomId, name: name || 'Bin room', kind: kind || 'res', fpM2: 0, areaM2: 0, targets: [] });
     const hit = r.targets.find(t => t.stream === stream && t.typeId === best.id);
-    if (hit) hit.qty += qty; else r.targets.push({ stream, typeId: best.id, sizeL, qty });
+    // weeklyVolL/perWeek are the compaction basis. They are DATA ONLY — the
+    // layout panel shows counts, never litres; volumes would swamp it.
+    if (hit) { hit.qty += qty; hit.weeklyVolL = (hit.weeklyVolL || 0) + (volL || 0); if (perWeek > (hit.perWeek || 0)) hit.perWeek = perWeek; }
+    else r.targets.push({ stream, typeId: best.id, sizeL, qty, weeklyVolL: volL || 0, perWeek: perWeek || 1 });
   };
   if (Array.isArray(rooms) && rooms.length) {
     rooms.forEach(rm => {
       byRoom[rm.id] = { id: rm.id, name: rm.name, kind: rm.kind || 'res', fpM2: rm.fpM2 || 0,
                         areaM2: rm.areaM2 || 0, targets: [], units: rm.units || [], chute: rm.chute || null };
-      (rm.bins || []).forEach(b => add(rm.id, rm.name, rm.kind, b.stream, b.sizeL, b.qty));
+      (rm.bins || []).forEach(b => add(rm.id, rm.name, rm.kind, b.stream, b.sizeL, b.qty, b.weeklyVolL, b.perWeek));
     });
   } else {
-    (schedule || []).forEach(it => add(it.room || 'R1', it.roomName, it.sec === 'c' ? 'com' : 'res', it.stream, it.sizeL, it.qty));
+    (schedule || []).forEach(it => add(it.room || 'R1', it.roomName, it.sec === 'c' ? 'com' : 'res', it.stream, it.sizeL, it.qty, it.weeklyVolL, it.perWeek));
   }
   WS_CALC_ROOMS = Object.values(byRoom).filter(r => r.targets.length);
   const flat = {};
