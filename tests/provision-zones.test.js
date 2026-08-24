@@ -322,3 +322,39 @@ test('only custom chips carry a remove control', () => {
   assert.ok(pill.includes('event.stopPropagation();wsProvisionRemoveCustom('),
     'removing must not also toggle the chip it sits on');
 });
+
+// ── surface 4: the B2 streams field in the admin table ──────────────────
+test('the admin equipment table has a streams column, beside compaction', () => {
+  assert.ok(SOURCE.includes("['streams','Streams',120,'streams']"),
+    'stream association belongs next to the ratio it works with');
+});
+
+test('the options come from the ONE canonical stream list', () => {
+  const cell = SOURCE.slice(SOURCE.indexOf("if (kind === 'streams')"), SOURCE.indexOf("if (kind === 'cat')"));
+  assert.ok(cell.includes("window.WS_STREAMS"),
+    'the admin table must read the canonical list, not keep its own copy');
+  assert.ok(cell.includes("filter(x => x.id !== 'equip')"),
+    'the equipment pseudo-stream is not assignable');
+  assert.ok(cell.includes('multiple'), 'stream association is many-to-one');
+  // the list is exported precisely because the two live in different script blocks
+  assert.ok(SOURCE.includes('window.WS_STREAMS = WS_STREAMS;'));
+  const copies = SOURCE.split("{ id: 'garbage',").length - 1;
+  assert.equal(copies, 1, 'the canonical stream list must exist exactly once');
+});
+
+test('empty means unrestricted, and the control says so', () => {
+  const cell = SOURCE.slice(SOURCE.indexOf("if (kind === 'streams')"), SOURCE.indexOf("if (kind === 'cat')"));
+  assert.ok(cell.includes('none = unrestricted'),
+    'an empty multi-select looks broken unless it explains itself');
+  assert.ok(cell.includes("sel.length ? sel.length + ' selected' : 'all streams'"));
+});
+
+test('streams are collected and saved as an array, never null', () => {
+  const collect = SOURCE.slice(SOURCE.indexOf('function edCollect'), SOURCE.indexOf('function edCell') > SOURCE.indexOf('function edCollect') ? SOURCE.indexOf('function edCell') : SOURCE.length);
+  assert.ok(SOURCE.includes("else if (spec[3]==='streams')"), 'the collector must handle the new kind');
+  assert.ok(SOURCE.includes('Array.from(el.selectedOptions || []).map(o => o.value)'));
+  // an array, because null would be indistinguishable from "not yet migrated"
+  assert.ok(SOURCE.includes('streams: Array.isArray(it.streams) ? it.streams : [],'),
+    'the save path must normalise to an array');
+  void collect;
+});

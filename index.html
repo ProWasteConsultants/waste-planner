@@ -8669,7 +8669,7 @@ const EQL = { items: [], deletes: [], cols: [
   ['supplier_type','Supplier type',92,'text'], ['label','Bin / equip type',150,'text'], ['category','Category',86,'cat'],
   ['item_kind','Item kind',70,'text'], ['collectable','Collectable',52,'bool'],
   ['height_mm','Height mm',56,'num'], ['width_mm','Width mm',56,'num'], ['depth_mm','Depth mm',56,'num'],
-  ['footprint_m2','Footprint m²',58,'num'], ['capacity_l','Capacity (L)',60,'num'], ['compaction_ratio','Compaction',56,'num'],
+  ['footprint_m2','Footprint m²',58,'num'], ['capacity_l','Capacity (L)',60,'num'], ['compaction_ratio','Compaction',56,'num'], ['streams','Streams',120,'streams'],
   ['company','Company',100,'text'], ['website','Website',130,'text'], ['phone','Phone',95,'text'],
   ['include_in_supplier_table','In supplier tbl',52,'bool'] ] };
 const CTL = { items: [], deletes: [], cols: [
@@ -8695,6 +8695,20 @@ function edCell(spec, i, val) {
   const base = `data-i="${i}" data-f="${f}" onchange="this.closest('table').dataset.dirty=1"`;
   const st = `style="width:${w}px;background:#182121;border:1px solid var(--border);border-radius:4px;padding:3px 5px;font-size:10.5px;color:var(--text);font-family:inherit;"`;
   if (kind === 'bool') return `<td style="padding:2px 5px;text-align:center;"><input type="checkbox" ${base} ${val===true?'checked':''}></td>`;
+  // B2 stream association. Options come from the ONE canonical stream list, so
+  // the admin table can never offer a stream the app does not know about.
+  // Empty selection = unrestricted, which is the semantic the layout and the
+  // calculator both rely on — so the control says so rather than looking broken.
+  if (kind === 'streams') {
+    const sel = Array.isArray(val) ? val : [];
+    const canon = (typeof window !== 'undefined' && window.WS_STREAMS) || [];
+    const opts = canon.filter(x => x.id !== 'equip').map(o =>
+      `<option value="${o.id}" ${sel.indexOf(o.id) >= 0 ? 'selected' : ''}>${o.label}</option>`).join('');
+    const hint = sel.length ? sel.length + ' selected' : 'all streams';
+    return `<td style="padding:2px 5px;">` +
+      `<select multiple size="3" ${base} ${st.replace('padding:3px 5px;', 'padding:2px 4px;')}>${opts}</select>` +
+      `<div style="font-size:8.5px;color:var(--muted);margin-top:1px;">${hint} · none = unrestricted</div></td>`;
+  }
   if (kind === 'cat') {
     const opts = ['bin','compactor','chute','carousel','other'].map(o=>`<option ${o===val?'selected':''}>${o}</option>`).join('');
     return `<td style="padding:2px 5px;"><select ${base} ${st}>${opts}</select></td>`;
@@ -8714,6 +8728,10 @@ function edCollect(cfg, bodyId) {
     const it = cfg.items[Number(el.dataset.i)]; if (!it) return;
     const spec = cfg.cols.find(c=>c[0]===el.dataset.f);
     if (spec[3]==='bool') it[el.dataset.f] = el.checked;
+    else if (spec[3]==='streams')
+      // stored as an array, empty meaning unrestricted — never null, or the
+      // column would be indistinguishable from "not yet migrated"
+      it[el.dataset.f] = Array.from(el.selectedOptions || []).map(o => o.value);
     else if (spec[3]==='num') it[el.dataset.f] = el.value==='' ? null : Number(el.value);
     else it[el.dataset.f] = el.value.trim() || null;
   });
@@ -8747,6 +8765,7 @@ async function eqlSave() {
       label: it.label, category: it.category||'other', item_kind: it.item_kind,
       capacity_l: it.capacity_l, width_mm: it.width_mm, depth_mm: it.depth_mm, height_mm: it.height_mm,
       footprint_m2: it.footprint_m2, compaction_ratio: it.compaction_ratio,
+      streams: Array.isArray(it.streams) ? it.streams : [],
       supplier_type: it.supplier_type, company: it.company, website: it.website, phone: it.phone,
       collectable: it.collectable===true, include_in_supplier_table: it.include_in_supplier_table===true,
       active: it.active !== false }));
@@ -12629,6 +12648,10 @@ const WS_STREAMS = [
   { id: 'soft',      label: 'Soft Plastics', col: '#06B6D4', aci: 4 },
   { id: 'equip',     label: 'Equipment',  col: '#607D8B', aci: 8 },
 ];
+// The admin equipment editor lives in a DIFFERENT script block, which cannot
+// see this const. Export it rather than duplicating the list — two copies of the
+// canonical streams would drift.
+window.WS_STREAMS = WS_STREAMS;
 // ── SHAPE LIBRARY ────────────────────────────────────────────────────────────
 // One geometry source drives BOTH the screen and the DXF, so they can never
 // disagree. A shape is a plan-view path drawn inside a 0..1 unit box; at render
