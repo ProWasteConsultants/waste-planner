@@ -234,91 +234,20 @@ test('a whole-room drag leaves reconciliation unchanged', () => {
   assert.equal(after.ok, true);
 });
 
-// ── chip placement ──────────────────────────────────────────────────────
-test('wsRoomChipAnchor: sits clear above the room top edge', () => {
-  const a = ws.wsRoomChipAnchor({ x1: 10, y1: 100, x2: 200, y2: 300 }, 80, 20, { margin: 6, minY: 0 });
-  assert.equal(a.placement, 'above');
-  assert.equal(a.x, 10, 'left-aligned with the room');
-  assert.equal(a.y, 74);
-  assert.ok(a.y + a.height <= 100, 'the chip must not overlap the room interior');
-});
-
-test('wsRoomChipAnchor: flips below when there is no room above', () => {
-  const a = ws.wsRoomChipAnchor({ x1: 10, y1: 5, x2: 200, y2: 300 }, 80, 20, { margin: 6, minY: 0 });
-  assert.equal(a.placement, 'below');
-  assert.equal(a.y, 306);
-  assert.ok(a.y >= 300, 'the flipped chip must still clear the room interior');
-});
-
-test('wsRoomChipAnchor: never overlaps the room in either placement', () => {
-  for (const y1 of [0, 3, 20, 26, 27, 200]) {
-    const bb = { x1: 0, y1, x2: 100, y2: y1 + 150 };
-    const a = ws.wsRoomChipAnchor(bb, 80, 20, { margin: 6, minY: 2 });
-    const clearsAbove = a.y + a.height <= bb.y1;
-    const clearsBelow = a.y >= bb.y2;
-    assert.ok(clearsAbove || clearsBelow, `chip overlapped the room at y1=${y1}`);
-  }
-});
-
-test('wsRoomChipAnchor: defaults are sane when no options are passed', () => {
-  const a = ws.wsRoomChipAnchor({ x1: 0, y1: 100, x2: 50, y2: 200 }, 40, 18);
-  assert.equal(a.placement, 'above');
-  assert.equal(a.y, 100 - 18 - 6);
-});
-
-// ── chip visibility ─────────────────────────────────────────────────────
-const REC_OK = { rows: [{ stream: 'garbage', required: 1, placed: 1, ok: true }], ok: true };
-const REC_SHORT = { rows: [{ stream: 'garbage', required: 2, placed: 1, ok: false }], ok: false };
-const REC_NONE = { rows: [], ok: false };
-
-test('wsRoomChipState: a room with no schedule renders no chip at all', () => {
-  assert.equal(ws.wsRoomChipState(REC_NONE, false, true).render, false);
-  assert.equal(ws.wsRoomChipState(null, false, true).render, false);
-  assert.equal(ws.wsRoomChipState(undefined, true, true).render, false);
-});
-
-test('wsRoomChipState: the Labels layer toggle hides chips', () => {
-  assert.equal(ws.wsRoomChipState(REC_SHORT, false, false).render, false,
-    'an unsatisfied chip must still hide with Labels off');
-  assert.equal(ws.wsRoomChipState(REC_OK, true, false).render, false,
-    'selection must not override the Labels toggle');
-  assert.equal(ws.wsRoomChipState(REC_SHORT, false, true).render, true);
-});
-
-test('wsRoomChipState: a satisfied room collapses to a badge', () => {
-  const s = ws.wsRoomChipState(REC_OK, false, true);
-  assert.equal(s.render, true);
-  assert.equal(s.ok, true);
-  assert.equal(s.collapsed, true);
-  assert.match(s.cls, /\bws-chip\b/);
-  assert.match(s.cls, /\bok\b/);
-  assert.doesNotMatch(s.cls, /\bsel\b/);
-});
-
-test('wsRoomChipState: selecting the room expands it again', () => {
-  const s = ws.wsRoomChipState(REC_OK, true, true);
-  assert.equal(s.collapsed, false);
-  assert.match(s.cls, /\bsel\b/);
-});
-
-test('wsRoomChipState: an unsatisfied room never collapses', () => {
-  for (const selected of [false, true]) {
-    const s = ws.wsRoomChipState(REC_SHORT, selected, true);
-    assert.equal(s.render, true);
-    assert.equal(s.collapsed, false, 'an outstanding shortfall must stay visible');
-    assert.doesNotMatch(s.cls, /\bok\b/);
-  }
-});
-
-test('the CSS backing the collapse rule exists and keys off the same classes', () => {
-  // wsRoomChipState only emits class names; CSS does the collapsing, so the two
-  // have to agree or a satisfied chip silently renders both states at once.
-  assert.match(SOURCE, /\.ws-chip \.ws-chip-badge\{display:none;\}/);
-  assert.match(SOURCE, /\.ws-chip\.ok \.ws-chip-badge\{display:inline;\}/);
-  assert.match(SOURCE, /\.ws-chip\.ok \.ws-chip-full\{display:none;\}/);
-  assert.match(SOURCE, /\.ws-chip\.ok:hover \.ws-chip-full,\.ws-chip\.ok\.sel \.ws-chip-full\{display:inline;\}/);
-  assert.match(SOURCE, /#ws-overlay-svg\.ws-hide-labels \.ws-chip\{display:none;\}/,
-    'chips must hide with the Labels layer');
+// The room label, area and reconciliation chip are no longer drawn on the canvas —
+// they live in the room selection pill. Their placement/visibility helpers were
+// removed with them; wsRoomReconcile itself is still the source of truth and is
+// covered in layout-rooms.test.js.
+test('the room label and reconciliation chip are off the canvas', () => {
+  const roomBlock = SOURCE.slice(SOURCE.indexOf('slot.rooms.forEach((r, i) => {'),
+                                 SOURCE.indexOf('// ── Dimensions layer'));
+  assert.doesNotMatch(roomBlock, /wsRoomChipState|ws-chip/, 'the chip must not be drawn on the plan');
+  assert.doesNotMatch(roomBlock, /target ${r.targetM2/, 'the room area label must not be drawn on the plan');
+  assert.doesNotMatch(roomBlock, /under the recommended area/, 'the area warning must not be drawn on the plan');
+  assert.equal(SOURCE.includes('.ws-chip{'), false, 'the chip CSS should have gone with it');
+  // ...but the reconciliation itself still drives the selection pill
+  const pill = SOURCE.slice(SOURCE.indexOf('function wsUpdateRoomPill'), SOURCE.indexOf('function wsPillInk'));
+  assert.match(pill, /wsRoomReconcile\(/, 'the counts must still reach the selection pill');
 });
 
 // ── room outline style ──────────────────────────────────────────────────

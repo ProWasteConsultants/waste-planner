@@ -44,7 +44,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-btn.primary:hover{background:#0f6363;}
 .ws-canvas-area{flex:1;position:relative;overflow:hidden;min-height:0;background:#2a2a2a;cursor:grab;}
 .ws-canvas-area:active{cursor:grabbing;}
-.ws-canvas-wrap{position:absolute;transform-origin:top left;will-change:transform;}
+/* No will-change:transform here. It promotes the wrapper to its own compositor
+   layer, which Chrome rasterises ONCE at the then-current transform and reuses
+   while the layer is only transformed — so a scaled plan is resampled from a
+   stale bitmap and the whole drawing goes soft. Adding SVG content (a door, say)
+   is exactly the kind of event that re-promotes the layer and makes it visible.
+   Panning still uses transform; it is just no longer pinned to a cached raster. */
+.ws-canvas-wrap{position:absolute;transform-origin:top left;}
 .ws-canvas-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;}
 .ws-upload-zone{border:2px dashed rgba(255,255,255,0.15);border-radius:12px;padding:40px 60px;text-align:center;cursor:pointer;transition:border-color 0.2s;}
 .ws-upload-zone:hover{border-color:var(--teal);}
@@ -141,19 +147,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ── WORKSPACE CANVAS SVG LAYERS ── */
 #ws-overlay-svg.ws-hide-labels text{display:none;}
-/* Reconciliation chips are annotation: they go with the Labels layer, and the
-   whole group hides (not just its text) so no orphan pills are left behind. */
-#ws-overlay-svg.ws-hide-labels .ws-chip{display:none;}
-/* A satisfied room collapses to a ✓ badge; hovering it, or selecting the room,
-   expands it back to the per-stream breakdown. Pure CSS so peeking at a chip
-   never costs a re-render. */
-.ws-chip{pointer-events:all;}
-.ws-chip .ws-chip-badge{display:none;}
-.ws-chip .ws-chip-full{display:inline;}
-.ws-chip.ok .ws-chip-badge{display:inline;}
-.ws-chip.ok .ws-chip-full{display:none;}
-.ws-chip.ok:hover .ws-chip-badge,.ws-chip.ok.sel .ws-chip-badge{display:none;}
-.ws-chip.ok:hover .ws-chip-full,.ws-chip.ok.sel .ws-chip-full{display:inline;}
 #ws-layer-binroom{pointer-events:none;}
 #ws-layer-swept{pointer-events:none;}
 #ws-layer-dims{pointer-events:none;}
@@ -12839,6 +12832,21 @@ const WS_LAYOUT = { byPage: {}, sel: null, selKind: 'bin', undo: [], redo: [], r
                     hover: null, drag: null, tabActive: false, _bound: false, _raf: false, _justDragged: false };
 // Tool state parked while a markup is being drawn — see wsMarkSuspend / wsMarkExit.
 let WS_MARK_SUSPEND = null;
+// Layout clipboard: a detached copy of one placed item, kept in memory only.
+let WS_LAYOUT_CLIP = null;
+// Pure: a placed item duplicated at an offset, with a fresh identity. Room tags
+// are cleared because the copy has not been placed anywhere yet — the caller
+// retags it once its position is known.
+function wsCloneItem(item, dx, dy, id) {
+  if (!item) return null;
+  const c = JSON.parse(JSON.stringify(item));
+  c.id = id;
+  c.x = (item.x || 0) + (dx || 0);
+  c.y = (item.y || 0) + (dy || 0);
+  delete c.locked;                 // a copy is never born locked
+  c.roomId = null; c.calcRoom = null;
+  return c;
+}
 
 // ── Bin & equipment palettes fed from the `equipment` DB table (WS_BIN_TYPES = offline fallback) ──
 // item_kind 'Bin' → bin palette (incl. zones like hard waste — placeable areas with footprints);
@@ -12936,7 +12944,7 @@ function wsLayoutSnapshot() {
   if (WS_LAYOUT.undo.length > 50) WS_LAYOUT.undo.shift();
   WS_LAYOUT.redo = [];
 }
-function wsLayoutDo(a) {
+function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
   const slot = wsLayoutSlot();
   if (a === 'undo') {
     if (!WS_LAYOUT.undo.length) { wsLayoutStatus('Nothing to undo.'); return; }
@@ -12966,6 +12974,34 @@ function wsLayoutDo(a) {
     wsLayoutStatus(t.locked
       ? '🔒 Locked — it will not move, rotate or delete, and Generate treats it as a keep-out.'
       : '🔓 Unlocked — it can be moved and will be repacked by Generate.');
+  } else if (a === 'copy' || a === 'duplicate') {
+    // Copy works on whatever is selected: bin, equipment/fixture (doors
+    // included) or chute. Rooms are not copied — they are drawn.
+    const src = slot.bins.find(x => x.id === WS_LAYOUT.sel)
+             || slot.equip.find(x => x.id === WS_LAYOUT.sel)
+             || slot.chutes.find(x => x.id === WS_LAYOUT.sel);
+    if (!src) { wsLayoutStatus('Select a bin, fixture or equipment item first, then copy.'); return; }
+    WS_LAYOUT_CLIP = { kind: slot.bins.includes(src) ? 'bins' : slot.equip.includes(src) ? 'equip' : 'chutes',
+                       item: wsCloneItem(src, 0, 0, null) };
+    if (a === 'copy') { wsLayoutStatus(`Copied ${src.label || 'item'} — Ctrl+V to paste.`); return; }
+    a = 'paste';   // duplicate = copy then paste in one step
+  }
+  if (a === 'paste') {
+    if (!WS_LAYOUT_CLIP) { wsLayoutStatus('Nothing copied yet — select something and press Ctrl+C.'); return; }
+    const mpp = wsSweptMpp() || 0.05;
+    // offset by a visible amount so the copy never hides exactly under the original
+    const off = 0.35 / mpp;
+    const id = (WS_LAYOUT_CLIP.kind === 'bins' ? 'bin_' : WS_LAYOUT_CLIP.kind === 'equip' ? 'fx_' : 'ch_')
+             + Date.now() + '_' + Math.floor(Math.random() * 9999);
+    const copy = wsCloneItem(WS_LAYOUT_CLIP.item, off, off, id);
+    wsLayoutSnapshot();
+    slot[WS_LAYOUT_CLIP.kind].push(copy);
+    // the pasted item belongs to whatever room it landed in
+    wsTagBinsToRooms(slot.rooms, slot.bins);
+    wsTagBinsToRooms(slot.rooms, slot.equip);
+    WS_LAYOUT.sel = copy.id;
+    WS_LAYOUT.selKind = WS_LAYOUT_CLIP.kind === 'bins' ? 'bin' : WS_LAYOUT_CLIP.kind === 'equip' ? 'equip' : 'chute';
+    wsLayoutStatus(`Pasted ${copy.label || 'item'} — drag to position it.`);
   } else if (a === 'delete') {
     let hit = false, wasLocked = false;
     // Deleting a room removes the outline only — the bins inside stay on the plan
@@ -13230,38 +13266,6 @@ function wsRoomDragMove(room, dx, dy, bins, equip) {
   return moved.length;
 }
 
-// ── RECONCILIATION CHIP PLACEMENT AND VISIBILITY ─────────────────────────────
-// The chip sits OUTSIDE the room outline so it can never cover bins. Above the
-// top edge by default; below the bottom edge when there is no room above (the
-// room is hard against the top of the sheet).
-function wsRoomChipAnchor(bb, chipW, chipH, opts) {
-  const o = opts || {};
-  const margin = o.margin == null ? 6 : o.margin;
-  const above = bb.y1 - chipH - margin;
-  const placement = above >= (o.minY == null ? 0 : o.minY) ? 'above' : 'below';
-  return {
-    x: bb.x1,
-    y: placement === 'above' ? above : bb.y2 + margin,
-    placement,
-    width: chipW,
-    height: chipH,
-  };
-}
-// What the chip should render as. A satisfied room collapses to a ✓ badge so a
-// finished plan is not cluttered; hover or selecting the room expands it again
-// (both handled in CSS, so no re-render is needed to peek at one).
-function wsRoomChipState(rec, selected, labelsOn) {
-  const hasRows = !!(rec && rec.rows && rec.rows.length);
-  if (!hasRows || labelsOn === false) return { render: false, collapsed: false, cls: '' };
-  const ok = !!rec.ok;
-  const collapsed = ok && !selected;
-  return {
-    render: true,
-    ok,
-    collapsed,
-    cls: 'ws-chip' + (ok ? ' ok' : '') + (selected ? ' sel' : ''),
-  };
-}
 // ── SHIFT CONSTRAINTS ────────────────────────────────────────────────────────
 // Holding Shift while dragging a corner snaps it square to whichever neighbour
 // it is closest to squaring with, so an orthogonal room stays orthogonal. Four
@@ -13290,6 +13294,8 @@ function wsSnapAxis(dx, dy) {
 // Edge lengths in metres to one decimal — the drafting convention for a room
 // plan. Rooms only; bins and equipment are dimensioned by their schedule, not
 // by a string on the drawing.
+// Royal blue: dimensions must read as OUR annotation, never as base-plan linework.
+const WS_DIM_COLOUR = '#4169E1';
 function wsDimText(lenPx, mpp) { return (lenPx * mpp).toFixed(1) + ' m'; }
 // One entry per edge long enough to letter, with the text position pushed to the
 // OUTSIDE of the polygon and the angle kept upright.
@@ -13448,7 +13454,12 @@ function wsLayoutHitEquip(x, y, mpp) {
     const e = eq[i], a = -(e.rot || 0) * Math.PI / 180;
     const dx = x - e.x, dy = y - e.y;
     const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
-    if (Math.abs(lx) <= e.w / 2 / mpp && Math.abs(ly) <= e.d / 2 / mpp) return e;
+    // A door is only ~100 mm deep — 2 canvas px, about 1 px on screen at 53%
+    // zoom — so its true footprint is impossible to hit. Every item gets a
+    // minimum grab band measured in SCREEN pixels.
+    const grab = wsHandleHitR() * 0.55;
+    if (Math.abs(lx) <= Math.max(e.w / 2 / mpp, grab) &&
+        Math.abs(ly) <= Math.max(e.d / 2 / mpp, grab)) return e;
   }
   return null;
 }
@@ -14142,6 +14153,9 @@ function wsLayoutBind() {
       if (WS._mode === 'layoutroom' && WS_LAYOUT.roomPts && WS_LAYOUT.roomPts.length >= 3) { wsLayoutRoomFinish(); return; }
       if (WS._mode === 'layoutmark' && WS_LAYOUT._mark) { wsMarkFinish(); return; }
     }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) { wsLayoutDo('copy'); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) { wsLayoutDo('paste'); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { wsLayoutDo('duplicate'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { wsLayoutDo(e.shiftKey ? 'redo' : 'undo'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) { wsLayoutDo('redo'); e.preventDefault(); return; }
     if (e.ctrlKey || e.metaKey) return;   // don't hijack browser shortcuts (Ctrl+R etc.)
@@ -14236,65 +14250,10 @@ function wsRenderLayoutLayer() {
         width: (hs * 2).toFixed(1), height: (hs * 2).toFixed(1),
         rx: (2 * HS).toFixed(1), fill: '#0d3333', stroke: '#00d4d4', 'stroke-width': (2 * HS).toFixed(2) }));
     }
-    const act = wsPolyArea(pts, mpp);
-    const t = mk('text', { x: bb.x1 + 8, y: bb.y1 + 20, fill: r.kind === 'com' ? '#B38600' : '#008080', 'font-size': 14, 'font-weight': 700 });
-    const tgt = r.targetM2 ? ` / target ${r.targetM2.toFixed(1)} m²` : '';
-    t.textContent = `${r.name || ('Room ' + (i + 1))} — ${act.toFixed(1)} m²${tgt}`;
-    let ly = bb.y1 + 36;
-    if (r.targetM2 && act < r.targetM2 * 0.95) {
-      const w2 = mk('text', { x: bb.x1 + 8, y: ly, fill: '#FF8A50', 'font-size': 12, 'font-weight': 700 });
-      w2.textContent = `⚠ ${(r.targetM2 - act).toFixed(1)} m² under the recommended area`;
-      ly += 16;
-    }
-    void ly;
-    // ── reconciliation chip: placed vs required, per stream, from this room's
-    // assigned schedule. Anchored OUTSIDE the outline so it can never sit over
-    // bins, scaled by wsLblF() like every other annotation, and collapsed to a ✓
-    // badge once satisfied (CSS expands it on hover or when the room is selected).
-    const rec = wsRoomReconcile(r.id, wsRoomTargets(r, WS_CALC_ROOMS), slot.bins);
-    const st8 = wsRoomChipState(rec, selRoom, true);
-    if (!st8.render) return;
-    const PADX = 6 * WSF, CH = 15 * WSF, GAP = 7 * WSF, TOPPAD = 4 * WSF;
-    const cells = rec.rows.map(row => {
-      const st = WS_STREAMS.find(s => s.id === row.stream);
-      return { ...row, col: st ? st.col : '#78909C', label: (st ? st.label : row.stream).slice(0, 3).toUpperCase(),
-               txt: `${row.placed}/${row.required}` };
-    });
-    const wOf = c => (c.label.length + c.txt.length + 1) * 6.1 * WSF + 12 * WSF;
-    const fullW = Math.max(cells.reduce((a, c) => a + wOf(c) + GAP, -GAP) + PADX * 2 + 20 * WSF, 40 * WSF);
-    const badgeW = 22 * WSF, chipH = CH + TOPPAD * 2;
-    const anchor = wsRoomChipAnchor(bb, fullW, chipH, { margin: 6 * WSF, minY: 2 });
-    const chip = mk('g', { transform: `translate(${anchor.x.toFixed(1)},${anchor.y.toFixed(1)})`,
-      class: st8.cls });
-
-    // collapsed badge — shown by CSS only while .ok and not hovered/selected
-    const badge = mk('g', { class: 'ws-chip-badge' }, chip);
-    mk('rect', { x: 0, y: 0, width: badgeW.toFixed(1), height: chipH.toFixed(1), rx: (chipH / 2).toFixed(1),
-      fill: 'rgba(22,74,44,0.92)', stroke: '#3DD68C', 'stroke-width': 1.2 }, badge);
-    const bt = mk('text', { x: (badgeW / 2).toFixed(1), y: (TOPPAD + CH * 0.74).toFixed(1),
-      'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, fill: '#3DD68C' }, badge);
-    bt.textContent = '✓';
-
-    const full = mk('g', { class: 'ws-chip-full' }, chip);
-    mk('rect', { x: 0, y: 0, width: fullW.toFixed(1), height: chipH.toFixed(1), rx: (chipH / 2).toFixed(1),
-      fill: rec.ok ? 'rgba(22,74,44,0.92)' : 'rgba(20,26,26,0.92)',
-      stroke: rec.ok ? '#3DD68C' : '#5a6a6a', 'stroke-width': 1.2 }, full);
-    let cx2 = PADX;
-    cells.forEach(c => {
-      const w = wOf(c);
-      mk('rect', { x: cx2.toFixed(1), y: TOPPAD.toFixed(1), width: w.toFixed(1), height: CH.toFixed(1), rx: (CH / 2).toFixed(1),
-        fill: c.ok ? c.col : 'none', stroke: c.col, 'stroke-width': 1.2,
-        opacity: c.ok ? 0.9 : 1 }, full);
-      const lab = mk('text', { x: (cx2 + w / 2).toFixed(1), y: (TOPPAD + CH * 0.74).toFixed(1),
-        'text-anchor': 'middle', 'font-size': 10, 'font-weight': 700,
-        fill: c.ok ? wsInk(c.col) : c.col }, full);
-      lab.textContent = `${c.label} ${c.txt}`;
-      if (c.over) mk('circle', { cx: (cx2 + w - 3 * WSF).toFixed(1), cy: TOPPAD.toFixed(1), r: 2.6 * WSF, fill: '#FFB74D' }, full);
-      cx2 += w + GAP;
-    });
-    const tick = mk('text', { x: (cx2 + 2 * WSF).toFixed(1), y: (TOPPAD + CH * 0.74).toFixed(1),
-      'font-size': 12, 'font-weight': 700, fill: rec.ok ? '#3DD68C' : '#FF8A50' }, full);
-    tick.textContent = rec.ok ? '✓' : `${rec.placed}/${rec.required}`;
+    // The room name, area and the per-stream reconciliation chip used to be drawn
+    // here. They are deliberately OFF the canvas now: annotation that belongs to
+    // the tool, not to the drawing, obscured the plan it was describing. Both live
+    // in the room selection pill instead — see wsUpdateRoomPill.
   });
 
   // ── Dimensions layer: room edge lengths. Rooms only — bins and equipment are
@@ -14310,11 +14269,11 @@ function wsRenderLayoutLayer() {
         [[e.a, 1], [e.b, 1]].forEach(([p]) => mk('line', {
           x1: (p.x + e.nx * 2).toFixed(1), y1: (p.y + e.ny * 2).toFixed(1),
           x2: (p.x + e.nx * (9 * WSF + tick)).toFixed(1), y2: (p.y + e.ny * (9 * WSF + tick)).toFixed(1),
-          stroke: '#9AA6A6', 'stroke-width': (0.9 * WSF).toFixed(2) }, gd));
+          stroke: WS_DIM_COLOUR, 'stroke-width': (0.9 * WSF).toFixed(2) }, gd));
         mk('line', { x1: (e.a.x + e.nx * 9 * WSF).toFixed(1), y1: (e.a.y + e.ny * 9 * WSF).toFixed(1),
                      x2: (e.b.x + e.nx * 9 * WSF).toFixed(1), y2: (e.b.y + e.ny * 9 * WSF).toFixed(1),
-                     stroke: '#9AA6A6', 'stroke-width': (0.9 * WSF).toFixed(2) }, gd);
-        const t = mk('text', { x: e.tx.toFixed(1), y: e.ty.toFixed(1), fill: '#C7D2D2',
+                     stroke: WS_DIM_COLOUR, 'stroke-width': (0.9 * WSF).toFixed(2) }, gd);
+        const t = mk('text', { x: e.tx.toFixed(1), y: e.ty.toFixed(1), fill: WS_DIM_COLOUR,
           'font-size': 10, 'font-weight': 600, 'text-anchor': 'middle',
           transform: `rotate(${e.deg.toFixed(1)} ${e.tx.toFixed(1)} ${e.ty.toFixed(1)})` }, gd);
         t.textContent = e.text;
@@ -14442,13 +14401,14 @@ function wsRenderLayoutLayer() {
   const drawDoor = (e, kind) => {
     const g2 = mk('g', { transform: `translate(${e.x.toFixed(1)},${e.y.toFixed(1)}) rotate(${e.rot || 0})` });
     const sel = WS_LAYOUT.sel === e.id;
-    const col = sel ? '#FFD54F' : '#B9C4C4', lw = sel ? 2 : 1.2;
+    // Plan convention: doors read as black linework, like the base drawing.
+    const col = sel ? '#FFD54F' : '#111111', lw = sel ? 2 : 1.2;
     const G = wsDoorGeometry(kind, e.w, e.d);
     const P = v => (v / mpp);
     G.jambs.forEach(j => mk('line', { x1: P(j[0][0]), y1: P(j[0][1]), x2: P(j[1][0]), y2: P(j[1][1]),
       stroke: col, 'stroke-width': lw + 0.4 }, g2));
     G.panels.forEach(pl => mk('polygon', { points: pl.map(p => P(p[0]) + ',' + P(p[1])).join(' '),
-      fill: 'rgba(185,196,196,0.18)', stroke: col, 'stroke-width': lw }, g2));
+      fill: 'rgba(17,17,17,0.10)', stroke: col, 'stroke-width': lw }, g2));
     if (G.rollDashed) mk('line', { x1: P(G.rollDashed[0][0]), y1: P(G.rollDashed[0][1]),
       x2: P(G.rollDashed[1][0]), y2: P(G.rollDashed[1][1]), stroke: col, 'stroke-width': lw,
       'stroke-dasharray': '5 4' }, g2);
@@ -15404,15 +15364,23 @@ function wsAisleMode() {
   document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
   wsLayoutStatus('Click to place a ' + wMm + 'mm clearance aisle. Drag its end handles to set length, R rotates. Esc to stop.');
 }
+// Placement is SINGLE-SHOT. It used to stay armed, so the very next click —
+// the one meant to select what you just placed — dropped another copy instead.
+// That is why doors could not be selected, moved, rotated or deleted: the tool
+// never handed the pointer back. Place one, exit, and select it.
 function wsFixtureAt(x, y) {
   const f = WS_LAYOUT._fixture; if (!f) { wsLayoutEndMode(); return; }
   wsLayoutSnapshot();
-  wsLayoutSlot().equip.push({ id: 'fx_' + Date.now(), x, y, rot: 0, code: f.code, label: f.label,
+  const id = 'fx_' + Date.now();
+  wsLayoutSlot().equip.push({ id, x, y, rot: 0, code: f.code, label: f.label,
     w: f.w, d: f.d, known: true, fixture: !f.aisle, aisle: !!f.aisle, round: !!f.round,
     door: f.door || null,
     calcRoom: wsLayoutCalcRoomAt(x, y) || null,
     roomId: wsBinRoomId(wsLayoutSlot().rooms, { x, y }) });
+  wsLayoutEndMode();
+  WS_LAYOUT.sel = id; WS_LAYOUT.selKind = 'equip';
   wsLayoutAutosave(); wsRenderLayoutLayer();
+  wsLayoutStatus(`${f.label} placed and selected — drag to move, R rotates, Ctrl+C/V copies, Del deletes.`);
 }
 
 // ── MARKUPS ──────────────────────────────────────────────────────────────────
@@ -15420,7 +15388,14 @@ function wsFixtureAt(x, y) {
 // a note is unreadable long before a bin label is. Used on screen and, because
 // the PDF export renders the same SVG, on the exported sheet too.
 const WS_CALLOUT_MIN_F = 0.85;
-function wsCalloutF(){ return Math.max(WS_CALLOUT_MIN_F, wsLblF()); }
+// wsLblF() tracks the DRAWING scale, but zooming out to a whole-site view shrinks
+// everything on screen regardless of it. wsCanvasPerScreen() converts a screen
+// size into canvas units, so this holds a minimum ON-SCREEN size for callouts —
+// clamped so a deep zoom-out cannot inflate them without limit.
+function wsCalloutF(){
+  const onScreen = WS_CALLOUT_MIN_F * Math.min(4, Math.max(1, wsCanvasPerScreen()));
+  return Math.max(onScreen, wsLblF());
+}
 const WS_MARK_STYLE = {
   measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false },
   area:     { col: '#7FD8D8', label: 'Area',           closed: true,  arrow: false },

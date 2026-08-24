@@ -8,7 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadLayout, SOURCE } = require('./extract.js');
+const { loadLayout, SOURCE, extractBlock } = require('./extract.js');
 
 const ws = loadLayout();
 
@@ -222,9 +222,17 @@ test('shift is read during both room drags', () => {
     'the axis lock must measure from the drag origin, not the previous frame');
 });
 
-test('B2: callouts have a higher scale floor than general labels', () => {
+test('B2: callouts stay legible at any plan scale AND any zoom', () => {
   assert.match(SOURCE, /const WS_CALLOUT_MIN_F = 0\.85;/);
-  assert.match(SOURCE, /function wsCalloutF\(\)\{ return Math\.max\(WS_CALLOUT_MIN_F, wsLblF\(\)\); \}/);
+  // wsLblF() alone only tracks the drawing scale — zooming out to a whole-site
+  // view shrinks everything on screen regardless, so the floor is expressed in
+  // screen units via wsCanvasPerScreen and clamped against runaway zoom-out.
+  assert.match(SOURCE, /function wsCalloutF\(\)\s*\{[\s\S]{0,240}wsCanvasPerScreen\(\)/,
+    'the callout floor must be measured on screen, not only in plan units');
+  assert.match(SOURCE, /Math\.min\(4, Math\.max\(1, wsCanvasPerScreen\(\)\)\)/,
+    'the on-screen floor must be clamped');
+  assert.match(SOURCE, /return Math\.max\(onScreen, wsLblF\(\)\);/,
+    'it is a floor, never a ceiling — a large plan scale still wins');
   // both the renderer and the hit-test must use it, or the box and its target disagree
   const uses = SOURCE.split('wsCalloutF()').length - 1;
   assert.ok(uses >= 3, 'wsCalloutF is used in only ' + uses + ' place(s)');
@@ -256,4 +264,94 @@ test('B7: the DXF door linework comes from the same geometry as the screen', () 
   assert.match(SOURCE, /const G = wsDoorGeometry\(dk, e\.w, e\.d\);/, 'DXF must reuse wsDoorGeometry');
   assert.match(SOURCE, /'A-DOOR'/);
   assert.match(SOURCE, /'A-WASTE-ZONE'/, 'hard waste zones need their own DXF layer');
+});
+
+// ── layout UI fixes (items 1–7) ─────────────────────────────────────────
+test('every placed item has a minimum SCREEN-sized grab band', () => {
+  // A 100 mm door is 2 canvas px deep — about 1 px on screen at 53% zoom — so
+  // its true footprint was impossible to click. That is why doors could not be
+  // selected, moved, rotated or deleted: nothing else was wrong with them.
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsLayoutHitEquip'), SOURCE.indexOf('// ── OBB GEOMETRY'));
+  assert.match(fn, /const grab = wsHandleHitR\(\) \* 0\.55;/, 'the grab band must be zoom-aware');
+  assert.match(fn, /Math\.max\(e\.w \/ 2 \/ mpp, grab\)/);
+  assert.match(fn, /Math\.max\(e\.d \/ 2 \/ mpp, grab\)/);
+  assert.doesNotMatch(fn, /Math\.abs\(ly\) <= e\.d \/ 2 \/ mpp\) return e;/, 'the raw footprint test is still there');
+});
+
+test('doors render in black, and selection still overrides it', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('const drawDoor = '), SOURCE.indexOf('// ── equipment ──'));
+  assert.match(fn, /const col = sel \? '#FFD54F' : '#111111'/, 'unselected doors must be black');
+  assert.doesNotMatch(fn, /'#B9C4C4'/, 'the old grey door colour is still present');
+  assert.match(fn, /rgba\(17,17,17,0\.10\)/, 'the roller panel fill should follow the black linework');
+});
+
+test('dimensions are royal blue everywhere they are drawn', () => {
+  assert.equal(ws.WS_DIM_COLOUR, '#4169E1');
+  const dims = SOURCE.slice(SOURCE.indexOf("const gd = document.getElementById('ws-layer-dims')"),
+                            SOURCE.indexOf('// polygon in progress'));
+  // ticks, the dimension line and the text all key off the one constant
+  assert.equal((dims.match(/WS_DIM_COLOUR/g) || []).length, 3,
+    'ticks, line and text must all use the shared colour');
+  assert.doesNotMatch(dims, /#9AA6A6|#C7D2D2/, 'the old grey dimension colours are still present');
+});
+
+test('the DXF dimension layer is unaffected by the screen colour change', () => {
+  // DXF carries an ACI index, not a hex colour — the royal blue is screen-only.
+  assert.match(SOURCE, /d \+= text\('A-ANNO-DIMS', 8,/);
+  assert.doesNotMatch(SOURCE.slice(SOURCE.indexOf('function wsLayoutDXFEntities')), /#4169E1/);
+});
+
+// ── placement hand-back and clipboard ───────────────────────────────────
+test('fixture placement is single-shot and hands the pointer back', () => {
+  // Root cause of "doors cannot be selected/moved/rotated/deleted": placement
+  // mode stayed armed, so the click meant to SELECT the door placed another one.
+  const fn = extractBlock(/^function wsFixtureAt\(/).text;
+  assert.match(fn, /wsLayoutEndMode\(\);/, 'placement must exit its mode');
+  assert.match(fn, /WS_LAYOUT\.sel = id; WS_LAYOUT\.selKind = 'equip';/,
+    'the item just placed should come back selected');
+  // the first wsLayoutEndMode() is the "no fixture armed" guard — check the last
+  assert.ok(fn.lastIndexOf('wsLayoutEndMode()') > fn.indexOf('equip.push('),
+    'the mode must end AFTER the item is pushed');
+});
+
+test('wsCloneItem: a copy is a fresh, unlocked, untagged duplicate', () => {
+  const src = { id: 'fx_1', x: 100, y: 200, rot: 90, code: 'DOOR', label: 'Door — single 920',
+                w: 0.92, d: 0.1, door: 'SINGLE', locked: true, roomId: 'A', calcRoom: 'R1' };
+  const c = ws.wsCloneItem(src, 7, -3, 'fx_2');
+  assert.equal(c.id, 'fx_2');
+  assert.deepEqual([c.x, c.y], [107, 197], 'offset applied');
+  assert.equal(c.rot, 90, 'rotation carries over');
+  assert.equal(c.door, 'SINGLE', 'the door kind carries over');
+  assert.equal(c.w, 0.92);
+  assert.equal(c.locked, undefined, 'a copy is never born locked');
+  assert.equal(c.roomId, null, 'room tags are cleared until it is placed');
+  assert.equal(c.calcRoom, null);
+});
+
+test('wsCloneItem: the copy is detached from the original', () => {
+  const src = { id: 'a', x: 0, y: 0, openings: [{ rx: 1, ry: 2 }] };
+  const c = ws.wsCloneItem(src, 0, 0, 'b');
+  c.openings[0].rx = 99;
+  assert.equal(src.openings[0].rx, 1, 'a deep copy, not a shared reference');
+  assert.equal(ws.wsCloneItem(null, 1, 1, 'x'), null);
+});
+
+test('wsCloneItem: a missing offset is treated as zero', () => {
+  const c = ws.wsCloneItem({ id: 'a', x: 5, y: 6 }, undefined, undefined, 'b');
+  assert.deepEqual([c.x, c.y], [5, 6]);
+});
+
+test('copy, paste and duplicate are wired to the keyboard and to wsLayoutDo', () => {
+  assert.match(SOURCE, /\(e\.key === 'c' \|\| e\.key === 'C'\)\) \{ wsLayoutDo\('copy'\)/);
+  assert.match(SOURCE, /\(e\.key === 'v' \|\| e\.key === 'V'\)\) \{ wsLayoutDo\('paste'\)/);
+  assert.match(SOURCE, /\(e\.key === 'd' \|\| e\.key === 'D'\)\) \{ wsLayoutDo\('duplicate'\)/);
+  // ...and they must be tested BEFORE the blanket "don't hijack Ctrl" bail-out
+  const kd = SOURCE.slice(SOURCE.indexOf("wsLayoutDo('copy')"));
+  assert.ok(kd.indexOf("if (e.ctrlKey || e.metaKey) return;") > 0, 'the Ctrl bail-out must come after');
+  // copy covers bins, equipment (doors included) and chutes — not rooms
+  const doFn = SOURCE.slice(SOURCE.indexOf("} else if (a === 'copy'"), SOURCE.indexOf("} else if (a === 'delete')"));
+  assert.match(doFn, /slot\.bins\.find/);
+  assert.match(doFn, /slot\.equip\.find/);
+  assert.match(doFn, /slot\.chutes\.find/);
+  assert.doesNotMatch(doFn, /slot\.rooms\.find/, 'rooms are drawn, not copied');
 });

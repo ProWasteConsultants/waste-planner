@@ -85,11 +85,9 @@ const LAYOUT_BLOCKS = [
   ['wsRoomDragMove',    /^function wsRoomDragMove\(/],
   ['wsRoomHandleAt',    /^function wsRoomHandleAt\(/],
   ['wsAnyRoomHandleAt', /^function wsAnyRoomHandleAt\(/],
-  ['wsRoomCursorAt',    /^function wsRoomCursorAt\(/],
-  ['wsRoomChipAnchor',  /^function wsRoomChipAnchor\(/],
-  ['wsRoomChipState',   /^function wsRoomChipState\(/],
-  ['wsSnapVertexOrtho', /^function wsSnapVertexOrtho\(/],
+  ['wsRoomCursorAt',    /^function wsRoomCursorAt\(/],    ['wsCloneItem',       /^function wsCloneItem\(/],    ['wsSnapVertexOrtho', /^function wsSnapVertexOrtho\(/],
   ['wsSnapAxis',        /^function wsSnapAxis\(/],
+  ['WS_DIM_COLOUR',     /^const WS_DIM_COLOUR = /],
   ['wsDimText',         /^function wsDimText\(/],
   ['wsRoomDimEdges',    /^function wsRoomDimEdges\(/],
   ['WS_DOOR_KINDS',     /^const WS_DOOR_KINDS = \{/],
