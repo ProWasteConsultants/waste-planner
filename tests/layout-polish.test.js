@@ -129,10 +129,12 @@ test('wsIsHardWasteZone: matches hard waste and bulky items, nothing else', () =
     assert.equal(ws.wsIsHardWasteZone(item), false, JSON.stringify(item));
 });
 
-test('the zone is purple, and distinct from the red access aisle', () => {
+test('zones and access aisles can never share a colour', () => {
   assert.equal(ws.WS_ZONE_PURPLE, '#7B1FA2');
-  assert.match(SOURCE, /const zc = zone \? '123,31,162' : '220,70,70';/,
-    'zone and aisle must not share a colour');
+  // A typed zone carries its own colour, the legacy hard-waste item keeps purple,
+  // and an aisle stays red — one expression decides all three.
+  assert.ok(SOURCE.includes("const zHex = wsIsZone(e) ? wsZoneColour(e) : (zone ? WS_ZONE_PURPLE : '#DC4646');"),
+    'the zone/aisle colour split must come from one place');
 });
 
 // ── B7: door symbols ────────────────────────────────────────────────────
@@ -256,8 +258,11 @@ test('B5: the Dimensions layer group is actually populated', () => {
 test('B6: aisle end handles use the zoom-aware radius and show while selected', () => {
   assert.match(SOURCE, /if \(Math\.hypot\(p\.x - hx, p\.y - hy\) <= wsHandleHitR\(\)\)/,
     'the aisle grab radius is still a fixed canvas-pixel value');
-  assert.match(SOURCE, /if \(selected && e\.aisle\) \{\s*\r?\n\s*const HS = wsCanvasPerScreen\(\);/,
-    'aisle handles must be screen-sized and drawn whenever the aisle is selected');
+  // zones are resizable too — the claimed area is the whole point of a zone
+  assert.ok(SOURCE.includes('if (selected && (e.aisle || wsIsZone(e))) {'),
+    'aisles AND zones must show screen-sized end handles while selected');
+  assert.ok(SOURCE.includes('(x.aisle || wsIsZone(x))'),
+    'the stretch drag must accept a zone, not only an aisle');
 });
 
 test('B7: the DXF door linework comes from the same geometry as the screen', () => {

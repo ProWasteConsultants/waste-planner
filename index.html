@@ -13417,6 +13417,100 @@ function wsRoomTargets(room, calcRooms) {
 // Placed vs required, per stream, for one room. `bins` is every bin on the page;
 // only those tagged to this room count. A room with no schedule reconciles to
 // nothing (ok:false, rows:[]) so the caller can skip drawing a chip.
+// ══ B6: PROVISION STREAMS ═══════════════════════════════════════════════════
+// Things a development must PROVIDE FOR but which have no generation rate: you
+// cannot compute litres of e-waste per dwelling per week. They are therefore
+// deliberately absent from the bin calculator, and reconcile as a presence
+// check — placed or not placed — rather than a count.
+const WS_PROVISION_STREAMS = [
+  { id: 'uco',      label: 'Used cooking oil',    col: '#C9A227' },
+  { id: 'ewaste',   label: 'E-waste',             col: '#5C6BC0' },
+  { id: 'hardwaste',label: 'Hard waste',          col: '#7B1FA2' },
+  { id: 'clinical', label: 'Clinical hold',       col: '#D81B60' },
+  { id: 'bulk',     label: 'Bulk / pallet storage', col: '#6D4C41' },
+];
+// User-defined entries live alongside the predefined ones. A custom id is
+// namespaced so it can never collide with a future predefined stream.
+function wsProvisionCustomId(label) {
+  return 'custom:' + String(label || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+function wsProvisionList(custom) {
+  const extra = (custom || []).filter(c => c && c.label).map(c => ({
+    id: c.id || wsProvisionCustomId(c.label), label: c.label, col: c.col || '#78909C', custom: true,
+  }));
+  return WS_PROVISION_STREAMS.concat(extra);
+}
+function wsProvisionById(id, custom) {
+  return wsProvisionList(custom).find(p => p.id === id) || null;
+}
+// A provision stream is SATISFIED when something in the room is linked to it —
+// a zone or a piece of equipment. There is no quantity: the question is only
+// whether the development has provided for it.
+function wsProvisionReconcile(roomId, assigned, items) {
+  const want = (assigned || []).filter(Boolean);
+  const provided = {};
+  (items || []).forEach(it => {
+    if (!it || it.roomId !== roomId) return;
+    const p = it.provisionStream;
+    if (p) provided[p] = (provided[p] || 0) + 1;
+  });
+  const rows = want.map(id => ({ provision: id, placed: !!provided[id], count: provided[id] || 0 }));
+  return { rows, ok: rows.length > 0 && rows.every(r => r.placed),
+           missing: rows.filter(r => !r.placed).map(r => r.provision) };
+}
+
+// ══ B7: ZONE TYPES ══════════════════════════════════════════════════════════
+// A zone is a floor-area CLAIM, not an equipment record: it has no capacity,
+// no compaction ratio and never appears in a collection table. It exists to
+// reserve space and to satisfy a provision stream.
+const WS_ZONE_TYPES = {
+  HARDWASTE: { id: 'HARDWASTE', label: 'Hard waste zone',  col: '#7B1FA2', provision: 'hardwaste', w: 3.0, d: 2.0 },
+  BALE:      { id: 'BALE',      label: 'Bale storage',     col: '#00838F', provision: null,        w: 2.0, d: 1.2 },
+  UCO:       { id: 'UCO',       label: 'UCO vessel',       col: '#C9A227', provision: 'uco',       w: 0.8, d: 0.8 },
+  CUSTOM:    { id: 'CUSTOM',    label: 'Custom zone',      col: '#607D8B', provision: null,        w: 2.0, d: 2.0 },
+};
+// The colour a placed zone draws in: its own override, else its type default.
+function wsZoneColour(zone) {
+  if (!zone) return WS_ZONE_TYPES.CUSTOM.col;
+  if (zone.col) return zone.col;
+  const t = WS_ZONE_TYPES[zone.zoneType];
+  return t ? t.col : WS_ZONE_TYPES.CUSTOM.col;
+}
+function wsZoneLabel(zone) {
+  if (!zone) return '';
+  if (zone.label) return zone.label;
+  const t = WS_ZONE_TYPES[zone.zoneType];
+  return t ? t.label : 'Zone';
+}
+function wsIsZone(item) { return !!(item && item.zoneType && WS_ZONE_TYPES[item.zoneType]); }
+// DXF layer for a zone. Predefined types get a stable layer; a custom zone
+// derives one from its label so a drawing set stays readable in CAD.
+function wsZoneDxfLayer(zone) {
+  if (!zone) return 'A-WASTE-ZONE';
+  if (zone.zoneType && zone.zoneType !== 'CUSTOM') return 'A-WASTE-ZONE-' + zone.zoneType;
+  // Truncate on WORD boundaries: a layer ending mid-word ('...NAME-IN') is a
+  // poor thing to hand a drafter.
+  const words = String(wsZoneLabel(zone) || 'CUSTOM').toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').split('-').filter(Boolean);
+  let slug = '';
+  for (const w of words) {
+    const next = slug ? slug + '-' + w : w;
+    if (next.length > 24) break;
+    slug = next;
+  }
+  return 'A-WASTE-ZONE-' + (slug || 'CUSTOM');
+}
+// Legend rows for the zones actually present, so an unused type never appears.
+function wsZoneLegendItems(items) {
+  const seen = {};
+  (items || []).filter(wsIsZone).forEach(z => {
+    const key = wsZoneLabel(z) + '|' + wsZoneColour(z);
+    if (!seen[key]) seen[key] = { key: 'zone-' + wsZoneDxfLayer(z), label: wsZoneLabel(z),
+                                  style: 'hatch', col: wsZoneColour(z) };
+  });
+  return Object.values(seen);
+}
+
 // ══ B3: EQUIPMENT-AWARE RECONCILIATION ══════════════════════════════════════
 // Compaction plant changes how many bins a room actually needs. The maths is the
 // bin calculator’s, not a second implementation: volume in, ratio applied,
@@ -14480,7 +14574,10 @@ function wsLayoutBind() {
       return;
     }
     // aisle end handles: stretch along the aisle's local axis
-    const selAisle = wsLayoutSlot().equip.find(x => x.id === WS_LAYOUT.sel && x.aisle && !x.locked);
+    // Zones resize the same way aisles do — they are floor-area claims, and the
+    // area is the point, so it has to be draggable.
+    const selAisle = wsLayoutSlot().equip.find(x => x.id === WS_LAYOUT.sel && !x.locked &&
+                                                    (x.aisle || wsIsZone(x)));
     if (selAisle) {
       const a = (selAisle.rot || 0) * Math.PI / 180, hw = selAisle.w / 2 / mpp;
       for (const end of [0, 1]) {
@@ -15158,9 +15255,13 @@ function wsRenderLayoutLayer() {
     const hw = e.w / 2 / mpp, hd = e.d / 2 / mpp;
     const doorKind = e.door || (WS_DOOR_KINDS[e.code] ? e.code : null);
     if (doorKind && !e.aisle) { drawDoor(e, doorKind); return; }
-    if (e.aisle || wsIsHardWasteZone(e)) {
-      const zone = !e.aisle;                       // hard waste zone vs access aisle
-      const zc = zone ? '123,31,162' : '220,70,70';
+    if (e.aisle || wsIsZone(e) || wsIsHardWasteZone(e)) {
+      const zone = !e.aisle;                       // a floor-area claim vs an access aisle
+      // A typed zone carries its own colour; the legacy hard-waste item keeps
+      // purple; an access aisle stays red. They must never share a colour.
+      const zHex = wsIsZone(e) ? wsZoneColour(e) : (zone ? WS_ZONE_PURPLE : '#DC4646');
+      const zc = [parseInt(zHex.slice(1, 3), 16), parseInt(zHex.slice(3, 5), 16),
+                  parseInt(zHex.slice(5, 7), 16)].join(',');
       // Keep-clear aisle: red dashed boundary + 45° hatch, drawn in local
       // coords inside a rotated group so the hatch clips itself by geometry.
       const g2 = mk('g', { transform: `translate(${e.x.toFixed(1)},${e.y.toFixed(1)}) rotate(${e.rot || 0})` });
@@ -15175,15 +15276,16 @@ function wsRenderLayoutLayer() {
         if (x2 > hw)  { y2 -= (x2 - hw);  x2 = hw; }
         if (x2 > x1) mk('line', { x1, y1, x2, y2, stroke: `rgba(${zc},0.40)`, 'stroke-width': 1.2 }, g2);
       }
-      const tl = mk('text', { x: 0, y: 4, fill: zone ? '#CE93D8' : '#EF9A9A', 'font-size': 10, 'font-weight': 700,
+      const tl = mk('text', { x: 0, y: 4, fill: zone ? zHex : '#EF9A9A', 'font-size': 10, 'font-weight': 700,
         'text-anchor': 'middle' }, g2);
-      tl.textContent = zone ? `${e.label || 'Hard waste zone'} ${(e.w * e.d).toFixed(1)}m²`
-                            : `Aisle ${Math.round(e.d * 1000)}mm × ${(e.w).toFixed(1)}m`;
+      tl.textContent = zone
+        ? `${wsIsZone(e) ? wsZoneLabel(e) : (e.label || 'Hard waste zone')} ${(e.w * e.d).toFixed(1)}m²`
+        : `Aisle ${Math.round(e.d * 1000)}mm × ${(e.w).toFixed(1)}m`;
       // end handles: grab to stretch the aisle along its axis
       // End handles are shown whenever the aisle is selected — including mid-drag,
       // so the grip stays visible while the length is being stretched — and are
       // sized in SCREEN px so they are grabbable at any zoom.
-      if (selected && e.aisle) {
+      if (selected && (e.aisle || wsIsZone(e))) {
         const HS = wsCanvasPerScreen();
         [-hw, hw].forEach(hx => {
           mk('circle', { cx: hx, cy: 0, r: (8 * HS).toFixed(1), fill: 'rgba(220,70,70,0.35)', stroke: '#FF8A80', 'stroke-width': (2 * HS).toFixed(2) }, g2);
@@ -15469,7 +15571,9 @@ function wsLayoutDXFEntities(mpp) {
       // Boundary + 45° hatch lines so the keep-clear intent survives into CAD.
       // Hard waste zones get their own layer and colour (magenta, ACI 6) so they
       // are never confused with a red access aisle.
-      const zl = zone ? 'A-WASTE-ZONE' : 'A-WASTE-AISLES', zc = zone ? 6 : 1;
+      // A custom zone gets a layer derived from its label so a CAD set stays
+      // readable; predefined types get a stable per-type layer.
+      const zl = zone ? wsZoneDxfLayer(e) : 'A-WASTE-AISLES', zc = zone ? 6 : 1;
       d += rect(zl, zc, e.x, e.y, e.w, e.d, e.rot || 0);
       const hw = e.w / 2 / mpp, hd = e.d / 2 / mpp, a = (e.rot || 0) * Math.PI / 180;
       const cos = Math.cos(a), sin = Math.sin(a);
@@ -15482,7 +15586,7 @@ function wsLayoutDXFEntities(mpp) {
         if (x2 > x1) d += poly(zl, zc, [loc(x1, y1), loc(x2, y2)]);
       }
       d += text(zl, zc, e.x, e.y, 150, zone
-        ? `${(e.label || 'HARD WASTE ZONE').toUpperCase()} ${(e.w * e.d).toFixed(1)}m2`
+        ? `${String(wsIsZone(e) ? wsZoneLabel(e) : (e.label || 'HARD WASTE ZONE')).toUpperCase()} ${(e.w * e.d).toFixed(1)}m2`
         : `AISLE ${Math.round(e.d * 1000)}mm CLEAR`);
       return;
     }
@@ -18222,6 +18326,7 @@ function wsSheetContent(slot, sweptSlot) {
     disposal: has('disposal'), transfer: has('transfer'), callout: has('text'),
     measure: has('measure'), area: has('area'),
     swept: !!(sweptSlot && (sweptSlot.paths || []).some(p => p.result)),
+    zones: wsZoneLegendItems(equip),
   };
 }
 // Legend rows for the styles of VISIBLE layers only. Pure: layer flags and a
@@ -18248,6 +18353,10 @@ function wsLegendItems(layers, content) {
     if (c.callout) out.push({ key: 'callout', label: 'Callout / note', style: 'leader', col: '#8A8A8A' });
     if (c.measure) out.push({ key: 'measure', label: 'Measured dimension', style: 'dim', col: '#00A0B0' });
     if (c.area) out.push({ key: 'area', label: 'Measured area', style: 'poly', col: '#4FA3A3' });
+  }
+  if (on('waste') && (c.zones || []).length) {
+    // only the zones actually on the page, each in its own colour
+    c.zones.forEach(z => out.push(z));
   }
   if (on('swept') && c.swept) {
     out.push({ key: 'swept', label: 'Swept path envelope', style: 'line', col: '#00A651' });
@@ -20933,8 +21042,13 @@ function wmpgDocModel() {
     // B3: obligations that follow from the plant actually placed in this room.
     // Silent when nothing applies, so a simple room reads exactly as before.
     try {
+      // Match on the CALCULATOR room id, which both sides already carry: the
+      // generator stores it as room.srcId, the drawn room as room.calcRoom.
+      // Name matching was a soft link that failed silently on a rename.
       const snap = (d.reconciliation || []).find(x =>
-        x.roomName && room.name && x.roomName.toLowerCase() === room.name.toLowerCase());
+        (room.srcId && x.calcRoomId === room.srcId) ||
+        (!room.srcId && x.roomName && room.name &&
+         x.roomName.toLowerCase() === room.name.toLowerCase()));
       wsWmpEquipmentText(snap, wsEquipLibrary(WS_EQUIP_DB))
         .forEach(t => M.push({ k:'p', t }));
     } catch (e) { /* the document must still build without the layout */ }
