@@ -438,8 +438,46 @@ test('wsEquipAssignStream: an impossible choice falls back, it never silently ac
     'a baler cannot serve glass, so it takes its first allowable stream instead');
   // an unrestricted item takes whatever was asked for
   assert.equal(ws.wsEquipAssignStream(rec('bin', { streams: [] }), 'glass', ALL), 'glass');
-  // nothing assignable at all is null, so the caller can refuse
-  assert.equal(ws.wsEquipAssignStream(rec('weird', { streams: ['unobtainium'] }), 'glass', ALL), null);
+  // A restriction nobody can read is not a restriction. This assertion used to
+  // expect null, and that is precisely what shipped the placement bug: three
+  // live rows carried calculator-vocabulary names, resolved to nothing, and were
+  // silently unplaceable. Corrupt metadata now falls back to unrestricted and is
+  // reported by wsEquipStreamIssues instead of blocking work.
+  assert.equal(ws.wsEquipAssignStream(rec('weird', { streams: ['unobtainium'] }), 'glass', ALL), 'glass');
+  assert.deepEqual(ws.wsEquipStreamIssues(rec('weird', { streams: ['unobtainium'] })), ['unobtainium']);
+});
+
+test('wsStreamId: resolves all three vocabularies this table has been written in', () => {
+  // canonical ids
+  assert.equal(ws.wsStreamId('paper'), 'paper');
+  assert.equal(ws.wsStreamId('garbage'), 'garbage');
+  // WS_STREAMS labels
+  assert.equal(ws.wsStreamId('Paper/Card'), 'paper');
+  assert.equal(ws.wsStreamId('Soft Plastics'), 'soft');
+  // the bin calculator's display names — the ones actually in the live table
+  assert.equal(ws.wsStreamId('Paper & cardboard'), 'paper');
+  assert.equal(ws.wsStreamId('General waste'), 'garbage');
+  assert.equal(ws.wsStreamId('Commingled recycling'), 'recycling');
+  // punctuation, case and & vs and are all noise
+  assert.equal(ws.wsStreamId('paper and cardboard'), 'paper');
+  assert.equal(ws.wsStreamId('  GENERAL   WASTE '), 'garbage');
+  // and a genuine miss stays a miss
+  assert.equal(ws.wsStreamId('unobtainium'), null);
+  assert.equal(ws.wsStreamId(''), null);
+  assert.equal(ws.wsStreamId(null), null);
+});
+
+test('wsEquipAllowedStreams: the live rows that could not be placed now resolve', () => {
+  // exactly the values sitting in the equipment table on 2026-08-24
+  assert.deepEqual(ws.wsEquipAllowedStreams(rec('baler', { streams: ['Paper & cardboard'] }), ALL),
+    ['paper'], 'a baler restricted to card must offer card, not nothing');
+  assert.deepEqual(
+    ws.wsEquipAllowedStreams(rec('flb', { streams: ['General waste', 'Commingled recycling'] }), ALL),
+    ['garbage', 'recycling']);
+  // the invariant itself is unchanged: populated and readable still restricts
+  assert.deepEqual(ws.wsEquipAllowedStreams(rec('b', { streams: ['glass'] }), ALL), ['glass']);
+  // empty is still unrestricted, and 'equip' is never an assignable stream
+  assert.equal(ws.wsEquipAllowedStreams(rec('b', { streams: [] }), ALL).indexOf('equip'), -1);
 });
 
 test('wsEquipLibrary: keyed by id, so a rename cannot break a reference', () => {

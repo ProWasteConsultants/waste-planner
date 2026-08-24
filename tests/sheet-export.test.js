@@ -567,3 +567,54 @@ test('both export entry points surface their errors', () => {
   assert.match(SOURCE, /function wsSheetExportSafe\(\) \{\s*\r?\n\s*wsSheetExport\(\)\.catch\(/);
   assert.match(SOURCE, /onclick="wsSheetExportSafe\(\)"/, 'the dialog button must use the guarded wrapper');
 });
+
+// ── Base plan screening ─────────────────────────────────────────────────────
+// The plan is faded on export so the waste layout, markups and swept paths are
+// the figure and the architect's drawing is the ground. Two things must hold:
+// the fade is bounded (it can never blank the base plan), and it touches the
+// RASTER underlay only — annotation is what the fade exists to make readable.
+
+test('wsPlanScreenAlpha: 60% by default, bounded, and never fully transparent', () => {
+  assert.equal(ws.WS_PLAN_SCREEN_DEFAULT, 60);
+  assert.equal(ws.wsPlanScreenAlpha(60), 0.6);
+  assert.equal(ws.wsPlanScreenAlpha(100), 1, '100% is the plan exactly as supplied');
+  // a blank underlay would drop the base plan with no error at all
+  assert.ok(ws.wsPlanScreenAlpha(0) >= 0.05);
+  assert.equal(ws.wsPlanScreenAlpha(-40), 0.05);
+  assert.equal(ws.wsPlanScreenAlpha(500), 1, 'over 100 cannot darken the plan past its own tone');
+  // garbage in falls back to the default rather than to 0
+  assert.equal(ws.wsPlanScreenAlpha(undefined), 0.6);
+  assert.equal(ws.wsPlanScreenAlpha('abc'), 0.6);
+  assert.equal(ws.wsPlanScreenAlpha(null), 0.6, 'Number(null) is 0, which must not blank the plan');
+});
+
+test('screening is applied to the underlay only, and reset afterwards', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function wsSheetRenderUnderlay'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /globalAlpha = wsPlanScreenAlpha\(screenPct\)/);
+  // white ground first: alpha over white lightens toward paper. Alpha over the
+  // page's own backdrop would just make the plan translucent, not screened.
+  assert.ok(body.indexOf("fillStyle = '#fff'") < body.indexOf('globalAlpha = wsPlanScreenAlpha'),
+    'the white fill must precede the screened draw');
+  assert.ok(body.indexOf('globalAlpha = 1') > body.indexOf('drawImage'),
+    'alpha must be reset after the draw so nothing else inherits it');
+  // the vector overlay is added by doc.svg(), never through this canvas
+  assert.doesNotMatch(body, /doc\.svg|svg2pdf/);
+});
+
+test('the screening control is wired end to end', () => {
+  assert.match(SOURCE, /id="shd-screen"/, 'no control in the dialog');
+  assert.match(SOURCE, /wsSheetDlgSet\('planScreen'/, 'the control does not write the setting');
+  assert.match(SOURCE, /planScreen: WS_PLAN_SCREEN_DEFAULT/, 'not defaulted for new sheets');
+  assert.match(SOURCE, /wsSheetRenderUnderlay\(crop, 4200, s\.planScreen\)/,
+    'the setting never reaches the renderer');
+});
+
+test('changing a dialog control keeps what has already been typed', () => {
+  // wsSheetDlgSet re-renders the whole form, so it must harvest the inputs
+  // first — otherwise picking a scale silently discards the drawing title.
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsSheetDlgSet'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.ok(body.indexOf('wsSheetDlgCollect') < body.indexOf('wsSheetDlgRender'),
+    'the form must be collected before it is rebuilt');
+});
