@@ -400,7 +400,7 @@ test('room interior grab is tested after bins, chutes, equipment and callouts', 
   const iBin = bind.indexOf('const hit = wsLayoutHit(');
   const iCallout = bind.indexOf('wsLayoutHitCallout(');
   const iAnyHandle = bind.indexOf('wsAnyRoomHandleAt(wsLayoutSlot().rooms');
-  const iRoomBody = bind.indexOf('const room = wsRoomAt(p.x, p.y);');
+  const iRoomBody = bind.indexOf('const room = roomUnder;');
   assert.ok(iSelHandles > 0 && iBin > 0 && iCallout > 0 && iAnyHandle > 0 && iRoomBody > 0,
     'hit-test order markers missing');
   assert.ok(iSelHandles < iBin, 'selected-room handles must be grabbed before contents');

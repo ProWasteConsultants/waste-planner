@@ -458,3 +458,38 @@ test('a left-drag on empty canvas starts a marquee, not a pan', () => {
   assert.match(bind, /!WS_SPACE_PAN && e\.button !== 1/, 'space or middle-button must fall through to pan');
   assert.match(bind, /if \(!e\.shiftKey\) wsSelSet\(\[\]\);/, 'a plain drag replaces the selection, shift extends');
 });
+
+// ── marquee inside rooms, and shift-click ───────────────────────────────
+test('a marquee can be drawn INSIDE a room', () => {
+  // The old rule bailed on wsRoomAt(), so rubber-band select was impossible over
+  // room floor — which is where most of the plan is. Dragging a room now
+  // requires it to be selected first; otherwise the drag marquee-selects.
+  const bind = SOURCE.slice(SOURCE.indexOf('function wsLayoutBind'), SOURCE.indexOf("area.addEventListener('mousemove'"));
+  assert.match(bind, /!\(roomUnder && wsSelHas\(roomUnder\.id\)\)/,
+    'only an already-selected room should swallow the drag');
+  assert.doesNotMatch(bind, /e\.button !== 1 && !wsRoomAt\(p\.x, p\.y\)\)/,
+    'the blanket "not inside a room" bail-out must be gone');
+  // and the room grab reuses the same lookup rather than testing again
+  assert.match(bind, /const room = roomUnder;/);
+});
+
+test('a marquee that never moved leaves the selection to the click handler', () => {
+  const bind = SOURCE.slice(SOURCE.indexOf('const endDrag = ()'), SOURCE.indexOf("area.addEventListener('mouseup'"));
+  assert.match(bind, /if \(!dg\.moved\) \{[\s\S]{0,120}return;/,
+    'a plain click must fall through to wsLayoutSelectAt, not clear the selection');
+});
+
+test('click selection honours the selection set and shift', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsLayoutSelectAt'), SOURCE.indexOf('function wsLayoutEvt'));
+  assert.match(fn, /function wsLayoutSelectAt\(x, y, additive\)/, 'the click handler needs the shift flag');
+  assert.match(fn, /const pick = \(id, kind\) =>/);
+  assert.match(fn, /wsExpandGroups\(all, \[id\]\)/, 'clicking a grouped item takes the group');
+  assert.match(fn, /cur\.indexOf\(id\) >= 0 \? cur\.filter/, 'shift-clicking a selected item deselects it');
+  // the old single-item assignments are gone from every branch
+  assert.doesNotMatch(fn, /WS_LAYOUT\.sel = hit\.id; WS_LAYOUT\.selKind = 'bin';/);
+  assert.doesNotMatch(fn, /WS_LAYOUT\.sel = eq\.id; WS_LAYOUT\.selKind = 'equip';/);
+  assert.doesNotMatch(fn, /WS_LAYOUT\.sel = ch\.chute\.id;/);
+  // shift over bare room floor must not wipe a multi-item selection
+  assert.match(fn, /if \(additive\) return;/);
+  assert.match(SOURCE, /wsLayoutSelectAt\(x, y, e\.shiftKey\);/, 'the router must pass shift through');
+});

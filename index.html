@@ -13814,20 +13814,37 @@ function wsPillInk(hex) {
 // the keyboard does the same job (R rotate, L lock, Del delete, Ctrl+C/X/V/G).
 // Only the ROOM pill remains, and that is a side panel rather than an overlay.
 function wsUpdateSelPill() { wsUpdateRoomPill(); }
-function wsLayoutSelectAt(x, y) {
+function wsLayoutSelectAt(x, y, additive) {
   if (WS_LAYOUT._justDragged) { WS_LAYOUT._justDragged = false; return; }
+  // Shift extends the selection; a plain click replaces it. Clicking a grouped
+  // item takes the whole group. This runs on `click`, AFTER mousedown has
+  // already set a selection, so it must respect the set rather than overwrite it.
+  const pick = (id, kind) => {
+    const slotP = wsLayoutSlot();
+    const all = wsAllPlaced(slotP).map(r => r.item);
+    let ids = wsExpandGroups(all, [id]);
+    if (additive) {
+      const cur = (WS_LAYOUT.selIds || []).slice();
+      // shift-clicking something already selected removes it again
+      ids = cur.indexOf(id) >= 0 ? cur.filter(v => ids.indexOf(v) < 0) : cur.concat(ids);
+    }
+    wsSelSet(ids, kind);
+    if (!additive) { WS_LAYOUT.sel = id; WS_LAYOUT.selKind = kind; }
+    return WS_LAYOUT.selIds.length;
+  };
   const mpp = wsSweptMpp(); if (!mpp) return;
   const hit = wsLayoutHit(x, y, mpp);
   if (hit) {
-    WS_LAYOUT.sel = hit.id; WS_LAYOUT.selKind = 'bin';
+    const n = pick(hit.id, 'bin');
     wsRenderLayoutLayer();
     const bt = wsBinType(hit.type);
-    wsLayoutStatus(`Selected ${bt ? bt.label : 'bin'} — drag to move, R rotates, Del deletes.`);
+    wsLayoutStatus(n > 1 ? n + ' items selected — Ctrl+G groups, Ctrl+X cuts, Del deletes.'
+                         : `Selected ${bt ? bt.label : 'bin'} — drag to move, R rotates, Del deletes.`);
     return;
   }
   const ch = wsLayoutHitChute(x, y, mpp);
   if (ch) {
-    WS_LAYOUT.sel = ch.chute.id; WS_LAYOUT.selKind = ch.op == null ? 'chute' : 'recv';
+    pick(ch.chute.id, ch.op == null ? 'chute' : 'recv');
     wsRenderLayoutLayer();
     const cs = WS_CHUTE_SPECS[ch.chute.type] || {};
     wsLayoutStatus(ch.op == null
@@ -13837,16 +13854,18 @@ function wsLayoutSelectAt(x, y) {
   }
   const eq = wsLayoutHitEquip(x, y, mpp);
   if (eq) {
-    WS_LAYOUT.sel = eq.id; WS_LAYOUT.selKind = 'equip';
+    const n = pick(eq.id, 'equip');
     wsRenderLayoutLayer();
-    wsLayoutStatus(`Selected ${eq.label} — drag to move, R rotates, Del deletes.`);
+    wsLayoutStatus(n > 1 ? n + ' items selected — Ctrl+G groups, Ctrl+X cuts, Del deletes.'
+                         : `Selected ${eq.label} — drag to move, R rotates, Ctrl+C/V copies, Del deletes.`);
     return;
   }
   // Rooms sit under everything else, so they are the last thing tested — clicking
   // empty floor inside an outline selects the room rather than clearing selection.
   const rm = wsRoomAt(x, y);
   if (rm) {
-    WS_LAYOUT.sel = rm.id; WS_LAYOUT.selKind = 'room';
+    if (additive) return;                 // shift over room floor keeps the item selection
+    wsSelSet([rm.id], 'room');
     wsRenderLayoutLayer();
     const rec = wsRoomReconcile(rm.id, wsRoomTargets(rm, WS_CALC_ROOMS), wsLayoutSlot().bins);
     wsLayoutStatus(rec.rows.length
@@ -14024,7 +14043,8 @@ function wsLayoutBind() {
       if (any) { startRoomHandle(any.room, any.handle); return; }
     }
     // Nothing under the pointer and no room to grab → rubber-band select.
-    if (!grabbed && !WS_SPACE_PAN && e.button !== 1 && !wsRoomAt(p.x, p.y)) {
+    const roomUnder = wsRoomAt(p.x, p.y);
+    if (!grabbed && !WS_SPACE_PAN && e.button !== 1 && !(roomUnder && wsSelHas(roomUnder.id))) {
       WS_LAYOUT.drag = { kind: 'marquee', x0: p.x, y0: p.y, x1: p.x, y1: p.y,
                          add: e.shiftKey, base: (WS_LAYOUT.selIds || []).slice(), moved: false };
       WS.isPanning = false;
@@ -14036,10 +14056,9 @@ function wsLayoutBind() {
     // Room interior — LAST, so bins, equipment, chutes and callouts always win the
     // grab. Dragging the interior moves the whole polygon and everything tagged to it.
     if (!grabbed) {
-      const room = wsRoomAt(p.x, p.y);
+      const room = roomUnder;
       if (room) {
-        WS_LAYOUT.sel = room.id;
-        WS_LAYOUT.selKind = 'room';
+        wsSelSet([room.id], 'room');
         WS.isPanning = false;
         WS_LAYOUT.drag = room.locked ? null
           : { kind: 'room', id: room.id, lastX: p.x, lastY: p.y, startX: p.x, startY: p.y, moved: false };
@@ -14249,6 +14268,10 @@ function wsLayoutBind() {
           return { w: r.item.w, d: r.item.d };
         });
         const all = rows.map(r => r.item);
+        if (!dg.moved) {          // a plain click: let wsLayoutSelectAt decide
+          WS_LAYOUT.drag = null;
+          return;
+        }
         const ids = wsExpandGroups(all, dg.add ? dg.base.concat(hits) : hits);
         const primary = rows.find(r => r.item.id === ids[0]);
         wsSelSet(ids, primary ? primary.selKind : 'bin');
@@ -17316,7 +17339,7 @@ function wsOnCanvasClick(e) {
   } else if (WS._mode === 'layoutstamp') {
     wsLayoutStampAt(x, y);
   } else if (layoutIdle) {
-    wsLayoutSelectAt(x, y);
+    wsLayoutSelectAt(x, y, e.shiftKey);
   } else if (WS._mode === 'swept' && WS_SWEPT.drawing) {
     WS_SWEPT.nodes.push({ x, y });
     wsRenderSweptLayer();
