@@ -42,8 +42,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-btn:hover{background:rgba(255,255,255,0.12);}
 .ws-btn.primary{background:var(--teal);border-color:var(--teal);color:#fff;}
 .ws-btn.primary:hover{background:#0f6363;}
-.ws-canvas-area{flex:1;position:relative;overflow:hidden;min-height:0;background:#2a2a2a;cursor:grab;}
-.ws-canvas-area:active{cursor:grabbing;}
+/* Default is the SELECT arrow: left-drag marquee-selects. Panning is middle-drag
+   or space+drag, and only then does the hand appear. */
+.ws-canvas-area{flex:1;position:relative;overflow:hidden;min-height:0;background:#2a2a2a;cursor:default;}
+.ws-canvas-area.ws-panning{cursor:grabbing;}
+.ws-canvas-area.ws-panready{cursor:grab;}
 /* No will-change:transform here. It promotes the wrapper to its own compositor
    layer, which Chrome rasterises ONCE at the then-current transform and reuses
    while the layer is only transformed — so a scaled plan is resampled from a
@@ -1515,12 +1518,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <div id="ws-float-status" style="display:none;position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:12;background:rgba(20,26,26,0.92);border:1px solid #333;border-radius:8px;padding:5px 14px;font-size:11.5px;color:rgba(255,255,255,0.75);max-width:56%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;"></div>
 
         <!-- floating selection pill: verbs travel with the selected item -->
-        <div id="ws-sel-pill" onmousedown="event.stopPropagation()"
-             style="display:none;position:absolute;z-index:13;align-items:center;gap:2px;padding:3px;background:rgba(20,26,26,0.95);border:1px solid #3a4747;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,0.45);">
-          <button class="wsl-btn" id="ws-pill-rotate" onclick="wsLayoutDo('rotate')" title="Rotate 90° (R) — drag the ⟳ handle for free rotation" style="padding:4px 8px;">⟳</button>
-          <button class="wsl-btn" id="ws-pill-lock" onclick="wsLayoutDo('lock')" title="Lock / unlock (L)" style="padding:4px 8px;">🔒</button>
-          <button class="wsl-btn wsl-btn-danger" id="ws-pill-del" onclick="wsLayoutDo('delete')" title="Delete (Del)" style="padding:4px 8px;">✕</button>
-        </div>
         <!-- Room selection pill: name, schedule assignment, stream subset, fill -->
         <div id="ws-room-pill" onmousedown="event.stopPropagation()"
              style="display:none;position:absolute;z-index:13;flex-direction:column;gap:4px;padding:6px;background:rgba(20,26,26,0.96);border:1px solid #3a4747;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:340px;"></div>
@@ -12282,6 +12279,12 @@ function wsOnWheel(e) {
 function wsOnMouseDown(e) {
   if (e.target.closest('#ws-side-stack') || e.target.closest('.ws-zoom-ctrl')) return;
   if (WS._mode) return;   // drawing/drive modes own the pointer — no panning
+  // Left-drag is SELECT. Pan is middle-drag, or space held — otherwise a marquee
+  // could never be drawn over the plan.
+  const panBtn = e.button === 1 || WS_SPACE_PAN || !(typeof WS_LAYOUT !== 'undefined' && WS_LAYOUT.tabActive);
+  if (!panBtn) return;
+  const area = document.getElementById('ws-canvas-area');
+  if (area) area.classList.add('ws-panning');
   WS.isPanning = true;
   WS.panStartX = e.clientX;
   WS.panStartY = e.clientY;
@@ -12296,7 +12299,11 @@ function wsOnMouseMove(e) {
   wsApplyTransform();
 }
 
-function wsOnMouseUp() { WS.isPanning = false; }
+function wsOnMouseUp() {
+  WS.isPanning = false;
+  const area = document.getElementById('ws-canvas-area');
+  if (area) area.classList.remove('ws-panning');
+}
 
 function wsChangePage(delta) {
   const next = WS.currentPage + delta;
@@ -12829,11 +12836,89 @@ function wsRecvDims(recvKey, fpM2) {
   return { w: 2.0, d: 1.4, spec: s, known: false };
 }
 const WS_LAYOUT = { byPage: {}, sel: null, selKind: 'bin', undo: [], redo: [], roomStart: null, activeCalcRoom: null,
-                    hover: null, drag: null, tabActive: false, _bound: false, _raf: false, _justDragged: false };
+                    hover: null, drag: null, tabActive: false, _bound: false, _raf: false, _justDragged: false,
+                    selIds: [] };
 // Tool state parked while a markup is being drawn — see wsMarkSuspend / wsMarkExit.
 let WS_MARK_SUSPEND = null;
-// Layout clipboard: a detached copy of one placed item, kept in memory only.
+// Layout clipboard: detached copies of the selected items, in memory only.
 let WS_LAYOUT_CLIP = null;
+// Space held = temporary pan mode, so a left-drag pans instead of marquee-selecting.
+let WS_SPACE_PAN = false;
+
+// ── SELECTION SET ────────────────────────────────────────────────────────────
+// WS_LAYOUT.selIds is the canonical selection; WS_LAYOUT.sel stays as the primary
+// id so the older single-selection code paths keep working unchanged.
+function wsSelSet(ids, kind) {
+  WS_LAYOUT.selIds = (ids || []).filter((v, i, a) => v && a.indexOf(v) === i);
+  WS_LAYOUT.sel = WS_LAYOUT.selIds[0] || null;
+  if (kind) WS_LAYOUT.selKind = kind;
+  if (!WS_LAYOUT.sel) WS_LAYOUT.selKind = 'bin';
+  return WS_LAYOUT.selIds;
+}
+function wsSelHas(id) { return !!id && (WS_LAYOUT.selIds || []).indexOf(id) >= 0; }
+// Every placed item, paired with the array it lives in, so one loop can act on
+// a mixed selection of bins, equipment and chutes.
+function wsAllPlaced(slot) {
+  const out = [];
+  (slot.bins || []).forEach(it => out.push({ kind: 'bins', selKind: 'bin', item: it }));
+  (slot.equip || []).forEach(it => out.push({ kind: 'equip', selKind: 'equip', item: it }));
+  (slot.chutes || []).forEach(it => out.push({ kind: 'chutes', selKind: 'chute', item: it }));
+  return out;
+}
+function wsSelected(slot) { return wsAllPlaced(slot).filter(r => wsSelHas(r.item.id)); }
+
+// ── GROUPING ─────────────────────────────────────────────────────────────────
+// A group is just a shared groupId. Selecting any member selects them all, so a
+// bin bank or a door set moves as one. Pure: ids in, ids out.
+let WS_GROUP_SEQ = 0;
+function wsGroupNewId() { return 'grp_' + Date.now().toString(36) + '_' + (++WS_GROUP_SEQ); }
+function wsExpandGroups(items, ids) {
+  const want = new Set(ids || []);
+  const groups = new Set();
+  (items || []).forEach(it => { if (it && want.has(it.id) && it.groupId) groups.add(it.groupId); });
+  const out = [];
+  (items || []).forEach(it => {
+    if (!it) return;
+    if (want.has(it.id) || (it.groupId && groups.has(it.groupId))) out.push(it.id);
+  });
+  return out;
+}
+// Returns the new group id, or null when there is nothing to group.
+function wsGroupItems(items, ids, groupId) {
+  const list = (items || []).filter(it => it && (ids || []).indexOf(it.id) >= 0);
+  if (list.length < 2) return null;
+  const gid = groupId || wsGroupNewId();
+  list.forEach(it => { it.groupId = gid; });
+  return gid;
+}
+function wsUngroupItems(items, ids) {
+  let n = 0;
+  (items || []).forEach(it => {
+    if (it && (ids || []).indexOf(it.id) >= 0 && it.groupId) { delete it.groupId; n++; }
+  });
+  return n;
+}
+
+// ── MARQUEE ──────────────────────────────────────────────────────────────────
+// Normalised drag rectangle, so dragging up-left works the same as down-right.
+function wsMarqueeRect(a, b) {
+  return { x1: Math.min(a.x, b.x), y1: Math.min(a.y, b.y),
+           x2: Math.max(a.x, b.x), y2: Math.max(a.y, b.y) };
+}
+// Ids whose footprint overlaps the rectangle. Footprint, not centre: a bin half
+// inside the band is visibly caught by it and must select.
+function wsMarqueeHits(rows, rect, mpp, sizeOf) {
+  const out = [];
+  (rows || []).forEach(r => {
+    const it = r.item || r;
+    const sz = sizeOf ? sizeOf(r) : { w: it.w || 0, d: it.d || 0 };
+    const hw = Math.max((sz.w || 0) / 2 / mpp, 2), hd = Math.max((sz.d || 0) / 2 / mpp, 2);
+    if (it.x + hw < rect.x1 || it.x - hw > rect.x2) return;
+    if (it.y + hd < rect.y1 || it.y - hd > rect.y2) return;
+    out.push(it.id);
+  });
+  return out;
+}
 // Pure: a placed item duplicated at an offset, with a fresh identity. Room tags
 // are cleared because the copy has not been placed anywhere yet — the caller
 // retags it once its position is known.
@@ -12950,21 +13035,22 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
     if (!WS_LAYOUT.undo.length) { wsLayoutStatus('Nothing to undo.'); return; }
     WS_LAYOUT.redo.push(JSON.stringify(WS_LAYOUT.byPage));
     WS_LAYOUT.byPage = JSON.parse(WS_LAYOUT.undo.pop());
-    WS_LAYOUT.sel = null;
+    wsSelSet([]);
   } else if (a === 'redo') {
     if (!WS_LAYOUT.redo.length) { wsLayoutStatus('Nothing to redo.'); return; }
     WS_LAYOUT.undo.push(JSON.stringify(WS_LAYOUT.byPage));
     WS_LAYOUT.byPage = JSON.parse(WS_LAYOUT.redo.pop());
-    WS_LAYOUT.sel = null;
+    wsSelSet([]);
   } else if (a === 'rotate') {
-    const t = slot.bins.find(x => x.id === WS_LAYOUT.sel) || slot.chutes.find(x => x.id === WS_LAYOUT.sel) ||
-              slot.equip.find(x => x.id === WS_LAYOUT.sel);
-    if (!t) { wsLayoutStatus('Click a bin, chute or equipment item first, then Rotate (or press R).'); return; }
-    if (t.locked) { wsLayoutStatus('🔒 Locked — press L to unlock before rotating.'); return; }
+    const rows = wsSelected(slot).filter(r => !r.item.locked);
+    if (!rows.length) { wsLayoutStatus('Select a bin, chute or equipment item first, then Rotate (or press R).'); return; }
     wsLayoutSnapshot();
-    // from a free angle, R lands on the next quarter turn rather than adding 90 to 37.5°
-    t.rot = (Math.floor(((t.rot || 0) + 0.01) / 90) * 90 + 90) % 360;
-    if (t.openings) wsChuteResetRecv(t);
+    rows.forEach(r => {
+      const t = r.item;
+      // from a free angle, R lands on the next quarter turn rather than adding 90 to 37.5°
+      t.rot = (Math.floor(((t.rot || 0) + 0.01) / 90) * 90 + 90) % 360;
+      if (t.openings) wsChuteResetRecv(t);
+    });
   } else if (a === 'lock') {
     const t = slot.bins.find(x => x.id === WS_LAYOUT.sel) || slot.chutes.find(x => x.id === WS_LAYOUT.sel) ||
               slot.equip.find(x => x.id === WS_LAYOUT.sel);
@@ -12974,34 +13060,63 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
     wsLayoutStatus(t.locked
       ? '🔒 Locked — it will not move, rotate or delete, and Generate treats it as a keep-out.'
       : '🔓 Unlocked — it can be moved and will be repacked by Generate.');
-  } else if (a === 'copy' || a === 'duplicate') {
+  } else if (a === 'copy' || a === 'cut' || a === 'duplicate') {
     // Copy works on whatever is selected: bin, equipment/fixture (doors
     // included) or chute. Rooms are not copied — they are drawn.
-    const src = slot.bins.find(x => x.id === WS_LAYOUT.sel)
-             || slot.equip.find(x => x.id === WS_LAYOUT.sel)
-             || slot.chutes.find(x => x.id === WS_LAYOUT.sel);
-    if (!src) { wsLayoutStatus('Select a bin, fixture or equipment item first, then copy.'); return; }
-    WS_LAYOUT_CLIP = { kind: slot.bins.includes(src) ? 'bins' : slot.equip.includes(src) ? 'equip' : 'chutes',
-                       item: wsCloneItem(src, 0, 0, null) };
-    if (a === 'copy') { wsLayoutStatus(`Copied ${src.label || 'item'} — Ctrl+V to paste.`); return; }
+    const rows = wsSelected(slot);
+    if (!rows.length) { wsLayoutStatus('Select something first, then copy.'); return; }
+    WS_LAYOUT_CLIP = { rows: rows.map(r => ({ kind: r.kind, selKind: r.selKind, item: wsCloneItem(r.item, 0, 0, null) })) };
+    if (a === 'cut') {
+      wsLayoutSnapshot();
+      const ids = new Set(rows.filter(r => !r.item.locked).map(r => r.item.id));
+      slot.bins = slot.bins.filter(x => !ids.has(x.id));
+      slot.equip = slot.equip.filter(x => !ids.has(x.id));
+      slot.chutes = slot.chutes.filter(x => !ids.has(x.id));
+      wsSelSet([]);
+      wsLayoutStatus('Cut ' + ids.size + ' item' + (ids.size === 1 ? '' : 's') + ' — Ctrl+V to place.');
+      wsRenderLayoutLayer(); wsLayoutAutosave(); return;
+    }
+    if (a === 'copy') { wsLayoutStatus('Copied ' + rows.length + ' item' + (rows.length === 1 ? '' : 's') + ' — Ctrl+V to paste.'); return; }
     a = 'paste';   // duplicate = copy then paste in one step
+  } else if (a === 'group' || a === 'ungroup') {
+    const rows = wsSelected(slot);
+    const all = wsAllPlaced(slot).map(r => r.item);
+    if (a === 'group') {
+      if (rows.length < 2) { wsLayoutStatus('Select two or more items to group them.'); return; }
+      wsLayoutSnapshot();
+      wsGroupItems(all, rows.map(r => r.item.id));
+      wsLayoutStatus('Grouped ' + rows.length + ' items — they select and move together. Ctrl+Shift+G ungroups.');
+    } else {
+      wsLayoutSnapshot();
+      const n = wsUngroupItems(all, rows.map(r => r.item.id));
+      wsLayoutStatus(n ? 'Ungrouped ' + n + ' items.' : 'Nothing grouped in the selection.');
+    }
+  } else if (a === 'selectall') {
+    const rows = wsAllPlaced(slot);
+    wsSelSet(rows.map(r => r.item.id), rows[0] ? rows[0].selKind : 'bin');
+    wsLayoutStatus(rows.length + ' item' + (rows.length === 1 ? '' : 's') + ' selected.');
   }
   if (a === 'paste') {
-    if (!WS_LAYOUT_CLIP) { wsLayoutStatus('Nothing copied yet — select something and press Ctrl+C.'); return; }
+    if (!WS_LAYOUT_CLIP || !WS_LAYOUT_CLIP.rows || !WS_LAYOUT_CLIP.rows.length) {
+      wsLayoutStatus('Nothing copied yet — select something and press Ctrl+C.'); return; }
     const mpp = wsSweptMpp() || 0.05;
     // offset by a visible amount so the copy never hides exactly under the original
     const off = 0.35 / mpp;
-    const id = (WS_LAYOUT_CLIP.kind === 'bins' ? 'bin_' : WS_LAYOUT_CLIP.kind === 'equip' ? 'fx_' : 'ch_')
-             + Date.now() + '_' + Math.floor(Math.random() * 9999);
-    const copy = wsCloneItem(WS_LAYOUT_CLIP.item, off, off, id);
     wsLayoutSnapshot();
-    slot[WS_LAYOUT_CLIP.kind].push(copy);
-    // the pasted item belongs to whatever room it landed in
+    const stamp = Date.now();
+    // a pasted group becomes a NEW group, never merged back into the original
+    const remap = {};
+    const ids = WS_LAYOUT_CLIP.rows.map((r, i) => {
+      const id = (r.kind === 'bins' ? 'bin_' : r.kind === 'equip' ? 'fx_' : 'ch_') + stamp + '_' + i;
+      const copy = wsCloneItem(r.item, off, off, id);
+      if (copy.groupId) copy.groupId = (remap[copy.groupId] = remap[copy.groupId] || wsGroupNewId());
+      slot[r.kind].push(copy);
+      return id;
+    });
     wsTagBinsToRooms(slot.rooms, slot.bins);
     wsTagBinsToRooms(slot.rooms, slot.equip);
-    WS_LAYOUT.sel = copy.id;
-    WS_LAYOUT.selKind = WS_LAYOUT_CLIP.kind === 'bins' ? 'bin' : WS_LAYOUT_CLIP.kind === 'equip' ? 'equip' : 'chute';
-    wsLayoutStatus(`Pasted ${copy.label || 'item'} — drag to position it.`);
+    wsSelSet(ids, WS_LAYOUT_CLIP.rows[0].selKind);
+    wsLayoutStatus('Pasted ' + ids.length + ' item' + (ids.length === 1 ? '' : 's') + ' — drag to position.');
   } else if (a === 'delete') {
     let hit = false, wasLocked = false;
     // Deleting a room removes the outline only — the bins inside stay on the plan
@@ -13015,6 +13130,19 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
       wsLayoutStatus('Room outline deleted — the bins inside it stayed put.');
       wsRenderLayoutLayer(); wsLayoutAutosave();
       return;
+    }
+    const selRows = wsSelected(slot);
+    if (selRows.length > 1) {
+      const live = selRows.filter(r => !r.item.locked);
+      if (!live.length) { wsLayoutStatus('🔒 Everything selected is locked.'); return; }
+      wsLayoutSnapshot();
+      const ids = new Set(live.map(r => r.item.id));
+      slot.bins = slot.bins.filter(x => !ids.has(x.id));
+      slot.equip = slot.equip.filter(x => !ids.has(x.id));
+      slot.chutes = slot.chutes.filter(x => !ids.has(x.id));
+      wsSelSet([]);
+      wsLayoutStatus('Deleted ' + live.length + ' items.');
+      wsRenderLayoutLayer(); wsLayoutAutosave(); return;
     }
     [['bins', slot.bins], ['chutes', slot.chutes], ['equip', slot.equip]].forEach(([, arr]) => {
       if (hit || wasLocked) return;
@@ -13679,44 +13807,13 @@ function wsPillInk(hex) {
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
   return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#1A1A1A' : '#FFFFFF';
 }
-function wsUpdateSelPill() {
-  wsUpdateRoomPill();
-  const pill = document.getElementById('ws-sel-pill'); if (!pill) return;
-  const hide = () => { pill.style.display = 'none'; };
-  const tab = document.getElementById('ws-tab-layout');
-  if (!tab || tab.style.display === 'none') return hide();
-  if (typeof wsActiveOverlayIframe === 'function' && wsActiveOverlayIframe()) return hide();
-  const mpp = wsSweptMpp(); if (!mpp) return hide();
-  const t = wsRotTarget(); if (!t) return hide();
-
-  // locked items get a lone unlock button; unlocked get all three
-  const locked = !!t.item.locked;
-  document.getElementById('ws-pill-rotate').style.display = locked ? 'none' : '';
-  document.getElementById('ws-pill-del').style.display = locked ? 'none' : '';
-  document.getElementById('ws-pill-lock').textContent = locked ? '🔓' : '🔒';
-  document.getElementById('ws-pill-lock').title = locked ? 'Unlock (L)' : 'Lock (L)';
-
-  const a = (t.item.rot || 0) * Math.PI / 180;
-  const cs = wsOBBCorners(t.item.x, t.item.y, t.w / 2 / mpp, t.d / 2 / mpp, a);
-  const xs = cs.map(p => p.x), ys = cs.map(p => p.y);
-  const area = document.getElementById('ws-canvas-area');
-  const toSX = v => v * WS.scale + WS.panX, toSY = v => v * WS.scale + WS.panY;
-  pill.style.display = 'flex';
-  const pw = pill.offsetWidth || 100, ph = pill.offsetHeight || 34;
-  let px = toSX((Math.min(...xs) + Math.max(...xs)) / 2) - pw / 2;
-  let py = toSY(Math.max(...ys)) + 12;                          // default: below the item
-  // dodge the rotation handle if it points into the pill zone
-  const h = wsRotHandleInfo(mpp);
-  if (h) {
-    const hx = toSX(h.hx), hy = toSY(h.hy);
-    if (hy > py - 14 && hy < py + ph + 14 && hx > px - 14 && hx < px + pw + 14)
-      py = toSY(Math.min(...ys)) - ph - 12;                     // flip above
-  }
-  if (py + ph > area.clientHeight - 6) py = toSY(Math.min(...ys)) - ph - 12; // clamp bottom
-  if (py < 6) py = 6;
-  px = Math.max(6, Math.min(px, area.clientWidth - pw - 6));
-  pill.style.left = px + 'px'; pill.style.top = py + 'px';
-}
+// The floating rotate/lock/delete pill is gone — it sat on top of the drawing and
+// the keyboard does the same job. Only the ROOM pill remains, and that is a side
+// panel rather than an overlay.
+// The floating rotate/lock/delete pill is gone: it sat on top of the drawing and
+// the keyboard does the same job (R rotate, L lock, Del delete, Ctrl+C/X/V/G).
+// Only the ROOM pill remains, and that is a side panel rather than an overlay.
+function wsUpdateSelPill() { wsUpdateRoomPill(); }
 function wsLayoutSelectAt(x, y) {
   if (WS_LAYOUT._justDragged) { WS_LAYOUT._justDragged = false; return; }
   const mpp = wsSweptMpp(); if (!mpp) return;
@@ -13757,7 +13854,7 @@ function wsLayoutSelectAt(x, y) {
       : `Selected ${rm.name || 'room'} — assign a bin room schedule to reconcile it.`);
     return;
   }
-  WS_LAYOUT.sel = null; WS_LAYOUT.selKind = 'bin';
+  wsSelSet([]);
   wsRenderLayoutLayer();
 }
 function wsLayoutEvt(e) {
@@ -13926,6 +14023,16 @@ function wsLayoutBind() {
       const any = wsAnyRoomHandleAt(wsLayoutSlot().rooms, p.x, p.y);
       if (any) { startRoomHandle(any.room, any.handle); return; }
     }
+    // Nothing under the pointer and no room to grab → rubber-band select.
+    if (!grabbed && !WS_SPACE_PAN && e.button !== 1 && !wsRoomAt(p.x, p.y)) {
+      WS_LAYOUT.drag = { kind: 'marquee', x0: p.x, y0: p.y, x1: p.x, y1: p.y,
+                         add: e.shiftKey, base: (WS_LAYOUT.selIds || []).slice(), moved: false };
+      WS.isPanning = false;
+      if (!e.shiftKey) wsSelSet([]);
+      wsRenderLayoutLayer();
+      e.preventDefault();
+      return;
+    }
     // Room interior — LAST, so bins, equipment, chutes and callouts always win the
     // grab. Dragging the interior moves the whole polygon and everything tagged to it.
     if (!grabbed) {
@@ -13945,6 +14052,13 @@ function wsLayoutBind() {
       }
     }
     if (grabbed) {
+      const slotG = wsLayoutSlot();
+      const all = wsAllPlaced(slotG).map(r => r.item);
+      // clicking a grouped item takes the whole group; shift adds to the selection
+      let ids = wsExpandGroups(all, [grabbed.id]);
+      if (e.shiftKey) ids = (WS_LAYOUT.selIds || []).concat(ids);
+      else if (wsSelHas(grabbed.id)) ids = (WS_LAYOUT.selIds || []).slice();   // keep a multi-drag intact
+      wsSelSet(ids, grabbed.kind);
       WS_LAYOUT.sel = grabbed.id;
       WS_LAYOUT.selKind = grabbed.kind;
       WS.isPanning = false;
@@ -13962,6 +14076,14 @@ function wsLayoutBind() {
     if (WS_LAYOUT.drag) {
       const mpp = wsSweptMpp(); if (!mpp) return;
       const dg = WS_LAYOUT.drag, slot2 = wsLayoutSlot();
+      if (dg.kind === 'marquee') {
+        dg.x1 = p.x; dg.y1 = p.y; dg.moved = true;
+        if (!WS_LAYOUT._raf) {
+          WS_LAYOUT._raf = true;
+          requestAnimationFrame(() => { WS_LAYOUT._raf = false; wsRenderLayoutLayer(); });
+        }
+        return;
+      }
       // Hold the edit cursor for the whole drag so the pan hand never flashes.
       if (dg.kind === 'room') wsLayoutSetCursor('move');
       else if (dg.kind === 'roomvert') wsLayoutSetCursor('pointer');
@@ -14076,6 +14198,17 @@ function wsLayoutBind() {
         } else {
           b.x = nx; b.y = ny;
         }
+        // Everything else in the selection moves by the same delta.
+        if (dg.kind === 'bin' || dg.kind === 'equip') {
+          const ddx = b.x - (dg.prevX == null ? b.x : dg.prevX);
+          const ddy = b.y - (dg.prevY == null ? b.y : dg.prevY);
+          if (ddx || ddy) wsSelected(slot2).forEach(r => {
+            if (r.item.id === b.id || r.item.locked) return;
+            r.item.x += ddx; r.item.y += ddy;
+            r.item.roomId = wsBinRoomId(slot2.rooms, r.item);
+          });
+          dg.prevX = b.x; dg.prevY = b.y;
+        }
         if (dg.kind === 'equip') b.roomId = wsBinRoomId(slot2.rooms, b);
         if (dg.kind === 'bin') {
           b.calcRoom = wsLayoutCalcRoomAt(b.x, b.y) || b.calcRoom || null;
@@ -14106,6 +14239,26 @@ function wsLayoutBind() {
   const endDrag = () => {
     if (WS_LAYOUT.drag) {
       const dg = WS_LAYOUT.drag;
+      if (dg.kind === 'marquee') {
+        const slotM = wsLayoutSlot(), mpp = wsSweptMpp() || 0.05;
+        const rect = wsMarqueeRect({ x: dg.x0, y: dg.y0 }, { x: dg.x1, y: dg.y1 });
+        const rows = wsAllPlaced(slotM);
+        const hits = wsMarqueeHits(rows, rect, mpp, r => {
+          if (r.kind === 'bins') { const bt = wsBinType(r.item.type); return bt ? { w: bt.w, d: bt.d } : { w: 0, d: 0 }; }
+          if (r.kind === 'chutes') { const cs = WS_CHUTE_SPECS[r.item.type] || WS_CHUTE_SPECS.SINGLE; return { w: cs.w, d: cs.d }; }
+          return { w: r.item.w, d: r.item.d };
+        });
+        const all = rows.map(r => r.item);
+        const ids = wsExpandGroups(all, dg.add ? dg.base.concat(hits) : hits);
+        const primary = rows.find(r => r.item.id === ids[0]);
+        wsSelSet(ids, primary ? primary.selKind : 'bin');
+        WS_LAYOUT.drag = null;
+        WS_LAYOUT._justDragged = dg.moved;
+        wsRenderLayoutLayer();
+        wsLayoutStatus(ids.length ? `${ids.length} item${ids.length === 1 ? '' : 's'} selected — Ctrl+G groups, Ctrl+X cuts, Del deletes.`
+                                  : 'Nothing in the selection band.');
+        return;
+      }
       if (dg.moved) {
         // A room edit changes what sits inside it, so tags (and therefore every
         // reconciliation chip) are recomputed once the drag settles.
@@ -14125,11 +14278,18 @@ function wsLayoutBind() {
   };
   area.addEventListener('mouseup', endDrag);
   area.addEventListener('mouseleave', endDrag);
+  document.addEventListener('keyup', e => {
+    if (e.code === 'Space') { WS_SPACE_PAN = false;
+      const ar = document.getElementById('ws-canvas-area'); if (ar) ar.classList.remove('ws-panready'); }
+  });
   document.addEventListener('keydown', e => {
     // A markup can be armed from any tab, so its Enter/Esc must work there too.
     if (!WS_LAYOUT.tabActive && WS._mode !== 'layoutmark') return;
     const tag = (document.activeElement?.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    if (e.code === 'Space' && !WS._mode) { WS_SPACE_PAN = true;
+      const ar = document.getElementById('ws-canvas-area'); if (ar) ar.classList.add('ws-panready');
+      e.preventDefault(); return; }
     // Backspace on a selected room drops the corner nearest the pointer, so a
     // vertex added by mistake can be taken straight back out.
     if (e.key === 'Backspace' && WS_LAYOUT.selKind === 'room' && WS_LAYOUT.sel && !WS._mode) {
@@ -14154,6 +14314,9 @@ function wsLayoutBind() {
       if (WS._mode === 'layoutmark' && WS_LAYOUT._mark) { wsMarkFinish(); return; }
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) { wsLayoutDo('copy'); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) { wsLayoutDo('cut'); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')) { wsLayoutDo(e.shiftKey ? 'ungroup' : 'group'); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) { wsLayoutDo('selectall'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) { wsLayoutDo('paste'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { wsLayoutDo('duplicate'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { wsLayoutDo(e.shiftKey ? 'redo' : 'undo'); e.preventDefault(); return; }
@@ -14281,6 +14444,14 @@ function wsRenderLayoutLayer() {
     });
   }
 
+  // rubber-band selection
+  if (WS_LAYOUT.drag && WS_LAYOUT.drag.kind === 'marquee' && WS_LAYOUT.drag.moved) {
+    const d = WS_LAYOUT.drag, r = wsMarqueeRect({ x: d.x0, y: d.y0 }, { x: d.x1, y: d.y1 });
+    const HS = wsCanvasPerScreen();
+    mk('rect', { x: r.x1, y: r.y1, width: (r.x2 - r.x1), height: (r.y2 - r.y1),
+      fill: 'rgba(0,212,212,0.10)', stroke: '#00d4d4', 'stroke-width': (1.2 * HS).toFixed(2),
+      'stroke-dasharray': (5 * HS).toFixed(1) + ' ' + (4 * HS).toFixed(1) });
+  }
   // polygon in progress
   if (WS._mode === 'layoutroom' && WS_LAYOUT.roomPts && WS_LAYOUT.roomPts.length) {
     const pts = WS_LAYOUT.roomPts.slice();
@@ -14329,7 +14500,7 @@ function wsRenderLayoutLayer() {
         fill: ghost ? st.col : ink, opacity: ghost ? 0.35 : 0.25 }, grp);
     }
     if (ghost) body.setAttribute('stroke-dasharray', '4 3');
-    if (!ghost && b.id === WS_LAYOUT.sel) {
+    if (!ghost && wsSelHas(b.id)) {
       mk('rect', { x: -hw - 4, y: -hd - 4, width: 2 * hw + 8, height: 2 * hd + 8, fill: 'none',
         stroke: '#FFFFFF', 'stroke-width': 1.5, 'stroke-dasharray': '5 3' }, grp);
     }
@@ -14349,7 +14520,7 @@ function wsRenderLayoutLayer() {
   slot.chutes.forEach(ch => {
     const cs = WS_CHUTE_SPECS[ch.type] || WS_CHUTE_SPECS.SINGLE;
     const a = (ch.rot || 0) * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
-    const selected = WS_LAYOUT.sel === ch.id;
+    const selected = wsSelHas(ch.id);
     const toCanvas = (lx, ly) => ({ x: ch.x + (lx * cos - ly * sin) / mpp, y: ch.y + (lx * sin + ly * cos) / mpp });
     // shaft body
     const hw = cs.w / 2 / mpp, hd = cs.d / 2 / mpp;
@@ -14400,7 +14571,7 @@ function wsRenderLayoutLayer() {
   // dashed curtain line instead of an arc.
   const drawDoor = (e, kind) => {
     const g2 = mk('g', { transform: `translate(${e.x.toFixed(1)},${e.y.toFixed(1)}) rotate(${e.rot || 0})` });
-    const sel = WS_LAYOUT.sel === e.id;
+    const sel = wsSelHas(e.id);
     // Plan convention: doors read as black linework, like the base drawing.
     const col = sel ? '#FFD54F' : '#111111', lw = sel ? 2 : 1.2;
     const G = wsDoorGeometry(kind, e.w, e.d);
@@ -14425,7 +14596,7 @@ function wsRenderLayoutLayer() {
   // ── equipment ──
   slot.equip.forEach(e => {
     tgt = e.fixture ? g : (gW || g);   // doors/columns belong to the room shell layer
-    const selected = WS_LAYOUT.sel === e.id;
+    const selected = wsSelHas(e.id);
     const hw = e.w / 2 / mpp, hd = e.d / 2 / mpp;
     const doorKind = e.door || (WS_DOOR_KINDS[e.code] ? e.code : null);
     if (doorKind && !e.aisle) { drawDoor(e, doorKind); return; }

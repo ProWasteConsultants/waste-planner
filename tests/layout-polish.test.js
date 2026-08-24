@@ -348,10 +348,113 @@ test('copy, paste and duplicate are wired to the keyboard and to wsLayoutDo', ()
   // ...and they must be tested BEFORE the blanket "don't hijack Ctrl" bail-out
   const kd = SOURCE.slice(SOURCE.indexOf("wsLayoutDo('copy')"));
   assert.ok(kd.indexOf("if (e.ctrlKey || e.metaKey) return;") > 0, 'the Ctrl bail-out must come after');
-  // copy covers bins, equipment (doors included) and chutes — not rooms
-  const doFn = SOURCE.slice(SOURCE.indexOf("} else if (a === 'copy'"), SOURCE.indexOf("} else if (a === 'delete')"));
-  assert.match(doFn, /slot\.bins\.find/);
-  assert.match(doFn, /slot\.equip\.find/);
-  assert.match(doFn, /slot\.chutes\.find/);
-  assert.doesNotMatch(doFn, /slot\.rooms\.find/, 'rooms are drawn, not copied');
+  // cut and grouping share the shortcut block
+  assert.match(SOURCE, /\(e\.key === 'x' \|\| e\.key === 'X'\)\) \{ wsLayoutDo\('cut'\)/);
+  assert.match(SOURCE, /\(e\.key === 'g' \|\| e\.key === 'G'\)\) \{ wsLayoutDo\(e\.shiftKey \? 'ungroup' : 'group'\)/);
+  // copy acts on the SELECTION SET, which spans bins, equipment and chutes
+  const doFn = SOURCE.slice(SOURCE.indexOf("} else if (a === 'copy'"), SOURCE.indexOf("  } else if (a === 'group'"));
+  assert.match(doFn, /const rows = wsSelected\(slot\);/, 'copy must read the selection set');
+  assert.doesNotMatch(doFn, /slot\.rooms/, 'rooms are drawn, not copied');
+});
+
+// ── grouping and marquee (pure) ─────────────────────────────────────────
+const gi = (id, x, y, extra = {}) => ({ id, x, y, w: 1, d: 1, ...extra });
+
+test('wsExpandGroups: selecting one member selects the whole group', () => {
+  const items = [gi('a', 0, 0, { groupId: 'g1' }), gi('b', 1, 1, { groupId: 'g1' }),
+                 gi('c', 2, 2), gi('d', 3, 3, { groupId: 'g2' })];
+  assert.deepEqual(ws.wsExpandGroups(items, ['a']), ['a', 'b'], 'the whole group comes along');
+  assert.deepEqual(ws.wsExpandGroups(items, ['c']), ['c'], 'an ungrouped item stays alone');
+  assert.deepEqual(ws.wsExpandGroups(items, ['a', 'd']), ['a', 'b', 'd'], 'two groups both expand');
+  assert.deepEqual(ws.wsExpandGroups(items, []), []);
+  assert.deepEqual(ws.wsExpandGroups(null, ['a']), []);
+});
+
+test('wsExpandGroups: the result is unique and in item order', () => {
+  const items = [gi('a', 0, 0, { groupId: 'g' }), gi('b', 1, 1, { groupId: 'g' })];
+  const out = ws.wsExpandGroups(items, ['b', 'a', 'b']);
+  assert.deepEqual(out, ['a', 'b'], 'no duplicates, source order');
+});
+
+test('wsGroupItems: needs two or more, and stamps one shared id', () => {
+  const items = [gi('a', 0, 0), gi('b', 1, 1), gi('c', 2, 2)];
+  assert.equal(ws.wsGroupItems(items, ['a']), null, 'one item is not a group');
+  assert.equal(ws.wsGroupItems(items, []), null);
+  const gid = ws.wsGroupItems(items, ['a', 'b']);
+  assert.ok(gid, 'a group id is returned');
+  assert.equal(items[0].groupId, gid);
+  assert.equal(items[1].groupId, gid);
+  assert.equal(items[2].groupId, undefined, 'an unselected item is untouched');
+});
+
+test('wsGroupItems: regrouping moves members to the new group', () => {
+  const items = [gi('a', 0, 0, { groupId: 'old' }), gi('b', 1, 1, { groupId: 'old' }), gi('c', 2, 2)];
+  const gid = ws.wsGroupItems(items, ['b', 'c']);
+  assert.equal(items[1].groupId, gid);
+  assert.equal(items[2].groupId, gid);
+  assert.equal(items[0].groupId, 'old', 'the member left behind keeps the old group');
+  assert.notEqual(gid, 'old');
+});
+
+test('wsUngroupItems: removes the tag and reports how many', () => {
+  const items = [gi('a', 0, 0, { groupId: 'g' }), gi('b', 1, 1, { groupId: 'g' }), gi('c', 2, 2)];
+  assert.equal(ws.wsUngroupItems(items, ['a', 'b', 'c']), 2, 'only grouped items count');
+  assert.equal('groupId' in items[0], false);
+  assert.equal(ws.wsUngroupItems(items, ['a']), 0, 'idempotent');
+});
+
+test('wsMarqueeRect: normalises a drag in any direction', () => {
+  const want = { x1: 10, y1: 20, x2: 50, y2: 60 };
+  assert.deepEqual(ws.wsMarqueeRect({ x: 10, y: 20 }, { x: 50, y: 60 }), want);
+  assert.deepEqual(ws.wsMarqueeRect({ x: 50, y: 60 }, { x: 10, y: 20 }), want, 'dragged up-left');
+  assert.deepEqual(ws.wsMarqueeRect({ x: 50, y: 20 }, { x: 10, y: 60 }), want);
+});
+
+test('wsMarqueeHits: catches anything the band overlaps, by footprint', () => {
+  const rows = [
+    { item: gi('inside', 50, 50, { w: 1, d: 1 }) },
+    { item: gi('outside', 500, 500, { w: 1, d: 1 }) },
+    { item: gi('edge', 105, 50, { w: 1, d: 1 }) },   // centre outside, footprint overlaps
+  ];
+  const rect = { x1: 0, y1: 0, x2: 100, y2: 100 };
+  const hits = ws.wsMarqueeHits(rows, rect, 0.05);   // 1 m at 0.05 m/px = 10 px half-width
+  assert.ok(hits.includes('inside'));
+  assert.ok(hits.includes('edge'), 'a half-caught item must select — it is visibly in the band');
+  assert.ok(!hits.includes('outside'));
+});
+
+test('wsMarqueeHits: a zero-size item still has a grabbable footprint', () => {
+  const rows = [{ item: { id: 'dot', x: 50, y: 50 } }];
+  assert.deepEqual(ws.wsMarqueeHits(rows, { x1: 0, y1: 0, x2: 100, y2: 100 }, 0.05), ['dot']);
+  assert.deepEqual(ws.wsMarqueeHits(rows, { x1: 200, y1: 200, x2: 300, y2: 300 }, 0.05), []);
+  assert.deepEqual(ws.wsMarqueeHits(null, { x1: 0, y1: 0, x2: 1, y2: 1 }, 0.05), []);
+});
+
+test('wsMarqueeHits: honours a caller-supplied size (bins carry theirs on the type)', () => {
+  const rows = [{ item: gi('bin', 120, 50), kind: 'bins' }];
+  const rect = { x1: 0, y1: 0, x2: 100, y2: 100 };
+  assert.deepEqual(ws.wsMarqueeHits(rows, rect, 0.05, () => ({ w: 0.2, d: 0.2 })), [], 'small bin misses');
+  assert.deepEqual(ws.wsMarqueeHits(rows, rect, 0.05, () => ({ w: 3, d: 3 })), ['bin'], 'large bin overlaps');
+});
+
+test('the black selection pill is gone from the markup', () => {
+  assert.equal(SOURCE.includes('id="ws-sel-pill"'), false, 'the floating pill must be removed');
+  assert.equal(SOURCE.includes('ws-pill-rotate'), false);
+  assert.equal(SOURCE.includes('ws-pill-del'), false);
+  // the ROOM pill is a side panel and stays
+  assert.ok(SOURCE.includes('id="ws-room-pill"'));
+});
+
+test('the canvas shows a select arrow, and pans only on middle-drag or space', () => {
+  assert.match(SOURCE, /\.ws-canvas-area\{[^}]*cursor:default;\}/, 'default cursor must be the arrow');
+  assert.match(SOURCE, /\.ws-canvas-area\.ws-panning\{cursor:grabbing;\}/);
+  assert.equal(/\.ws-canvas-area\{[^}]*cursor:grab;\}/.test(SOURCE), false, 'the always-on hand is gone');
+  assert.match(SOURCE, /const panBtn = e\.button === 1 \|\| WS_SPACE_PAN/, 'left-drag must not pan');
+});
+
+test('a left-drag on empty canvas starts a marquee, not a pan', () => {
+  const bind = SOURCE.slice(SOURCE.indexOf('function wsLayoutBind'), SOURCE.indexOf("area.addEventListener('mousemove'"));
+  assert.match(bind, /kind: 'marquee'/);
+  assert.match(bind, /!WS_SPACE_PAN && e\.button !== 1/, 'space or middle-button must fall through to pan');
+  assert.match(bind, /if \(!e\.shiftKey\) wsSelSet\(\[\]\);/, 'a plain drag replaces the selection, shift extends');
 });
