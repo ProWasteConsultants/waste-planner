@@ -73,6 +73,8 @@ const LAYOUT_BLOCKS = [
   ['wsBinRoomId',       /^function wsBinRoomId\(/],
   ['wsTagBinsToRooms',  /^function wsTagBinsToRooms\(/],
   ['WS_PROVISION_STREAMS', /^const WS_PROVISION_STREAMS = /],
+  ['WS_PROVISION_PALETTE', /^const WS_PROVISION_PALETTE = /],
+  ['wsProvisionNextColour', /^function wsProvisionNextColour\(/],
   ['wsProvisionCustomId', /^function wsProvisionCustomId\(/],
   ['wsProvisionList', /^function wsProvisionList\(/],
   ['wsProvisionById', /^function wsProvisionById\(/],

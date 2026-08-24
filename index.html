@@ -14386,10 +14386,16 @@ function wsUpdateRoomPill() {
     const why = on ? (placed ? ' — provided in this room' : ' — required but not placed')
                    : ' — not required here';
     const mark = on ? (placed ? '✓ ' : '! ') : '';
+    // custom streams carry their own remove control; predefined ones cannot go
+    const kill = p.custom
+      ? '<span onclick="event.stopPropagation();wsProvisionRemoveCustom(\'' + esc(p.id) + '\')" ' +
+        'title="Remove this custom stream from the project" ' +
+        'style="margin-left:5px;opacity:0.65;cursor:pointer;">×</span>'
+      : '';
     return '<button onclick="wsRoomToggleProvision(\'' + esc(room.id) + '\',\'' + esc(p.id) + '\')"' +
       ' title="' + esc(p.label + why) + '"' +
       ' style="background:none;border:1px solid;border-radius:11px;font-size:10px;padding:2px 8px;cursor:pointer;' + style + '">' +
-      mark + esc(p.label) + '</button>';
+      mark + esc(p.label) + kill + '</button>';
   }).join('');
   const provStatus = provOn.length
     ? '<span style="font-size:9.5px;font-weight:700;color:' + (provRec.ok ? '#3DD68C' : '#FF8A50') + ';">' +
@@ -14400,7 +14406,12 @@ function wsUpdateRoomPill() {
     '<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">' +
     '<span style="font-size:10px;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:0.4px;">Provision streams</span>' +
     '<span style="flex:1"></span>' + provStatus + '</div>' +
-    '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + provBtns + '</div></div>';
+    '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + provBtns +
+    '<button onclick="wsProvisionAddCustom(\'' + esc(room.id) + '\')" ' +
+    'title="Add a provision stream this project needs but the list does not have" ' +
+    'style="background:none;border:1px dashed #4a5a5a;border-radius:11px;color:rgba(255,255,255,0.5);' +
+    'font-size:10px;padding:2px 8px;cursor:pointer;">+ add custom</button>' +
+    '</div></div>';
   const opts = ['<option value="">— no schedule —</option>'].concat(WS_CALC_ROOMS.map(c =>
     `<option value="${esc(c.id)}"${c.id === room.calcRoom ? ' selected' : ''}>${esc(c.name)}</option>`)).join('');
   const subset = allStreams.length > 1 ? `<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;">
@@ -16053,6 +16064,55 @@ function wsRoomFillFromCalc(roomId) {
 }
 // Provision streams are assigned to a ROOM, in the side panel. They never get a
 // canvas overlay: a presence check is a checklist, not a drawing.
+// Custom provision streams are managed where they are USED — the room panel —
+// not buried in admin. A name and a colour is the whole record: a provision has
+// no rate, no capacity and no geometry.
+const WS_PROVISION_PALETTE = ['#C9A227', '#5C6BC0', '#7B1FA2', '#D81B60', '#6D4C41',
+                              '#00838F', '#2E7D32', '#EF6C00', '#455A64'];
+// The next colour that is not already in use, so two custom streams never
+// arrive looking identical.
+function wsProvisionNextColour(custom) {
+  const used = wsProvisionList(custom).map(p => String(p.col || '').toUpperCase());
+  const free = WS_PROVISION_PALETTE.find(c => used.indexOf(c.toUpperCase()) < 0);
+  return free || WS_PROVISION_PALETTE[(custom || []).length % WS_PROVISION_PALETTE.length];
+}
+function wsProvisionAddCustom(roomId) {
+  const name = prompt('Name the provision stream\n\nSomething the development must provide for but which has no generation rate \u2014 e.g. Battery drop-off, Mattress storage.');
+  if (name === null) return;
+  const label = String(name).trim();
+  if (!label) { wsLayoutStatus('A provision stream needs a name.'); return; }
+  const id = wsProvisionCustomId(label);
+  if (!id || id === 'custom:') { wsLayoutStatus('That name has no usable characters \u2014 try letters or numbers.'); return; }
+  if (wsProvisionById(id, WS_PROVISION_CUSTOM)) {
+    wsLayoutStatus('\u201c' + label + '\u201d already exists.');
+    return;
+  }
+  wsLayoutSnapshot();
+  WS_PROVISION_CUSTOM = WS_PROVISION_CUSTOM.concat([
+    { id, label, col: wsProvisionNextColour(WS_PROVISION_CUSTOM) }]);
+  // adding it from a room assigns it to that room — that is why you were there
+  const room = wsRoomById(roomId);
+  if (room) room.provisions = (Array.isArray(room.provisions) ? room.provisions : []).concat([id]);
+  wsUpdateSelPill(); wsLayoutAutosave();
+  wsLayoutStatus('\u201c' + label + '\u201d added and required in ' + ((room && room.name) || 'this room') + '.');
+}
+// Removing a custom stream also clears it from every room that required it,
+// so no room is left pointing at a stream that no longer exists.
+function wsProvisionRemoveCustom(provisionId) {
+  const p = wsProvisionById(provisionId, WS_PROVISION_CUSTOM);
+  if (!p || !p.custom) return;
+  const rooms = wsLayoutSlot().rooms || [];
+  const used = rooms.filter(r => (r.provisions || []).indexOf(provisionId) >= 0).length;
+  if (used && !confirm('\u201c' + p.label + '\u201d is required in ' + used + ' room' + (used === 1 ? '' : 's') + '.\n\nRemove it from the project?')) return;
+  wsLayoutSnapshot();
+  WS_PROVISION_CUSTOM = WS_PROVISION_CUSTOM.filter(c => c.id !== provisionId);
+  rooms.forEach(r => {
+    if (!Array.isArray(r.provisions)) return;
+    r.provisions = r.provisions.filter(x => x !== provisionId);
+  });
+  wsUpdateSelPill(); wsRenderLayoutLayer(); wsLayoutAutosave();
+  wsLayoutStatus('\u201c' + p.label + '\u201d removed from the project.');
+}
 function wsRoomToggleProvision(roomId, provisionId) {
   const room = wsRoomById(roomId); if (!room) return;
   const cur = Array.isArray(room.provisions) ? room.provisions.slice() : [];

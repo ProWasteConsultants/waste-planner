@@ -271,3 +271,54 @@ test('custom provisions survive a save and reload', () => {
   assert.ok(SOURCE.includes('WS_PROVISION_CUSTOM = (st && st.provisionCustom) || [];'),
     'and restore them');
 });
+
+// ── surface 3: the custom-provision editor ──────────────────────────────
+test('wsProvisionNextColour: never hands out a colour already in use', () => {
+  assert.equal(ws.WS_PROVISION_PALETTE.length > 5, true, 'enough colours to matter');
+  // the five predefined already claim colours, so the first custom gets a fresh one
+  const first = ws.wsProvisionNextColour([]);
+  const usedByPredefined = ws.WS_PROVISION_STREAMS.map(p => p.col.toUpperCase());
+  assert.equal(usedByPredefined.includes(first.toUpperCase()), false,
+    'two streams arriving the same colour is a drawing defect');
+  const second = ws.wsProvisionNextColour([{ id: 'custom:a', label: 'A', col: first }]);
+  assert.notEqual(second, first);
+});
+
+test('wsProvisionNextColour: falls back rather than returning nothing', () => {
+  // Exhaust the palette — every colour taken — and it must still answer.
+  const all = ws.WS_PROVISION_PALETTE.map((c, i) => ({ id: 'custom:' + i, label: 'x' + i, col: c }));
+  const c = ws.wsProvisionNextColour(all);
+  assert.match(c, /^#[0-9A-Fa-f]{6}$/, 'a colour is always returned, so a chip always draws');
+});
+
+test('the editor lives in the same panel section it is used from', () => {
+  const pill = SOURCE.slice(SOURCE.indexOf('function wsUpdateRoomPill'), SOURCE.indexOf('function wsPillInk'));
+  assert.ok(pill.includes('+ add custom'), 'managed where it is used, not buried in admin');
+  assert.ok(pill.includes('wsProvisionAddCustom('));
+});
+
+test('adding a custom stream from a room assigns it to that room', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsProvisionAddCustom'), SOURCE.indexOf('function wsProvisionRemoveCustom'));
+  assert.ok(fn.includes('room.provisions = (Array.isArray(room.provisions) ? room.provisions : []).concat([id])'),
+    'you were standing in a room when you added it — that is why');
+  assert.ok(fn.includes('wsLayoutSnapshot();'), 'undoable');
+  // a name that yields no usable id must be refused, not silently accepted
+  assert.ok(fn.includes("if (!id || id === 'custom:')"));
+  assert.ok(fn.includes('if (wsProvisionById(id, WS_PROVISION_CUSTOM))'), 'and duplicates refused');
+});
+
+test('removing a custom stream clears it from every room that required it', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsProvisionRemoveCustom'), SOURCE.indexOf('function wsRoomToggleProvision'));
+  assert.ok(fn.includes('r.provisions = r.provisions.filter(x => x !== provisionId);'),
+    'no room may be left requiring a stream that no longer exists');
+  assert.ok(fn.includes('if (!p || !p.custom) return;'), 'a predefined stream cannot be deleted');
+  assert.ok(fn.includes('rooms.filter(r => (r.provisions || []).indexOf(provisionId) >= 0).length'),
+    'and the user is told how many rooms it would affect first');
+});
+
+test('only custom chips carry a remove control', () => {
+  const pill = SOURCE.slice(SOURCE.indexOf('const provBtns'), SOURCE.indexOf('const provStatus'));
+  assert.ok(pill.includes('const kill = p.custom'), 'predefined streams must not offer deletion');
+  assert.ok(pill.includes('event.stopPropagation();wsProvisionRemoveCustom('),
+    'removing must not also toggle the chip it sits on');
+});
