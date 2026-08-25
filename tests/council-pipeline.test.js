@@ -15,6 +15,7 @@ const { SOURCE } = require('./extract.js');
 
 const MIG_C1 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c1-guideline-versioning.sql'), 'utf8');
 const MIG_C2 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c2-guideline-storage.sql'), 'utf8');
+const MIG_C3 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c3-council-requirements.sql'), 'utf8');
 
 // ── C1: migration ───────────────────────────────────────────────────────
 test('C1 migration: lifecycle columns, version sequencing, grants', () => {
@@ -79,6 +80,48 @@ test('C2: bulk upload — councils assigned by hand, versioned through one path'
     'files land under the guidelines/ prefix of the existing bucket');
   assert.ok(fn.includes('sequential on purpose'),
     'same-council files take sequential versions instead of racing max(version)');
+});
+
+// ── C3: structured requirements + review queue ──────────────────────────
+test('C3 migration: pipeline table with the agreed enum, clause_ref required, RLS split', () => {
+  for (const t of ['generation_rate', 'room_dimension', 'aisle_width', 'chute_spec',
+                   'collection_limit', 'equipment_rule', 'stream_split', 'other'])
+    assert.ok(MIG_C3.includes(`'${t}'`), 'requirement_type includes ' + t);
+  assert.ok(MIG_C3.includes('clause_ref text not null'),
+    'every row is traceable to a clause — enforced by the schema, not convention');
+  assert.ok(MIG_C3.includes("check (status in ('proposed','approved','rejected'))"));
+  assert.ok(MIG_C3.includes("'garbage','recycling','fogo','glass','paper','soft'"),
+    'streams are the canonical ids, checked in the schema');
+  assert.ok(MIG_C3.includes("using (status = 'approved')"),
+    'non-staff read approved rows ONLY — proposed is never consumed');
+  assert.ok(MIG_C3.includes('grant select on public.council_requirements to anon'),
+    'GRANTs ship with the table, every time');
+});
+
+test('C3: extraction drops untraceable rows and never invents streams', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('const CRQ_Q ='));
+  assert.ok(fn.includes('if (!clause) { dropped++; return; }'),
+    'a row with no clause reference is never inserted');
+  assert.ok(fn.includes("status = 'rejected'; rejected++;"),
+    'an unresolvable stream rejects the row rather than guessing');
+  assert.ok(fn.includes('wsStreamId'),
+    'synonyms resolve through the one canonical resolver');
+  assert.ok(fn.includes('council_guideline_id: doc.id'),
+    'every proposal is pinned to the exact guideline version');
+  assert.ok(fn.includes(".is('superseded_at', null)"),
+    'extraction targets the live document version');
+});
+
+test('C3: approval is the only path to machine-usable rows', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crqDecide'), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
+  assert.ok(fn.includes("if (status === 'approved' && !edits.clause_ref)"),
+    'approval without a clause reference is refused');
+  assert.ok(fn.includes("reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString()"),
+    'decisions record who and when');
+  assert.ok(fn.includes(".eq('status', 'proposed')"),
+    'a decision only ever moves a PROPOSED row — no re-approving rejected rows by accident');
+  const q = SOURCE.slice(SOURCE.indexOf('async function crqLoad'), SOURCE.indexOf('function crqRender'));
+  assert.ok(q.includes(".eq('status', 'proposed')"), 'the queue lists proposed rows only');
 });
 
 test('C2 migration: storage policies for the guidelines prefix', () => {

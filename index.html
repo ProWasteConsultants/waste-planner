@@ -913,6 +913,16 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div id="cg-review"></div>
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 6px;">Library</div>
           <div id="cg-library" style="display:flex;flex-direction:column;gap:6px;"></div>
+
+          <!-- C3: structured requirements review queue -->
+          <div style="display:flex;align-items:center;gap:10px;margin:22px 0 6px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Requirements review queue</div>
+            <div id="crq-status" style="font-size:11px;color:var(--muted);"></div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;">
+            AI-proposed rows from guideline documents, each pinned to a document version and a clause reference. Verify each value against the cited clause, edit if needed, then approve — <b>nothing is consumed by any tool until it is approved</b>. Extraction confidence is not approval.
+          </div>
+          <div id="crq-wrap" style="display:flex;flex-direction:column;gap:10px;"></div>
         </div>
 
         <!-- REVIEWS TAB (removed — global oversight lives in the Review Queue's staff "All organisations" scope) -->
@@ -8945,7 +8955,8 @@ async function cgLoad() {
         <span style="font-weight:700;font-size:12px;">${ssxEsc(r.council_name)}</span>
         <span style="font-size:10.5px;color:var(--muted);margin-left:8px;">${ssxEsc(r.state || '')} · v${r.version}${r.version_label ? ' (' + ssxEsc(r.version_label) + ')' : ''} · ${(r.requirements || []).length} requirements${r.effective_date ? ' · effective ' + new Date(r.effective_date).toLocaleDateString('en-AU') : ''} · ${new Date(r.updated_at).toLocaleDateString('en-AU')}${g.total > 1 ? ' · ' + (g.total - 1) + ' older version' + (g.total > 2 ? 's' : '') + ' on record' : ''}${retired ? ' · RETIRED' : ''}</span>
       </div>
-      ${retired ? '' : `<button class="btn" onclick="cgEdit('${k}')">✎ Edit</button>
+      ${retired ? '' : `<button class="btn" title="AI-extract structured requirement rows from this document into the review queue (C3)" onclick="crqExtract('${k}')">🧾 Extract to queue</button>
+      <button class="btn" onclick="cgEdit('${k}')">✎ Edit</button>
       <button class="btn" title="Retire — versions stay on record for past checks" onclick="cgDelete('${k}')">✕</button>`}
     </div>`;
   }).join('');
@@ -9114,6 +9125,198 @@ async function cgbUploadAll() {
     await cgbUploadOne(r);
   }
   cgLoad();
+}
+
+// ── C3: STRUCTURED REQUIREMENTS — EXTRACTION + REVIEW QUEUE ─────────────────
+// AI proposes rows into council_requirements (status 'proposed'), each pinned
+// to the exact guideline version and carrying a clause_ref; a human approves,
+// edits-then-approves, or rejects. NOTHING is consumed until approved.
+// Streams are canonical ids only: synonyms resolve here at extraction, and a
+// row whose stream cannot be resolved is inserted 'rejected' — never guessed.
+const CRQ_TYPES = ['generation_rate','room_dimension','aisle_width','chute_spec','collection_limit','equipment_rule','stream_split','other'];
+const CRQ_STREAMS = ['garbage','recycling','fogo','glass','paper','soft'];
+const CRQ_PROMPT = `You extract ENFORCEABLE waste-management requirements from an Australian council guideline / DCP PDF into structured rows. Respond with JSON only: {"rows":[...]}
+Each row:
+- "requirement_type": one of generation_rate | room_dimension | aisle_width | chute_spec | collection_limit | equipment_rule | stream_split | other
+- "use_class": the development class the clause applies to ("residential", "commercial", "mixed use", "MUD", …) or null
+- "stream": one of garbage | recycling | fogo | glass | paper | soft, or null when the clause is streamless. Resolve synonyms: general waste/residual → garbage, commingled/mixed recycling → recycling, FOGO/organics/food waste/garden → fogo, paper & cardboard/card → paper, soft plastics → soft. If a stream is named but fits none, put the document's exact wording in "stream_raw" and set "stream" null.
+- "value_num": the single numeric value when one exists (80, 1500, 2.5), else null
+- "unit": its unit verbatim ("L/dwelling/week", "mm", "m2", "per week", "%"), else null
+- "value_text": the requirement wording, short but verbatim enough to verify
+- "clause_ref": clause/section AND page as printed, e.g. "cl 4.2.1, p.12". REQUIRED — a row you cannot cite must not be returned.
+Rules: enforceable requirements only (shall / must / minimum / maximum), never advice. Never invent values. generation_rate rows need value_num and unit. stream_split rows are the percentage share of one stream for one use_class.`;
+
+function crqMsg(t, warn) { const el = document.getElementById('crq-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
+
+// Extract one council's LIVE document into proposed rows. Storage-backed
+// documents (bulk uploads) are fetched from the bucket; legacy rows that only
+// carry a filename need the PDF re-picked locally.
+async function crqExtract(councilKey, localFile) {
+  const { data, error } = await sb.from('council_guidelines').select('*')
+    .eq('council_key', councilKey).is('superseded_at', null)
+    .order('version', { ascending: false }).limit(1);
+  const doc = data?.[0];
+  if (error || !doc) { crqMsg('Could not load that council.', true); return; }
+  let b64 = null;
+  if (localFile) {
+    b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = () => rej(new Error('read failed')); r.readAsDataURL(localFile); });
+  } else if (doc.source_file && doc.source_file.indexOf('guidelines/') === 0) {
+    crqMsg(`Fetching ${doc.council_name} v${doc.version} from storage…`);
+    const { data: sig, error: sErr } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(doc.source_file, 600);
+    if (sErr || !sig?.signedUrl) { crqMsg('Could not fetch the stored PDF: ' + (sErr?.message || 'no URL'), true); return; }
+    const buf = await (await fetch(sig.signedUrl)).arrayBuffer();
+    let s = ''; const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    b64 = btoa(s);
+  } else {
+    // legacy row: the PDF was never stored — pick it locally, then re-run
+    crqMsg('This document predates stored PDFs — choose the same PDF to extract from.', true);
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.pdf,application/pdf';
+    inp.onchange = () => { if (inp.files[0]) crqExtract(councilKey, inp.files[0]); };
+    inp.click();
+    return;
+  }
+  crqMsg(`Extracting ${doc.council_name} v${doc.version} — big documents can take a minute…`);
+  try {
+    const resp = await aiProxy({
+      max_tokens: 8192,
+      system: CRQ_PROMPT,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: 'Extract the enforceable requirements as structured rows. JSON only — start your response with {' },
+      ]}],
+    });
+    const raw = (resp.content?.[0]?.text || '').trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(raw);
+    const cand = Array.isArray(parsed.rows) ? parsed.rows : [];
+    let dropped = 0, rejected = 0;
+    const rows = [];
+    cand.forEach(r => {
+      const clause = String(r.clause_ref || '').trim();
+      if (!clause) { dropped++; return; }   // untraceable = unusable, never inserted
+      let stream = null, status = 'proposed', text = String(r.value_text || '').trim() || null;
+      const rawStream = r.stream || r.stream_raw || null;
+      if (rawStream) {
+        stream = (typeof wsStreamId === 'function') ? wsStreamId(rawStream) : (CRQ_STREAMS.includes(rawStream) ? rawStream : null);
+        if (!stream) {
+          // do not invent streams: keep the row, visibly rejected, reason recorded
+          status = 'rejected'; rejected++;
+          text = (text ? text + ' ' : '') + `[stream “${rawStream}” did not resolve to a canonical stream]`;
+        }
+      }
+      rows.push({
+        council_guideline_id: doc.id,
+        requirement_type: CRQ_TYPES.includes(r.requirement_type) ? r.requirement_type : 'other',
+        use_class: String(r.use_class || '').trim() || null,
+        stream,
+        value_num: (r.value_num === 0 || r.value_num) && !isNaN(+r.value_num) ? +r.value_num : null,
+        unit: String(r.unit || '').trim() || null,
+        value_text: text,
+        clause_ref: clause,
+        status,
+      });
+    });
+    if (!rows.length) { crqMsg('No citable requirements found in that PDF.', true); return; }
+    const { error: insErr } = await sb.from('council_requirements').insert(rows);
+    if (insErr) { crqMsg('Insert failed: ' + insErr.message + ' — has sql/2026-08-25-package-c3-council-requirements.sql been run?', true); return; }
+    crqMsg(`✓ ${rows.filter(r => r.status === 'proposed').length} proposed rows queued for ${doc.council_name} v${doc.version}` +
+      (rejected ? ` · ${rejected} auto-rejected (unresolvable stream)` : '') +
+      (dropped ? ` · ${dropped} dropped (no clause reference)` : ''));
+    crqLoad();
+  } catch (err) { crqMsg('Extraction failed: ' + (err.message || err), true); }
+}
+
+// ── the review queue ────────────────────────────────────────────────────────
+const CRQ_Q = { rows: [], docs: {} };
+async function crqLoad() {
+  const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
+  const { data, error } = await sb.from('council_requirements')
+    .select('*').eq('status', 'proposed').order('created_at');
+  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Queue load failed: ${error.message} — has sql/2026-08-25-package-c3-council-requirements.sql been run?</div>`; return; }
+  CRQ_Q.rows = data || [];
+  CRQ_Q.docs = {};
+  const gids = [...new Set(CRQ_Q.rows.map(r => r.council_guideline_id))];
+  if (gids.length) {
+    const { data: docs } = await sb.from('council_guidelines')
+      .select('id, council_name, version, version_label, source_file').in('id', gids);
+    (docs || []).forEach(d => { CRQ_Q.docs[d.id] = d; });
+  }
+  crqRender();
+}
+function crqRender() {
+  const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
+  if (!CRQ_Q.rows.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Queue is empty — use 🧾 Extract to queue on a library document above.</div>'; return; }
+  const byDoc = {};
+  CRQ_Q.rows.forEach(r => (byDoc[r.council_guideline_id] = byDoc[r.council_guideline_id] || []).push(r));
+  const streamOpts = s => `<option value="">— none —</option>` + CRQ_STREAMS.map(x => `<option ${x === s ? 'selected' : ''}>${x}</option>`).join('');
+  const typeOpts = t => CRQ_TYPES.map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('');
+  wrap.innerHTML = Object.keys(byDoc).map(gid => {
+    const d = CRQ_Q.docs[gid] || {};
+    const rows = byDoc[gid];
+    return `
+    <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <span style="font-weight:700;font-size:12px;">${cgbEsc(d.council_name || 'Unknown document')} v${d.version ?? '?'}${d.version_label ? ' (' + cgbEsc(d.version_label) + ')' : ''}</span>
+        <span style="font-size:10.5px;color:var(--muted);">${rows.length} proposed</span>
+        <span style="flex:1"></span>
+        <button class="btn" title="Approve every row in this document as it stands — verify them against the PDF first" onclick="crqBulkApprove('${gid}')">✓ Approve all ${rows.length}</button>
+      </div>
+      <div style="display:grid;grid-template-columns:130px 90px 84px 70px 76px 1fr 96px 108px;gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">
+        <span>Type</span><span>Use class</span><span>Stream</span><span>Value</span><span>Unit</span><span>Text</span><span>Clause</span><span></span>
+      </div>
+      ${rows.map(r => `
+      <div id="crq-row-${r.id}" style="display:grid;grid-template-columns:130px 90px 84px 70px 76px 1fr 96px 108px;gap:6px;align-items:start;margin-bottom:5px;">
+        <select data-crq="${r.id}:requirement_type" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">${typeOpts(r.requirement_type)}</select>
+        <input type="text" data-crq="${r.id}:use_class" value="${cgbEsc(r.use_class)}" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">
+        <select data-crq="${r.id}:stream" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">${streamOpts(r.stream)}</select>
+        <input type="text" data-crq="${r.id}:value_num" value="${r.value_num ?? ''}" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">
+        <input type="text" data-crq="${r.id}:unit" value="${cgbEsc(r.unit)}" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">
+        <textarea data-crq="${r.id}:value_text" rows="2" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;resize:vertical;">${cgbEsc(r.value_text)}</textarea>
+        <input type="text" data-crq="${r.id}:clause_ref" value="${cgbEsc(r.clause_ref)}" title="Verify this against the source PDF — it is the whole audit trail" style="background:#101717;border:1px solid #4a5a3a;border-radius:6px;padding:4px 6px;font-size:10.5px;color:#C5E1A5;font-family:inherit;">
+        <span style="display:flex;gap:4px;">
+          <button class="btn" title="Approve (uses the values as edited here)" onclick="crqDecide('${r.id}','approved')" style="padding:3px 8px;font-size:10px;background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;">✓</button>
+          <button class="btn" title="Reject" onclick="crqDecide('${r.id}','rejected')" style="padding:3px 8px;font-size:10px;color:#EF8080;">✕</button>
+        </span>
+      </div>`).join('')}
+    </div>`;
+  }).join('');
+}
+function crqCollect(id) {
+  const out = {};
+  document.querySelectorAll(`[data-crq^="${id}:"]`).forEach(el => {
+    const key = el.getAttribute('data-crq').split(':')[1];
+    out[key] = el.value.trim() === '' ? null : el.value.trim();
+  });
+  if (out.value_num != null) out.value_num = isNaN(+out.value_num) ? null : +out.value_num;
+  return out;
+}
+async function crqDecide(id, status) {
+  const edits = crqCollect(id);
+  if (status === 'approved' && !edits.clause_ref) { crqMsg('A row cannot be approved without a clause reference.', true); return; }
+  const patch = { ...edits, status, reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() };
+  const { error } = await sb.from('council_requirements').update(patch).eq('id', id).eq('status', 'proposed');
+  if (error) { crqMsg('Update failed: ' + error.message, true); return; }
+  CRQ_Q.rows = CRQ_Q.rows.filter(r => r.id !== id);
+  const el = document.getElementById('crq-row-' + id); if (el) el.remove();
+  crqMsg(status === 'approved' ? '✓ Approved.' : 'Rejected.');
+  if (!CRQ_Q.rows.length) crqRender();
+}
+async function crqBulkApprove(gid) {
+  const rows = CRQ_Q.rows.filter(r => r.council_guideline_id === gid);
+  if (!rows.length) return;
+  if (!confirm(`Approve all ${rows.length} proposed rows for this document, with any edits you have made? Verify them against the PDF first — approval is what makes them machine-usable.`)) return;
+  let ok = 0, fail = 0;
+  for (const r of rows) {
+    const edits = crqCollect(r.id);
+    if (!edits.clause_ref) { fail++; continue; }   // untraceable rows stay in the queue
+    const { error } = await sb.from('council_requirements')
+      .update({ ...edits, status: 'approved', reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() })
+      .eq('id', r.id).eq('status', 'proposed');
+    if (error) fail++; else ok++;
+  }
+  crqMsg(`✓ ${ok} approved` + (fail ? ` · ${fail} skipped (missing clause reference or update failed)` : ''));
+  crqLoad();
 }
 
 // C1: guidelines are VERSIONED. A save is always a new row (version = max+1
@@ -10054,7 +10257,7 @@ function switchAdminTab(btn, panelId) {
   if (panel) panel.style.display = 'block';
   if (panelId === 'stab-analytics') loadAdminAnalytics();
   if (panelId === 'stab-users') loadAdminUsers();
-  if (panelId === 'stab-rates') { rdbLoad(); cgLoad(); }
+  if (panelId === 'stab-rates') { rdbLoad(); cgLoad(); if (typeof crqLoad === 'function') crqLoad(); }
   if (panelId === 'stab-equipment') { eqlLoad(); ctlLoad(); }
 }
 
