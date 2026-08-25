@@ -15,15 +15,57 @@
 -- Idempotent — re-running is a no-op.
 -- Run AFTER package-c1 (it references council_guidelines.id).
 
--- The FK column must match council_guidelines' primary-key type exactly, so
--- the type is read, not assumed.
+-- ── 0. council_guidelines must expose an `id` primary key ───────────────────
+-- The live table's PK column may not be named `id` (e.g. the profiles-style
+-- `uuid`, or the original `council_key`). The app reads `id` by name, and C1
+-- versioning needs a surrogate key — one row PER VERSION means council_key can
+-- no longer be the PK. Discover the actual PK and normalise, never assume.
+do $$
+declare pk_cols text[]; pk_name text;
+begin
+  -- already has an id column → nothing to do
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'council_guidelines'
+               and column_name = 'id') then
+    return;
+  end if;
+
+  select array_agg(a.attname::text order by k.ord) into pk_cols
+  from pg_index i
+  join lateral unnest(i.indkey) with ordinality as k(attnum, ord) on true
+  join pg_attribute a on a.attrelid = i.indrelid and a.attnum = k.attnum
+  where i.indrelid = 'public.council_guidelines'::regclass and i.indisprimary;
+
+  -- profiles-style: a single uuid PK column named "uuid" → rename in place
+  if pk_cols = array['uuid'] then
+    alter table public.council_guidelines rename column "uuid" to id;
+    return;
+  end if;
+
+  -- otherwise add a surrogate uuid id and promote it to the primary key.
+  -- The old PK column (e.g. council_key) keeps its data; uniqueness of
+  -- (council_key, version) is already enforced by C1's unique index.
+  alter table public.council_guidelines
+    add column id uuid not null default gen_random_uuid();
+
+  select conname into pk_name from pg_constraint
+  where conrelid = 'public.council_guidelines'::regclass and contype = 'p';
+  if pk_name is not null then
+    execute format('alter table public.council_guidelines drop constraint %I', pk_name);
+  end if;
+
+  alter table public.council_guidelines add primary key (id);
+end $$;
+
+-- The FK column must match council_guidelines.id's type exactly, so the type
+-- is read, not assumed.
 do $$
 declare pk_type text;
 begin
   select format_type(a.atttypid, a.atttypmod) into pk_type
-  from pg_index i
-  join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
-  where i.indrelid = 'public.council_guidelines'::regclass and i.indisprimary;
+  from pg_attribute a
+  where a.attrelid = 'public.council_guidelines'::regclass
+    and a.attname = 'id' and not a.attisdropped;
 
   execute format($ct$
     create table if not exists public.council_requirements (
@@ -74,5 +116,8 @@ grant select on public.council_requirements to anon;
 grant select, insert, update, delete on public.council_requirements to authenticated;
 
 -- ── VERIFY ──────────────────────────────────────────────────────────────────
+-- Expect: council_guidelines PK is now (id), and council_requirements exists.
+select conname, pg_get_constraintdef(oid) from pg_constraint
+where conrelid = 'public.council_guidelines'::regclass and contype = 'p';
 select column_name, data_type from information_schema.columns
 where table_name = 'council_requirements' order by ordinal_position;
