@@ -214,6 +214,14 @@ test('the door kinds offered match the fixtures list', () => {
   assert.match(SOURCE, /door: 'ROLLER'/);
 });
 
+test('a drawn library shape beats the plain circle on the plan', () => {
+  // The circle branch is a fallback: a hand-drawn drain or bollard must render
+  // its drawn outline on plan, thumbnail and DXF alike (the DXF block writer
+  // already prefers shp.outline over the round flag).
+  assert.ok(SOURCE.includes("if (e.round && !(eshp && eshp.source === 'drawn'))"),
+    'the round branch must yield to a drawn shape');
+});
+
 // ── door palette thumbnails ─────────────────────────────────────────────
 test('door palette thumbnails are the plan door symbol, not the squashed profile', () => {
   assert.ok(SOURCE.includes('f.door ? wsDoorThumb(f.door, f.w, f.d,'),

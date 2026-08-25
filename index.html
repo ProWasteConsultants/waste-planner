@@ -9519,7 +9519,27 @@ function shpdRender() {
 // what this preview shows IS what the canvas and the DXF will draw.
 const SHP = { code: null };
 function shpMsg(t, warn) { const el = document.getElementById('shp-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
-function shpItem() { return EQL.items.find(it => (it.code || '') === SHP.code) || null; }
+function shpItem() {
+  if (!SHP.code) return null;
+  if (SHP.code.indexOf('fx:') === 0) return shpFixtureItem(SHP.code.slice(3));
+  return EQL.items.find(it => (it.code || '') === SHP.code) || null;
+}
+// A fixture is not an equipment row until a shape is saved for it. The editor
+// works on a pseudo-item built from WS_FIXTURES — dimensions are canonical
+// there, placement reads them from the list and never from the row — overlaid
+// with any previously saved shape row of the same code. Doors are excluded:
+// their plan symbol is parametric (wsDoorGeometry) and always correct.
+function shpFixtureItem(code) {
+  const fx = (typeof WS_FIXTURES !== 'undefined') ? WS_FIXTURES.find(f => f.code === code) : null;
+  if (!fx) return null;
+  const row = EQL.items.find(it => (it.code || '') === code) || {};
+  const collision = row.code && String(row.item_kind || '').toLowerCase() !== 'fixture';
+  return { code: fx.code, label: fx.label, item_kind: 'Fixture', _fixture: true, _collision: collision,
+    width_mm: Math.round(fx.w * 1000), depth_mm: Math.round(fx.d * 1000),
+    round_shape: row.round_shape !== undefined ? row.round_shape : !!fx.round,
+    outline_svg: row.outline_svg || null, detail_svg: row.detail_svg || null,
+    profile: row.profile || null, capacity_l: null };
+}
 
 function shpPopulate() {
   const sel = document.getElementById('shp-item');
@@ -9531,7 +9551,16 @@ function shpPopulate() {
       const dims = (it.width_mm > 0 && it.depth_mm > 0) ? '' : ' (no W×D — not placeable)';
       return `<option value="${it.code}">${String(it.label || it.code).replace(/</g,'&lt;')}${dims}</option>`;
     }).join('');
-  if (cur && EQL.items.some(it => it.code === cur)) sel.value = cur;
+  // Layout-palette fixtures (column, drain, bollard…) are drawable too; the
+  // shape saves as an item_kind='Fixture' row that only wsShapeFor reads.
+  if (typeof WS_FIXTURES !== 'undefined') {
+    sel.innerHTML += '<optgroup label="Fixtures — layout palette">' + WS_FIXTURES
+      .filter(f => !f.door)
+      .map(f => `<option value="${'fx:' + f.code}">${String(f.label).replace(/</g,'&lt;')}</option>`)
+      .join('') + '</optgroup>';
+  }
+  if (cur && cur.indexOf('fx:') === 0) sel.value = cur;
+  else if (cur && EQL.items.some(it => it.code === cur)) sel.value = cur;
   // Profile dropdown, once
   const ps = document.getElementById('shp-profile');
   if (ps && !ps.options.length && typeof WS_PROFILES !== 'undefined') {
@@ -9631,9 +9660,25 @@ async function shpSave() {
   };
   shpMsg('Saving shape…');
   try {
-    const { error } = await sb.from('equipment').update(row).eq('code', it.code);
-    if (error) throw error;
-    Object.assign(it, row); // keep the in-memory table row in sync
+    if (it._fixture) {
+      // Never silently convert an existing equipment/bin row into a fixture —
+      // a code collision here means the library row must be renamed first.
+      if (it._collision) { shpMsg(`“${it.code}” is already an equipment/bin code in the table — rename that row first.`, true); return; }
+      // First save creates the row; later saves update it. The row is a shape
+      // carrier only (item_kind 'Fixture') — it appears in no picker, and
+      // placement keeps reading dimensions from the built-in fixtures list.
+      const full = { code: it.code, label: it.label, item_kind: 'Fixture', category: 'other',
+        width_mm: it.width_mm, depth_mm: it.depth_mm,
+        collectable: false, include_in_supplier_table: false, active: true, ...row };
+      const { error } = await sb.from('equipment').upsert(full, { onConflict: 'code' });
+      if (error) throw error;
+      const ex = EQL.items.find(x => (x.code || '') === it.code);
+      if (ex) Object.assign(ex, full); else EQL.items.push(full);
+    } else {
+      const { error } = await sb.from('equipment').update(row).eq('code', it.code);
+      if (error) throw error;
+      Object.assign(it, row); // keep the in-memory table row in sync
+    }
     shpMsg('✓ Shape saved — layout tool refreshed.');
     if (typeof wsLoadEquipmentDB === 'function') wsLoadEquipmentDB();
   } catch (err) { shpMsg('Shape save failed: ' + (err.message || err), true); }
@@ -13018,6 +13063,10 @@ function wsCloneItem(item, dx, dy, id) {
 // ── Bin & equipment palettes fed from the `equipment` DB table (WS_BIN_TYPES = offline fallback) ──
 // item_kind 'Bin' → bin palette (incl. zones like hard waste — placeable areas with footprints);
 // item_kind 'Equipment' → equipment palette (bin wash, tug, press…). Needs width+depth to be placeable.
+// item_kind 'Fixture' → shape carrier ONLY: rows the admin shape drawer saves
+// for the fixed WS_FIXTURES palette (column, drain, bollard…). They appear in
+// no picker — wsShapeFor finds them by code, which is how a drawn fixture
+// shape reaches the plan, the palette thumbnail and the DXF automatically.
 let WS_EQUIP_DB = null; // null = not loaded, [] = loaded/failed
 async function wsLoadEquipmentDB() {
   try {
@@ -13027,7 +13076,7 @@ async function wsLoadEquipmentDB() {
     WS_EQUIP_DB = (data || [])
       .map(r => ({
         id: 'eq_' + r.code, code: r.code, label: r.label,
-        kind: String(r.item_kind || 'Bin').toLowerCase() === 'equipment' ? 'equipment' : 'bin',
+        kind: (k => k === 'equipment' ? 'equipment' : k === 'fixture' ? 'fixture' : 'bin')(String(r.item_kind || 'Bin').toLowerCase()),
         collectable: r.collectable !== false,
         w: +r.width_mm / 1000, d: +r.depth_mm / 1000,
         heightM: +r.height_mm > 0 ? +r.height_mm / 1000 : null,
@@ -13188,6 +13237,9 @@ function wsLayoutPopulateBins() {
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
   else { const def = bins.find(b => b.capacityL === 240) || bins[0]; if (def) sel.value = def.id; }
   if (typeof wsRenderEquipPalette === 'function') wsRenderEquipPalette();
+  // Fixture thumbs draw through wsShapeFor too, so a shape saved in admin
+  // must refresh them the same way — not only on the next tab switch.
+  if (typeof wsRenderFixturePalette === 'function') wsRenderFixturePalette();
 }
 
 function wsLayoutSlot() {
@@ -15432,7 +15484,12 @@ function wsRenderLayoutLayer() {
       return;
     }
     const col = e.fixture ? '#78909C' : (e.compactor ? '#F5B400' : '#90A4AE');
-    if (e.round) {
+    const eshp = wsShapeFor(e.code);
+    // The plain circle is a fallback, not a style: a hand-drawn library shape
+    // (admin “Draw shape”) wins even for round fixtures, so a drawn drain or
+    // bollard renders identically on plan, palette thumbnail and DXF — the
+    // DXF block writer already prefers the outline.
+    if (e.round && !(eshp && eshp.source === 'drawn')) {
       mk('circle', { cx: e.x, cy: e.y, r: Math.max(hw, hd), fill: 'rgba(120,144,156,0.18)',
         stroke: selected ? '#FFD54F' : col, 'stroke-width': selected ? 3 : 2 });
       const tl = mk('text', { x: e.x, y: e.y - Math.max(hw, hd) - 4, fill: '#B0BEC5', 'font-size': 9,
@@ -15441,7 +15498,6 @@ function wsRenderLayoutLayer() {
       keepouts.push({ kind: 'circle', x: e.x, y: e.y, r: Math.max(e.w, e.d) / 2, why: e.label });
       return;
     }
-    const eshp = wsShapeFor(e.code);
     const fill = e.fixture ? 'rgba(120,144,156,0.18)' : (e.known ? 'rgba(245,180,0,0.12)' : 'rgba(255,138,80,0.10)');
     if (eshp && eshp.outline) {
       const g2 = mk('g', { transform: `translate(${e.x.toFixed(1)},${e.y.toFixed(1)}) rotate(${e.rot || 0})` });
