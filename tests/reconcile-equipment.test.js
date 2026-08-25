@@ -517,18 +517,19 @@ test('wsEquipPickerGroups: an item with no dimensions still lists', () => {
 // The button shows the plan-view shape and the name, nothing else. Size,
 // stream restrictions and pairing stay in wsEquipPickerGroups and surface in
 // the tooltip — the detail is out of the way, not lost.
-test('the equipment palette is generated from the picker groups, not hand-listed', () => {
+test('the unified picker is generated from the picker groups, not hand-listed', () => {
   const fn = SOURCE.slice(SOURCE.indexOf('function wsRenderEquipPalette'),
                           SOURCE.indexOf('function wsEquipPaletteMode'));
   assert.ok(fn.includes('wsEquipPickerGroups(WS_EQUIP_DB, order)'),
     'must render from the same grouped data these tests cover');
-  assert.ok(fn.includes("wsEquipPaletteMode('${esc(it.id)}')"),
-    'each entry arms placement by ID, never by name');
-  assert.ok(fn.includes('wsShapeThumb(r.code || it.id'),
-    'the thumbnail draws through wsShapeFor, the single geometry source');
+  assert.ok(fn.includes("wsEquipPaletteMode('${esc(id)}','${kind}')"),
+    'each tile selects by ID, never by name');
+  assert.ok(fn.includes("tile(it.id, 'equip', r.code || it.id"),
+    'the thumbnail draws through wsShapeFor via the item code — the single geometry source');
   assert.ok(fn.includes("it.dims ? it.dims + ' mm' : 'no size in library'"),
     'dimensions belong to the tooltip, and a missing size says so rather than fabricating one');
-  assert.ok(!fn.includes('wsl-fx-dim'), 'no visible dimension text on the button');
+  assert.ok(!fn.includes('wsl-fx-dim'), 'no visible dimension text on the tile');
+  assert.ok(fn.includes('wsLayoutBinList()'), 'bins share the same picker, driven by the library');
 });
 
 test('a palette pick routes through the shared select + place-mode path', () => {

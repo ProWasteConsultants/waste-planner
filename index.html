@@ -110,10 +110,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-status{font-size:10.5px;color:rgba(255,255,255,0.72);}
 .wsl-stats{font-size:10.5px;color:#4BED12;margin-left:auto;white-space:nowrap;}
 .wsl-fx{display:flex;align-items:center;gap:6px;background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:3px 8px 3px 4px;cursor:pointer;font-family:inherit;color:rgba(255,255,255,0.85);min-width:0;overflow:hidden;}
-/* Equipment + fixture pickers are square TILES: big thumbnail on top, label
-   underneath — zones keep the horizontal swatch row. */
-.wsl-fx.wsl-tile{flex-direction:column;justify-content:center;gap:4px;padding:8px 4px 6px;}
-.wsl-fx.wsl-tile .wsl-fx-nm{font-size:10px;max-width:100%;text-align:center;}
+/* Equipment + fixture pickers are square TILES: thumbnail on top, small label
+   underneath, 3–4 per row — zones keep the horizontal swatch row. */
+.wsl-fx.wsl-tile{flex-direction:column;justify-content:center;gap:2px;padding:5px 3px 4px;}
+.wsl-fx.wsl-tile .wsl-fx-nm{font-size:9px;max-width:100%;text-align:center;}
+.wsl-fx.wsl-tile.sel{border-color:#00d4d4;background:#0d3333;box-shadow:0 0 0 1px #00d4d4 inset;}
+/* internal-scroll sections: the RHS panel itself never scrolls — every section
+   header (and ZONES) stays reachable at 1080p */
+.wsl-scroll{overflow-y:auto;min-height:0;}
 .wsl-fx:hover{border-color:#008080;}
 .wsl-fx-nm{font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .wsl-fx-dim{font-size:8px;color:rgba(255,255,255,0.3);white-space:nowrap;}
@@ -232,17 +236,68 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* ── LAYOUT ── */
 .app{display:flex;width:100%;height:100%;overflow:hidden;}
 
-/* ── LHS VERTICAL NAV (screens rail; project name / council / user stay on the top edge) ── */
+/* ── LHS NAV RAIL — thin, vertical labels, same style as the RHS tool tabs.
+   No top header bar exists: the brand mark sits at the rail's head, the
+   account chip is pinned at its foot, and the project/council chip floats on
+   the canvas top edge. ── */
 .side-nav{
-  width:172px;flex-shrink:0;display:flex;flex-direction:column;gap:4px;
-  padding:12px 10px;overflow-y:auto;
+  width:36px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
+  padding:8px 0 6px;overflow:hidden;
   --white:#1A2424;--grey:#243030;--border:#2C3838;--text:#E8EFEF;--muted:#8CA3A3;--lt:rgba(22,126,126,0.35);
   background:#1A2424;border-right:1px solid #2C3838;
 }
-.side-nav .topbar-brand{padding:2px 8px 12px;border-bottom:1px solid #2C3838;margin-bottom:8px;cursor:pointer;}
-.side-nav .nav-item{width:100%;}
-.side-nav .nav-item.active{color:#4FC3C3;}
+.side-nav .topbar-brand{padding:4px 0 10px;margin:0 4px 6px;border-bottom:1px solid #2C3838;cursor:pointer;text-align:center;}
+.side-nav .nav-item{
+  writing-mode:vertical-rl;padding:12px 0;border-radius:0;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:11px;font-weight:600;letter-spacing:.4px;white-space:nowrap;
+  border-right:2px solid transparent;
+}
+.side-nav .nav-item.active{background:none;color:#4FC3C3;border-right:2px solid #4FC3C3;}
+.side-nav .nav-item .ni{display:none;}
+.side-nav .nav-badge{writing-mode:horizontal-tb;font-size:8px;padding:1px 4px;}
+/* account chip pinned at the rail's foot — initials always, name + role on hover */
+.rail-account{margin-top:auto;position:relative;display:flex;justify-content:center;padding:8px 0 2px;cursor:pointer;}
+.rail-account .rail-account-info{
+  display:none;position:absolute;left:34px;bottom:2px;z-index:40;white-space:nowrap;
+  background:#1A2424;border:1px solid #2C3838;border-radius:8px;padding:7px 12px;
+  box-shadow:0 4px 14px rgba(0,0,0,0.5);
+}
+.rail-account:hover .rail-account-info{display:block;}
 .ws-embed .side-nav{display:none!important}
+
+/* ── TOOL STRIP — Actions / Layers / Markups / Set Scale as a second thin rail
+   on the canvas's left edge. Each tab opens ONE flyout that OVERLAYS the
+   canvas; opening or closing never moves the plan. ── */
+.ws-tool-strip{
+  width:36px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
+  padding:8px 0;background:#1a1a1a;border-right:1px solid #333;z-index:15;
+}
+.ws-strip-tab{
+  flex:0 0 auto;writing-mode:vertical-rl;padding:14px 0;font-size:11px;cursor:pointer;
+  color:rgba(255,255,255,0.4);white-space:nowrap;border:none;border-right:2px solid transparent;
+  background:none;font-family:inherit;text-align:center;letter-spacing:.4px;
+}
+.ws-strip-tab:hover{color:rgba(255,255,255,0.7);}
+.ws-strip-tab.active{color:var(--teal, #00d4d4);color:#00d4d4;border-right:2px solid #00d4d4;}
+.ws-flyout{
+  position:absolute;left:37px;top:0;bottom:auto;max-height:100%;overflow-y:auto;z-index:15;
+  background:#1a1a1a;border:1px solid #333;border-left:none;border-radius:0 0 10px 0;
+  box-shadow:10px 0 24px rgba(0,0,0,0.35);padding:10px 12px;min-width:190px;max-width:280px;
+}
+.ws-flyout .ws-layer-panel{border:none;background:none;padding:0;min-width:0;}
+
+/* ── PROJECT / COUNCIL CHIP — slim, floating on the canvas top edge,
+   collapsible so it never has to block plan content. ── */
+.ws-top-chip{
+  position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:13;
+  display:flex;align-items:center;gap:8px;
+  background:rgba(26,26,26,0.92);border:1px solid #333;border-radius:9px;
+  padding:4px 10px;backdrop-filter:blur(4px);max-width:60%;
+}
+.ws-top-chip.min > *:not(.ws-top-chip-toggle){display:none!important;}
+.ws-top-chip .breadcrumb{font-size:12px;}
+.ws-top-chip-toggle{background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:11px;padding:0 2px;font-family:inherit;}
 
 /* ── MAIN CONTENT ── */
 .content{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;}
@@ -586,11 +641,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 <body>
 <div id="app-content" style="display:none;width:100%;height:100%;"><div class="app">
 
-<!-- LHS VERTICAL NAV — screens rail. Project name, council/org selector and
-     the user chip stay on the top edge. -->
+<!-- LHS NAV RAIL — thin, vertical labels; brand mark at the head, account chip
+     pinned at the foot. There is no top header bar: the project/council chip
+     floats on the canvas top edge instead. -->
 <div class="side-nav" id="side-nav">
-  <div class="topbar-brand" id="topbar-brand" onclick="showScreen('projects',null)" title="All projects">
-    <span style="font-size:16px;font-weight:700;letter-spacing:-0.3px;line-height:1;"><span style="color:#008080;">Waste</span><span style="color:var(--text);">Planner</span></span>
+  <div class="topbar-brand" id="topbar-brand" onclick="showScreen('projects',null)" title="WastePlanner — all projects">
+    <span style="font-size:15px;font-weight:800;letter-spacing:-0.5px;line-height:1;"><span style="color:#14B8B8;">W</span><span style="color:var(--text);">P</span></span>
   </div>
   <div class="nav-item" onclick="showScreen('tools',this)" id="nav-tools" style="display:none;">
     <span class="ni">⚙</span><span class="nl">Tools</span>
@@ -617,36 +673,34 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   <div id="nav-calculator" style="display:none;"></div>
   <div id="nav-layout" style="display:none;"></div>
   <div id="nav-swept" style="display:none;"></div>
+  <!-- account chip: initials always, name + role on hover, pinned at the foot -->
+  <div class="rail-account" id="user-pill-btn" onclick="showScreen('profile', null)" title="Account & settings">
+    <div class="user-avatar" id="user-avatar-initials">LH</div>
+    <div class="rail-account-info">
+      <div class="user-name" id="user-display-name">Lachy Harris</div>
+      <div class="user-tier" id="user-display-tier">Pro Waste Consultants</div>
+    </div>
+  </div>
 </div>
 
-<!-- MAIN CONTENT -->
-<div class="content">
+<!-- MAIN CONTENT — no top header bar; the project/council chip floats over it -->
+<div class="content" style="position:relative;">
 
-  <!-- TOPBAR — project identity and account only; screens nav lives in the sidebar -->
-  <div class="topbar">
-    <div class="breadcrumb" id="breadcrumb" style="padding-left:2px;"><span>Projects</span></div>
-    <!-- Document-level actions: they act on the project, so they sit with the
-         project's name rather than in the tool strip. -->
-
-
-    <div class="topbar-actions">
-      <select id="org-switcher" onchange="setOrgContext(this.value)" title="Workspace — personal or organisation"
-        style="display:none;background:#182121;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;color:var(--text);font-family:inherit;max-width:200px;cursor:pointer;">
-        <option value="">Personal</option>
-      </select>
-      <button class="btn btn-green" id="btn-new-project" onclick="openNewProject()">+ New Project</button>
-      <div class="user-pill" id="user-pill-btn" onclick="showScreen('profile', null)" style="cursor:pointer;">
-        <div class="user-avatar" id="user-avatar-initials">LH</div>
-        <div>
-          <div class="user-name" id="user-display-name">Lachy Harris</div>
-          <div class="user-tier" id="user-display-tier">Pro Waste Consultants</div>
-        </div>
-      </div>
-    </div>
+  <!-- slim floating project + workspace chip, collapsible so it never blocks plan content -->
+  <div class="ws-top-chip" id="ws-top-chip">
+    <button class="ws-top-chip-toggle" onclick="wsTopChipToggle()" title="Collapse / expand">◂</button>
+    <div class="breadcrumb" id="breadcrumb"><span>Projects</span></div>
+    <select id="org-switcher" onchange="setOrgContext(this.value)" title="Workspace — personal or organisation"
+      style="display:none;background:#182121;border:1px solid #2C3838;border-radius:8px;padding:4px 8px;font-size:11px;font-weight:600;color:#E8EFEF;font-family:inherit;max-width:180px;cursor:pointer;">
+      <option value="">Personal</option>
+    </select>
   </div>
 
   <!-- PROJECTS SCREEN -->
   <div class="screen active" id="screen-projects">
+    <div class="topbar-actions" style="display:flex;justify-content:flex-end;padding:14px 16px 0;">
+      <button class="btn btn-green" id="btn-new-project" onclick="openNewProject()">+ New Project</button>
+    </div>
     <div class="stats-row">
       <div class="stat-card stat-filter active" data-status="all" onclick="filterProjects('all',this)">
         <div class="stat-num" id="stat-active">0</div>
@@ -1446,6 +1500,33 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   <div class="screen fill" id="screen-workspace">
     <div class="ws-shell">
 
+      <!-- TOOL STRIP — Actions / Layers / Markups / Set Scale. One flyout at a
+           time, overlaying the canvas: opening or closing never moves the plan. -->
+      <div class="ws-tool-strip" id="ws-tool-strip">
+        <button class="ws-strip-tab" id="ws-strip-actions" onclick="wsStripToggle('actions')">Actions</button>
+        <button class="ws-strip-tab" id="ws-strip-layers" onclick="wsStripToggle('layers')">Layers</button>
+        <button class="ws-strip-tab" id="ws-strip-markups" onclick="wsStripToggle('markups')">Markups</button>
+        <button class="ws-strip-tab" id="ws-strip-scale" onclick="wsStripToggle('scale')">Set Scale</button>
+      </div>
+      <div class="ws-flyout" id="ws-flyout" style="display:none;">
+        <div id="ws-fly-actions" style="display:none;">
+          <div class="wsl-group-hd">Actions</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <button class="wsl-btn" onclick="wsLayoutDo('undo')">↩ Undo</button>
+            <button class="wsl-btn" onclick="wsLayoutDo('redo')">↪ Redo</button>
+            <label class="wsl-chk"><input type="checkbox" id="ws-layout-clr" checked onchange="wsRenderLayoutLayer()">150 spacing</label>
+            <button class="wsl-btn wsl-btn-danger" onclick="wsLayoutClearPage()">Clear</button>
+          </div>
+        </div>
+        <div id="ws-fly-layers" style="display:none;"></div>
+        <div id="ws-fly-markups" style="display:none;"></div>
+        <div id="ws-fly-scale" style="display:none;">
+          <div class="wsl-group-hd">Set scale</div>
+          <div style="font-size:10.5px;color:rgba(255,255,255,0.5);margin-bottom:6px;line-height:1.5;">Everything placed is dimensioned — set the drawing scale and paper size so the plan measures true.</div>
+          <div id="ws-scale-slot"></div>
+        </div>
+      </div>
+
       <!-- CANVAS AREA -->
       <div class="ws-canvas-area" id="ws-canvas-area"
            onwheel="wsOnWheel(event)"
@@ -1607,23 +1688,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <div id="ws-room-pill" onmousedown="event.stopPropagation();wsPillDragStart(event,'ws-room-pill')"
              style="display:none;position:absolute;z-index:13;flex-direction:column;gap:4px;padding:6px;background:rgba(20,26,26,0.96);border:1px solid #3a4747;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:340px;"></div>
 
-        <!-- Layout actions pill: floats over the canvas, minimisable, draggable by its header -->
-        <div id="ws-actions-pill" onmousedown="event.stopPropagation()"
-             style="display:none;position:absolute;top:12px;right:12px;z-index:13;background:rgba(20,26,26,0.96);border:1px solid #3a4747;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,0.45);">
-          <div onmousedown="wsPillDragStart(event,'ws-actions-pill')"
-               style="display:flex;align-items:center;gap:10px;padding:5px 8px;cursor:grab;user-select:none;">
-            <span style="font-size:9px;font-weight:700;letter-spacing:.6px;color:rgba(255,255,255,0.4);">ACTIONS</span>
-            <button id="ws-actions-min" onclick="wsActionsPillMin()" title="Minimise"
-                    style="margin-left:auto;background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:12px;padding:0 2px;font-family:inherit;">▾</button>
-          </div>
-          <div id="ws-actions-body" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:0 8px 7px;max-width:280px;">
-            <button class="wsl-btn" onclick="wsLayoutDo('undo')">↩ Undo</button>
-            <button class="wsl-btn" onclick="wsLayoutDo('redo')">↪ Redo</button>
-            <label class="wsl-chk"><input type="checkbox" id="ws-layout-clr" checked onchange="wsRenderLayoutLayer()">150 spacing</label>
-            <button class="wsl-btn" id="ws-gen-btn" onclick="wsGenerateLayout()" style="background:#004d4d;border-color:#008080;color:#4BED12;font-weight:700;">✦ Generate layout</button>
-            <button class="wsl-btn wsl-btn-danger" onclick="wsLayoutClearPage()">Clear</button>
-          </div>
-        </div>
+        <!-- Actions moved into the tool strip's Actions flyout; Generate layout
+             lives ONLY in the Bin Rooms panel header. -->
       </div>
 
       <!-- PAGE THUMBNAIL BAR -->
@@ -1659,74 +1725,81 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
 
           <!-- LAYOUT TAB — full layout generator embedded -->
-          <div id="ws-tab-layout" style="display:none;flex:1;min-height:0;overflow:auto;padding:6px 10px;flex-direction:column;gap:5px;">
-            <div class="wsl-groups">
+          <!-- The panel itself NEVER scrolls: every section header (and ZONES)
+               stays visible at 1080p; long sections scroll internally. -->
+          <div id="ws-tab-layout" style="display:none;flex:1;min-height:0;overflow:hidden;padding:6px 10px;flex-direction:column;gap:5px;">
+            <div class="wsl-groups" style="display:flex;flex-direction:column;gap:7px;flex:1;min-height:0;overflow:hidden;align-items:stretch;">
 
-              <div class="wsl-group" style="flex:1.2 1 250px;">
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:0 1 auto;">
                 <div class="wsl-group-hd">Bin rooms
                   <span style="flex:1"></span>
                   <button class="wsl-btn" id="ws-room-gen-btn" onclick="wsGenerateRoomLayout()" disabled
                           title="Select a bin room on the plan first"
                           style="background:#004d4d;border-color:#008080;color:#4BED12;font-weight:700;font-size:10.5px;">✦ Generate layout</button>
                 </div>
-                <div class="wsl-group-body">
+                <div class="wsl-group-body wsl-scroll" style="max-height:24vh;">
                   <button class="wsl-btn wsl-btn-lead" onclick="wsLayoutRoomMode()">▱ Draw bin room</button>
                   <div id="ws-layout-targets" class="wsl-cards"></div>
                 </div>
               </div>
 
-              <div style="display:flex;flex-direction:column;gap:7px;flex:1 1 210px;min-width:0;">
-                <div class="wsl-group" style="flex:1;">
-                  <div class="wsl-group-hd">Bins</div>
-                  <div class="wsl-group-body">
-                    <select id="ws-layout-bin" class="wsl-sel" onchange="wsRenderBinThumb()">
-                      <option value="b120">120L MGB</option>
-                      <option value="b240" selected>240L MGB</option>
-                      <option value="b360">360L MGB</option>
-                      <option value="b660">660L Bin</option>
-                      <option value="b1100">1100L Bin</option>
-                    </select>
-                    <select id="ws-layout-stream" class="wsl-sel" onchange="wsRenderBinThumb()">
-                      <option value="garbage" selected>Garbage</option>
-                      <option value="recycling">Recycling</option>
-                      <option value="fogo">FOGO</option>
-                      <option value="glass">Glass</option>
-                      <option value="paper">Paper/Card</option>
-                      <option value="soft">Soft Plastics</option>
-                    </select>
-                    <span id="ws-bin-thumb" style="display:inline-flex;align-items:center;"></span>
-                    <button class="wsl-btn" onclick="wsLayoutPlaceMode()" title="Places whichever bin OR equipment item is selected above — the list holds both">Place on plan</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="wsl-group" id="ws-layout-equip-group" style="flex:1.3 1 240px;display:none;">
-                <div class="wsl-group-hd">Equipment</div>
-                <div class="wsl-group-body" id="ws-layout-equipment" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
-              </div>
-
-              <div class="wsl-group" style="flex:1.6 1 300px;">
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:0 1 auto;">
                 <div class="wsl-group-hd">Obstacles &amp; fixtures</div>
-                <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
-                  <select id="ws-aisle-width" class="wsl-sel" style="max-width:150px;" title="Clearance aisle width">
-                    <option value="900">Aisle 900mm (&lt;240L)</option>
-                    <option value="1300" selected>Aisle 1300mm (660/1100L)</option>
-                    <option value="1500">Aisle 1500mm (1100L ideal)</option>
-                    <option value="2000">Aisle 2000mm (trolley pass)</option>
-                    <option value="2500">Aisle 2500mm (vehicle)</option>
+                <div class="wsl-scroll" style="max-height:17vh;">
+                  <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+                    <select id="ws-aisle-width" class="wsl-sel" style="max-width:150px;" title="Clearance aisle width">
+                      <option value="900">Aisle 900mm (&lt;240L)</option>
+                      <option value="1300" selected>Aisle 1300mm (660/1100L)</option>
+                      <option value="1500">Aisle 1500mm (1100L ideal)</option>
+                      <option value="2000">Aisle 2000mm (trolley pass)</option>
+                      <option value="2500">Aisle 2500mm (vehicle)</option>
+                    </select>
+                    <button class="wsl-btn" onclick="wsAisleMode()" title="Keep-clear access aisle — bins and auto-layout stay out. Drag the end handles to set its length.">▨ Place aisle</button>
+                  </div>
+                  <div class="wsl-group-body" id="ws-layout-fixtures" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:4px;align-items:stretch;"></div>
+                </div>
+              </div>
+
+              <!-- One picker for everything placeable from the library: bins,
+                   equipment (and any library fixtures), grouped and searchable.
+                   The hidden select stays the single selection state holder. -->
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:1 1 auto;">
+                <div class="wsl-group-hd">Bins &amp; equipment</div>
+                <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">
+                  <input type="search" id="ws-picker-search" class="wsl-sel" placeholder="Search…" oninput="wsPickerFilter()" style="flex:1;min-width:90px;">
+                  <select id="ws-layout-bin" class="wsl-sel" onchange="wsRenderBinThumb();wsPickerSyncSel();" style="display:none;">
+                    <option value="b120">120L MGB</option>
+                    <option value="b240" selected>240L MGB</option>
+                    <option value="b360">360L MGB</option>
+                    <option value="b660">660L Bin</option>
+                    <option value="b1100">1100L Bin</option>
                   </select>
-                  <button class="wsl-btn" onclick="wsAisleMode()" title="Keep-clear access aisle — bins and auto-layout stay out. Drag the end handles to set its length.">▨ Place aisle</button>
+                  <select id="ws-layout-stream" class="wsl-sel" onchange="wsRenderBinThumb();wsRenderEquipPalette();" title="Stream for the selected item">
+                    <option value="garbage" selected>Garbage</option>
+                    <option value="recycling">Recycling</option>
+                    <option value="fogo">FOGO</option>
+                    <option value="glass">Glass</option>
+                    <option value="paper">Paper/Card</option>
+                    <option value="soft">Soft Plastics</option>
+                  </select>
+                  <span id="ws-bin-thumb" style="display:none;align-items:center;"></span>
+                  <button class="wsl-btn" onclick="wsPickerPlace()" title="Place the selected tile on the plan">Place on plan</button>
                 </div>
-                <div class="wsl-group-body" id="ws-layout-fixtures" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
-                <div class="wsl-group-hd" style="margin-top:8px;">Zones</div>
-                <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
-                  <input id="ws-zone-w" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone width in mm — applied when you click to place">
-                  <span style="font-size:10px;color:rgba(255,255,255,0.4);">×</span>
-                  <input id="ws-zone-d" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone depth in mm — applied when you click to place">
-                  <span style="font-size:10px;color:rgba(255,255,255,0.4);">mm</span>
-                  <button class="wsl-btn" onclick="wsZoneDrawMode()" title="Draw the picked zone as a polygon — click corners, Enter or double-click to close. The area is measured from the outline, and a zone inside a bin room is tagged to it.">▱ Draw</button>
+                <div class="wsl-scroll" id="ws-layout-equipment" style="flex:1;min-height:60px;max-height:30vh;display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:4px;align-items:start;align-content:start;"></div>
+              </div>
+
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:0 0 auto;">
+                <div class="wsl-group-hd">Zones</div>
+                <div class="wsl-scroll" style="max-height:15vh;">
+                  <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+                    <input id="ws-zone-w" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone width in mm — applied when you click to place">
+                    <span style="font-size:10px;color:rgba(255,255,255,0.4);">×</span>
+                    <input id="ws-zone-d" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone depth in mm — applied when you click to place">
+                    <span style="font-size:10px;color:rgba(255,255,255,0.4);">mm</span>
+                    <button class="wsl-btn" onclick="wsZoneDrawMode()" title="Draw the picked zone as a polygon — click corners, Enter or double-click to close. The area is measured from the outline, and a zone inside a bin room is tagged to it.">▱ Draw</button>
+                  </div>
+                  <div class="wsl-group-body" id="ws-layout-zones" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
                 </div>
-                <div class="wsl-group-body" id="ws-layout-zones" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
               </div>
 
             </div>
@@ -13230,7 +13303,7 @@ function wsOnWheel(e) {
 
 function wsOnMouseDown(e) {
   if (e.target.closest('#ws-side-stack') || e.target.closest('.ws-zoom-ctrl') ||
-      e.target.closest('#ws-float-bar') || e.target.closest('#ws-actions-pill')) return;
+      e.target.closest('#ws-float-bar')) return;
   if (WS._mode) return;   // drawing/drive modes own the pointer — no panning
   // Left-drag is SELECT. Pan is middle-drag, or space held — otherwise a marquee
   // could never be drawn over the plan.
@@ -13298,8 +13371,6 @@ function wsShowTab(name, btn) {
   // Plan viewer chrome (project name, page nav, zoom) lives in EVERY tab
   if (floatBar) floatBar.style.display = 'flex';
   if (pageNav) pageNav.style.display = (WS.totalPages > 1 ? 'flex' : 'none');
-  const actPill = document.getElementById('ws-actions-pill');
-  if (actPill) actPill.style.display = (name === 'layout') ? '' : 'none';
   if (name !== 'layout' && typeof WS_LAYOUT !== 'undefined') {
     WS_LAYOUT.tabActive = false;
     if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark') wsLayoutEndMode();
@@ -17651,29 +17722,42 @@ function wsRenderFixturePalette() {
   // Fixtures take the plan's fixture grey, doors their real plan symbol.
   el.innerHTML = WS_FIXTURES.map(f =>
     `<button class="wsl-fx wsl-tile" onclick="wsFixtureMode('${f.code}')" title="${f.label} — ${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)} mm">` +
-    (f.door ? wsDoorThumb(f.door, f.w, f.d, '#B0BEC5', 44) : wsShapeThumb(f.code, f.w, f.d, f.round, '#78909C', 44)) +
+    (f.door ? wsDoorThumb(f.door, f.w, f.d, '#B0BEC5', 36) : wsShapeThumb(f.code, f.w, f.d, f.round, '#78909C', 36)) +
     `<span class="wsl-fx-nm">${f.pal || f.label}</span></button>`
   ).join('');
 }
-// Equipment picks are visual: the same plan-view shape the item will draw on
-// the plan (wsShapeThumb draws through wsShapeFor, the single geometry source,
-// so the thumbnail and the plan can never disagree), plus the name. Size,
-// stream restrictions and pairing behaviour all live in the tooltip — the
-// wsEquipPickerGroups data still carries them, it is only the button that is
-// minimal. Pairing-capable units take the amber the plan renders compactors in.
+// ── BINS & EQUIPMENT — one library-driven picker ────────────────────────────
+// A searchable, internally-scrolling tile grid replaces the bins dropdown and
+// the separate equipment palette: grouped Bins / Equipment (by category) /
+// Fixtures (item_kind), 3–4 tiles per row. Tiles draw through wsShapeThumb →
+// wsShapeFor, the single geometry source, so the picker and the plan can
+// never disagree; size, stream restrictions and pairing stay in the tooltip.
+// A click SELECTS (the hidden #ws-layout-bin select remains the single state
+// holder); Place on plan — or a double-click — arms placement.
 function wsRenderEquipPalette() {
-  const grp = document.getElementById('ws-layout-equip-group');
   const el = document.getElementById('ws-layout-equipment');
-  if (!grp || !el) return;
+  if (!el) return;
   const esc = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const selId = document.getElementById('ws-layout-bin')?.value || null;
+  const stSel = WS_STREAMS.find(x => x.id === document.getElementById('ws-layout-stream')?.value) || WS_STREAMS[0];
+  const tile = (id, kind, code, w, d, round, col, label, tip) =>
+    `<button class="wsl-fx wsl-tile${id === selId ? ' sel' : ''}" data-pick="${esc(id)}" data-kind="${kind}" data-label="${esc(String(label).toLowerCase())}" ` +
+    `onclick="wsEquipPaletteMode('${esc(id)}','${kind}')" ondblclick="wsPickerPlace()" title="${esc(tip)}">` +
+    wsShapeThumb(code, w, d, round, col, 36) +
+    `<span class="wsl-fx-nm">${esc(label)}</span></button>`;
+  let html = '';
+  // Bins — thumbed in the currently selected stream's colour
+  const bins = wsLayoutBinList();
+  if (bins.length) {
+    html += `<div class="wsl-fx-cat">Bins</div>` + bins.map(b =>
+      tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, stSel.col, b.label,
+        `${b.label} — ${Math.round(b.w * 1000)}×${Math.round(b.d * 1000)} mm`)).join('');
+  }
+  // Equipment — grouped by category; detail lives in the tooltip
   const lib = wsEquipLibrary(WS_EQUIP_DB);
   const order = WS_STREAMS.map(x => x.id);
-  const groups = wsEquipPickerGroups(WS_EQUIP_DB, order);
-  if (!groups.length) { grp.style.display = 'none'; el.innerHTML = ''; return; }
-  grp.style.display = '';
-  el.innerHTML = groups.map(g =>
-    `<div class="wsl-fx-cat">${esc(g.category)}</div>` +
-    g.items.map(it => {
+  wsEquipPickerGroups(WS_EQUIP_DB, order).forEach(g => {
+    html += `<div class="wsl-fx-cat">${esc(g.category)}</div>` + g.items.map(it => {
       const r = lib[it.id] || {};
       const streams = it.restricted && it.streams.length
         ? it.streams.map(sid => { const st = WS_STREAMS.find(x => x.id === sid); return st ? st.label : sid; }).join(', ')
@@ -17682,22 +17766,61 @@ function wsRenderEquipPalette() {
       const tip = [it.label, it.dims ? it.dims + ' mm' : 'no size in library', streams, tag]
         .filter(Boolean).join(' — ');
       const col = it.pairingType ? '#F5B400' : '#90A4AE';
-      return `<button class="wsl-fx wsl-tile" onclick="wsEquipPaletteMode('${esc(it.id)}')" title="${esc(tip)}">` +
-        wsShapeThumb(r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, col, 44) +
-        `<span class="wsl-fx-nm">${esc(it.label)}</span></button>`;
-    }).join('')
-  ).join('');
+      return tile(it.id, 'equip', r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, col, it.label, tip);
+    }).join('');
+  });
+  // Library fixture rows (item_kind Fixture) that map onto placeable fixtures
+  const fxRows = (WS_EQUIP_DB || []).filter(x => x.kind === 'fixture' &&
+    typeof WS_FIXTURES !== 'undefined' && WS_FIXTURES.some(f => f.code === x.code));
+  if (fxRows.length) {
+    html += `<div class="wsl-fx-cat">Fixtures</div>` + fxRows.map(x =>
+      tile('fx:' + x.code, 'fixture', x.code, x.w > 0 ? x.w : 0.4, x.d > 0 ? x.d : 0.4,
+        !!x.roundShape, '#78909C', x.label, `${x.label} — fixture, placed single-shot`)).join('');
+  }
+  el.innerHTML = html;
+  wsPickerFilter();
+  wsPickerStreamVis();
 }
-// A palette pick routes through the same select + place-mode path the room
-// cards use (wsLayoutPickTarget), so 'Place on plan', stream assignment and
-// Esc behave identically however the item was chosen.
-function wsEquipPaletteMode(id) {
-  const bs = document.getElementById('ws-layout-bin');
-  if (bs && [...bs.options].some(o => o.value === id)) bs.value = id;
+// A tile click SELECTS. Placement happens on Place on plan (or double-click),
+// through the same select + place-mode path the room cards use, so stream
+// assignment and Esc behave identically however the item was chosen.
+function wsEquipPaletteMode(id, kind) {
+  WS_LAYOUT._pickerKind = kind || 'equip';
+  if (kind === 'fixture') {
+    WS_LAYOUT._pickerFixture = String(id).slice(3);
+  } else {
+    WS_LAYOUT._pickerFixture = null;
+    const bs = document.getElementById('ws-layout-bin');
+    if (bs && [...bs.options].some(o => o.value === id)) bs.value = id;
+  }
+  document.querySelectorAll('#ws-layout-equipment [data-pick]').forEach(b =>
+    b.classList.toggle('sel', b.getAttribute('data-pick') === String(id)));
   wsRenderBinThumb();
+  wsPickerStreamVis();
+}
+// The stream selector applies only to stream-carrying items — never fixtures.
+function wsPickerStreamVis() {
+  const ss = document.getElementById('ws-layout-stream'); if (!ss) return;
+  ss.style.display = WS_LAYOUT._pickerKind === 'fixture' ? 'none' : '';
+}
+function wsPickerPlace() {
+  if (WS_LAYOUT._pickerKind === 'fixture' && WS_LAYOUT._pickerFixture) { wsFixtureMode(WS_LAYOUT._pickerFixture); return; }
   wsLayoutPlaceMode();
-  const bt = wsBinType(id);
-  if (WS._mode === 'layoutbin' && bt) wsLayoutStatus('Click to place ' + bt.label + ' — keeps placing. Double-click or Esc to stop.');
+}
+function wsPickerFilter() {
+  const q = (document.getElementById('ws-picker-search')?.value || '').trim().toLowerCase();
+  document.querySelectorAll('#ws-layout-equipment [data-pick]').forEach(b => {
+    b.style.display = !q || (b.getAttribute('data-label') || '').includes(q) ? '' : 'none';
+  });
+}
+// Keep the tile highlight honest when code sets the select directly
+// (e.g. wsLayoutPickTarget from a room card).
+function wsPickerSyncSel() {
+  const id = document.getElementById('ws-layout-bin')?.value || null;
+  WS_LAYOUT._pickerKind = null; WS_LAYOUT._pickerFixture = null;
+  document.querySelectorAll('#ws-layout-equipment [data-pick]').forEach(b =>
+    b.classList.toggle('sel', b.getAttribute('data-pick') === id));
+  wsPickerStreamVis();
 }
 // A zone is a floor-area claim, so its palette swatch is the hatch it draws in
 // rather than a shape outline — the colour IS the identity.
@@ -18096,6 +18219,7 @@ function wsLayoutPickTarget(roomId, stream, typeId) {
   WS_LAYOUT.activeCalcRoom = roomId || null;
   const bs = document.getElementById('ws-layout-bin'); if (bs) bs.value = typeId;
   const ss = document.getElementById('ws-layout-stream'); if (ss) ss.value = stream;
+  if (typeof wsPickerSyncSel === 'function') wsPickerSyncSel();
   wsLayoutPlaceMode();
   const rm = WS_CALC_ROOMS.find(r => r.id === roomId);
   if (rm) wsLayoutStatus('Placing into ' + rm.name + ' — click to drop bins. Esc to stop.');
@@ -20566,14 +20690,6 @@ function wsPanelApplyWidth() {
   const w = wsPanelWidthFor(_wsPanelTab);
   panel.style.width = w + 'px';
   wsPanelSetW(w);
-  wsPanelKeepPillsClear(w);
-}
-// The panel OVERLAYS the canvas, so pills defaulted near the right edge would
-// sit underneath it. Nudge them clear of the current panel width — unless the
-// user has dragged the pill somewhere themselves (a drag sets style.left).
-function wsPanelKeepPillsClear(panelW) {
-  const ap = document.getElementById('ws-actions-pill');
-  if (ap && !ap.style.left) ap.style.right = (panelW + 20) + 'px';
 }
 function wsPanelMaxToggle() {
   _wsPanelMax = !_wsPanelMax;
@@ -20599,7 +20715,6 @@ function wsPanelToggle() {
     if (col) col.style.display = 'none';
     if (exp) exp.style.display = '';
     wsPanelSetW(26);
-    wsPanelKeepPillsClear(26);
   } else {
     if (body) body.style.display = '';
     if (tabs) tabs.style.display = '';
@@ -20610,6 +20725,51 @@ function wsPanelToggle() {
 }
 // The calculator width tracks the window, so re-derive it on resize.
 window.addEventListener('resize', wsPanelApplyWidth);
+
+// ── TOOL STRIP FLYOUTS ──────────────────────────────────────────────────────
+// Actions / Layers / Markups / Set Scale live behind a thin vertical strip on
+// the canvas's left edge. Exactly one flyout opens at a time, OVER the canvas
+// — opening or closing never moves the plan. The Layers and Markups cards and
+// the scale controls are MOVED (same nodes, same ids) into the flyouts at
+// startup, so every existing toggle and legacy display write keeps working.
+let _wsStripOpen = null, _wsStripInited = false;
+function wsStripInit() {
+  if (_wsStripInited) return; _wsStripInited = true;
+  const mv = (id, dest) => {
+    const el = document.getElementById(id), d = document.getElementById(dest);
+    if (el && d) d.appendChild(el);
+  };
+  mv('ws-layer-panel', 'ws-fly-layers');
+  mv('ws-markup-panel', 'ws-fly-markups');
+  mv('ws-scale-wrap', 'ws-scale-slot');
+  // docked in flyouts now — the old card drag handles no longer apply
+  ['ws-layer-panel', 'ws-markup-panel'].forEach(id => {
+    const t = document.getElementById(id)?.querySelector('.ws-layer-title');
+    if (t) t.removeAttribute('onmousedown');
+  });
+}
+function wsStripToggle(name) {
+  wsStripInit();
+  _wsStripOpen = _wsStripOpen === name ? null : name;
+  ['actions', 'layers', 'markups', 'scale'].forEach(n => {
+    const tab = document.getElementById('ws-strip-' + n);
+    const fly = document.getElementById('ws-fly-' + n);
+    if (tab) tab.classList.toggle('active', n === _wsStripOpen);
+    if (fly) fly.style.display = n === _wsStripOpen ? 'block' : 'none';
+  });
+  const wrap = document.getElementById('ws-flyout');
+  if (wrap) wrap.style.display = _wsStripOpen ? 'block' : 'none';
+}
+// The project/council chip collapses to just its toggle, so it can never be
+// in the way of plan content.
+function wsTopChipToggle() {
+  const chip = document.getElementById('ws-top-chip');
+  if (!chip) return;
+  chip.classList.toggle('min');
+  const btn = chip.querySelector('.ws-top-chip-toggle');
+  if (btn) btn.textContent = chip.classList.contains('min') ? '▸' : '◂';
+}
+wsStripInit();
 
 // ── draggable floating pills ────────────────────────────────────────────
 // Any floating card (Layers, Markups, Actions) can be repositioned by its
@@ -20659,14 +20819,6 @@ function wsPillDragStart(e, id) {
   };
   document.addEventListener('mousemove', move);
   document.addEventListener('mouseup', up);
-}
-function wsActionsPillMin() {
-  const body = document.getElementById('ws-actions-body');
-  const btn = document.getElementById('ws-actions-min');
-  if (!body) return;
-  const min = body.style.display !== 'none';
-  body.style.display = min ? 'none' : '';
-  if (btn) { btn.textContent = min ? '▸' : '▾'; btn.title = min ? 'Expand' : 'Minimise'; }
 }
 
 // ── AUTOSAVE DRAFT ────────────────────────────────────────────
