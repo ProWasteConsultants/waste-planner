@@ -100,7 +100,10 @@ test('wsProvisionReconcile: only items in THIS room count', () => {
 
 // ── zone types ──────────────────────────────────────────────────────────
 test('the zone types are the agreed set, each with a footprint default', () => {
-  assert.deepEqual(Object.keys(ws.WS_ZONE_TYPES).sort(), ['BALE', 'CUSTOM', 'HARDWASTE', 'UCO']);
+  // EWASTE and TEXTILE joined the set when zones became the way area
+  // allowances (ALLOW_EWASTE / ALLOW_TEXTILE) are satisfied on the plan.
+  assert.deepEqual(Object.keys(ws.WS_ZONE_TYPES).sort(),
+    ['BALE', 'CUSTOM', 'EWASTE', 'HARDWASTE', 'TEXTILE', 'UCO']);
   for (const k of Object.keys(ws.WS_ZONE_TYPES)) {
     const t = ws.WS_ZONE_TYPES[k];
     assert.ok(t.w > 0 && t.d > 0, k + ' needs a default size to place');
@@ -228,6 +231,86 @@ test('the zone palette is rendered whenever the layout tab opens', () => {
   assert.ok(SOURCE.includes('wsRenderFixturePalette(); wsRenderZonePalette();'),
     'the zone palette must appear alongside the fixtures, not only on demand');
   assert.ok(SOURCE.includes('id="ws-layout-zones"'), 'and it needs somewhere to render');
+});
+
+// ── allowance-area reconciliation ───────────────────────────────────────
+// The calculator's ALLOW_ units are AREA requirements. A zone of the mapped
+// type satisfies them by measured m² — never by mere presence, and never by
+// label.
+test('each area allowance maps to exactly one zone type, by id', () => {
+  const byAllow = {};
+  for (const k of Object.keys(ws.WS_ZONE_TYPES)) {
+    const a = ws.WS_ZONE_TYPES[k].allow;
+    if (a) { assert.ok(!byAllow[a], a + ' mapped twice'); byAllow[a] = k; }
+  }
+  assert.deepEqual(byAllow,
+    { ALLOW_HARD: 'HARDWASTE', ALLOW_EWASTE: 'EWASTE', ALLOW_TEXTILE: 'TEXTILE' });
+});
+
+test('wsAllowanceReconcile: area against area, with the three refusals', () => {
+  const units = [{ code: 'ALLOW_HARD', label: 'Hard waste area', fpM2: 5, qty: 1 }];
+  const zone = (id, extra = {}) => ({ id, zoneType: 'HARDWASTE', w: 3, d: 2, ...extra });
+  // 6 m² against 5 m² required → satisfied
+  let rows = ws.wsAllowanceReconcile(units, [zone('z1')], 0.05);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].ok, true);
+  assert.equal(rows[0].placedM2, 6);
+  assert.equal(rows[0].requiredM2, 5);
+  // 2 m² against 5 → short, and the shortfall is visible
+  rows = ws.wsAllowanceReconcile(units, [zone('z1', { w: 2, d: 1 })], 0.05);
+  assert.equal(rows[0].ok, false);
+  assert.equal(rows[0].placedM2, 2);
+  // refusal 1: no required area → ok is null, never assumed satisfied
+  rows = ws.wsAllowanceReconcile([{ code: 'ALLOW_HARD', label: 'Hard waste area' }], [zone('z1')], 0.05);
+  assert.equal(rows[0].ok, null, '"nobody set an area" and "satisfied" must not print the same');
+  // refusal 2: matching is by id — a custom zone CAPTIONED hard waste counts for nothing
+  rows = ws.wsAllowanceReconcile(units, [{ id: 'z2', zoneType: 'CUSTOM', label: 'Hard waste', w: 9, d: 9 }], 0.05);
+  assert.equal(rows[0].placedM2, 0);
+  assert.equal(rows[0].ok, false);
+  // refusal 3: an aisle never satisfies an area claim
+  rows = ws.wsAllowanceReconcile(units, [zone('z3', { aisle: true })], 0.05);
+  assert.equal(rows[0].placedM2, 0);
+  // qty multiplies the requirement
+  rows = ws.wsAllowanceReconcile([{ code: 'ALLOW_HARD', label: 'HW', fpM2: 5, qty: 2 }], [zone('z1')], 0.05);
+  assert.equal(rows[0].requiredM2, 10);
+  assert.equal(rows[0].ok, false);
+  // non-allowance units are not this function's business
+  assert.deepEqual(ws.wsAllowanceReconcile([{ code: 'CHUTE_SINGLE', fpM2: 1 }], [], 0.05), []);
+});
+
+test('wsAllowanceReconcile: a traced zone counts its measured polygon area', () => {
+  const units = [{ code: 'ALLOW_HARD', label: 'HW', fpM2: 5 }];
+  // right triangle 200×100 px at mpp 0.05 → 10m × 5m / 2 = 25 m²
+  const tri = { id: 'z1', zoneType: 'HARDWASTE', w: 10, d: 5,
+    pts: [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 0, y: 100 }] };
+  const rows = ws.wsAllowanceReconcile(units, [tri], 0.05);
+  assert.ok(Math.abs(rows[0].placedM2 - 25) < 1e-9, 'polygon area, not the 50 m² bounding box');
+  // the card-stamped placeholder rect (code ALLOW_HARD) also counts
+  const both = ws.wsAllowanceReconcile(units, [tri, { id: 's1', code: 'ALLOW_HARD', w: 2, d: 1 }], 0.05);
+  assert.ok(Math.abs(both[0].placedM2 - 27) < 1e-9);
+});
+
+test('wsAllowanceItems: scoped to the calculator room, one pass', () => {
+  const rooms = [{ id: 'dr1', calcRoom: 'cr1' }, { id: 'dr2', calcRoom: 'other' }];
+  const equip = [
+    { id: 'a', roomId: 'dr1' },                        // inside a room on this schedule
+    { id: 'b', calcRoom: 'cr1' },                      // stamped unit, direct link
+    { id: 'c', roomId: 'dr1', calcRoom: 'cr1' },       // both — must count once
+    { id: 'd', roomId: 'dr2' },                        // another schedule's room
+    { id: 'e' },                                       // floating, tagged to nothing
+  ];
+  assert.deepEqual(ws.wsAllowanceItems('cr1', rooms, equip).map(x => x.id), ['a', 'b', 'c']);
+});
+
+test('the allowances ride the single reconcile entry point and both surfaces', () => {
+  const live = SOURCE.slice(SOURCE.indexOf('function wsRoomReconcileLive'), SOURCE.indexOf('function wsAllowanceLive'));
+  assert.ok(live.includes('rec.allowances = room.calcRoom ? wsAllowanceLive(room.calcRoom) : [];'),
+    'pill, card and WMP snapshot read one computation');
+  assert.ok(SOURCE.includes('const allowShort = allowRows.some(a => a.ok === false);'),
+    'a room with its hard waste area missing is NOT done');
+  assert.ok(SOURCE.includes('>Area allowances</div>'), 'the room pill prints the same rows');
+  assert.ok(SOURCE.includes("a.requiredM2 == null ? 'area not set'"),
+    'a missing requirement says so instead of pretending');
 });
 
 // ── zone dimensions and traced polygons ─────────────────────────────────
