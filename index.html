@@ -918,11 +918,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div style="display:flex;align-items:center;gap:10px;margin:22px 0 6px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Requirements review queue</div>
             <div id="crq-status" style="font-size:11px;color:var(--muted);"></div>
+            <span style="flex:1"></span>
+            <button class="btn" title="Diff approved generation_rate / stream_split rows against the live R2 rates JSON — nothing publishes; apply via the spreadsheet flow" onclick="crxExport()">⇩ Export approved rates</button>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;">
             AI-proposed rows from guideline documents, each pinned to a document version and a clause reference. Verify each value against the cited clause, edit if needed, then approve — <b>nothing is consumed by any tool until it is approved</b>. Extraction confidence is not approval.
           </div>
           <div id="crq-wrap" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <div id="crx-out"></div>
         </div>
 
         <!-- REVIEWS TAB (removed — global oversight lives in the Review Queue's staff "All organisations" scope) -->
@@ -9282,6 +9285,162 @@ async function crqServe(gid) {
   if (upErr) { crqMsg('Serve failed: ' + upErr.message, true); return; }
   crqMsg(`✓ ${legacy.length} approved requirements now serving — the older version stops being used.`);
   cgLoad();
+}
+
+// ── C4: APPROVED RATES → DIFF AGAINST THE LIVE R2 RATES ────────────────────
+// Approved generation_rate / stream_split rows NEVER auto-publish. This
+// produces a reviewable diff against the live waste_rates.json — new /
+// changed / same / conflicting / unmapped, per council, use and stream — to
+// be applied by hand through the existing spreadsheet → PublishRatesToJSON →
+// R2 flow. Per-use split percentages surfaced here are the sourced values
+// that should eventually replace the unsourced defaults in SPLIT_DEFS — via
+// this review path only.
+// Pure: approved rows + their guideline docs + the live rates JSON in,
+// diff rows out. No DOM, no network, no writes.
+const CRX_STREAM_TO_RATES = { garbage: 'GW', recycling: 'REC', fogo: 'ORG', glass: 'GLS', paper: 'CARD', soft: 'SOFT' };
+const CRX_SPLIT_FOR_STREAM = { fogo: 'GW_ORG', soft: 'GW_SOFT', paper: 'REC_CARD', glass: 'REC_GLS' };
+function crxNorm(s) { return String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
+function crxResUnit(useClass) {
+  const s = String(useClass || '').toLowerCase();
+  if (/town\s*house|townhouse/.test(s)) return 'townhouse';
+  if (/(^|\D)1\s*(br|bed)/.test(s)) return 'apt_1br';
+  if (/(^|\D)2\s*(br|bed)/.test(s)) return 'apt_2br';
+  if (/(^|\D)3\s*(br|bed)/.test(s)) return 'apt_3br';
+  return null;   // "residential" alone is not one unit type — never guess one
+}
+function crxDiffRates(rows, docsById, remote, commTable) {
+  const out = [];
+  const profiles = (remote && remote.PROFILES) || {};
+  const councilProfiles = (remote && remote.COUNCIL_PROFILES) || {};
+  const councils = (remote && remote.COUNCILS) || {};
+  const comm = commTable || {};
+  const seen = {};   // conflict detection: same target approved twice with different values
+  (rows || []).forEach(r => {
+    if (!r || r.status !== 'approved') return;
+    if (r.requirement_type !== 'generation_rate' && r.requirement_type !== 'stream_split') return;
+    const doc = docsById[r.council_guideline_id] || {};
+    const state = doc.state || null;
+    // council_value resolves by normalised label against the live councils list
+    const clist = (state && councils[state]) || [];
+    const cv = clist.find(c => crxNorm(c.label) === crxNorm(doc.council_name))
+            || clist.find(c => crxNorm(c.label).includes(crxNorm(doc.council_name)) || crxNorm(doc.council_name).includes(crxNorm(c.label)));
+    const councilValue = cv ? cv.value : null;
+    const profile = state ? (profiles[state] || {}) : {};
+    const override = (state && councilValue) ? (councilProfiles[state + '|' + councilValue] || {}) : {};
+    const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
+    const base = {
+      kind: r.requirement_type, council: doc.council_name || '?', state,
+      councilValue, guidelineVersion: doc.version ?? null,
+      useClass: r.use_class || null, stream: r.stream || null, streamKey,
+      value: r.value_num, unit: r.unit || null, clauseRef: r.clause_ref,
+    };
+    if (r.value_num == null) { out.push({ ...base, status: 'unmapped', why: 'no numeric value' }); return; }
+    let target = null, current = null, currentSrc = null;
+    if (r.requirement_type === 'stream_split') {
+      const splitId = r.stream ? CRX_SPLIT_FOR_STREAM[r.stream] : null;
+      if (!splitId) { out.push({ ...base, status: 'unmapped', why: 'stream has no split definition' }); return; }
+      const useKey = Object.keys(comm).find(k => crxNorm(comm[k].label) === crxNorm(r.use_class))
+                  || Object.keys(comm).find(k => r.use_class && crxNorm(comm[k].label).includes(crxNorm(r.use_class)));
+      if (!useKey) { out.push({ ...base, status: 'unmapped', why: 'use class not matched to a commercial use — assign manually' }); return; }
+      target = 'splits.' + useKey + '.' + splitId;
+      const uc = (override.comRates && override.comRates[useKey]) || (profile.comRates && profile.comRates[useKey]) || {};
+      current = uc.splits && uc.splits[splitId] != null ? +uc.splits[splitId] : null;
+      currentSrc = current == null ? 'code default (unsourced)' : 'rates data';
+    } else {
+      const resUnit = crxResUnit(r.use_class);
+      if (resUnit) {
+        if (!streamKey) { out.push({ ...base, status: 'unmapped', why: 'no stream on a residential rate' }); return; }
+        target = 'resRates.' + resUnit + '.' + streamKey;
+        const res = (override.resRates && override.resRates[resUnit]) || (profile.resRates && profile.resRates[resUnit]) || null;
+        current = res && res[streamKey] != null ? +res[streamKey] : null;
+        currentSrc = (override.resRates && override.resRates[resUnit]) ? 'council override' : 'state profile';
+      } else {
+        const useKey = Object.keys(comm).find(k => crxNorm(comm[k].label) === crxNorm(r.use_class))
+                    || Object.keys(comm).find(k => r.use_class && crxNorm(comm[k].label).includes(crxNorm(r.use_class)));
+        if (!useKey || !streamKey) { out.push({ ...base, status: 'unmapped', why: !useKey ? 'use class not matched — assign manually' : 'no stream' }); return; }
+        target = 'comRates.' + useKey + '.' + streamKey;
+        const uc = (override.comRates && override.comRates[useKey]) || (profile.comRates && profile.comRates[useKey]) || null;
+        current = uc && uc[streamKey] && uc[streamKey].rate != null ? +uc[streamKey].rate : null;
+        currentSrc = (override.comRates && override.comRates[useKey]) ? 'council override' : 'state profile';
+      }
+    }
+    const skey = (state || '?') + '|' + (councilValue || crxNorm(base.council)) + '|' + target;
+    if (seen[skey] != null && seen[skey] !== +r.value_num) {
+      out.push({ ...base, target, current, currentSrc, status: 'conflicting',
+                 why: 'another approved row set ' + seen[skey] + ' for the same target' });
+      return;
+    }
+    seen[skey] = +r.value_num;
+    const status = current == null ? 'new' : (Math.abs(current - +r.value_num) < 1e-9 ? 'same' : 'changed');
+    out.push({ ...base, target, current, currentSrc, status });
+  });
+  return out;
+}
+
+async function crxExport() {
+  crqMsg('Building rates diff…');
+  const { data: rows, error } = await sb.from('council_requirements')
+    .select('*').eq('status', 'approved').in('requirement_type', ['generation_rate', 'stream_split']);
+  if (error) { crqMsg('Load failed: ' + error.message, true); return; }
+  if (!rows?.length) { crqMsg('No approved generation_rate or stream_split rows yet.', true); return; }
+  const gids = [...new Set(rows.map(r => r.council_guideline_id))];
+  const { data: docs } = await sb.from('council_guidelines')
+    .select('id, council_name, state, version').in('id', gids);
+  const docsById = {}; (docs || []).forEach(d => { docsById[d.id] = d; });
+  let remote = null;
+  try { remote = await (await fetch(RATES_URL_PARENT, { cache: 'no-store' })).json(); }
+  catch (e) { crqMsg('Could not fetch the live rates JSON — no baseline, no diff. ' + (e.message || e), true); return; }
+  const comm = (typeof COMM !== 'undefined') ? COMM : {};
+  const diff = crxDiffRates(rows, docsById, remote, comm);
+  const wrap = document.getElementById('crx-out');
+  const counts = {};
+  diff.forEach(d => { counts[d.status] = (counts[d.status] || 0) + 1; });
+  const chip = s => ({ new: '#3DD68C', changed: '#EFB080', conflicting: '#EF8080', unmapped: '#B39DDB', same: '#78909C' })[s] || '#78909C';
+  wrap.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;margin-top:8px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+        <span style="font-weight:700;font-size:12px;">Approved rates vs live R2 data</span>
+        ${['new','changed','conflicting','unmapped','same'].filter(s => counts[s]).map(s =>
+          `<span style="font-size:10px;font-weight:700;color:${chip(s)};border:1px solid ${chip(s)};border-radius:9px;padding:1px 8px;">${counts[s]} ${s}</span>`).join('')}
+        <span style="flex:1"></span>
+        <button class="btn" onclick="crxDownload('csv')">⇩ CSV for the spreadsheet</button>
+        <button class="btn" onclick="crxDownload('json')">⇩ JSON</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;">Apply through the master spreadsheet → Publish Rates → R2 — nothing here writes anywhere. 'same' rows confirm the live data; split rows are the sourced values that should replace the code defaults.</div>
+      <div style="display:grid;grid-template-columns:110px 1fr 90px 70px 70px 90px 1fr;gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">
+        <span>Status</span><span>Council</span><span>Kind</span><span>Approved</span><span>Current</span><span>Stream</span><span>Target / clause</span>
+      </div>
+      ${diff.map(d => `
+      <div style="display:grid;grid-template-columns:110px 1fr 90px 70px 70px 90px 1fr;gap:6px;font-size:10.5px;align-items:center;border-top:1px solid #1e2a2a;padding:3px 0;">
+        <b style="color:${chip(d.status)};">${d.status}${d.why ? ' *' : ''}</b>
+        <span>${cgbEsc(d.council)} ${d.state ? '(' + d.state + ')' : ''} v${d.guidelineVersion ?? '?'}</span>
+        <span>${d.kind === 'stream_split' ? 'split %' : 'rate'}</span>
+        <span>${d.value ?? '—'}${d.unit ? ' ' + cgbEsc(d.unit) : ''}</span>
+        <span>${d.current ?? '—'}</span>
+        <span>${cgbEsc(d.stream || '—')}</span>
+        <span style="color:var(--muted);">${cgbEsc(d.target || d.why || '')} · ${cgbEsc(d.clauseRef)}${d.why && d.target ? ' · ' + cgbEsc(d.why) : ''}</span>
+      </div>`).join('')}
+    </div>`;
+  CRX_LAST = diff;
+  crqMsg(`Diff built — ${diff.length} approved rate rows compared against live data.`);
+}
+let CRX_LAST = null;
+function crxDownload(kind) {
+  if (!CRX_LAST) return;
+  let blob, name;
+  if (kind === 'csv') {
+    const head = 'status,council,state,council_value,guideline_version,kind,use_class,stream,rates_key,target,approved_value,unit,current_value,current_source,clause_ref,note';
+    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const lines = CRX_LAST.map(d => [d.status, d.council, d.state, d.councilValue, d.guidelineVersion, d.kind,
+      d.useClass, d.stream, d.streamKey, d.target, d.value, d.unit, d.current, d.currentSrc, d.clauseRef, d.why].map(q).join(','));
+    blob = new Blob([head + '\n' + lines.join('\n')], { type: 'text/csv' });
+    name = 'approved-rates-diff.csv';
+  } else {
+    blob = new Blob([JSON.stringify(CRX_LAST, null, 2)], { type: 'application/json' });
+    name = 'approved-rates-diff.json';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
 }
 
 // ── the review queue ────────────────────────────────────────────────────────

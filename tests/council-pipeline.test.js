@@ -146,6 +146,59 @@ test('approved rows reach consumers only through the explicit Serve action', () 
   assert.ok(!decide.includes('crqServe('), 'approving a row never auto-publishes — no silent publication, anywhere');
 });
 
+// ── C4: approved rates → diff against live R2 data ──────────────────────
+test('C4: the diff engine classifies new/changed/same/conflicting/unmapped and never guesses', () => {
+  const { loadEngine } = require('./extract.js');
+  const ws4 = loadEngine({ blocks: [
+    ['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /],
+    ['CRX_SPLIT_FOR_STREAM', /^const CRX_SPLIT_FOR_STREAM = /],
+    ['crxNorm', /^function crxNorm\(/],
+    ['crxResUnit', /^function crxResUnit\(/],
+    ['crxDiffRates', /^function crxDiffRates\(/],
+  ] });
+  const docs = { g1: { id: 'g1', council_name: 'Randwick City Council', state: 'NSW', version: 2 } };
+  const remote = {
+    COUNCILS: { NSW: [{ value: 'randwick', label: 'Randwick City Council' }] },
+    PROFILES: { NSW: { resRates: { apt_2br: { GW: 100, REC: 100 } },
+                       comRates: { cafe: { GW: { rate: 240, unitValue: 100, unit: 'L/Day/100m2' } } } } },
+    COUNCIL_PROFILES: {},
+  };
+  const comm = { cafe: { label: 'Cafe' } };
+  const row = (over) => ({ status: 'approved', requirement_type: 'generation_rate',
+    council_guideline_id: 'g1', clause_ref: 'cl 1, p.2', ...over });
+  const diff = ws4.crxDiffRates([
+    row({ use_class: '2 bedroom apartments', stream: 'garbage', value_num: 100 }),   // same
+    row({ use_class: '2 bedroom apartments', stream: 'recycling', value_num: 120 }), // changed
+    row({ use_class: 'cafe', stream: 'fogo', value_num: 60 }),                       // new (no ORG rate yet)
+    row({ use_class: 'residential', stream: 'garbage', value_num: 90 }),             // unmapped: not one unit type
+    row({ use_class: '2 bedroom apartments', stream: 'garbage', value_num: 110 }),   // conflicting with the first
+    { status: 'proposed', requirement_type: 'generation_rate', council_guideline_id: 'g1',
+      use_class: 'cafe', stream: 'garbage', value_num: 999, clause_ref: 'x' },       // proposed never exports
+  ], docs, remote, comm);
+  assert.deepEqual(diff.map(d => d.status), ['same', 'changed', 'new', 'unmapped', 'conflicting']);
+  assert.equal(diff[0].target, 'resRates.apt_2br.GW');
+  assert.equal(diff[1].current, 100);
+  assert.equal(diff[2].target, 'comRates.cafe.ORG');
+  assert.ok(/not one unit type|never guess/.test('never guess'), 'sanity');
+  assert.equal(diff[4].why.includes('another approved row'), true);
+  // stream_split maps onto the split ids that should replace the code defaults
+  const split = ws4.crxDiffRates([row({ requirement_type: 'stream_split',
+    use_class: 'Cafe', stream: 'paper', value_num: 45 })], docs, remote, comm);
+  assert.equal(split[0].target, 'splits.cafe.REC_CARD');
+  assert.equal(split[0].status, 'new');
+});
+
+test('C4: export is a diff for the human flow — nothing writes, ever', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crxExport'), SOURCE.indexOf('let CRX_LAST'));
+  assert.ok(fn.includes(".eq('status', 'approved')"), 'approved rows only');
+  assert.ok(!/\.(upsert|insert|update|delete)\(/.test(fn.replace(/from\('council_guidelines'\)\s*\n?\s*\.select/g, '')),
+    'the export never writes to any table');
+  assert.ok(fn.includes('no baseline, no diff'), 'no live JSON, no diff — never diff against nothing');
+  assert.ok(!SOURCE.includes('publish-rates', SOURCE.indexOf('async function crxExport')) ||
+    SOURCE.indexOf('publish-rates', SOURCE.indexOf('async function crxExport')) > SOURCE.indexOf('let CRX_LAST'),
+    'the export never calls the publish edge function');
+});
+
 test('crqToLegacy: approved-only, clause-required, faithful field mapping', () => {
   const { loadEngine } = require('./extract.js');
   const ws2 = loadEngine({ blocks: [['crqToLegacy', /^function crqToLegacy\(/]] });
