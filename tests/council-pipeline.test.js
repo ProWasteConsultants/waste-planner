@@ -199,6 +199,35 @@ test('C4: export is a diff for the human flow — nothing writes, ever', () => {
     'the export never calls the publish edge function');
 });
 
+// ── C5: layout soft warnings ────────────────────────────────────────────
+test('C5: warnings compare council minima to measured layout facts, citing clause + version', () => {
+  const { loadEngine } = require('./extract.js');
+  const ws5 = loadEngine({ blocks: [['wsCouncilLayoutWarnings', /^function wsCouncilLayoutWarnings\(/]] });
+  const reqs = [
+    { requirement_type: 'aisle_width', value_num: 1500, unit: 'mm', clause_ref: 'cl 4.2', _version: 2 },
+    { requirement_type: 'room_dimension', value_num: 8, unit: 'm2', clause_ref: 'cl 5.1', _version: 2 },
+    { requirement_type: 'room_dimension', value_num: 2.5, unit: 'm', clause_ref: 'cl 5.2', _version: 2 },
+    { requirement_type: 'aisle_width', value_num: null, unit: 'mm', clause_ref: 'cl 9' },   // no number, no warning
+  ];
+  const facts = { aislesMm: [1200, 1600], rooms: [{ name: 'Bin room', areaM2: 6.2, minSideM: 2.1 }] };
+  const w = ws5.wsCouncilLayoutWarnings(reqs, facts);
+  assert.equal(w.length, 3);
+  assert.match(w[0], /^Council minimum aisle 1500mm — current 1200mm \(cl 4\.2, guideline v2\)$/);
+  assert.match(w[1], /minimum room area 8 m² — Bin room is 6\.2 m²/);
+  assert.match(w[2], /minimum room dimension 2500mm — Bin room is 2100mm at its narrowest/);
+  assert.deepEqual(ws5.wsCouncilLayoutWarnings(reqs, { aislesMm: [1600], rooms: [] }), [],
+    'a compliant layout warns about nothing');
+});
+
+test('C5: soft only — approved rows, no blocking, no canvas overlay', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function wsCouncilReqsRefresh'), SOURCE.indexOf('// ── OBSTACLES & FIXTURES'));
+  assert.ok(fn.includes(".eq('status', 'approved')"), 'only approved requirements are consumed');
+  assert.ok(fn.includes("in('requirement_type', ['aisle_width', 'room_dimension'])"), 'the agreed two types only');
+  assert.ok(fn.includes("getElementById('ws-council-warn')"), 'warnings render in the side panel div');
+  assert.ok(!fn.includes("mk("), 'no canvas/SVG overlay from the warnings path');
+  assert.ok(!/alert\(|confirm\(/.test(fn), 'advisory means advisory — nothing blocks');
+});
+
 test('crqToLegacy: approved-only, clause-required, faithful field mapping', () => {
   const { loadEngine } = require('./extract.js');
   const ws2 = loadEngine({ blocks: [['crqToLegacy', /^function crqToLegacy\(/]] });

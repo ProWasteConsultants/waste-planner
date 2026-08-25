@@ -1679,6 +1679,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
             </div>
 
+            <!-- C5: council soft warnings — advisory only, never blocking -->
+            <div id="ws-council-warn" style="display:none;flex-direction:column;gap:3px;padding:7px 10px;background:rgba(90,60,20,0.35);border:1px solid #8a6a3a;border-radius:7px;font-size:10.5px;line-height:1.5;color:#FFD8A8;"></div>
+
             <span id="ws-gen-variants" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;align-self:flex-start;padding:6px 8px;background:#0d3333;border:1px solid #008080;border-radius:7px;"></span>
 
             <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:2px 2px 0;">
@@ -13053,6 +13056,7 @@ function wsShowTab(name, btn) {
     if (sb) sb.style.display = ''; if (eb) eb.style.display = '';
     WS_LAYOUT.tabActive = true;
     if (WS_EQUIP_DB === null) wsLoadEquipmentDB(); else wsLayoutPopulateBins();
+    if (typeof wsCouncilReqsRefresh === 'function') wsCouncilReqsRefresh();
     wsLayoutBind();
     const osvg = document.getElementById('ws-overlay-svg');
     if (osvg) osvg.style.pointerEvents = 'all';
@@ -16340,6 +16344,8 @@ function wsLayoutUpdateStats(slot, mpp) {
     const uniq = [...new Set(cl)];
     el.textContent += ` · ⚠ ${cl.length} bin${cl.length === 1 ? '' : 's'} clashing with ${uniq.join(', ')}`;
   }
+  // C5: advisory council warnings track the same render cadence as the stats
+  if (typeof wsCouncilWarnRender === 'function') wsCouncilWarnRender();
 }
 // Emit each distinct item once as a BLOCK, then reference it per instance with
 // INSERT. Smaller files, and redefining the block in CAD restyles every copy.
@@ -17158,6 +17164,95 @@ function wsCanvasXY(e) {
   const rect = canvas.getBoundingClientRect();
   return { x: (e.clientX - rect.left) * (canvas.width / rect.width),
            y: (e.clientY - rect.top) * (canvas.height / rect.height) };
+}
+
+// ── C5: COUNCIL SOFT WARNINGS ────────────────────────────────────────────────
+// APPROVED aisle_width / room_dimension requirements for the project's council
+// surface as advisory lines in the layout side panel. Soft only, by design:
+// no blocking, no auto-resize, no canvas overlays — the drawing stays the
+// designer's. Only status='approved' rows are ever read (RLS enforces the
+// same), and each warning cites its clause and guideline version.
+// Pure: requirements + measured layout facts in, warning strings out.
+function wsCouncilLayoutWarnings(reqs, facts) {
+  const out = [];
+  const mm = r => r.unit && /^m$/i.test(r.unit.trim()) ? r.value_num * 1000
+             : r.unit && /mm/i.test(r.unit) ? r.value_num : null;
+  (reqs || []).forEach(r => {
+    if (!r || r.value_num == null) return;
+    const cite = `${r.clause_ref}${r._version ? ', guideline v' + r._version : ''}`;
+    if (r.requirement_type === 'aisle_width') {
+      const need = mm(r);
+      if (need == null) return;
+      (facts.aislesMm || []).forEach(got => {
+        if (got < need - 1e-9) out.push(`Council minimum aisle ${Math.round(need)}mm — current ${Math.round(got)}mm (${cite})`);
+      });
+    } else if (r.requirement_type === 'room_dimension') {
+      if (r.unit && /m2|m²/i.test(r.unit)) {
+        (facts.rooms || []).forEach(rm => {
+          if (rm.areaM2 != null && rm.areaM2 < r.value_num - 1e-9)
+            out.push(`Council minimum room area ${r.value_num} m² — ${rm.name || 'room'} is ${rm.areaM2.toFixed(1)} m² (${cite})`);
+        });
+      } else {
+        const need = mm(r);
+        if (need == null) return;
+        (facts.rooms || []).forEach(rm => {
+          if (rm.minSideM != null && rm.minSideM * 1000 < need - 1e-9)
+            out.push(`Council minimum room dimension ${Math.round(need)}mm — ${rm.name || 'room'} is ${Math.round(rm.minSideM * 1000)}mm at its narrowest (${cite})`);
+        });
+      }
+    }
+  });
+  return out;
+}
+// Cached fetch of the project council's approved layout requirements.
+const WS_CREQ5 = { council: null, rows: null };
+async function wsCouncilReqsRefresh() {
+  const council = (WS.extractData && WS.extractData.council) || null;
+  if (!council || typeof sb === 'undefined' || !sb) { WS_CREQ5.council = council; WS_CREQ5.rows = []; wsCouncilWarnRender(); return; }
+  if (WS_CREQ5.council === council && WS_CREQ5.rows) { wsCouncilWarnRender(); return; }
+  WS_CREQ5.council = council; WS_CREQ5.rows = [];
+  try {
+    const { data: reqs } = await sb.from('council_requirements')
+      .select('requirement_type, value_num, unit, value_text, clause_ref, council_guideline_id, status')
+      .eq('status', 'approved').in('requirement_type', ['aisle_width', 'room_dimension']);
+    if (reqs?.length) {
+      const gids = [...new Set(reqs.map(r => r.council_guideline_id))];
+      const { data: docs } = await sb.from('council_guidelines')
+        .select('id, council_name, version').in('id', gids);
+      const byId = {}; (docs || []).forEach(d => { byId[d.id] = d; });
+      const norm = s => String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, '');
+      const want = norm(council);
+      WS_CREQ5.rows = reqs.filter(r => {
+        const d = byId[r.council_guideline_id];
+        if (!d) return false;
+        const n = norm(d.council_name);
+        return n === want || n.includes(want) || want.includes(n);
+      }).map(r => ({ ...r, _version: (byId[r.council_guideline_id] || {}).version ?? null }));
+    }
+  } catch (e) { /* advisory only — a failed fetch warns about nothing */ }
+  wsCouncilWarnRender();
+}
+function wsCouncilWarnRender() {
+  const el = document.getElementById('ws-council-warn'); if (!el) return;
+  const rows = WS_CREQ5.rows || [];
+  if (!rows.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const mpp = wsSweptMpp();
+  const slot = wsLayoutSlot();
+  const facts = { aislesMm: [], rooms: [] };
+  if (mpp) {
+    (slot.equip || []).forEach(e => { if (e.aisle) facts.aislesMm.push(e.d * 1000); });
+    (slot.rooms || []).forEach(r => {
+      const pts = wsRoomPts(r), bb = wsPolyBBox(pts);
+      facts.rooms.push({ name: r.name || null, areaM2: wsPolyArea(pts, mpp),
+        minSideM: Math.min(bb.x2 - bb.x1, bb.y2 - bb.y1) * mpp });
+    });
+  }
+  const warns = wsCouncilLayoutWarnings(rows, facts);
+  if (!warns.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  el.innerHTML = `<div style="font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#FFB74D;">Council requirements — advisory</div>` +
+    warns.slice(0, 8).map(w => `<div>⚠ ${w.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('') +
+    (warns.length > 8 ? `<div style="color:rgba(255,255,255,0.5);">+ ${warns.length - 8} more</div>` : '');
 }
 
 // ── OBSTACLES & FIXTURES ─────────────────────────────────────────────────────
