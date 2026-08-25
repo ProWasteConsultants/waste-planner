@@ -301,6 +301,67 @@ test('layout actions live in a draggable, minimisable pill on the canvas', () =>
   assert.ok(SOURCE.includes('_wsPillDragMoved'), 'drags suppress the click');
 });
 
+// ── design-canvas UI patch (Lachy, 25 Aug) ──────────────────────────────
+test('the screens nav is a LHS vertical sidebar; identity stays on the top edge', () => {
+  const nav = SOURCE.slice(SOURCE.indexOf('<div class="side-nav" id="side-nav">'), SOURCE.indexOf('<!-- MAIN CONTENT -->'));
+  assert.ok(nav.length > 0, 'the sidebar exists before the content column');
+  for (const id of ['nav-workspace', 'nav-compliance', 'nav-costcheck', 'nav-orgqueue', 'nav-wmp-queue', 'nav-admin'])
+    assert.ok(nav.includes(`id="${id}"`), id + ' lives in the sidebar');
+  const topbar = SOURCE.slice(SOURCE.indexOf('<div class="topbar">'), SOURCE.indexOf('<!-- PROJECTS SCREEN -->'));
+  assert.ok(!topbar.includes('id="nav-workspace"'), 'no nav items left in the topbar');
+  assert.ok(topbar.includes('id="user-pill-btn"') && topbar.includes('id="org-switcher"'),
+    'user chip and workspace selector stay on the top edge');
+  assert.ok(SOURCE.includes('.ws-embed .side-nav{display:none!important}'), 'embed mode hides the sidebar too');
+});
+
+test('the tool panel OVERLAYS the plan — panel changes can never resize or shift the PDF', () => {
+  assert.ok(SOURCE.includes('position:absolute;right:0;top:0;bottom:0;z-index:14;'),
+    'the panel floats over the canvas instead of sharing the flex row');
+  // the plan fits the full sheet on load, and only the fit button re-fits
+  assert.ok(SOURCE.includes('await wsRenderPage(WS.currentPage);\n  wsFitPage();'),
+    'default view is fit-to-sheet on load');
+});
+
+test('section headings are enlarged teal; room cards are wide, short and minimal', () => {
+  assert.ok(SOURCE.includes('.wsl-group-hd{font-size:11.5px;') && SOURCE.includes('color:#00d4d4;margin-bottom:6px'),
+    'one heading style for BIN ROOMS / BINS / EQUIPMENT / OBSTACLES & FIXTURES / ZONES');
+  assert.ok(SOURCE.includes('class="wsl-card-nm" style="color:#fff;'), 'room names are white');
+  assert.ok(SOURCE.includes('.wsl-card:hover .wsl-card-more{display:block;}'),
+    'secondary lines (area note, drag hint, extras) reveal on hover');
+  assert.ok(SOURCE.includes('flex:1 1 100%;min-width:0;cursor:grab'), 'cards run full panel width');
+});
+
+test('equipment and fixture pickers are square labelled tiles', () => {
+  assert.ok(SOURCE.includes('.wsl-fx.wsl-tile{flex-direction:column'), 'tile layout: thumb above, label below');
+  assert.ok(SOURCE.includes(`'#78909C', 44)`) && SOURCE.includes(`'#B0BEC5', 44)`),
+    'fixture thumbs render at the larger tile size');
+  assert.ok(SOURCE.includes('!!r.roundShape, col, 44)'), 'equipment thumbs too');
+});
+
+test('DXF/PDF exports live in the Layers pill', () => {
+  const layers = SOURCE.slice(SOURCE.indexOf('id="ws-layer-panel"'), SOURCE.indexOf('id="ws-markup-panel"'));
+  assert.ok(layers.includes('id="ws-export-btn"') && layers.includes('id="ws-exportpdf-btn"'),
+    'both export actions sit with the layer controls');
+  const rail = SOURCE.slice(SOURCE.indexOf('<div class="ws-tool-tabs">'), SOURCE.indexOf('<div class="ws-tool-body">'));
+  assert.ok(!rail.includes('ws-export-btn'), 'and they are gone from the right rail');
+});
+
+test('Generate layout (room-scoped): gated, locked-respecting, one undo step, never auto-run', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsGenRoomEligible'), SOURCE.indexOf('function wsGenerateLayout()'));
+  assert.ok(fn.includes("return { ok: false, why: 'Select a bin room' };"), 'disabled without a selected room');
+  assert.ok(fn.includes("return { ok: false, why: 'Room has no items' };"), 'disabled for an empty room');
+  assert.ok(fn.includes('slot.bins.some(inRoom) || slot.equip.some(inRoom)'),
+    'eligibility counts bins, equipment and fixtures — attributed or manually placed');
+  assert.equal((fn.match(/wsLayoutSnapshot\(\)/g) || []).length, 1,
+    'exactly one snapshot — one click, one undo step');
+  assert.ok(fn.includes('const kept = slot.bins.filter(b => b.locked || !wsPointInPoly(pts, b.x, b.y));'),
+    'locked items and everything outside the room are never touched');
+  assert.ok(fn.includes("WS_LAYOUT._roomGenBase"), 're-running rotates the seed for a fresh arrangement');
+  // never auto-run: the only call site is the button
+  assert.equal((SOURCE.match(/wsGenerateRoomLayout\(\)/g) || []).length, 2,
+    'one definition-adjacent reference and one button onclick — nothing else runs it');
+});
+
 test('every canvas pill is draggable — float bar, zoom controls, room pill included', () => {
   for (const id of ['ws-float-bar', 'ws-zoom-ctrl', 'ws-room-pill'])
     assert.ok(SOURCE.includes(`wsPillDragStart(event,'${id}')`), id + ' is draggable');

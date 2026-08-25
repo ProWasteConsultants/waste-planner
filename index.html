@@ -82,14 +82,20 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-layer-toggle.on{background:var(--teal);}
 .ws-layer-toggle::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:transform 0.15s;}
 .ws-layer-toggle.on::after{transform:translateX(12px);}
-.ws-zoom-ctrl{position:absolute;bottom:60px;right:10px;z-index:12;display:flex;flex-direction:column;gap:4px;}
+/* Bottom-left, above the float bar: the tool panel now overlays the canvas's
+   right edge, so anything defaulted there would sit underneath it. Draggable. */
+.ws-zoom-ctrl{position:absolute;bottom:64px;left:12px;z-index:12;display:flex;flex-direction:column;gap:4px;}
 .ws-zoom-btn{width:28px;height:28px;border-radius:6px;background:#1a1a1a;border:1px solid #333;color:rgba(255,255,255,0.6);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
 .ws-zoom-btn:hover{background:#2a2a2a;}
 .ws-zoom-level{width:28px;height:24px;background:#1a1a1a;border:1px solid #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:rgba(255,255,255,0.4);}
-.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row;transition:width 0.2s ease;position:relative;min-height:0;}
+/* The tool panel OVERLAYS the plan viewport: opening, resizing or switching
+   panels never resizes, reflows or shifts the PDF — the canvas area always
+   spans the full shell, so minimising the panel reveals plan that was already
+   there at the same zoom and centre. */
+.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row;transition:width 0.2s ease;position:absolute;right:0;top:0;bottom:0;z-index:14;min-height:0;box-shadow:-10px 0 24px rgba(0,0,0,0.35);}
 .wsl-groups{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
 .wsl-group{border:1px solid #2f3a3a;border-radius:7px;background:#1c2222;padding:4px 7px 5px;min-width:0;}
-.wsl-group-hd{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,0.32);margin-bottom:5px;}
+.wsl-group-hd{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#00d4d4;margin-bottom:6px;display:flex;align-items:center;gap:8px;}
 .wsl-group-body{display:flex;gap:5px;flex-wrap:wrap;align-items:flex-start;}
 .wsl-btn{background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.85);padding:5px 10px;font-size:10.5px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;}
 .wsl-btn:hover{border-color:#008080;color:#7FD8D8;}
@@ -104,12 +110,20 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-status{font-size:10.5px;color:rgba(255,255,255,0.72);}
 .wsl-stats{font-size:10.5px;color:#4BED12;margin-left:auto;white-space:nowrap;}
 .wsl-fx{display:flex;align-items:center;gap:6px;background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:3px 8px 3px 4px;cursor:pointer;font-family:inherit;color:rgba(255,255,255,0.85);min-width:0;overflow:hidden;}
+/* Equipment + fixture pickers are square TILES: big thumbnail on top, label
+   underneath — zones keep the horizontal swatch row. */
+.wsl-fx.wsl-tile{flex-direction:column;justify-content:center;gap:4px;padding:8px 4px 6px;}
+.wsl-fx.wsl-tile .wsl-fx-nm{font-size:10px;max-width:100%;text-align:center;}
 .wsl-fx:hover{border-color:#008080;}
 .wsl-fx-nm{font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .wsl-fx-dim{font-size:8px;color:rgba(255,255,255,0.3);white-space:nowrap;}
 .wsl-fx-cat{grid-column:1/-1;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,0.28);margin-top:3px;}
 .wsl-cards{display:flex;gap:6px;flex-wrap:wrap;flex-basis:100%;}
-.wsl-card{border:1px solid #33403f;border-radius:6px;background:#212a2a;padding:6px 10px;min-width:158px;cursor:grab;user-select:none;}
+/* Room cards run full panel width so they stay SHORT; secondary lines (area
+   note, drag hint, extra units) reveal on hover instead of always printing. */
+.wsl-card{border:1px solid #33403f;border-radius:6px;background:#212a2a;padding:5px 10px;flex:1 1 100%;min-width:0;cursor:grab;user-select:none;}
+.wsl-card .wsl-card-more{display:none;}
+.wsl-card:hover .wsl-card-more{display:block;}
 .wsl-card:active{cursor:grabbing;}
 .wsl-card:hover{border-color:#008080;}
 .wsl-card.done{border-color:#2f5c2f;}
@@ -217,6 +231,18 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ── LAYOUT ── */
 .app{display:flex;width:100%;height:100%;overflow:hidden;}
+
+/* ── LHS VERTICAL NAV (screens rail; project name / council / user stay on the top edge) ── */
+.side-nav{
+  width:172px;flex-shrink:0;display:flex;flex-direction:column;gap:4px;
+  padding:12px 10px;overflow-y:auto;
+  --white:#1A2424;--grey:#243030;--border:#2C3838;--text:#E8EFEF;--muted:#8CA3A3;--lt:rgba(22,126,126,0.35);
+  background:#1A2424;border-right:1px solid #2C3838;
+}
+.side-nav .topbar-brand{padding:2px 8px 12px;border-bottom:1px solid #2C3838;margin-bottom:8px;cursor:pointer;}
+.side-nav .nav-item{width:100%;}
+.side-nav .nav-item.active{color:#4FC3C3;}
+.ws-embed .side-nav{display:none!important}
 
 /* ── MAIN CONTENT ── */
 .content{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;}
@@ -560,44 +586,45 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 <body>
 <div id="app-content" style="display:none;width:100%;height:100%;"><div class="app">
 
+<!-- LHS VERTICAL NAV — screens rail. Project name, council/org selector and
+     the user chip stay on the top edge. -->
+<div class="side-nav" id="side-nav">
+  <div class="topbar-brand" id="topbar-brand" onclick="showScreen('projects',null)" title="All projects">
+    <span style="font-size:16px;font-weight:700;letter-spacing:-0.3px;line-height:1;"><span style="color:#008080;">Waste</span><span style="color:var(--text);">Planner</span></span>
+  </div>
+  <div class="nav-item" onclick="showScreen('tools',this)" id="nav-tools" style="display:none;">
+    <span class="ni">⚙</span><span class="nl">Tools</span>
+  </div>
+  <div class="nav-item" onclick="showScreen('workspace',this)" id="nav-workspace">
+    <span class="nl">Design</span>
+  </div>
+  <div class="nav-item" onclick="showScreen('compliance',this)" id="nav-compliance">
+    <span class="nl">Compliance Checker</span>
+  </div>
+  <div class="nav-item" onclick="showScreen('costcheck',this)" id="nav-costcheck">
+    <span class="nl">Cost Check</span><span class="nav-badge" style="background:var(--lt);color:var(--teal);">Coming soon</span>
+  </div>
+  <div class="nav-item" onclick="showScreen('orgqueue',this)" id="nav-orgqueue" style="display:none;">
+    <span class="nl">Review Queue</span><span class="nav-badge" id="orgqueue-badge" style="background:#E65100;color:#fff;display:none;">0</span>
+  </div>
+  <div class="nav-item" onclick="showScreen('wmpqueue',this)" id="nav-wmp-queue" style="display:none;">
+    <span class="ni">📄</span><span class="nl">WMP Queue</span><span class="nav-badge" id="wmpqueue-badge" style="background:#E65100;color:#fff;display:none;">0</span>
+  </div>
+  <div class="nav-item" onclick="showScreen('admin',this)" id="nav-admin" style="display:none;">
+    <span class="ni">🔐</span><span class="nl">Admin</span><span class="nav-badge" style="background:#C62828;color:#fff;">PWC</span>
+  </div>
+  <div id="nav-upload" style="display:none;"></div>
+  <div id="nav-calculator" style="display:none;"></div>
+  <div id="nav-layout" style="display:none;"></div>
+  <div id="nav-swept" style="display:none;"></div>
+</div>
+
 <!-- MAIN CONTENT -->
 <div class="content">
 
-  <!-- TOPBAR (nav moved here from old sidebar) -->
+  <!-- TOPBAR — project identity and account only; screens nav lives in the sidebar -->
   <div class="topbar">
-    <div class="topbar-brand" id="topbar-brand" onclick="showScreen('projects',null)" title="All projects">
-      <span style="font-size:16px;font-weight:700;letter-spacing:-0.3px;line-height:1;"><span style="color:#008080;">Waste</span><span style="color:var(--text);">Planner</span></span>
-    </div>
-
-    <div class="topbar-nav">
-      <div class="nav-item" onclick="showScreen('tools',this)" id="nav-tools" style="display:none;">
-        <span class="ni">⚙</span><span class="nl">Tools</span>
-      </div>
-      <div class="nav-item" onclick="showScreen('workspace',this)" id="nav-workspace">
-        <span class="nl">Design</span>
-      </div>
-      <div class="nav-item" onclick="showScreen('compliance',this)" id="nav-compliance">
-        <span class="nl">Compliance Checker</span>
-      </div>
-      <div class="nav-item" onclick="showScreen('costcheck',this)" id="nav-costcheck">
-        <span class="nl">Cost Check</span><span class="nav-badge" style="background:var(--lt);color:var(--teal);">Coming soon</span>
-      </div>
-      <div class="nav-item" onclick="showScreen('orgqueue',this)" id="nav-orgqueue" style="display:none;">
-        <span class="nl">Review Queue</span><span class="nav-badge" id="orgqueue-badge" style="background:#E65100;color:#fff;display:none;">0</span>
-      </div>
-      <div class="nav-item" onclick="showScreen('wmpqueue',this)" id="nav-wmp-queue" style="display:none;">
-        <span class="ni">📄</span><span class="nl">WMP Queue</span><span class="nav-badge" id="wmpqueue-badge" style="background:#E65100;color:#fff;display:none;">0</span>
-      </div>
-      <div class="nav-item" onclick="showScreen('admin',this)" id="nav-admin" style="display:none;">
-        <span class="ni">🔐</span><span class="nl">Admin</span><span class="nav-badge" style="background:#C62828;color:#fff;">PWC</span>
-      </div>
-      <div id="nav-upload" style="display:none;"></div>
-      <div id="nav-calculator" style="display:none;"></div>
-      <div id="nav-layout" style="display:none;"></div>
-      <div id="nav-swept" style="display:none;"></div>
-    </div>
-
-    <div class="breadcrumb" id="breadcrumb" style="border-left:1px solid var(--border);padding-left:14px;"><span>Projects</span></div>
+    <div class="breadcrumb" id="breadcrumb" style="padding-left:2px;"><span>Projects</span></div>
     <!-- Document-level actions: they act on the project, so they sit with the
          project's name rather than in the tool strip. -->
 
@@ -1514,6 +1541,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <div class="ws-layer-label"><div class="ws-layer-dot" style="background:#B9C4C4;"></div>Labels</div>
             <button class="ws-layer-toggle on" id="ws-toggle-labels" onclick="this.classList.toggle('on');document.getElementById('ws-overlay-svg').classList.toggle('ws-hide-labels', !this.classList.contains('on'));"></button>
           </div>
+          <!-- Exports act on the visible layers, so they live with the layer controls -->
+          <div class="ws-layer-row" style="gap:6px;margin-top:8px;border-top:1px solid #2a3333;padding-top:8px;">
+            <button class="ws-mini-btn" id="ws-export-btn" onclick="wsExportDXF()" style="display:none;flex:1;" title="Export DXF">⬇ DXF</button>
+            <button class="ws-mini-btn" id="ws-exportpdf-btn" onclick="wsExportPDF()" style="display:none;flex:1;" title="Export PDF sheet">⬇ PDF</button>
+          </div>
         </div>
 
         <!-- Markups card — available from any tab, not just Layout -->
@@ -1615,8 +1647,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="ws-tool-tab" onclick="wsShowTab('swept',this)" title="Swept Path Generator">Swept Paths</button>
           <button class="ws-rail-btn" id="ws-panel-max" onclick="wsPanelMaxToggle()" title="Maximise the tools panel">⛶ Max</button>
           <button class="ws-rail-btn" id="ws-save-btn" onclick="wsSaveProject()" style="display:none;" title="Save project">💾 Save</button>
-          <button class="ws-rail-btn" id="ws-export-btn" onclick="wsExportDXF()" style="display:none;" title="Export DXF">⬇ DXF</button>
-          <button class="ws-rail-btn" id="ws-exportpdf-btn" onclick="wsExportPDF()" style="display:none;" title="Export PDF sheet">⬇ PDF</button>
         </div>
         <div class="ws-tool-body">
 
@@ -1633,7 +1663,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <div class="wsl-groups">
 
               <div class="wsl-group" style="flex:1.2 1 250px;">
-                <div class="wsl-group-hd">Bin rooms</div>
+                <div class="wsl-group-hd">Bin rooms
+                  <span style="flex:1"></span>
+                  <button class="wsl-btn" id="ws-room-gen-btn" onclick="wsGenerateRoomLayout()" disabled
+                          title="Select a bin room on the plan first"
+                          style="background:#004d4d;border-color:#008080;color:#4BED12;font-weight:700;font-size:10.5px;">✦ Generate layout</button>
+                </div>
                 <div class="wsl-group-body">
                   <button class="wsl-btn wsl-btn-lead" onclick="wsLayoutRoomMode()">▱ Draw bin room</button>
                   <div id="ws-layout-targets" class="wsl-cards"></div>
@@ -16575,6 +16610,8 @@ function wsLayoutUpdateStats(slot, mpp) {
   }
   // C5: advisory council warnings track the same render cadence as the stats
   if (typeof wsCouncilWarnRender === 'function') wsCouncilWarnRender();
+  // Generate-for-room enablement follows selection, on the same cadence
+  if (typeof wsUpdateRoomGenBtn === 'function') wsUpdateRoomGenBtn();
 }
 // Emit each distinct item once as a BLOCK, then reference it per instance with
 // INSERT. Smaller files, and redefining the block in CAD restyles every copy.
@@ -17076,6 +17113,66 @@ function wsGenItemsForRoom(room, slot) {
   });
   return Object.values(byKey);
 }
+// ── GENERATE SCOPED TO THE SELECTED ROOM ─────────────────────────────────────
+// Same engine as full Generate (wsGenRoom + wsScoreVariant, best of four
+// seeds) and the same item derivation (wsGenItemsForRoom: the assigned
+// schedule when there is one, else the room's own unlocked bins), but only
+// the SELECTED room is touched. Locked items and everything outside the room
+// stay exactly where they are; equipment and fixtures act as keep-outs. One
+// click takes ONE snapshot — a single undo step — and nothing ever auto-runs.
+// The seed base rotates per click so re-running produces a fresh arrangement.
+function wsGenRoomEligible() {
+  if (typeof WS_LAYOUT === 'undefined' || WS_LAYOUT.selKind !== 'room' || !WS_LAYOUT.sel)
+    return { ok: false, why: 'Select a bin room' };
+  const slot = wsLayoutSlot();
+  const room = slot.rooms.find(r => r.id === WS_LAYOUT.sel);
+  if (!room) return { ok: false, why: 'Select a bin room' };
+  const pts = wsRoomPts(room);
+  const inRoom = it => it.roomId === room.id || wsPointInPoly(pts, it.x, it.y);
+  const has = slot.bins.some(inRoom) || slot.equip.some(inRoom) ||
+              wsGenItemsForRoom(room, slot).length > 0;
+  if (!has) return { ok: false, why: 'Room has no items' };
+  return { ok: true, room, pts };
+}
+function wsUpdateRoomGenBtn() {
+  const btn = document.getElementById('ws-room-gen-btn'); if (!btn) return;
+  const el = wsGenRoomEligible();
+  btn.disabled = !el.ok;
+  btn.style.opacity = el.ok ? '' : '0.45';
+  btn.title = el.ok
+    ? `Arrange ${el.room.name || 'this room'}'s items inside its boundary — locked items stay put; re-run for another arrangement`
+    : el.why === 'Room has no items'
+      ? 'Room has no items — place or attribute bins, equipment or fixtures first'
+      : 'Select a bin room on the plan first';
+}
+function wsGenerateRoomLayout() {
+  const el = wsGenRoomEligible();
+  if (!el.ok) { wsLayoutStatus(el.why + '.'); return; }
+  const mpp = wsNeedScale(); if (!mpp) return;
+  const slot = wsLayoutSlot();
+  const room = el.room, pts = el.pts;
+  const items = wsGenItemsForRoom(room, slot);
+  if (!items.length) { wsLayoutStatus('Nothing to arrange — every bin in this room is locked, and locked items never move.'); return; }
+  wsLayoutSnapshot();   // exactly one snapshot: one click = one undo step
+  const kept = slot.bins.filter(b => b.locked || !wsPointInPoly(pts, b.x, b.y));
+  const keeps = wsKeepoutFps({ ...slot, bins: kept }, mpp, { locked: true });
+  const base = (WS_LAYOUT._roomGenBase = ((WS_LAYOUT._roomGenBase || 0) + 4) % 64);
+  let best = null;
+  for (let s = 1; s <= 4; s++) {
+    const res = wsGenRoom(pts, items.map(i => ({ ...i })), keeps, mpp, base + s);
+    const score = wsScoreVariant(res.placed, pts, keeps, mpp).score - res.left * 1e6;
+    if (!best || score > best.score) best = { score, res };
+  }
+  slot.bins = kept.concat(best.res.placed.map(p => ({
+    id: 'bin_' + Date.now() + '_' + Math.floor(Math.random() * 99999),
+    type: p.typeId, stream: p.stream, x: p.x, y: p.y, rot: p.rot,
+    calcRoom: room.calcRoom || null, roomId: room.id || null })));
+  wsTagBinsToRooms(slot.rooms, slot.bins);
+  wsRenderLayoutLayer(); wsLayoutAutosave();
+  wsLayoutStatus(best.res.left > 0
+    ? `${room.name || 'Room'} arranged — ${best.res.placed.length} placed, ${best.res.left} would not fit. Enlarge the room or clear space.`
+    : `${room.name || 'Room'} arranged — ${best.res.placed.length} bins placed. Generate again for a fresh arrangement; Ctrl+Z undoes in one step.`);
+}
 function wsGenerateLayout() {
   const mpp = wsNeedScale(); if (!mpp) return;
   const slot = wsLayoutSlot();
@@ -17553,8 +17650,8 @@ function wsRenderFixturePalette() {
   // Thumbnail + short name only; the full name and size live in the tooltip.
   // Fixtures take the plan's fixture grey, doors their real plan symbol.
   el.innerHTML = WS_FIXTURES.map(f =>
-    `<button class="wsl-fx" onclick="wsFixtureMode('${f.code}')" title="${f.label} — ${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)} mm">` +
-    (f.door ? wsDoorThumb(f.door, f.w, f.d, '#B0BEC5') : wsShapeThumb(f.code, f.w, f.d, f.round, '#78909C')) +
+    `<button class="wsl-fx wsl-tile" onclick="wsFixtureMode('${f.code}')" title="${f.label} — ${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)} mm">` +
+    (f.door ? wsDoorThumb(f.door, f.w, f.d, '#B0BEC5', 44) : wsShapeThumb(f.code, f.w, f.d, f.round, '#78909C', 44)) +
     `<span class="wsl-fx-nm">${f.pal || f.label}</span></button>`
   ).join('');
 }
@@ -17585,8 +17682,8 @@ function wsRenderEquipPalette() {
       const tip = [it.label, it.dims ? it.dims + ' mm' : 'no size in library', streams, tag]
         .filter(Boolean).join(' — ');
       const col = it.pairingType ? '#F5B400' : '#90A4AE';
-      return `<button class="wsl-fx" onclick="wsEquipPaletteMode('${esc(it.id)}')" title="${esc(tip)}">` +
-        wsShapeThumb(r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, col) +
+      return `<button class="wsl-fx wsl-tile" onclick="wsEquipPaletteMode('${esc(it.id)}')" title="${esc(tip)}">` +
+        wsShapeThumb(r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, col, 44) +
         `<span class="wsl-fx-nm">${esc(it.label)}</span></button>`;
     }).join('')
   ).join('');
@@ -17978,11 +18075,13 @@ function wsLayoutRenderTargets() {
     const extraLine = extras.length
       ? `<div class="wsl-card-line" style="color:#F5B400;"><span>+ ${extras.length} unit${extras.length === 1 ? '' : 's'}</span><span>${extras.map(u => u.label).join(', ').slice(0, 26)}</span></div>` : '';
     return `<div class="wsl-card${done ? ' done' : ''}" draggable="true" ondragstart="wsCardDragStart(event,'${rm.id}')" ` +
-      `title="Drag onto the plan to place this room and lay its bins out inside" onclick="wsLayoutPickRoom('${rm.id}')">` +
-      `<div class="wsl-card-hd"><span class="wsl-card-nm" style="color:${kindCol};">${rm.name}</span>` +
+      `title="~${(rm.areaM2 || 0).toFixed(1)} m² · ${drawn[rm.id] ? 'drawn — drag onto the plan to re-fill' : 'drag onto the plan to place this room and lay its bins out inside'}" onclick="wsLayoutPickRoom('${rm.id}')">` +
+      `<div class="wsl-card-hd"><span style="width:7px;height:7px;border-radius:50%;background:${kindCol};flex:0 0 auto;align-self:center;" title="${rm.kind === 'com' ? 'commercial' : 'residential'}"></span>` +
+      `<span class="wsl-card-nm" style="color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${rm.name}</span>` +
       `<span class="wsl-card-meta">${got}/${need}${done ? ' ✓' : ''}</span></div>` +
-      lines + allowLines + extraLine +
-      `<div class="wsl-card-ft">~${(rm.areaM2 || 0).toFixed(1)} m² · ${drawn[rm.id] ? 'drawn — drag to re-fill' : 'drag onto the plan'}</div></div>`;
+      lines + allowLines +
+      `<div class="wsl-card-more">` + extraLine +
+      `<div class="wsl-card-ft">~${(rm.areaM2 || 0).toFixed(1)} m² · ${drawn[rm.id] ? 'drawn — drag to re-fill' : 'drag onto the plan'}</div></div></div>`;
   }).join('');
   const orphan = wsLayoutUntagged();
   if (orphan) wrap.innerHTML += `<div class="wsl-empty" style="color:#FFB74D;flex-basis:100%;">${orphan} bin${orphan === 1 ? '' : 's'} not attributed to a bin room.</div>`;
@@ -20467,6 +20566,14 @@ function wsPanelApplyWidth() {
   const w = wsPanelWidthFor(_wsPanelTab);
   panel.style.width = w + 'px';
   wsPanelSetW(w);
+  wsPanelKeepPillsClear(w);
+}
+// The panel OVERLAYS the canvas, so pills defaulted near the right edge would
+// sit underneath it. Nudge them clear of the current panel width — unless the
+// user has dragged the pill somewhere themselves (a drag sets style.left).
+function wsPanelKeepPillsClear(panelW) {
+  const ap = document.getElementById('ws-actions-pill');
+  if (ap && !ap.style.left) ap.style.right = (panelW + 20) + 'px';
 }
 function wsPanelMaxToggle() {
   _wsPanelMax = !_wsPanelMax;
@@ -20492,6 +20599,7 @@ function wsPanelToggle() {
     if (col) col.style.display = 'none';
     if (exp) exp.style.display = '';
     wsPanelSetW(26);
+    wsPanelKeepPillsClear(26);
   } else {
     if (body) body.style.display = '';
     if (tabs) tabs.style.display = '';
