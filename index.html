@@ -86,7 +86,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-zoom-btn{width:28px;height:28px;border-radius:6px;background:#1a1a1a;border:1px solid #333;color:rgba(255,255,255,0.6);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
 .ws-zoom-btn:hover{background:#2a2a2a;}
 .ws-zoom-level{width:28px;height:24px;background:#1a1a1a;border:1px solid #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:rgba(255,255,255,0.4);}
-.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:column;transition:width 0.2s ease;position:relative;padding-left:5px;min-height:0;}
+.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row;transition:width 0.2s ease;position:relative;min-height:0;}
 .wsl-groups{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
 .wsl-group{border:1px solid #2f3a3a;border-radius:7px;background:#1c2222;padding:4px 7px 5px;min-width:0;}
 .wsl-group-hd{font-size:8.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:rgba(255,255,255,0.32);margin-bottom:5px;}
@@ -120,10 +120,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-card-line b{font-weight:700;}
 .wsl-card-ft{font-size:9.5px;color:rgba(255,255,255,0.4);margin-top:3px;border-top:1px solid #2b3434;padding-top:3px;}
 .wsl-empty{font-size:10.5px;color:rgba(255,255,255,0.3);}
-.ws-tool-tabs{display:flex;border-bottom:1px solid #333;flex-shrink:0;align-items:stretch;}
-.ws-tool-tab{flex:1 1 0;padding:8px 16px;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.4);border-bottom:2px solid transparent;white-space:nowrap;border:none;background:none;font-family:inherit;text-align:center;}
+/* Vertical tab rail on the panel's canvas-facing edge. Labels run vertically so
+   the rail stays 36px wide at any panel width. */
+.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:36px;flex-shrink:0;border-right:1px solid #333;padding:8px 0 6px;}
+.ws-tool-tab{writing-mode:vertical-rl;padding:13px 0;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.4);white-space:nowrap;border:none;border-right:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.4px;}
 .ws-tool-tab:hover{color:rgba(255,255,255,0.7);}
-.ws-tool-tab.active{color:var(--teal);border-bottom:2px solid var(--teal);}
+.ws-tool-tab.active{color:var(--teal);border-right:2px solid var(--teal);}
+.ws-rail-btn{writing-mode:vertical-rl;padding:9px 0;margin:2px 5px;border-radius:5px;border:1px solid #444;background:#2a2a2a;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.7);font-family:inherit;letter-spacing:.5px;white-space:nowrap;}
+.ws-rail-btn:hover{border-color:#008080;color:#fff;}
 .ws-tool-body{flex:1;display:flex;overflow:auto;min-height:0;}
 .ws-tool-col{flex:1;padding:12px 14px;border-right:1px solid #333;overflow-y:auto;min-width:0;}
 .ws-tool-col:last-child{border-right:none;}
@@ -1537,17 +1541,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
       <!-- TOOL PANEL -->
       <div class="ws-tool-panel" id="ws-tool-panel">
-        <div id="ws-resize-handle" style="position:absolute;left:0;top:0;bottom:0;width:5px;background:#2a2a2a;cursor:ew-resize;border-right:1px solid #444;z-index:2;" onmousedown="wsStartResize(event)"></div>
         <button id="ws-panel-expand" onclick="wsPanelToggle()" title="Expand tools" style="display:none;position:absolute;inset:0;background:#1a1a1a;border:none;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;font-family:inherit;writing-mode:vertical-rl;letter-spacing:1px;">◀ &nbsp;T O O L S</button>
-        <button id="ws-panel-collapse" onclick="wsPanelToggle()" title="Collapse tools panel" style="position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:15px;height:62px;background:#1a1a1a;border:1px solid #444;border-right:none;border-radius:8px 0 0 8px;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;z-index:3;padding:0;">▸</button>        <div class="ws-tool-tabs" style="flex-wrap:wrap;row-gap:4px;">
-          <button class="ws-tool-tab active" onclick="wsShowTab('calculator',this)">Bin Calculator</button>
-          <button class="ws-tool-tab" onclick="wsShowTab('layout',this)">Waste Layout Generator</button>
-          <button class="ws-tool-tab" onclick="wsShowTab('swept',this)">Swept Path Generator</button>
-          <span style="flex:0 0 auto;display:flex;gap:6px;align-items:center;padding:0 8px;">
-            <button class="ws-mini-btn" id="ws-save-btn" onclick="wsSaveProject()" style="display:none;">💾 Save</button>
-            <button class="ws-mini-btn" id="ws-export-btn" onclick="wsExportDXF()" style="display:none;">⬇ Export DXF</button>
-            <button class="ws-mini-btn" id="ws-exportpdf-btn" onclick="wsExportPDF()" style="display:none;">⬇ Export PDF</button>
-          </span>
+        <button id="ws-panel-collapse" onclick="wsPanelToggle()" title="Hide tools panel" style="position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:15px;height:62px;background:#1a1a1a;border:1px solid #444;border-right:none;border-radius:8px 0 0 8px;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;z-index:3;padding:0;">▸</button>
+        <div class="ws-tool-tabs">
+          <button class="ws-tool-tab active" onclick="wsShowTab('calculator',this)" title="Bin Calculator">Bin Calculator</button>
+          <button class="ws-tool-tab" onclick="wsShowTab('layout',this)" title="Waste Layout Generator">Layout Generator</button>
+          <button class="ws-tool-tab" onclick="wsShowTab('swept',this)" title="Swept Path Generator">Swept Paths</button>
+          <span style="flex:1;"></span>
+          <button class="ws-rail-btn" id="ws-panel-max" onclick="wsPanelMaxToggle()" title="Maximise the tools panel">⛶ Max</button>
+          <button class="ws-rail-btn" id="ws-save-btn" onclick="wsSaveProject()" style="display:none;" title="Save project">💾 Save</button>
+          <button class="ws-rail-btn" id="ws-export-btn" onclick="wsExportDXF()" style="display:none;" title="Export DXF">⬇ DXF</button>
+          <button class="ws-rail-btn" id="ws-exportpdf-btn" onclick="wsExportPDF()" style="display:none;" title="Export PDF sheet">⬇ PDF</button>
         </div>
         <div class="ws-tool-body">
 
@@ -7582,6 +7586,8 @@ function showScreen(name, navEl) {
         if (typeof wsPushSummaryToCalc === 'function') setTimeout(wsPushSummaryToCalc, 400);
       }, 50);
     }
+    // Apply the active tab's preset panel width once the shell has laid out
+    if (typeof wsPanelApplyWidth === 'function') setTimeout(wsPanelApplyWidth, 0);
   }
   if (name === 'admin') {
     setTimeout(() => { if (typeof loadAdminAnalytics === 'function') loadAdminAnalytics(); }, 100);
@@ -12408,10 +12414,10 @@ function wsShowTab(name, btn) {
     if (scaleWrap) scaleWrap.style.display = 'none';
   }
 
-  // Side panel: width persists across tabs; just ensure the body is visible when expanded
+  // Side panel: each tab has its own preset width (wsPanelWidthFor)
+  _wsPanelTab = name;
   if (!_wsPanelCollapsed) {
-    const panel = document.querySelector('.ws-tool-panel');
-    if (panel) panel.style.width = _wsCurrentPanelWidth + 'px';
+    wsPanelApplyWidth();
     const body = document.querySelector('.ws-tool-body');
     if (body) body.style.display = '';
   }
@@ -16367,12 +16373,41 @@ function wsShapeThumb(code, wM, dM, round, col, box) {
   }
   return `<svg width="${B}" height="${B}" viewBox="0 0 ${B} ${B}" style="flex:0 0 auto;">${inner}</svg>`;
 }
+// Doors get their thumbnail from wsDoorGeometry — the exact jamb/leaf/arc
+// geometry the plan and the DXF draw — so the palette shows the real plan
+// symbol with its swing, not the door profile squashed into the wall strip.
+function wsDoorThumb(kind, wM, wallM, col, box) {
+  const B = box || 26, pad = 2;
+  const G = wsDoorGeometry(kind, wM, wallM);
+  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+  const pt = (x, y) => { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); };
+  const arcPt = (a, t) => {
+    const ang = (a.a0 + (a.a1 - a.a0) * t) * Math.PI / 180;
+    return [a.cx + a.r * Math.cos(ang), a.cy + a.r * Math.sin(ang)];
+  };
+  G.jambs.concat(G.leaves, G.panels, G.rollDashed ? [G.rollDashed] : [])
+    .forEach(seg => seg.forEach(p => pt(p[0], p[1])));
+  G.arcs.forEach(a => { for (let t = 0; t <= 8; t++) { const p = arcPt(a, t / 8); pt(p[0], p[1]); } });
+  const k = (B - pad * 2) / Math.max(x2 - x1, y2 - y1, 0.9);
+  const X = x => ((x - (x1 + x2) / 2) * k + B / 2).toFixed(1);
+  const Y = y => ((y - (y1 + y2) / 2) * k + B / 2).toFixed(1);
+  let s = '';
+  G.panels.forEach(pl => s += `<polygon points="${pl.map(p => X(p[0]) + ',' + Y(p[1])).join(' ')}" fill="${col}22" stroke="${col}" stroke-width="1"/>`);
+  if (G.rollDashed) s += `<line x1="${X(G.rollDashed[0][0])}" y1="${Y(G.rollDashed[0][1])}" x2="${X(G.rollDashed[1][0])}" y2="${Y(G.rollDashed[1][1])}" stroke="${col}" stroke-width="1" stroke-dasharray="2 2"/>`;
+  G.jambs.concat(G.leaves).forEach(l => s += `<line x1="${X(l[0][0])}" y1="${Y(l[0][1])}" x2="${X(l[1][0])}" y2="${Y(l[1][1])}" stroke="${col}" stroke-width="1.3"/>`);
+  G.arcs.forEach(a => {
+    const p0 = arcPt(a, 0), p1 = arcPt(a, 1);
+    s += `<path d="M${X(p0[0])},${Y(p0[1])} A${(a.r * k).toFixed(1)},${(a.r * k).toFixed(1)} 0 0 ${a.dir > 0 ? 1 : 0} ${X(p1[0])},${Y(p1[1])}" fill="none" stroke="${col}" stroke-width="0.9" stroke-dasharray="2 1.6"/>`;
+  });
+  return `<svg width="${B}" height="${B}" viewBox="0 0 ${B} ${B}" style="flex:0 0 auto;">${s}</svg>`;
+}
 function wsRenderFixturePalette() {
   const el = document.getElementById('ws-layout-fixtures'); if (!el) return;
   // Thumbnail + short name only; the full name and size live in the tooltip.
+  // Fixtures take the plan's fixture grey, doors their real plan symbol.
   el.innerHTML = WS_FIXTURES.map(f =>
     `<button class="wsl-fx" onclick="wsFixtureMode('${f.code}')" title="${f.label} — ${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)} mm">` +
-    wsShapeThumb(f.code, f.w, f.d, f.round, '#90A4AE') +
+    (f.door ? wsDoorThumb(f.door, f.w, f.d, '#B0BEC5') : wsShapeThumb(f.code, f.w, f.d, f.round, '#78909C')) +
     `<span class="wsl-fx-nm">${f.pal || f.label}</span></button>`
   ).join('');
 }
@@ -16429,7 +16464,8 @@ function wsRenderZonePalette() {
     const t = WS_ZONE_TYPES[k];
     const dim = Math.round(t.w * 1000) + '×' + Math.round(t.d * 1000);
     return `<button class="wsl-fx" onclick="wsZoneMode('${k}')" title="${esc(t.label)} — ${dim} mm default, drag an edge handle to resize">` +
-      `<span style="display:block;flex:0 0 18px;height:14px;border-radius:3px;border:1.5px dashed ${t.col};background:${t.col}22;"></span>` +
+      `<span style="display:block;flex:0 0 20px;height:15px;border-radius:3px;border:1.5px dashed ${t.col};` +
+      `background:repeating-linear-gradient(45deg,${t.col}66 0 1px,${t.col}1a 1px 5px);"></span>` +
       `<span class="wsl-fx-nm">${esc(t.label)}</span></button>`;
   }).join('');
 }
@@ -19188,9 +19224,40 @@ function wsOpenProject(project) {
   }
 }
 let _wsPanelCollapsed = false;
+let _wsPanelMax = false;
+let _wsPanelTab = 'calculator';
 function wsPanelSetW(w) {
   const shell = document.querySelector('.ws-shell');
   if (shell) shell.style.setProperty('--ws-panel-w', (w + 1) + 'px');
+}
+// The panel is not free-resizable: each tool has a predefined width. The bin
+// calculator runs wide — the PDF matters little while calculating — while the
+// layout generator and swept paths hold a single column of tool groups so the
+// plan stays visible. Maximise and collapse are the only user controls.
+function wsPanelWidthFor(tab) {
+  const shell = document.querySelector('.ws-shell');
+  const shellW = (shell && shell.clientWidth) || window.innerWidth;
+  if (_wsPanelMax) return Math.max(360, shellW - 48);
+  if (tab === 'calculator') return Math.min(Math.round(shellW * 0.66), 1100);
+  return 440;   // layout + swept: one column of tool groups
+}
+function wsPanelApplyWidth() {
+  if (_wsPanelCollapsed) return;
+  const panel = document.getElementById('ws-tool-panel');
+  if (!panel) return;
+  const w = wsPanelWidthFor(_wsPanelTab);
+  panel.style.width = w + 'px';
+  wsPanelSetW(w);
+}
+function wsPanelMaxToggle() {
+  _wsPanelMax = !_wsPanelMax;
+  const b = document.getElementById('ws-panel-max');
+  if (b) {
+    b.textContent = _wsPanelMax ? '🗗 Restore' : '⛶ Max';
+    b.title = _wsPanelMax ? 'Restore the panel to its preset width' : 'Maximise the tools panel';
+  }
+  if (_wsPanelCollapsed) { wsPanelToggle(); return; }   // expanding re-applies the width
+  wsPanelApplyWidth();
 }
 function wsPanelToggle() {
   const panel = document.getElementById('ws-tool-panel');
@@ -19198,50 +19265,24 @@ function wsPanelToggle() {
   const tabs = document.querySelector('.ws-tool-tabs');
   const exp = document.getElementById('ws-panel-expand');
   const col = document.getElementById('ws-panel-collapse');
-  const handle = document.getElementById('ws-resize-handle');
   _wsPanelCollapsed = !_wsPanelCollapsed;
   if (_wsPanelCollapsed) {
     panel.style.width = '26px';
     if (body) body.style.display = 'none';
     if (tabs) tabs.style.display = 'none';
-    if (handle) handle.style.display = 'none';
     if (col) col.style.display = 'none';
     if (exp) exp.style.display = '';
     wsPanelSetW(26);
   } else {
     if (body) body.style.display = '';
     if (tabs) tabs.style.display = '';
-    if (handle) handle.style.display = '';
     if (col) col.style.display = '';
     if (exp) exp.style.display = 'none';
-    panel.style.width = _wsCurrentPanelWidth + 'px';
-    wsPanelSetW(_wsCurrentPanelWidth);
+    wsPanelApplyWidth();
   }
 }
-
-let _wsCurrentPanelWidth = 500;
-
-function wsStartResize(e) {
-  e.preventDefault();
-  const panel = document.getElementById('ws-tool-panel');
-  const startX = e.clientX;
-  const startW = panel.offsetWidth;
-  function onMove(ev) {
-    // handle sits on the panel's LEFT edge: dragging left widens the panel
-    const newW = Math.max(300, Math.min(window.innerWidth * 0.7, startW + (startX - ev.clientX)));
-    panel.style.width = newW + 'px';
-    panel.style.transition = 'none';
-    _wsCurrentPanelWidth = newW;
-    wsPanelSetW(newW);
-  }
-  function onUp() {
-    panel.style.transition = '';
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
-  }
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', onUp);
-}
+// The calculator width tracks the window, so re-derive it on resize.
+window.addEventListener('resize', wsPanelApplyWidth);
 
 // ── AUTOSAVE DRAFT ────────────────────────────────────────────
 let _wsDraftTimer = null;

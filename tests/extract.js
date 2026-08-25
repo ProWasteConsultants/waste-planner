@@ -100,6 +100,7 @@ const LAYOUT_BLOCKS = [
   ['wsEquipLibrary', /^function wsEquipLibrary\(/],
   ['wsPathPolys', /^function wsPathPolys\(/],
   ['wsShapePolys', /^function wsShapePolys\(/],
+  ['wsDoorThumb', /^function wsDoorThumb\(/],
   ['WS_STREAM_ALIAS', /^const WS_STREAM_ALIAS = \{/],
   ['wsStreamKey', /^function wsStreamKey\(/],
   ['wsStreamId', /^function wsStreamId\(/],
