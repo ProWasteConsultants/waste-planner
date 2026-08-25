@@ -230,6 +230,33 @@ test('the zone palette is rendered whenever the layout tab opens', () => {
   assert.ok(SOURCE.includes('id="ws-layout-zones"'), 'and it needs somewhere to render');
 });
 
+// ── zone dimensions and traced polygons ─────────────────────────────────
+test('zone placement takes the palette W×D at the click, not a frozen default', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsFixtureAt'), SOURCE.indexOf('// ── MARKUPS'));
+  assert.ok(fn.includes('if (f.zoneType) {'), 'zones re-read dimensions at placement');
+  assert.ok(fn.includes('ws-zone-w'), 'width comes from the palette input');
+  assert.ok(fn.includes('if (zw >= 0.2) f.w = zw;'), 'a blank or absurd input falls back to the default');
+});
+
+test('a zone can be traced as a polygon, riding the room-draw machinery', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsZoneDrawMode'), SOURCE.indexOf('function wsZonePolyFinish'));
+  assert.ok(fn.includes("WS._mode = 'layoutroom';"),
+    'same collection mode, so click-to-corner, Enter, double-click and Esc all come free');
+  const fin = SOURCE.slice(SOURCE.indexOf('function wsZonePolyFinish'), SOURCE.indexOf('function wsRenderBinThumb'));
+  assert.ok(fin.includes('pts: pts.slice()'), 'the traced outline is stored on the item');
+  assert.ok(fin.includes('wsTagBinsToRooms(wsLayoutSlot().rooms, wsLayoutSlot().equip)'),
+    'the bin room picks up the zone by containment');
+  assert.ok(SOURCE.includes('if (WS_LAYOUT._zonePoly) { wsZonePolyFinish(pts, mpp); return; }'),
+    'wsLayoutRoomFinish branches to the zone finisher');
+});
+
+test('a traced zone reports the area measured from its outline everywhere', () => {
+  assert.ok(SOURCE.includes('wsPolyArea(e.pts, mpp).toFixed(1)'),
+    'the on-plan label and the DXF text carry the measured area');
+  assert.ok(SOURCE.includes('(e.pts && e.pts.length >= 3 && mpp) ? wsPolyArea(e.pts, mpp) : e.w * e.d'),
+    'room-usage stats claim the measured area, never the bounding box');
+});
+
 // ── surface 2: provision assignment in the room panel ───────────────────
 test('provisions are assigned in the SIDE PANEL, never on the canvas', () => {
   const pill = SOURCE.slice(SOURCE.indexOf('function wsUpdateRoomPill'), SOURCE.indexOf('function wsPillInk'));

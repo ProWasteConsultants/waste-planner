@@ -123,7 +123,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* Vertical tab rail on the panel's canvas-facing edge. Labels run vertically so
    the rail stays 36px wide at any panel width. */
 .ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:36px;flex-shrink:0;border-right:1px solid #333;padding:8px 0 6px;}
-.ws-tool-tab{writing-mode:vertical-rl;padding:13px 0;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.4);white-space:nowrap;border:none;border-right:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.4px;}
+.ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.4);white-space:nowrap;border:none;border-right:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.4px;min-height:0;}
 .ws-tool-tab:hover{color:rgba(255,255,255,0.7);}
 .ws-tool-tab.active{color:var(--teal);border-right:2px solid var(--teal);}
 .ws-rail-btn{writing-mode:vertical-rl;padding:9px 0;margin:2px 5px;border-radius:5px;border:1px solid #444;background:#2a2a2a;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.7);font-family:inherit;letter-spacing:.5px;white-space:nowrap;}
@@ -1431,7 +1431,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <!-- Layer panel + Markups card -->
         <div class="ws-side-stack" id="ws-side-stack">
         <div class="ws-layer-panel" id="ws-layer-panel" style="display:none;">
-          <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Layers <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
+          <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:grab;" onmousedown="wsPillDragStart(event,'ws-layer-panel')" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Layers <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
           <div class="ws-layer-row">
             <div class="ws-layer-label"><div class="ws-layer-dot" style="background:#7f97a8;"></div>DXF underlay</div>
             <div style="display:flex;gap:4px;align-items:center;">
@@ -1472,7 +1472,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <!-- No inline min-width or display here: inline styles outrank the
              .ws-layer-panel.min rules, which is what stopped this card collapsing. -->
         <div class="ws-layer-panel" id="ws-markup-panel" style="display:none;">
-          <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Markups <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
+          <div class="ws-layer-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:grab;" onmousedown="wsPillDragStart(event,'ws-markup-panel')" onclick="this.parentElement.classList.toggle('min');this.querySelector('span').textContent=this.parentElement.classList.contains('min')?'+':'−';">Markups <span style="font-size:12px;color:rgba(255,255,255,0.55);">−</span></div>
           <div class="ws-mark-body">
             <button class="ws-mark-btn" id="ws-mark-btn-text"     onclick="wsMarkMode('text')"><span class="ws-mark-swatch" style="background:#ECEFF1;"></span>T Callout</button>
             <button class="ws-mark-btn" id="ws-mark-btn-measure"  onclick="wsMarkMode('measure')"><span class="ws-mark-swatch" style="background:#00E5FF;"></span>↔ Measure length</button>
@@ -1526,6 +1526,24 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <!-- Room selection pill: name, schedule assignment, stream subset, fill -->
         <div id="ws-room-pill" onmousedown="event.stopPropagation()"
              style="display:none;position:absolute;z-index:13;flex-direction:column;gap:4px;padding:6px;background:rgba(20,26,26,0.96);border:1px solid #3a4747;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:340px;"></div>
+
+        <!-- Layout actions pill: floats over the canvas, minimisable, draggable by its header -->
+        <div id="ws-actions-pill" onmousedown="event.stopPropagation()"
+             style="display:none;position:absolute;top:12px;right:12px;z-index:13;background:rgba(20,26,26,0.96);border:1px solid #3a4747;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,0.45);">
+          <div onmousedown="wsPillDragStart(event,'ws-actions-pill')"
+               style="display:flex;align-items:center;gap:10px;padding:5px 8px;cursor:grab;user-select:none;">
+            <span style="font-size:9px;font-weight:700;letter-spacing:.6px;color:rgba(255,255,255,0.4);">ACTIONS</span>
+            <button id="ws-actions-min" onclick="wsActionsPillMin()" title="Minimise"
+                    style="margin-left:auto;background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:12px;padding:0 2px;font-family:inherit;">▾</button>
+          </div>
+          <div id="ws-actions-body" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:0 8px 7px;max-width:280px;">
+            <button class="wsl-btn" onclick="wsLayoutDo('undo')">↩ Undo</button>
+            <button class="wsl-btn" onclick="wsLayoutDo('redo')">↪ Redo</button>
+            <label class="wsl-chk"><input type="checkbox" id="ws-layout-clr" checked onchange="wsRenderLayoutLayer()">150 spacing</label>
+            <button class="wsl-btn" id="ws-gen-btn" onclick="wsGenerateLayout()" style="background:#004d4d;border-color:#008080;color:#4BED12;font-weight:700;">✦ Generate layout</button>
+            <button class="wsl-btn wsl-btn-danger" onclick="wsLayoutClearPage()">Clear</button>
+          </div>
+        </div>
       </div>
 
       <!-- PAGE THUMBNAIL BAR -->
@@ -1547,7 +1565,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="ws-tool-tab active" onclick="wsShowTab('calculator',this)" title="Bin Calculator">Bin Calculator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('layout',this)" title="Waste Layout Generator">Layout Generator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('swept',this)" title="Swept Path Generator">Swept Paths</button>
-          <span style="flex:1;"></span>
           <button class="ws-rail-btn" id="ws-panel-max" onclick="wsPanelMaxToggle()" title="Maximise the tools panel">⛶ Max</button>
           <button class="ws-rail-btn" id="ws-save-btn" onclick="wsSaveProject()" style="display:none;" title="Save project">💾 Save</button>
           <button class="ws-rail-btn" id="ws-export-btn" onclick="wsExportDXF()" style="display:none;" title="Export DXF">⬇ DXF</button>
@@ -1598,16 +1615,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                     <button class="wsl-btn" onclick="wsLayoutPlaceMode()" title="Places whichever bin OR equipment item is selected above — the list holds both">Place on plan</button>
                   </div>
                 </div>
-                <div class="wsl-group" style="flex:1;">
-                  <div class="wsl-group-hd">Actions</div>
-                  <div class="wsl-editrow">
-                    <button class="wsl-btn" onclick="wsLayoutDo('undo')">↩ Undo</button>
-                    <button class="wsl-btn" onclick="wsLayoutDo('redo')">↪ Redo</button>
-                    <label class="wsl-chk"><input type="checkbox" id="ws-layout-clr" checked onchange="wsRenderLayoutLayer()">150 spacing</label>
-                    <button class="wsl-btn" id="ws-gen-btn" onclick="wsGenerateLayout()" style="background:#004d4d;border-color:#008080;color:#4BED12;font-weight:700;">✦ Generate layout</button>
-                    <button class="wsl-btn wsl-btn-danger" onclick="wsLayoutClearPage()">Clear</button>
-                  </div>
-                </div>
               </div>
 
               <div class="wsl-group" id="ws-layout-equip-group" style="flex:1.3 1 240px;display:none;">
@@ -1629,6 +1636,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                 </div>
                 <div class="wsl-group-body" id="ws-layout-fixtures" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
                 <div class="wsl-group-hd" style="margin-top:8px;">Zones</div>
+                <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+                  <input id="ws-zone-w" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone width in mm — applied when you click to place">
+                  <span style="font-size:10px;color:rgba(255,255,255,0.4);">×</span>
+                  <input id="ws-zone-d" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone depth in mm — applied when you click to place">
+                  <span style="font-size:10px;color:rgba(255,255,255,0.4);">mm</span>
+                  <button class="wsl-btn" onclick="wsZoneDrawMode()" title="Draw the picked zone as a polygon — click corners, Enter or double-click to close. The area is measured from the outline, and a zone inside a bin room is tagged to it.">▱ Draw</button>
+                </div>
                 <div class="wsl-group-body" id="ws-layout-zones" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
               </div>
 
@@ -12428,6 +12442,8 @@ function wsShowTab(name, btn) {
   // Plan viewer chrome (project name, page nav, zoom) lives in EVERY tab
   if (floatBar) floatBar.style.display = 'flex';
   if (pageNav) pageNav.style.display = (WS.totalPages > 1 ? 'flex' : 'none');
+  const actPill = document.getElementById('ws-actions-pill');
+  if (actPill) actPill.style.display = (name === 'layout') ? '' : 'none';
   if (name !== 'layout' && typeof WS_LAYOUT !== 'undefined') {
     WS_LAYOUT.tabActive = false;
     if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark') wsLayoutEndMode();
@@ -13285,6 +13301,13 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
     wsLayoutSnapshot();
     rows.forEach(r => {
       const t = r.item;
+      if (t.pts) {
+        // A traced zone rotates its outline geometry a quarter turn about its
+        // centre — rot stays 0 because the polygon path IS the truth.
+        t.pts.forEach(q => { const dx = q.x - t.x, dy = q.y - t.y; q.x = t.x - dy; q.y = t.y + dx; });
+        const w0 = t.w; t.w = t.d; t.d = w0;
+        return;
+      }
       // from a free angle, R lands on the next quarter turn rather than adding 90 to 37.5°
       t.rot = (Math.floor(((t.rot || 0) + 0.01) / 90) * 90 + 90) % 360;
       if (t.openings) wsChuteResetRecv(t);
@@ -13441,7 +13464,7 @@ function wsLayoutRoomMode() {
 }
 function wsLayoutEndMode() {
   WS._mode = null; WS_LAYOUT.roomStart = null; WS_LAYOUT.hover = null; WS_LAYOUT._equipPend = null;
-  WS_LAYOUT.roomPts = null; WS_LAYOUT._mark = null; WS_LAYOUT._fixture = null;
+  WS_LAYOUT.roomPts = null; WS_LAYOUT._mark = null; WS_LAYOUT._fixture = null; WS_LAYOUT._zonePoly = null;
   WS_MARK_SUSPEND = null;   // an explicit end-of-mode discards any parked tool
   if (typeof wsMarkSyncButtons === 'function') wsMarkSyncButtons();
   const area = document.getElementById('ws-canvas-area');
@@ -14262,12 +14285,14 @@ function wsLayoutRoomClick(x, y) {
   pts.push(p);
   wsLayoutStatus(pts.length < 3
     ? `${pts.length} point${pts.length === 1 ? '' : 's'} — keep clicking the corners.`
-    : `${pts.length} points — click the first point again, or press Enter, to close the room.`);
+    : `${pts.length} points — click the first point again, or press Enter, to close the outline.`);
   wsRenderLayoutLayer();
 }
 function wsLayoutRoomFinish() {
   const mpp = wsLayoutMpp();
   const pts = WS_LAYOUT.roomPts || [];
+  // A zone polygon rides the same collection mode; only the finish differs.
+  if (WS_LAYOUT._zonePoly) { wsZonePolyFinish(pts, mpp); return; }
   if (pts.length >= 3 && mpp && wsPolyArea(pts, mpp) > 0.3) {
     wsLayoutSnapshot();
     const cr = WS_LAYOUT.activeCalcRoom, rm = WS_CALC_ROOMS.find(r => r.id === cr);
@@ -14761,7 +14786,8 @@ function wsLayoutBind() {
     // aisle end handles: stretch along the aisle's local axis
     // Zones resize the same way aisles do — they are floor-area claims, and the
     // area is the point, so it has to be draggable.
-    const selAisle = wsLayoutSlot().equip.find(x => x.id === WS_LAYOUT.sel && !x.locked &&
+    // (a traced polygon zone has no end handles — its outline is the geometry)
+    const selAisle = wsLayoutSlot().equip.find(x => x.id === WS_LAYOUT.sel && !x.locked && !x.pts &&
                                                     (x.aisle || wsIsZone(x)));
     if (selAisle) {
       const a = (selAisle.rot || 0) * Math.PI / 180, hw = selAisle.w / 2 / mpp;
@@ -15034,6 +15060,8 @@ function wsLayoutBind() {
           b.x = nx; b.y = ny;
           (b.openings || []).forEach(o => { if (o.rx != null) { o.rx += ddx; o.ry += ddy; } });
         } else {
+          // a polygon zone's outline travels with its centre
+          if (b.pts) { const zdx = nx - b.x, zdy = ny - b.y; b.pts.forEach(q => { q.x += zdx; q.y += zdy; }); }
           b.x = nx; b.y = ny;
         }
         // Everything else in the selection moves by the same delta.
@@ -15043,6 +15071,7 @@ function wsLayoutBind() {
           if (ddx || ddy) wsSelected(slot2).forEach(r => {
             if (r.item.id === b.id || r.item.locked) return;
             r.item.x += ddx; r.item.y += ddy;
+            if (r.item.pts) r.item.pts.forEach(q => { q.x += ddx; q.y += ddy; });
             r.item.roomId = wsBinRoomId(slot2.rooms, r.item);
           });
           dg.prevX = b.x; dg.prevY = b.y;
@@ -15447,6 +15476,29 @@ function wsRenderLayoutLayer() {
       const zHex = wsIsZone(e) ? wsZoneColour(e) : (zone ? WS_ZONE_PURPLE : '#DC4646');
       const zc = [parseInt(zHex.slice(1, 3), 16), parseInt(zHex.slice(3, 5), 16),
                   parseInt(zHex.slice(5, 7), 16)].join(',');
+      // A polygon zone (▱ Draw) renders its traced outline: same dashed
+      // boundary and hatch convention, clipped by the polygon, labelled with
+      // the area measured from the outline — not the bounding box.
+      if (zone && e.pts && e.pts.length >= 3) {
+        const ptsStr = e.pts.map(q => q.x.toFixed(1) + ',' + q.y.toFixed(1)).join(' ');
+        const gz = mk('g', {});
+        const clipId = 'ws-zoneclip-' + e.id;
+        const cp = mk('clipPath', { id: clipId }, gz);
+        mk('polygon', { points: ptsStr }, cp);
+        mk('polygon', { points: ptsStr, fill: `rgba(${zc},0.10)`,
+          stroke: selected ? '#FFD54F' : `rgba(${zc},0.85)`, 'stroke-width': selected ? 3 : 2,
+          'stroke-dasharray': '7 5' }, gz);
+        const zb = wsPolyBBox(e.pts), zh = zb.y2 - zb.y1;
+        const hg = mk('g', { 'clip-path': `url(#${clipId})` }, gz);
+        const zstep = Math.max(14, zh * 0.45);
+        for (let t = zb.x1 - zh; t < zb.x2; t += zstep)
+          mk('line', { x1: t, y1: zb.y1, x2: t + zh, y2: zb.y2, stroke: `rgba(${zc},0.40)`, 'stroke-width': 1.2 }, hg);
+        const zt = mk('text', { x: e.x, y: e.y + 4, fill: zHex, 'font-size': 10, 'font-weight': 700,
+          'text-anchor': 'middle' }, gz);
+        zt.textContent = `${wsIsZone(e) ? wsZoneLabel(e) : (e.label || 'Zone')} ${wsPolyArea(e.pts, mpp).toFixed(1)}m²`;
+        keepouts.push({ kind: 'rect', x: e.x, y: e.y, w: e.w, d: e.d, rot: 0, why: 'zone' });
+        return;
+      }
       // Keep-clear aisle: red dashed boundary + 45° hatch, drawn in local
       // coords inside a rotated group so the hatch clips itself by geometry.
       const g2 = mk('g', { transform: `translate(${e.x.toFixed(1)},${e.y.toFixed(1)}) rotate(${e.rot || 0})` });
@@ -15605,7 +15657,11 @@ function wsLayoutUpdateStats(slot, mpp) {
   for (const k in byStream) parts.push(`${byStream[k]} ${k}`);
   if (fp) parts.push(`${fp.toFixed(1)} m² footprint`);
   slot.chutes.forEach(c => { const cs = WS_CHUTE_SPECS[c.type]; if (cs) fp += cs.w * cs.d; });
-  slot.equip.forEach(e => { if (!e.aisle) fp += e.w * e.d; });  // aisles are clearance, not plant
+  // aisles are clearance, not plant; a traced zone claims its measured area
+  slot.equip.forEach(e => {
+    if (e.aisle) return;
+    fp += (e.pts && e.pts.length >= 3 && mpp) ? wsPolyArea(e.pts, mpp) : e.w * e.d;
+  });
   if (slot.chutes.length) parts.push(`${slot.chutes.length} chute${slot.chutes.length === 1 ? '' : 's'}`);
   if (slot.equip.length) parts.push(`${slot.equip.length} equipment`);
   if (roomA) parts.push(`room ${roomA.toFixed(1)} m²` + (fp ? ` · ${(fp / roomA * 100).toFixed(0)}% used` : ''));
@@ -15619,8 +15675,39 @@ function wsLayoutUpdateStats(slot, mpp) {
 // Emit each distinct item once as a BLOCK, then reference it per instance with
 // INSERT. Smaller files, and redefining the block in CAD restyles every copy.
 function wsDXFBlockName(code) { return 'WP_' + String(code || 'ITEM').replace(/[^A-Za-z0-9_]/g, '_').toUpperCase(); }
-function wsLayoutDXFBlocks(mpp, mmx, mmy) {
-  const slot = wsLayoutSlot(), defs = {};
+// Every layer name the payload references, read as strict code/value pairs —
+// a flat regex would mistake an ACI colour value of 8 for a layer group code.
+function wsDXFLayersIn(payload) {
+  const lines = String(payload || '').split('\n');
+  const names = new Set();
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    if (lines[i].trim() === '8') names.add(lines[i + 1].trim());
+  }
+  names.delete('');
+  return [...names].sort();
+}
+// Every DXF this app writes goes through this skeleton. A bare BLOCKS/ENTITIES
+// stream is rejected by Autodesk's viewer as AutoCAD-InvalidFile: R12 needs a
+// HEADER declaring $ACADVER plus a TABLES section defining every linetype,
+// layer and text style the entities reference. The LAYER table is generated by
+// scanning the payload itself — never hardcoded — so a new layer can never be
+// referenced without being defined.
+function wsDXFDocument(blocksSection, entities) {
+  const layers = wsDXFLayersIn(String(blocksSection || '') + String(entities || ''));
+  let t = '0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n0\nENDSEC\n';
+  t += '0\nSECTION\n2\nTABLES\n';
+  t += '0\nTABLE\n2\nLTYPE\n70\n1\n' +
+       '0\nLTYPE\n2\nCONTINUOUS\n70\n0\n3\nSolid line\n72\n65\n73\n0\n40\n0.0\n0\nENDTAB\n';
+  t += `0\nTABLE\n2\nLAYER\n70\n${layers.length}\n` +
+       layers.map(n => `0\nLAYER\n2\n${n}\n70\n0\n62\n7\n6\nCONTINUOUS\n`).join('') + '0\nENDTAB\n';
+  t += '0\nTABLE\n2\nSTYLE\n70\n1\n' +
+       '0\nSTYLE\n2\nSTANDARD\n70\n0\n40\n0.0\n41\n1.0\n50\n0.0\n71\n0\n42\n2.5\n3\ntxt\n4\n\n0\nENDTAB\n';
+  t += '0\nENDSEC\n';
+  return t + String(blocksSection || '') +
+    '0\nSECTION\n2\nENTITIES\n' + String(entities || '') + '0\nENDSEC\n0\nEOF\n';
+}
+function wsLayoutDXFBlocks(mpp, mmx, mmy, slotOpt) {
+  const slot = slotOpt || wsLayoutSlot(), defs = {};
   const add = (code, wM, dM, shp, layer, aci, round) => {
     const nm = wsDXFBlockName(code);
     if (defs[nm]) return nm;
@@ -15648,14 +15735,17 @@ function wsLayoutDXFBlocks(mpp, mmx, mmy) {
     add(b.type + '_' + b.stream, bt.w, bt.d, wsShapeFor(b.type), 'BINS_' + st.id.toUpperCase(), st.aci, false);
   });
   slot.equip.forEach(e => {
-    if (e.aisle) return; // aisles export as hatched polylines on their own layer, not block inserts
+    // Aisles, zones and doors export as raw linework (hatch / door symbol) on
+    // their own layers, never as INSERTs — defining a block here would leave
+    // an orphan definition nothing references.
+    if (e.aisle || e.door || WS_DOOR_KINDS[e.code] || wsIsZone(e) || wsIsHardWasteZone(e)) return;
     const layer = e.fixture ? 'A-WASTE-FIXTURE' : (e.compactor ? 'E-COMPACTOR' : 'A-WASTE-EQUIPMENT');
     add(e.code, e.w, e.d, wsShapeFor(e.code), layer, e.fixture ? 8 : (e.compactor ? 2 : 8), !!e.round);
   });
   return { section: Object.keys(defs).length ? ('0\nSECTION\n2\nBLOCKS\n' + Object.values(defs).join('') + '0\nENDSEC\n') : '', names: defs };
 }
-function wsLayoutDXFEntities(mpp) {
-  const slot = wsLayoutSlot();
+function wsLayoutDXFEntities(mpp, slotOpt) {
+  const slot = slotOpt || wsLayoutSlot();
   let d = '';
   const mmx = v => (v * mpp * 1000).toFixed(1);
   const mmy = v => (-v * mpp * 1000).toFixed(1);
@@ -15755,7 +15845,10 @@ function wsLayoutDXFEntities(mpp) {
       });
       return;
     }
-    const zone = wsIsHardWasteZone(e) && !e.aisle;
+    // Same zone detection as the screen renderer: every typed zone exports as
+    // hatch linework on its own layer. A non-hardwaste zone falling through to
+    // the equipment path used to INSERT an anonymous WP_ITEM block.
+    const zone = (wsIsZone(e) || wsIsHardWasteZone(e)) && !e.aisle;
     if (e.aisle || zone) {
       // Boundary + 45° hatch lines so the keep-clear intent survives into CAD.
       // Hard waste zones get their own layer and colour (magenta, ACI 6) so they
@@ -15763,6 +15856,14 @@ function wsLayoutDXFEntities(mpp) {
       // A custom zone gets a layer derived from its label so a CAD set stays
       // readable; predefined types get a stable per-type layer.
       const zl = zone ? wsZoneDxfLayer(e) : 'A-WASTE-AISLES', zc = zone ? 6 : 1;
+      if (zone && e.pts && e.pts.length >= 3) {
+        // Traced zone: its polygon boundary is the geometry — the label carries
+        // the area measured from the outline. (Hatching is left to CAD.)
+        d += poly(zl, zc, e.pts.map(q => [q.x, q.y]).concat([[e.pts[0].x, e.pts[0].y]]));
+        d += text(zl, zc, e.x, e.y, 150,
+          `${String(wsIsZone(e) ? wsZoneLabel(e) : (e.label || 'ZONE')).toUpperCase()} ${wsPolyArea(e.pts, mpp).toFixed(1)}m2`);
+        return;
+      }
       d += rect(zl, zc, e.x, e.y, e.w, e.d, e.rot || 0);
       const hw = e.w / 2 / mpp, hd = e.d / 2 / mpp, a = (e.rot || 0) * Math.PI / 180;
       const cos = Math.cos(a), sin = Math.sin(a);
@@ -15787,14 +15888,11 @@ function wsLayoutDXFEntities(mpp) {
   slot.bins.forEach(b => {
     const bt = wsBinType(b.type); if (!bt) return;
     const st = WS_STREAMS.find(s => s.id === b.stream) || WS_STREAMS[0];
-    const hw = bt.w / 2 / mpp, hd = bt.d / 2 / mpp, a = (b.rot || 0) * Math.PI / 180;
-    const cos = Math.cos(a), sin = Math.sin(a);
-    const cor = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd], [-hw, -hd]]
-      .map(([lx, ly]) => [b.x + lx * cos - ly * sin, b.y + lx * sin + ly * cos]);
     const layer = 'BINS_' + st.id.toUpperCase();
-    d += `0\nPOLYLINE\n8\n${layer}\n62\n${st.aci}\n66\n1\n70\n0\n`;
-    cor.forEach(p => { d += `0\nVERTEX\n8\n${layer}\n10\n${mmx(p[0])}\n20\n${mmy(p[1])}\n30\n0\n`; });
-    d += '0\nSEQEND\n';
+    // Reference the block defined for this type+stream. Bins used to draw a
+    // raw bounding rectangle here while their blocks sat unreferenced — which
+    // lost the drawn plan shape in CAD and left orphan definitions.
+    d += `0\nINSERT\n8\n${layer}\n62\n${st.aci}\n2\n${wsDXFBlockName(b.type + '_' + b.stream)}\n10\n${mmx(b.x)}\n20\n${mmy(b.y)}\n30\n0\n50\n${(-(b.rot || 0)).toFixed(1)}\n`;
     d += `0\nTEXT\n8\n${layer}\n62\n${st.aci}\n10\n${mmx(b.x)}\n20\n${mmy(b.y)}\n30\n0\n40\n150\n1\n${bt.label}\n72\n1\n11\n${mmx(b.x)}\n21\n${mmy(b.y)}\n31\n0\n`;
   });
   return d;
@@ -16532,13 +16630,63 @@ function wsZoneMode(typeId) {
   if (!t) return;
   if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
   if (!wsNeedScale()) return;
+  // Remember the pick and prefill the W×D inputs with the type default — the
+  // values ACTUALLY used are read back at placement, so they can be edited
+  // between arming and clicking.
+  WS_LAYOUT._zoneType = t.id;
+  const zw = document.getElementById('ws-zone-w'), zd = document.getElementById('ws-zone-d');
+  if (zw) zw.value = Math.round(t.w * 1000);
+  if (zd) zd.value = Math.round(t.d * 1000);
   WS_LAYOUT._fixture = { code: 'ZONE_' + t.id, label: t.label, w: t.w, d: t.d,
                          round: false, aisle: false, zoneType: t.id,
                          provisionStream: t.provision || null, col: t.col };
   WS._mode = 'layoutfixture';
   document.getElementById('ws-canvas-area').style.cursor = 'crosshair';
   document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
-  wsLayoutStatus(`Click to place the ${t.label}. Drag its end handles to resize once placed. Esc to stop.`);
+  wsLayoutStatus(`Click to place the ${t.label} at the W×D set in the palette — or use ▱ Draw to trace its real outline. Esc to stop.`);
+}
+// Zones can also be DRAWN as a polygon — click corners, Enter or double-click
+// closes — for the real shape of a store or claim. The measured outline is
+// what the area label, the DXF and the room stats report, never a nominal W×D.
+// Rides the layoutroom polygon-collection machinery wholesale; only the
+// finish differs (wsLayoutRoomFinish branches on _zonePoly).
+function wsZoneDrawMode() {
+  const t = WS_ZONE_TYPES[WS_LAYOUT._zoneType || ''] || null;
+  if (!t) { wsLayoutStatus('Pick a zone type first, then ▱ Draw.'); return; }
+  if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
+  if (!wsNeedScale()) return;
+  WS_LAYOUT._zonePoly = { type: t.id };
+  WS_LAYOUT.roomPts = [];
+  WS._mode = 'layoutroom';
+  document.getElementById('ws-canvas-area').style.cursor = 'crosshair';
+  document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
+  wsLayoutStatus(`Click the corners of the ${t.label} — Enter or double-click to close. Esc cancels.`);
+}
+function wsZonePolyFinish(pts, mpp) {
+  const t = WS_ZONE_TYPES[(WS_LAYOUT._zonePoly || {}).type];
+  if (t && pts.length >= 3 && mpp && wsPolyArea(pts, mpp) > 0.1) {
+    wsLayoutSnapshot();
+    const bb = wsPolyBBox(pts);
+    const it = { id: 'fx_' + Date.now(), x: (bb.x1 + bb.x2) / 2, y: (bb.y1 + bb.y2) / 2, rot: 0,
+      code: 'ZONE_' + t.id, label: t.label, pts: pts.slice(),
+      w: (bb.x2 - bb.x1) * mpp, d: (bb.y2 - bb.y1) * mpp,
+      known: true, fixture: false, aisle: false, round: false,
+      zoneType: t.id, provisionStream: t.provision || null, col: t.col };
+    wsLayoutSlot().equip.push(it);
+    // the bin room picks up the zone: containment tags it like any equipment
+    wsTagBinsToRooms(wsLayoutSlot().rooms, wsLayoutSlot().equip);
+    WS_LAYOUT.sel = it.id;
+    wsLayoutAutosave();
+    WS_LAYOUT.roomPts = null; WS_LAYOUT._zonePoly = null;
+    wsLayoutEndMode();
+    wsRenderLayoutLayer();
+    // after endMode, so its default hint does not stomp the measurement
+    wsLayoutStatus(`${t.label} drawn — ${wsPolyArea(pts, mpp).toFixed(1)} m² measured from the outline.`);
+    return;
+  }
+  WS_LAYOUT.roomPts = null; WS_LAYOUT._zonePoly = null;
+  wsLayoutEndMode();
+  wsRenderLayoutLayer();
 }
 function wsRenderBinThumb() {
   const el = document.getElementById('ws-bin-thumb'); if (!el) return;
@@ -16578,6 +16726,14 @@ function wsFixtureAt(x, y) {
   const f = WS_LAYOUT._fixture; if (!f) { wsLayoutEndMode(); return; }
   wsLayoutSnapshot();
   const id = 'fx_' + Date.now();
+  // A zone takes the W×D typed in the palette at the moment of the click, so
+  // the dimensions can be set per placement without re-arming the tool.
+  if (f.zoneType) {
+    const zw = +(document.getElementById('ws-zone-w')?.value || 0) / 1000;
+    const zd = +(document.getElementById('ws-zone-d')?.value || 0) / 1000;
+    if (zw >= 0.2) f.w = zw;
+    if (zd >= 0.2) f.d = zd;
+  }
   wsLayoutSlot().equip.push({ id, x, y, rot: 0, code: f.code, label: f.label,
     w: f.w, d: f.d, known: true, fixture: !f.aisle, aisle: !!f.aisle, round: !!f.round,
     door: f.door || null,
@@ -16980,7 +17136,7 @@ function wsLayoutExportDXF() {
   const blocks = wsLayoutDXFBlocks(mpp,
     (v) => ((v - 0) * mpp * 1000).toFixed(1), (v) => (-(v) * mpp * 1000).toFixed(1));
   if (!ents) { wsLayoutStatus('Nothing to export — place bins or draw a room first.'); return; }
-  const d = blocks.section + '0\nSECTION\n2\nENTITIES\n' + ents + '0\nENDSEC\n0\nEOF\n';
+  const d = wsDXFDocument(blocks.section, ents);
   const blob = new Blob([d], { type: 'application/dxf' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -18125,7 +18281,7 @@ function wsSweptDXF(){
   const s = wsSweptSlot();
   const done = s.paths.filter(p => p.result);
   if (!done.length) return;
-  let d = '0\nSECTION\n2\nENTITIES\n';
+  let d = '';
   done.forEach((path, pi) => {
     const r = path.result;
     const v = wsVehById(path.vehicleId);
@@ -18150,7 +18306,7 @@ function wsSweptDXF(){
     });
     path.nodes.forEach(p => { d += `0\nPOINT\n8\n${L}_WAYPOINTS\n10\n${mm(p)}\n30\n0\n`; });
   });
-  d += '0\nENDSEC\n0\nEOF\n';
+  d = wsDXFDocument('', d);
   const blob = new Blob([d], { type: 'application/dxf' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -19295,7 +19451,7 @@ function wsPanelWidthFor(tab) {
   const shellW = (shell && shell.clientWidth) || window.innerWidth;
   if (_wsPanelMax) return Math.max(360, shellW - 48);
   if (tab === 'calculator') return Math.min(Math.round(shellW * 0.66), 1100);
-  return 440;   // layout + swept: one column of tool groups
+  return 348;   // layout + swept: one room-card-wide column, plan stays visible
 }
 function wsPanelApplyWidth() {
   if (_wsPanelCollapsed) return;
@@ -19339,6 +19495,56 @@ function wsPanelToggle() {
 }
 // The calculator width tracks the window, so re-derive it on resize.
 window.addEventListener('resize', wsPanelApplyWidth);
+
+// ── draggable floating pills ────────────────────────────────────────────
+// Any floating card (Layers, Markups, Actions) can be repositioned by its
+// header. The first drag lifts the card out of its stack into the canvas
+// container at its current visual position, so nothing jumps. A drag that
+// actually moved suppresses the header's click, so dragging never also
+// collapses the card.
+let _wsPillDragMoved = false;
+document.addEventListener('click', e => {
+  if (_wsPillDragMoved) { e.stopPropagation(); e.preventDefault(); _wsPillDragMoved = false; }
+}, true);
+function wsPillDragStart(e, id) {
+  if (e.button !== 0) return;
+  if (e.target.closest('button,select,input,label')) return;   // controls keep working
+  const el = document.getElementById(id); if (!el) return;
+  e.preventDefault(); e.stopPropagation();
+  const stack = document.getElementById('ws-side-stack');
+  const host = (stack && stack.parentElement) || el.parentElement;
+  const hr = host.getBoundingClientRect(), r = el.getBoundingClientRect();
+  if (el.parentElement !== host) {
+    host.appendChild(el);
+    el.onmousedown = ev => ev.stopPropagation();   // pan guard travels with the card
+  }
+  el.style.position = 'absolute';
+  el.style.left = (r.left - hr.left) + 'px'; el.style.top = (r.top - hr.top) + 'px';
+  el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.zIndex = 13;
+  const sx = e.clientX, sy = e.clientY, ox = r.left - hr.left, oy = r.top - hr.top;
+  let moved = false;
+  const move = ev => {
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+    el.style.left = Math.max(0, Math.min(hr.width - 60, ox + dx)) + 'px';
+    el.style.top = Math.max(0, Math.min(hr.height - 24, oy + dy)) + 'px';
+  };
+  const up = () => {
+    _wsPillDragMoved = moved;
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+}
+function wsActionsPillMin() {
+  const body = document.getElementById('ws-actions-body');
+  const btn = document.getElementById('ws-actions-min');
+  if (!body) return;
+  const min = body.style.display !== 'none';
+  body.style.display = min ? 'none' : '';
+  if (btn) { btn.textContent = min ? '▸' : '▾'; btn.title = min ? 'Expand' : 'Minimise'; }
+}
 
 // ── AUTOSAVE DRAFT ────────────────────────────────────────────
 let _wsDraftTimer = null;
