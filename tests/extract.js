@@ -98,6 +98,8 @@ const LAYOUT_BLOCKS = [
   ['wsRoomTargets',     /^function wsRoomTargets\(/],
   ['wsRoomReconcile',   /^function wsRoomReconcile\(/],
   ['wsEquipLibrary', /^function wsEquipLibrary\(/],
+  ['wsPathPolys', /^function wsPathPolys\(/],
+  ['wsShapePolys', /^function wsShapePolys\(/],
   ['WS_STREAM_ALIAS', /^const WS_STREAM_ALIAS = \{/],
   ['wsStreamKey', /^function wsStreamKey\(/],
   ['wsStreamId', /^function wsStreamId\(/],

@@ -214,6 +214,27 @@ test('the door kinds offered match the fixtures list', () => {
   assert.match(SOURCE, /door: 'ROLLER'/);
 });
 
+// ── unit-box path parsing (shared by SVG, DXF and palette thumbnails) ───
+test('wsPathPolys: Z followed by M starts a clean subpath', () => {
+  // The baler detail shape: a closed chamber plus a separate ejection line.
+  // Z is consumed at the top of the parse loop — a second advance here used to
+  // eat the following M and draw a stray diagonal through the shape.
+  const polys = ws.wsPathPolys('M0.10,0.10 L0.90,0.10 L0.90,0.62 L0.10,0.62 Z M0.10,0.78 L0.90,0.78');
+  assert.equal(polys.length, 2);
+  assert.equal(polys[0].length, 5, 'the closed subpath ends back at its start');
+  assert.deepEqual(polys[0][4], { x: 0.10, y: 0.10 });
+  assert.deepEqual(polys[1], [{ x: 0.10, y: 0.78 }, { x: 0.90, y: 0.78 }],
+    'the second subpath must not inherit the closed one\'s start point');
+});
+
+test('wsShapePolys: normalises the unit box to the real footprint, centred', () => {
+  const polys = ws.wsShapePolys('M0,0 L1,0 L1,1 L0,1 Z', 2.0, 1.0, 0.05); // 2m × 1m at 20 px/m
+  assert.equal(polys.length, 1);
+  const xs = polys[0].map(p => p.x), ys = polys[0].map(p => p.y);
+  assert.equal(Math.max(...xs), 20); assert.equal(Math.min(...xs), -20);
+  assert.equal(Math.max(...ys), 10); assert.equal(Math.min(...ys), -10);
+});
+
 // ── wiring guards ───────────────────────────────────────────────────────
 test('shift is read during both room drags', () => {
   assert.match(SOURCE, /if \(e\.shiftKey\)\s*\{\s*\r?\n\s*const lock = wsSnapAxis\(p\.x - dg\.startX, p\.y - dg\.startY\);/,

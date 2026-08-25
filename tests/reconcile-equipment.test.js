@@ -13,7 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadLayout } = require('./extract.js');
+const { loadLayout, SOURCE } = require('./extract.js');
 
 const ws = loadLayout();
 
@@ -511,6 +511,47 @@ test('wsEquipPickerGroups: an item with no dimensions still lists', () => {
   const g = ws.wsEquipPickerGroups([rec('x', { category: 'Compaction', label: 'X' })], ALL);
   assert.equal(g[0].items[0].dims, null, 'no size rather than a fabricated one');
   assert.deepEqual(ws.wsEquipPickerGroups(null, ALL), []);
+});
+
+// ── the equipment palette: thumbnails and minimal text ──────────────────
+// The button shows the plan-view shape and the name, nothing else. Size,
+// stream restrictions and pairing stay in wsEquipPickerGroups and surface in
+// the tooltip — the detail is out of the way, not lost.
+test('the equipment palette is generated from the picker groups, not hand-listed', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsRenderEquipPalette'),
+                          SOURCE.indexOf('function wsEquipPaletteMode'));
+  assert.ok(fn.includes('wsEquipPickerGroups(WS_EQUIP_DB, order)'),
+    'must render from the same grouped data these tests cover');
+  assert.ok(fn.includes("wsEquipPaletteMode('${esc(it.id)}')"),
+    'each entry arms placement by ID, never by name');
+  assert.ok(fn.includes('wsShapeThumb(r.code || it.id'),
+    'the thumbnail draws through wsShapeFor, the single geometry source');
+  assert.ok(fn.includes("it.dims ? it.dims + ' mm' : 'no size in library'"),
+    'dimensions belong to the tooltip, and a missing size says so rather than fabricating one');
+  assert.ok(!fn.includes('wsl-fx-dim'), 'no visible dimension text on the button');
+});
+
+test('a palette pick routes through the shared select + place-mode path', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsEquipPaletteMode'),
+                          SOURCE.indexOf('// A zone is a floor-area claim'));
+  assert.ok(fn.includes('bs.value = id'), 'the select stays the single state holder');
+  assert.ok(fn.includes('wsLayoutPlaceMode()'),
+    'same placement mode as the Place button and the room cards');
+});
+
+test('the equipment palette renders on tab open and whenever the DB populates the select', () => {
+  assert.ok(SOURCE.includes('wsRenderFixturePalette(); wsRenderZonePalette(); wsRenderEquipPalette();'),
+    'the palette must appear alongside fixtures and zones');
+  assert.ok(SOURCE.includes("if (typeof wsRenderEquipPalette === 'function') wsRenderEquipPalette();"),
+    'and re-render when wsLayoutPopulateBins refreshes from the DB');
+  assert.ok(SOURCE.includes('id="ws-layout-equipment"'), 'and it needs somewhere to render');
+});
+
+test('equipment options in the select are name-only — detail lives in the palette tooltip', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsLayoutPopulateBins'),
+                          SOURCE.indexOf('function wsLayoutSlot'));
+  assert.ok(fn.includes('`<option value="${esc(it.id)}">${esc(it.label)}</option>`'),
+    'no dims, badges or pairing tags in the option text');
 });
 
 // ── B5: legacy migration ────────────────────────────────────────────────
