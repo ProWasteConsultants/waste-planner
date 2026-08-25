@@ -6439,15 +6439,28 @@ function cgNorm(s) { return String(s || &#x27;&#x27;).toLowerCase().replace(/\b(
 async function cgFetchStructured(councilName) {
   try {
     if (!state._cgAll) {
-      // C1: only the latest non-superseded version of each council is used;
-      // the fallback keeps working against a pre-migration table.
-      let resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=id,council_name,state,version,version_label,requirements&amp;superseded_at=is.null&amp;order=version.desc`, { headers: { apikey: CG_ANON } });
+      // C1: the latest non-superseded version is preferred, but a fresh upload
+      // has no structured requirements until its extraction is approved and
+      // served — so a live-but-empty version falls back to the newest version
+      // that HAS requirements. Pre-migration fallback keeps old tables working.
+      let resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=id,council_key,council_name,state,version,version_label,superseded_at,requirements&amp;order=version.desc`, { headers: { apikey: CG_ANON } });
       if (!resp.ok) resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=council_name,state,version,requirements`, { headers: { apikey: CG_ANON } });
-      state._cgAll = resp.ok ? await resp.json() : [];
+      const all = resp.ok ? await resp.json() : [];
+      const serving = {};
+      all.forEach(r =&gt; {
+        const k = r.council_key || r.council_name;
+        const g = serving[k] = serving[k] || {};
+        if (!r.superseded_at &amp;&amp; !g.live) g.live = r;
+        if ((r.requirements || []).length &amp;&amp; !g.withReqs) g.withReqs = r;
+      });
+      state._cgAll = Object.values(serving).map(g =&gt;
+        (g.live &amp;&amp; (g.live.requirements || []).length) ? g.live
+          : g.withReqs ? Object.assign({}, g.withReqs, { servedFallback: !!g.live })
+          : g.live).filter(Boolean);
     }
     const target = cgNorm(councilName);
     if (!target) return null;
-    return state._cgAll.find(r => { const n = cgNorm(r.council_name); return n === target || n.includes(target) || target.includes(n); }) || null;
+    return state._cgAll.find(r =&gt; { const n = cgNorm(r.council_name); return n === target || n.includes(target) || target.includes(n); }) || null;
   } catch (e) { return null; }
 }
 async function cgStructuredCheck() {
@@ -9227,27 +9240,80 @@ async function crqExtract(councilKey, localFile) {
   } catch (err) { crqMsg('Extraction failed: ' + (err.message || err), true); }
 }
 
+// ── approved rows → the checker's serving format ────────────────────────────
+// The compliance checker and WMP consume the guideline row's JSONB
+// `requirements`. Approved council_requirements rows are projected into that
+// shape by an EXPLICIT admin action (crqServe) — never automatically — which
+// is what finally flips consumers off the previous version's requirements.
+// Pure: rows in, legacy items out.
+function crqToLegacy(rows) {
+  const cat = { generation_rate: 'generation_rates', room_dimension: 'storage',
+    aisle_width: 'storage', chute_spec: 'chutes', collection_limit: 'collection',
+    equipment_rule: 'other', stream_split: 'generation_rates', other: 'other' };
+  const applies = u => {
+    const s = String(u || '').toLowerCase();
+    if (/res/.test(s)) return 'residential';
+    if (/com|retail|office/.test(s)) return 'commercial';
+    if (/mix|mud/.test(s)) return 'mixed';
+    return 'all';
+  };
+  return (rows || []).filter(r => r && r.status === 'approved' && r.clause_ref).map(r => {
+    const pg = /p\.?\s*(\d+)/i.exec(r.clause_ref || '');
+    return {
+      clause: r.clause_ref,
+      page: pg ? parseInt(pg[1], 10) : null,
+      category: cat[r.requirement_type] || 'other',
+      applies_to: applies(r.use_class),
+      requirement: r.value_text || '',
+      quantitative: (r.value_num === 0 || r.value_num) ? { value: +r.value_num, unit: r.unit || null } : null,
+      stream: r.stream || null,
+    };
+  });
+}
+async function crqServe(gid) {
+  const { data: appr, error } = await sb.from('council_requirements')
+    .select('*').eq('council_guideline_id', gid).eq('status', 'approved');
+  if (error) { crqMsg('Load failed: ' + error.message, true); return; }
+  const legacy = crqToLegacy(appr);
+  if (!legacy.length) { crqMsg('Nothing approved for this document yet — approve rows first.', true); return; }
+  if (!confirm(`Serve ${legacy.length} approved requirements to the compliance checker and WMP for this document? This replaces what its previous version was serving.`)) return;
+  const { error: upErr } = await sb.from('council_guidelines')
+    .update({ requirements: legacy, updated_at: new Date().toISOString() }).eq('id', gid);
+  if (upErr) { crqMsg('Serve failed: ' + upErr.message, true); return; }
+  crqMsg(`✓ ${legacy.length} approved requirements now serving — the older version stops being used.`);
+  cgLoad();
+}
+
 // ── the review queue ────────────────────────────────────────────────────────
 const CRQ_Q = { rows: [], docs: {} };
 async function crqLoad() {
   const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
   const { data, error } = await sb.from('council_requirements')
-    .select('*').eq('status', 'proposed').order('created_at');
+    .select('*').order('created_at');
   if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Queue load failed: ${error.message} — has sql/2026-08-25-package-c3-council-requirements.sql been run?</div>`; return; }
-  CRQ_Q.rows = data || [];
+  // Only PROPOSED rows are editable in the queue; approved/rejected are
+  // counted so a fully-reviewed document keeps its Serve button visible.
+  CRQ_Q.rows = (data || []).filter(r => r.status === 'proposed');
+  CRQ_Q.counts = {};
+  (data || []).forEach(r => {
+    const c = CRQ_Q.counts[r.council_guideline_id] = CRQ_Q.counts[r.council_guideline_id] || { approved: 0, rejected: 0, proposed: 0 };
+    c[r.status] = (c[r.status] || 0) + 1;
+  });
   CRQ_Q.docs = {};
-  const gids = [...new Set(CRQ_Q.rows.map(r => r.council_guideline_id))];
+  const gids = [...new Set((data || []).map(r => r.council_guideline_id))];
   if (gids.length) {
     const { data: docs } = await sb.from('council_guidelines')
-      .select('id, council_name, version, version_label, source_file').in('id', gids);
+      .select('id, council_name, version, version_label, source_file, requirements').in('id', gids);
     (docs || []).forEach(d => { CRQ_Q.docs[d.id] = d; });
   }
   crqRender();
 }
 function crqRender() {
   const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
-  if (!CRQ_Q.rows.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Queue is empty — use 🧾 Extract to queue on a library document above.</div>'; return; }
+  const gidsAll = Object.keys(CRQ_Q.counts || {});
+  if (!gidsAll.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Queue is empty — use 🧾 Extract to queue on a library document above.</div>'; return; }
   const byDoc = {};
+  gidsAll.forEach(g => { byDoc[g] = []; });
   CRQ_Q.rows.forEach(r => (byDoc[r.council_guideline_id] = byDoc[r.council_guideline_id] || []).push(r));
   const streamOpts = s => `<option value="">— none —</option>` + CRQ_STREAMS.map(x => `<option ${x === s ? 'selected' : ''}>${x}</option>`).join('');
   const typeOpts = t => CRQ_TYPES.map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('');
@@ -9258,9 +9324,10 @@ function crqRender() {
     <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
         <span style="font-weight:700;font-size:12px;">${cgbEsc(d.council_name || 'Unknown document')} v${d.version ?? '?'}${d.version_label ? ' (' + cgbEsc(d.version_label) + ')' : ''}</span>
-        <span style="font-size:10.5px;color:var(--muted);">${rows.length} proposed</span>
+        <span style="font-size:10.5px;color:var(--muted);">${rows.length} proposed${(CRQ_Q.counts[gid]?.approved || 0) ? ' · ' + CRQ_Q.counts[gid].approved + ' approved' : ''}${(CRQ_Q.counts[gid]?.rejected || 0) ? ' · ' + CRQ_Q.counts[gid].rejected + ' rejected' : ''}${(d.requirements || []).length ? ' · serving ' + d.requirements.length : ' · serving nothing yet'}</span>
         <span style="flex:1"></span>
-        <button class="btn" title="Approve every row in this document as it stands — verify them against the PDF first" onclick="crqBulkApprove('${gid}')">✓ Approve all ${rows.length}</button>
+        ${(CRQ_Q.counts[gid]?.approved || 0) ? `<button class="btn" style="background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;" title="Publish the approved set to the compliance checker and WMP — this is the explicit step that stops the previous version serving" onclick="crqServe('${gid}')">⇧ Serve ${CRQ_Q.counts[gid].approved} approved</button>` : ''}
+        ${rows.length ? `<button class="btn" title="Approve every row in this document as it stands — verify them against the PDF first" onclick="crqBulkApprove('${gid}')">✓ Approve all ${rows.length}</button>` : ''}
       </div>
       <div style="display:grid;grid-template-columns:130px 90px 84px 70px 76px 1fr 96px 108px;gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">
         <span>Type</span><span>Use class</span><span>Stream</span><span>Value</span><span>Unit</span><span>Text</span><span>Clause</span><span></span>
@@ -9297,10 +9364,15 @@ async function crqDecide(id, status) {
   const patch = { ...edits, status, reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() };
   const { error } = await sb.from('council_requirements').update(patch).eq('id', id).eq('status', 'proposed');
   if (error) { crqMsg('Update failed: ' + error.message, true); return; }
+  const row = CRQ_Q.rows.find(r => r.id === id);
   CRQ_Q.rows = CRQ_Q.rows.filter(r => r.id !== id);
-  const el = document.getElementById('crq-row-' + id); if (el) el.remove();
-  crqMsg(status === 'approved' ? '✓ Approved.' : 'Rejected.');
-  if (!CRQ_Q.rows.length) crqRender();
+  if (row && CRQ_Q.counts[row.council_guideline_id]) {
+    const c = CRQ_Q.counts[row.council_guideline_id];
+    c.proposed = Math.max(0, (c.proposed || 0) - 1);
+    c[status] = (c[status] || 0) + 1;
+  }
+  crqMsg(status === 'approved' ? '✓ Approved — use ⇧ Serve when the set is ready.' : 'Rejected.');
+  crqRender();
 }
 async function crqBulkApprove(gid) {
   const rows = CRQ_Q.rows.filter(r => r.council_guideline_id === gid);
@@ -23886,17 +23958,32 @@ async function creqLoad(d) {
   CREQ.pack = null; CREQ.loadedFor = key;
   if (!d.council || typeof sb === 'undefined' || !sb) return null;
   try {
-    // C1: only the latest non-superseded version of each council is consumed.
-    // The pre-migration fallback keeps the WMP working until the SQL is run.
+    // C1: the latest non-superseded version of each council is preferred — but
+    // a fresh upload arrives with NO structured requirements until a new
+    // extraction is approved and served, so a live-but-empty version falls
+    // back to the newest version that HAS requirements. The check still pins
+    // the version it actually used. Pre-migration fallback keeps the WMP
+    // working until the SQL is run.
     let { data, error } = await sb.from('council_guidelines')
-      .select('id,council_key,council_name,state,version,version_label,requirements')
-      .is('superseded_at', null).order('version', { ascending: false });
+      .select('id,council_key,council_name,state,version,version_label,superseded_at,requirements')
+      .order('version', { ascending: false });
     if (error) ({ data } = await sb.from('council_guidelines')
       .select('council_key,council_name,state,version,requirements'));
     if (!data?.length) return null;
+    const serving = {};
+    data.forEach(r => {
+      const k = r.council_key || r.council_name;
+      const g = serving[k] = serving[k] || {};
+      if (!r.superseded_at && !g.live) g.live = r;
+      if ((r.requirements || []).length && !g.withReqs) g.withReqs = r;
+    });
+    const packs = Object.values(serving).map(g =>
+      (g.live && (g.live.requirements || []).length) ? g.live
+        : g.withReqs ? { ...g.withReqs, servedFallback: !!g.live }
+        : g.live).filter(Boolean);
     const want = d.council.trim().toLowerCase();
-    const hit = data.find(r => (r.council_name || '').trim().toLowerCase() === want)
-             || data.find(r => want.includes((r.council_name || '').trim().toLowerCase()) && r.council_name)
+    const hit = packs.find(r => (r.council_name || '').trim().toLowerCase() === want)
+             || packs.find(r => want.includes((r.council_name || '').trim().toLowerCase()) && r.council_name)
              || null;
     CREQ.pack = hit;
     // Record WHICH document this WMP is being checked against. p.wmp saves
@@ -23963,7 +24050,7 @@ async function creqRun() {
     </li>`;
   el.innerHTML = `
     <div style="font-size:11px;color:#9BB0B0;margin-bottom:6px;">
-      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''}${pack.version_label ? ' (' + wmpgEsc(pack.version_label) + ')' : ''} — ${f.length} requirements
+      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''}${pack.version_label ? ' (' + wmpgEsc(pack.version_label) + ')' : ''}${pack.servedFallback ? ' · <span style="color:#EFB080;">a newer upload exists — serving this version until its extraction is approved</span>' : ''} — ${f.length} requirements
       <span style="color:#EF8080;">${fails.length} not met</span> ·
       <span style="color:#EFB080;">${unk.length} unstated</span> ·
       <span style="color:#81C784;">${pass.length} met</span> ·

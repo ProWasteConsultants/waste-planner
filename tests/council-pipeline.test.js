@@ -51,18 +51,20 @@ test('C1: retiring a council supersedes — the delete path is gone', () => {
 });
 
 // ── C1: consumers read the latest non-superseded version ────────────────
-test('C1: the WMP requirements check uses only live versions and pins the one it used', () => {
+test('C1: the WMP requirements check serves per-council versions and pins the one it used', () => {
   const fn = SOURCE.slice(SOURCE.indexOf('async function creqLoad'), SOURCE.indexOf('function creqEvaluate'));
-  assert.ok(fn.includes(".is('superseded_at', null).order('version', { ascending: false })"),
-    'latest non-superseded only');
+  assert.ok(fn.includes(".order('version', { ascending: false })"),
+    'versions are walked newest-first');
+  assert.ok(fn.includes('if (!r.superseded_at && !g.live) g.live = r;'),
+    'the live version is preferred');
   assert.ok(fn.includes('d.creqSource = hit ? { guidelineId: hit.id || null'),
     'the WMP snapshot records guideline id + version (persists via p.wmp)');
   assert.ok(fn.includes("version: hit.version ?? null"), 'version is pinned, not re-derived later');
 });
 
-test('C1: the compliance checker fetches live versions and stamps the scan', () => {
-  assert.ok(SOURCE.includes('superseded_at=is.null&amp;order=version.desc'),
-    'the iframe REST fetch filters superseded versions');
+test('C1: the compliance checker fetches versions newest-first and stamps the scan', () => {
+  assert.ok(SOURCE.includes('superseded_at,requirements&amp;order=version.desc'),
+    'the iframe REST fetch carries the lifecycle column, newest first');
   assert.ok(SOURCE.includes('state.checkedAgainst = structuredGuidelines ? {'),
     'each AI check records which guideline version it ran against');
 });
@@ -121,7 +123,49 @@ test('C3: approval is the only path to machine-usable rows', () => {
   assert.ok(fn.includes(".eq('status', 'proposed')"),
     'a decision only ever moves a PROPOSED row — no re-approving rejected rows by accident');
   const q = SOURCE.slice(SOURCE.indexOf('async function crqLoad'), SOURCE.indexOf('function crqRender'));
-  assert.ok(q.includes(".eq('status', 'proposed')"), 'the queue lists proposed rows only');
+  assert.ok(q.includes("CRQ_Q.rows = (data || []).filter(r => r.status === 'proposed');"),
+    'only proposed rows are editable in the queue');
+});
+
+// ── check-in amendments ─────────────────────────────────────────────────
+test('a live version with no requirements falls back — a fresh upload never blanks the checker', () => {
+  const wmp = SOURCE.slice(SOURCE.indexOf('async function creqLoad'), SOURCE.indexOf('function creqEvaluate'));
+  assert.ok(wmp.includes('servedFallback'), 'the WMP check serves the newest version WITH requirements');
+  assert.ok(wmp.includes('g.withReqs'), 'fallback picks by content, not just by liveness');
+  assert.ok(SOURCE.includes('Object.assign({}, g.withReqs, { servedFallback:'),
+    'the compliance checker iframe applies the same fallback');
+  assert.ok(SOURCE.includes('serving this version until its extraction is approved'),
+    'fallback serving is visible on the WMP check, not silent');
+});
+
+test('approved rows reach consumers only through the explicit Serve action', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function crqToLegacy'), SOURCE.indexOf('// ── the review queue'));
+  assert.ok(fn.includes('async function crqServe'), 'the bridge exists');
+  assert.ok(fn.includes('if (!confirm('), 'serving is confirmed, never silent');
+  const decide = SOURCE.slice(SOURCE.indexOf('async function crqDecide'), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
+  assert.ok(!decide.includes('crqServe('), 'approving a row never auto-publishes — no silent publication, anywhere');
+});
+
+test('crqToLegacy: approved-only, clause-required, faithful field mapping', () => {
+  const { loadEngine } = require('./extract.js');
+  const ws2 = loadEngine({ blocks: [['crqToLegacy', /^function crqToLegacy\(/]] });
+  const rows = [
+    { status: 'approved', clause_ref: 'cl 4.2.1, p.12', requirement_type: 'generation_rate',
+      use_class: 'Residential flats', stream: 'garbage', value_num: 80, unit: 'L/dwelling/week', value_text: '80L per dwelling per week' },
+    { status: 'proposed', clause_ref: 'cl 9', requirement_type: 'other', value_text: 'not approved' },
+    { status: 'approved', clause_ref: '', requirement_type: 'other', value_text: 'no clause' },
+    { status: 'approved', clause_ref: 'cl 5.1', requirement_type: 'aisle_width',
+      use_class: 'commercial tenancy', value_num: 1500, unit: 'mm', value_text: 'aisles min 1500mm' },
+  ];
+  const out = ws2.crqToLegacy(rows);
+  assert.equal(out.length, 2, 'proposed and clause-less rows never serve');
+  assert.equal(out[0].clause, 'cl 4.2.1, p.12');
+  assert.equal(out[0].page, 12, 'page parsed from the clause reference');
+  assert.equal(out[0].category, 'generation_rates');
+  assert.equal(out[0].applies_to, 'residential');
+  assert.deepEqual(out[0].quantitative, { value: 80, unit: 'L/dwelling/week' });
+  assert.equal(out[1].category, 'storage', 'aisle_width maps into the storage category');
+  assert.equal(out[1].applies_to, 'commercial');
 });
 
 test('C2 migration: storage policies for the guidelines prefix', () => {
