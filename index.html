@@ -883,18 +883,54 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
             Upload a council's waste guideline or DCP chapter (PDF). Enforceable requirements are extracted with clause and page references, reviewed here, then saved to a shared library — the compliance checker cites them by clause for every user scanning that council, on any device.
           </div>
+
+          <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND.
+               C6: a second mode routes spec sheets into equipment_proposals. -->
+          <div style="display:flex;gap:14px;align-items:center;margin-bottom:6px;font-size:11px;color:var(--muted);">
+            <label style="cursor:pointer;"><input type="radio" name="cgb-mode" value="guidelines" checked onchange="cgbSetMode('guidelines')"> Council guidelines</label>
+            <label style="cursor:pointer;"><input type="radio" name="cgb-mode" value="equipment" onchange="cgbSetMode('equipment')"> Equipment spec sheets → proposals queue</label>
+          </div>
+          <div id="cgb-drop" ondragover="event.preventDefault();this.style.borderColor='var(--teal)';"
+               ondragleave="this.style.borderColor='var(--border)';"
+               ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbAddFiles(event.dataTransfer.files);"
+               onclick="document.getElementById('cgb-files').click()"
+               style="border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:8px;">
+            <span id="cgb-drop-hint">⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.</span>
+            <input type="file" id="cgb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbAddFiles(this.files);this.value='';">
+          </div>
+          <datalist id="cgb-councils"></datalist>
+          <div id="cgb-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
+          <div id="cgb-actions" style="display:none;gap:8px;align-items:center;margin-bottom:14px;">
+            <button class="btn" style="background:var(--teal);color:#fff;font-weight:700;" onclick="cgbUploadAll()">⇪ Upload assigned files</button>
+            <span style="font-size:10.5px;color:var(--muted);">Each upload becomes a NEW version of that council's guideline — the previous version is superseded, and its structured requirements stop being served until a new extraction is approved.</span>
+          </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
             <input type="text" id="cg-name" placeholder="Council name, e.g. Randwick City Council" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
             <select id="cg-state" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;color:var(--text);font-family:inherit;">
               <option value="">State…</option><option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
             </select>
-            <input type="text" id="cg-version" placeholder="Version / year" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;width:110px;">
+            <input type="text" id="cg-version" placeholder="Doc label, e.g. 2023 DCP" title="Free-text label from the document — the integer version number is sequenced automatically" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;width:130px;">
+            <input type="date" id="cg-effective" title="Effective date, if the document states one" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;">
+            <input type="url" id="cg-source-url" placeholder="Source URL (optional)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:200px;">
             <input type="file" id="cg-file" accept=".pdf,application/pdf" style="font-size:11px;color:var(--text);max-width:240px;">
             <button class="btn" onclick="cgExtract()">🤖 Extract requirements</button>
           </div>
           <div id="cg-review"></div>
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 6px;">Library</div>
           <div id="cg-library" style="display:flex;flex-direction:column;gap:6px;"></div>
+
+          <!-- C3: structured requirements review queue -->
+          <div style="display:flex;align-items:center;gap:10px;margin:22px 0 6px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Requirements review queue</div>
+            <div id="crq-status" style="font-size:11px;color:var(--muted);"></div>
+            <span style="flex:1"></span>
+            <button class="btn" title="Diff approved generation_rate / stream_split rows against the live R2 rates JSON — nothing publishes; apply via the spreadsheet flow" onclick="crxExport()">⇩ Export approved rates</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;">
+            AI-proposed rows from guideline documents, each pinned to a document version and a clause reference. Verify each value against the cited clause, edit if needed, then approve — <b>nothing is consumed by any tool until it is approved</b>. Extraction confidence is not approval.
+          </div>
+          <div id="crq-wrap" style="display:flex;flex-direction:column;gap:10px;"></div>
+          <div id="crx-out"></div>
         </div>
 
         <!-- REVIEWS TAB (removed — global oversight lives in the Review Queue's staff "All organisations" scope) -->
@@ -951,6 +987,18 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="btn" onclick="ssxExtract()">🤖 Extract with AI</button>
           </div>
           <div id="ssx-results"></div>
+
+          <!-- C6: bulk spec-sheet proposals review queue -->
+          <div style="display:flex;align-items:center;gap:10px;margin:18px 0 6px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Equipment proposals queue</div>
+            <div id="eqp-status" style="font-size:11px;color:var(--muted);"></div>
+            <span style="flex:1"></span>
+            <button class="btn" onclick="eqpLoad()">↻ Refresh</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;">
+            Bulk spec-sheet extractions land here as proposals. Verify against the cited source, edit, set the permanent <b>code</b>, then approve to insert into the library. Streams, pairing, receiver and collectable are design decisions — set them in the table above <i>after</i> approval; a proposal can never carry them.
+          </div>
+          <div id="eqp-wrap" style="display:flex;flex-direction:column;gap:8px;"></div>
 
           <!-- ── SHAPE EDITOR ─────────────────────────────────────────── -->
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:24px 0 4px;">
@@ -1647,6 +1695,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
               </div>
 
             </div>
+
+            <!-- C5: council soft warnings — advisory only, never blocking -->
+            <div id="ws-council-warn" style="display:none;flex-direction:column;gap:3px;padding:7px 10px;background:rgba(90,60,20,0.35);border:1px solid #8a6a3a;border-radius:7px;font-size:10.5px;line-height:1.5;color:#FFD8A8;"></div>
 
             <span id="ws-gen-variants" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;align-self:flex-start;padding:6px 8px;background:#0d3333;border:1px solid #008080;border-radius:7px;"></span>
 
@@ -6411,12 +6462,28 @@ function cgNorm(s) { return String(s || &#x27;&#x27;).toLowerCase().replace(/\b(
 async function cgFetchStructured(councilName) {
   try {
     if (!state._cgAll) {
-      const resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=council_name,state,version,requirements`, { headers: { apikey: CG_ANON } });
-      state._cgAll = resp.ok ? await resp.json() : [];
+      // C1: the latest non-superseded version is preferred, but a fresh upload
+      // has no structured requirements until its extraction is approved and
+      // served — so a live-but-empty version falls back to the newest version
+      // that HAS requirements. Pre-migration fallback keeps old tables working.
+      let resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=id,council_key,council_name,state,version,version_label,superseded_at,requirements&amp;order=version.desc`, { headers: { apikey: CG_ANON } });
+      if (!resp.ok) resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=council_name,state,version,requirements`, { headers: { apikey: CG_ANON } });
+      const all = resp.ok ? await resp.json() : [];
+      const serving = {};
+      all.forEach(r =&gt; {
+        const k = r.council_key || r.council_name;
+        const g = serving[k] = serving[k] || {};
+        if (!r.superseded_at &amp;&amp; !g.live) g.live = r;
+        if ((r.requirements || []).length &amp;&amp; !g.withReqs) g.withReqs = r;
+      });
+      state._cgAll = Object.values(serving).map(g =&gt;
+        (g.live &amp;&amp; (g.live.requirements || []).length) ? g.live
+          : g.withReqs ? Object.assign({}, g.withReqs, { servedFallback: !!g.live })
+          : g.live).filter(Boolean);
     }
     const target = cgNorm(councilName);
     if (!target) return null;
-    return state._cgAll.find(r => { const n = cgNorm(r.council_name); return n === target || n.includes(target) || target.includes(n); }) || null;
+    return state._cgAll.find(r =&gt; { const n = cgNorm(r.council_name); return n === target || n.includes(target) || target.includes(n); }) || null;
   } catch (e) { return null; }
 }
 async function cgStructuredCheck() {
@@ -6680,6 +6747,15 @@ async function startScan() {
   const _csel = document.getElementById(&#x27;council-select&#x27;);
   const _cname = document.getElementById(&#x27;custom-council-name&#x27;)?.value.trim() || _csel.options[_csel.selectedIndex]?.text || &#x27;&#x27;;
   const structuredGuidelines = await cgFetchStructured(_cname);
+  // C1: record WHICH guideline version this check runs against — it travels
+  // with the scan state and is shown on the checker header.
+  state.checkedAgainst = structuredGuidelines ? {
+    guidelineId: structuredGuidelines.id || null,
+    councilName: structuredGuidelines.council_name,
+    version: structuredGuidelines.version ?? null,
+    versionLabel: structuredGuidelines.version_label || null,
+    checkedAt: new Date().toISOString(),
+  } : null;
 
   // Switch to checker view
   document.getElementById(&#x27;setup-panel&#x27;).style.display = &#x27;none&#x27;;
@@ -6689,7 +6765,8 @@ async function startScan() {
   // Set title
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;Unnamed Project&#x27;;
   const ref = document.getElementById(&#x27;proj-ref&#x27;).value;
-  document.getElementById(&#x27;checker-title&#x27;).textContent = `${addr}${ref ? &#x27; — &#x27; + ref : &#x27;&#x27;}`;
+  document.getElementById(&#x27;checker-title&#x27;).textContent = `${addr}${ref ? &#x27; — &#x27; + ref : &#x27;&#x27;}` +
+    (state.checkedAgainst &amp;&amp; state.checkedAgainst.version ? ` · checked against ${state.checkedAgainst.councilName} v${state.checkedAgainst.version}` : &#x27;&#x27;);
 
   // Render PDF
   renderAllPages();
@@ -8892,18 +8969,33 @@ function cgSlug(name) { return String(name).toLowerCase().replace(/[^a-z0-9]+/g,
 async function cgLoad() {
   const wrap = document.getElementById('cg-library');
   wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Loading…</div>';
-  const { data, error } = await sb.from('council_guidelines').select('council_key, council_name, state, version, updated_at, requirements').order('council_name');
-  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Load failed: ${error.message} — has council_guidelines.sql been run?</div>`; return; }
+  const { data, error } = await sb.from('council_guidelines')
+    .select('council_key, council_name, state, version, version_label, effective_date, superseded_at, updated_at, requirements')
+    .order('council_name').order('version', { ascending: false });
+  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Load failed: ${error.message} — has sql/2026-08-25-package-c1-guideline-versioning.sql been run?</div>`; return; }
   if (!data?.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No councils in the library yet — extract one above.</div>'; return; }
-  wrap.innerHTML = data.map(r => `
-    <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;background:#182121;padding:8px 12px;">
+  // One card per council: its latest LIVE version, with the history counted.
+  const byKey = {};
+  data.forEach(r => {
+    const g = byKey[r.council_key] = byKey[r.council_key] || { live: null, total: 0 };
+    g.total++;
+    if (!r.superseded_at && (!g.live || r.version > g.live.version)) g.live = r;
+    g.any = g.any || r;
+  });
+  wrap.innerHTML = Object.keys(byKey).sort().map(k => {
+    const g = byKey[k], r = g.live || g.any;
+    const retired = !g.live;
+    return `
+    <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;background:#182121;padding:8px 12px;${retired ? 'opacity:0.55;' : ''}">
       <div style="flex:1;">
         <span style="font-weight:700;font-size:12px;">${ssxEsc(r.council_name)}</span>
-        <span style="font-size:10.5px;color:var(--muted);margin-left:8px;">${ssxEsc(r.state || '')} · v${ssxEsc(r.version || '—')} · ${(r.requirements || []).length} requirements · ${new Date(r.updated_at).toLocaleDateString('en-AU')}</span>
+        <span style="font-size:10.5px;color:var(--muted);margin-left:8px;">${ssxEsc(r.state || '')} · v${r.version}${r.version_label ? ' (' + ssxEsc(r.version_label) + ')' : ''} · ${(r.requirements || []).length} requirements${r.effective_date ? ' · effective ' + new Date(r.effective_date).toLocaleDateString('en-AU') : ''} · ${new Date(r.updated_at).toLocaleDateString('en-AU')}${g.total > 1 ? ' · ' + (g.total - 1) + ' older version' + (g.total > 2 ? 's' : '') + ' on record' : ''}${retired ? ' · RETIRED' : ''}</span>
       </div>
-      <button class="btn" onclick="cgEdit('${r.council_key}')">✎ Edit</button>
-      <button class="btn" onclick="cgDelete('${r.council_key}')">✕</button>
-    </div>`).join('');
+      ${retired ? '' : `<button class="btn" title="AI-extract structured requirement rows from this document into the review queue (C3)" onclick="crqExtract('${k}')">🧾 Extract to queue</button>
+      <button class="btn" onclick="cgEdit('${k}')">✎ Edit</button>
+      <button class="btn" title="Retire — versions stay on record for past checks" onclick="cgDelete('${k}')">✕</button>`}
+    </div>`;
+  }).join('');
 }
 
 async function cgExtract() {
@@ -8989,6 +9081,718 @@ function cgCollectReview() {
   });
 }
 
+// ── C2: BULK GUIDELINE UPLOAD ────────────────────────────────────────────────
+// Many PDFs in, one council assignment each — BY HAND, never matched from the
+// filename. Files land in the existing 'project-plans' bucket under
+// guidelines/<council_key>/, and each upload becomes a new guideline version
+// through the same cgInsertVersion path the single-doc flow uses.
+const CGB = { rows: [], mode: 'guidelines' };
+function cgbEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+// C6: the same drop zone serves equipment spec sheets — those route into the
+// equipment_proposals staging table instead of the guidelines library.
+function cgbSetMode(m) {
+  CGB.mode = m === 'equipment' ? 'equipment' : 'guidelines';
+  const hint = document.getElementById('cgb-drop-hint');
+  if (hint) hint.textContent = CGB.mode === 'equipment'
+    ? '⇪ Drop manufacturer spec-sheet PDFs here (or click) — each is AI-extracted into the equipment proposals queue for review. Nothing lands in the library until approved.'
+    : '⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.';
+}
+async function cgbCouncilList() {
+  try {
+    const { data } = await sb.from('council_guidelines').select('council_name').is('superseded_at', null);
+    const names = [...new Set((data || []).map(r => r.council_name).filter(Boolean))].sort();
+    const dl = document.getElementById('cgb-councils');
+    if (dl) dl.innerHTML = names.map(n => `<option value="${cgbEsc(n)}">`).join('');
+  } catch (e) { /* datalist is a convenience — free text always works */ }
+}
+function cgbAddFiles(files) {
+  [...(files || [])].forEach(f => {
+    if (!/\.pdf$/i.test(f.name)) return;
+    if (f.size > 25 * 1024 * 1024) { CGB.rows.push({ file: f, mode: CGB.mode, status: 'Too large (25 MB max)', dead: true }); return; }
+    CGB.rows.push({ file: f, mode: CGB.mode, council: '', state: '', effective: '',
+      status: CGB.mode === 'equipment' ? 'spec sheet — ready to extract' : 'assign a council' });
+  });
+  cgbCouncilList();
+  cgbRender();
+}
+function cgbRender() {
+  const wrap = document.getElementById('cgb-rows'), act = document.getElementById('cgb-actions');
+  if (!wrap) return;
+  wrap.innerHTML = CGB.rows.map((r, i) => `
+    <div style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,1.2fr) 70px 130px minmax(120px,1fr) 26px;gap:6px;align-items:center;border:1px solid var(--border);border-radius:7px;background:#182121;padding:6px 8px;">
+      <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${cgbEsc(r.file.name)}">📄 ${cgbEsc(r.file.name)}</span>
+      ${r.mode === 'equipment' ? `
+      <span style="font-size:10.5px;color:#9FA8DA;">spec sheet → proposals queue</span>
+      <span></span><span></span>` : `
+      <input type="text" list="cgb-councils" placeholder="Council (pick or type)" value="${cgbEsc(r.council)}" ${r.done || r.dead ? 'disabled' : ''}
+             oninput="CGB.rows[${i}].council=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;">
+      <select ${r.done || r.dead ? 'disabled' : ''} onchange="CGB.rows[${i}].state=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:11px;color:var(--text);font-family:inherit;">
+        <option value="">St…</option>${['NSW','VIC','QLD','SA','WA','TAS','ACT','NT'].map(s => `<option ${r.state === s ? 'selected' : ''}>${s}</option>`).join('')}
+      </select>
+      <input type="date" ${r.done || r.dead ? 'disabled' : ''} value="${cgbEsc(r.effective)}" title="Effective date, if known"
+             onchange="CGB.rows[${i}].effective=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:11px;color:var(--text);font-family:inherit;">`}
+      <span style="font-size:10.5px;color:${r.dead ? '#EF8080' : r.done ? '#3DD68C' : 'var(--muted)'};">${cgbEsc(r.status)}</span>
+      <button class="btn" title="Remove from the batch" ${r.busy ? 'disabled' : ''} onclick="CGB.rows.splice(${i},1);cgbRender();" style="padding:2px 7px;font-size:10px;">✕</button>
+    </div>`).join('');
+  if (act) act.style.display = CGB.rows.some(r => !r.done && !r.dead) ? 'flex' : 'none';
+}
+async function cgbUploadOne(r) {
+  const name = (r.council || '').trim();
+  if (!name) { r.status = 'assign a council'; return false; }
+  const key = cgSlug(name);
+  r.busy = true; r.status = 'uploading…'; cgbRender();
+  try {
+    const safe = r.file.name.replace(/[^A-Za-z0-9._-]+/g, '_');
+    const path = `guidelines/${key}/${Date.now()}_${safe}`;
+    const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
+      .upload(path, r.file, { contentType: 'application/pdf' });
+    if (upErr) throw upErr;
+    const ins = await cgInsertVersion({
+      council_key: key, council_name: name,
+      state: r.state || null,
+      version_label: null,
+      effective_date: r.effective || null,
+      source_url: null,
+      uploaded_by: currentUser?.id || null,
+      source_file: path,
+      requirements: [],     // structured rows come from extraction + review (C3)
+      notes: 'bulk upload',
+      updated_at: new Date().toISOString(),
+    });
+    r.done = true; r.status = `✓ v${ins.version} — extract + review to serve requirements`;
+    return true;
+  } catch (err) {
+    r.status = 'failed: ' + (err.message || err);
+    return false;
+  } finally { r.busy = false; cgbRender(); }
+}
+async function cgbUploadAll() {
+  // sequential on purpose: two files for the same council must version 1, 2 —
+  // parallel inserts would race the max(version) read
+  for (const r of CGB.rows) {
+    if (r.done || r.dead) continue;
+    if (r.mode === 'equipment') await eqpExtractOne(r);
+    else await cgbUploadOne(r);
+  }
+  cgLoad();
+  if (typeof eqpLoad === 'function' && CGB.rows.some(r => r.mode === 'equipment')) eqpLoad();
+}
+
+// ── C6: spec sheet → equipment_proposals ────────────────────────────────────
+// Reuses SSX_PROMPT — ai-extract was originally built for spec-sheet
+// extraction. Every proposal carries the source document and where in it the
+// values were read. Design decisions (streams, pairing, receiver, collectable)
+// have no columns in the staging table, so a proposal can never set them.
+async function eqpExtractOne(r) {
+  r.busy = true; r.status = 'extracting…'; cgbRender();
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const rd = new FileReader();
+      rd.onload = () => res(rd.result.split(',')[1]);
+      rd.onerror = () => rej(new Error('Could not read file'));
+      rd.readAsDataURL(r.file);
+    });
+    const data = await aiProxy({
+      max_tokens: 4096,
+      system: SSX_PROMPT,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: 'Extract every equipment item from this spec sheet. JSON only — start your response with {' },
+      ]}],
+    });
+    const raw = (data.content?.[0]?.text || '').trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    if (!items.length) { r.status = 'no items found'; return; }
+    // The live table's category vocabulary is read from the data, never
+    // invented: an AI value outside it lands null for the reviewer to assign.
+    const cats = await eqpKnownCategories();
+    const num = v => (v === 0 || v) && !isNaN(+v) ? +v : null;
+    const rows = items.map(it => {
+      const w = num(it.width_mm), d = num(it.depth_mm);
+      const stated = num(it.footprint_m2);
+      // SSX vocabulary: its "item_kind" noun matches the table's category
+      // list; its "category" (bin|equipment) is the loader's item_kind.
+      const catRaw = String(it.item_kind || '').toLowerCase().trim();
+      return {
+        source_file: r.file.name,
+        source_ref: it.source_note || null,
+        label: String(it.label || '').trim() || 'Unnamed item',
+        category: cats.includes(catRaw) ? catRaw : null,
+        item_kind: it.category === 'equipment' ? 'Equipment' : 'Bin',
+        capacity_l: num(it.capacity_l),
+        width_mm: w, depth_mm: d, height_mm: num(it.height_mm),
+        footprint_m2: stated != null ? stated : (w > 0 && d > 0 ? +((w / 1000) * (d / 1000)).toFixed(3) : null),
+        footprint_computed: stated == null && w > 0 && d > 0,
+        compaction_ratio: num(it.compaction_ratio),
+        company: it.company || parsed.manufacturer || null,
+        website: it.website || null, phone: it.phone || null,
+        status: 'proposed',
+      };
+    });
+    const { error } = await sb.from('equipment_proposals').insert(rows);
+    if (error) throw new Error(error.message + ' — has sql/2026-08-25-package-c6-equipment-proposals.sql been run?');
+    r.done = true; r.status = `✓ ${rows.length} proposal${rows.length === 1 ? '' : 's'} queued`;
+  } catch (err) {
+    r.status = 'failed: ' + (err.message || err);
+  } finally { r.busy = false; cgbRender(); }
+}
+let _eqpCats = null;
+async function eqpKnownCategories() {
+  if (_eqpCats) return _eqpCats;
+  try {
+    const { data } = await sb.from('equipment').select('category');
+    _eqpCats = [...new Set((data || []).map(r => r.category).filter(Boolean))].sort();
+  } catch (e) { _eqpCats = []; }
+  return _eqpCats;
+}
+
+// ── C6: proposals review queue ──────────────────────────────────────────────
+// Duplicate guard is a WARNING the reviewer must read, never a silent skip and
+// never a silent create: a close label or footprint match to a live record is
+// shown on the row, and approving one asks again.
+const EQP = { rows: [] };
+function eqpMsg(t, warn) { const el = document.getElementById('eqp-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
+function eqpNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+// Close-match test against the live library: same normalised label, or both
+// dimensions within 5%. Pure; covered by tests.
+function eqpNearDuplicates(p, live) {
+  const nl = eqpNorm(p.label);
+  return (live || []).filter(e => {
+    if (!e) return false;
+    if (nl && eqpNorm(e.label) === nl) return true;
+    const w1 = +p.width_mm, d1 = +p.depth_mm, w2 = +e.width_mm, d2 = +e.depth_mm;
+    if (w1 > 0 && d1 > 0 && w2 > 0 && d2 > 0) {
+      const close = (a, b) => Math.abs(a - b) <= 0.05 * Math.max(a, b);
+      if (close(w1, w2) && close(d1, d2)) return true;
+    }
+    return false;
+  });
+}
+async function eqpLoad() {
+  const wrap = document.getElementById('eqp-wrap'); if (!wrap) return;
+  const { data, error } = await sb.from('equipment_proposals')
+    .select('*').eq('status', 'proposed').order('created_at');
+  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Queue load failed: ${error.message} — has sql/2026-08-25-package-c6-equipment-proposals.sql been run?</div>`; return; }
+  EQP.rows = data || [];
+  await eqpKnownCategories();
+  eqpRender();
+}
+function eqpField(id, key, val, w, title) {
+  return `<input type="text" data-eqp="${id}:${key}" value="${cgbEsc(val)}" ${title ? `title="${cgbEsc(title)}"` : ''} style="width:${w || '100%'};background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">`;
+}
+function eqpRender() {
+  const wrap = document.getElementById('eqp-wrap'); if (!wrap) return;
+  if (!EQP.rows.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No proposals — use the bulk uploader (Rates &amp; Guidelines tab) in spec-sheet mode.</div>'; return; }
+  const cats = _eqpCats || [];
+  const taken = new Set(EQL.items.map(x => x.code).filter(Boolean));
+  wrap.innerHTML = EQP.rows.map(p => {
+    const dupes = eqpNearDuplicates(p, EQL.items);
+    const code = p.proposed_code || slugCode(p.label, new Set(taken));
+    return `
+    <div style="border:1px solid ${dupes.length ? '#8a6a3a' : 'var(--border)'};border-radius:8px;background:#141c1c;padding:10px 12px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+        <span style="font-weight:700;font-size:12px;">${cgbEsc(p.label)}</span>
+        <span style="font-size:10px;color:var(--muted);">📄 ${cgbEsc(p.source_file)}${p.source_ref ? ' · ' + cgbEsc(p.source_ref) : ''}</span>
+        ${p.footprint_computed ? '<span style="font-size:9.5px;color:#EFB080;border:1px solid #8a6a3a;border-radius:8px;padding:0 6px;" title="Footprint derived from W×D, not stated in the document">footprint computed</span>' : ''}
+        <span style="flex:1"></span>
+        <button class="btn" style="background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;padding:3px 10px;font-size:10.5px;" onclick="eqpApprove('${p.id}')">✓ Approve → insert</button>
+        <button class="btn" style="color:#EF8080;padding:3px 10px;font-size:10.5px;" onclick="eqpReject('${p.id}')">✕ Reject</button>
+      </div>
+      ${dupes.length ? `<div style="font-size:10.5px;color:#FFB74D;margin-bottom:6px;">⚠ Close match in the library: ${dupes.slice(0, 3).map(d => cgbEsc(d.label) + ' (' + cgbEsc(d.code) + ')').join(', ')} — approve only if this is genuinely a different item.</div>` : ''}
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:5px 8px;">
+        <label style="font-size:9.5px;color:var(--muted);">Label ${eqpField(p.id, 'label', p.label)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Code (permanent) <input type="text" data-eqp="${p.id}:proposed_code" value="${cgbEsc(code)}" style="width:100%;background:#101717;border:1px solid #4a5a3a;border-radius:6px;padding:4px 6px;font-size:10.5px;color:#C5E1A5;font-family:monospace;"></label>
+        <label style="font-size:9.5px;color:var(--muted);">Category <select data-eqp="${p.id}:category" style="width:100%;background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">
+          <option value="">— pick —</option>${cats.map(c => `<option ${c === p.category ? 'selected' : ''}>${cgbEsc(c)}</option>`).join('')}</select></label>
+        <label style="font-size:9.5px;color:var(--muted);">Kind <select data-eqp="${p.id}:item_kind" style="width:100%;background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">
+          ${['Bin','Equipment'].map(k => `<option ${k === p.item_kind ? 'selected' : ''}>${k}</option>`).join('')}</select></label>
+        <label style="font-size:9.5px;color:var(--muted);">Capacity L ${eqpField(p.id, 'capacity_l', p.capacity_l)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Width mm ${eqpField(p.id, 'width_mm', p.width_mm)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Depth mm ${eqpField(p.id, 'depth_mm', p.depth_mm)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Height mm ${eqpField(p.id, 'height_mm', p.height_mm)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Footprint m² ${eqpField(p.id, 'footprint_m2', p.footprint_m2)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Compaction ${eqpField(p.id, 'compaction_ratio', p.compaction_ratio)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Company ${eqpField(p.id, 'company', p.company)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Website ${eqpField(p.id, 'website', p.website)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Phone ${eqpField(p.id, 'phone', p.phone)}</label>
+      </div>
+    </div>`;
+  }).join('');
+}
+function eqpCollect(id) {
+  const out = {};
+  document.querySelectorAll(`[data-eqp^="${id}:"]`).forEach(el => {
+    const key = el.getAttribute('data-eqp').split(':')[1];
+    const v = el.value.trim();
+    out[key] = v === '' ? null : (['capacity_l', 'width_mm', 'depth_mm', 'height_mm', 'footprint_m2', 'compaction_ratio'].includes(key) ? (isNaN(+v) ? null : +v) : v);
+  });
+  return out;
+}
+async function eqpApprove(id) {
+  const p = EQP.rows.find(r => r.id === id); if (!p) return;
+  const e = eqpCollect(id);
+  if (!e.label) { eqpMsg('A proposal needs a label.', true); return; }
+  const code = String(e.proposed_code || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  if (!code) { eqpMsg('Set the code before approving — codes are permanent.', true); return; }
+  if (EQL.items.some(x => x.code === code)) { eqpMsg(`Code “${code}” already exists in the library — pick another.`, true); return; }
+  const dupes = eqpNearDuplicates({ ...p, ...e }, EQL.items);
+  const q = `Insert “${e.label}” into the equipment library as code “${code}”?` +
+    (dupes.length ? `\n\n⚠ Close match: ${dupes.map(d => d.label + ' (' + d.code + ')').join(', ')} — near-duplicates are never created silently.` : '') +
+    `\n\nStreams, pairing, receiver and collectable stay unset — assign them in the equipment table afterwards.`;
+  if (!confirm(q)) return;
+  // Deliberately absent from this insert: streams, pairing_type,
+  // output_equipment_id, receiver, collectable — design decisions, not
+  // spec-sheet facts. They are set by hand after approval.
+  const row = {
+    code, label: e.label, category: e.category || null, item_kind: e.item_kind || 'Equipment',
+    capacity_l: e.capacity_l, width_mm: e.width_mm, depth_mm: e.depth_mm, height_mm: e.height_mm,
+    footprint_m2: e.footprint_m2, compaction_ratio: e.compaction_ratio,
+    company: e.company, website: e.website, phone: e.phone,
+    include_in_supplier_table: false, active: true,
+  };
+  const { error } = await sb.from('equipment').insert(row);
+  if (error) { eqpMsg('Insert failed: ' + error.message, true); return; }
+  await sb.from('equipment_proposals').update({ status: 'approved', proposed_code: code,
+    reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() }).eq('id', id).eq('status', 'proposed');
+  _eqpCats = null;
+  eqpMsg(`✓ ${e.label} inserted as ${code} — set streams/pairing in the table, then Save.`);
+  eqlLoad(); eqpLoad();
+}
+async function eqpReject(id) {
+  const { error } = await sb.from('equipment_proposals').update({ status: 'rejected',
+    reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() }).eq('id', id).eq('status', 'proposed');
+  if (error) { eqpMsg('Reject failed: ' + error.message, true); return; }
+  EQP.rows = EQP.rows.filter(r => r.id !== id);
+  eqpRender();
+}
+
+// ── C3: STRUCTURED REQUIREMENTS — EXTRACTION + REVIEW QUEUE ─────────────────
+// AI proposes rows into council_requirements (status 'proposed'), each pinned
+// to the exact guideline version and carrying a clause_ref; a human approves,
+// edits-then-approves, or rejects. NOTHING is consumed until approved.
+// Streams are canonical ids only: synonyms resolve here at extraction, and a
+// row whose stream cannot be resolved is inserted 'rejected' — never guessed.
+const CRQ_TYPES = ['generation_rate','room_dimension','aisle_width','chute_spec','collection_limit','equipment_rule','stream_split','other'];
+const CRQ_STREAMS = ['garbage','recycling','fogo','glass','paper','soft'];
+const CRQ_PROMPT = `You extract ENFORCEABLE waste-management requirements from an Australian council guideline / DCP PDF into structured rows. Respond with JSON only: {"rows":[...]}
+Each row:
+- "requirement_type": one of generation_rate | room_dimension | aisle_width | chute_spec | collection_limit | equipment_rule | stream_split | other
+- "use_class": the development class the clause applies to ("residential", "commercial", "mixed use", "MUD", …) or null
+- "stream": one of garbage | recycling | fogo | glass | paper | soft, or null when the clause is streamless. Resolve synonyms: general waste/residual → garbage, commingled/mixed recycling → recycling, FOGO/organics/food waste/garden → fogo, paper & cardboard/card → paper, soft plastics → soft. If a stream is named but fits none, put the document's exact wording in "stream_raw" and set "stream" null.
+- "value_num": the single numeric value when one exists (80, 1500, 2.5), else null
+- "unit": its unit verbatim ("L/dwelling/week", "mm", "m2", "per week", "%"), else null
+- "value_text": the requirement wording, short but verbatim enough to verify
+- "clause_ref": clause/section AND page as printed, e.g. "cl 4.2.1, p.12". REQUIRED — a row you cannot cite must not be returned.
+Rules: enforceable requirements only (shall / must / minimum / maximum), never advice. Never invent values. generation_rate rows need value_num and unit. stream_split rows are the percentage share of one stream for one use_class.`;
+
+function crqMsg(t, warn) { const el = document.getElementById('crq-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
+
+// Extract one council's LIVE document into proposed rows. Storage-backed
+// documents (bulk uploads) are fetched from the bucket; legacy rows that only
+// carry a filename need the PDF re-picked locally.
+async function crqExtract(councilKey, localFile) {
+  const { data, error } = await sb.from('council_guidelines').select('*')
+    .eq('council_key', councilKey).is('superseded_at', null)
+    .order('version', { ascending: false }).limit(1);
+  const doc = data?.[0];
+  if (error || !doc) { crqMsg('Could not load that council.', true); return; }
+  let b64 = null;
+  if (localFile) {
+    b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = () => rej(new Error('read failed')); r.readAsDataURL(localFile); });
+  } else if (doc.source_file && doc.source_file.indexOf('guidelines/') === 0) {
+    crqMsg(`Fetching ${doc.council_name} v${doc.version} from storage…`);
+    const { data: sig, error: sErr } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(doc.source_file, 600);
+    if (sErr || !sig?.signedUrl) { crqMsg('Could not fetch the stored PDF: ' + (sErr?.message || 'no URL'), true); return; }
+    const buf = await (await fetch(sig.signedUrl)).arrayBuffer();
+    let s = ''; const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    b64 = btoa(s);
+  } else {
+    // legacy row: the PDF was never stored — pick it locally, then re-run
+    crqMsg('This document predates stored PDFs — choose the same PDF to extract from.', true);
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.pdf,application/pdf';
+    inp.onchange = () => { if (inp.files[0]) crqExtract(councilKey, inp.files[0]); };
+    inp.click();
+    return;
+  }
+  crqMsg(`Extracting ${doc.council_name} v${doc.version} — big documents can take a minute…`);
+  try {
+    const resp = await aiProxy({
+      max_tokens: 8192,
+      system: CRQ_PROMPT,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: 'Extract the enforceable requirements as structured rows. JSON only — start your response with {' },
+      ]}],
+    });
+    const raw = (resp.content?.[0]?.text || '').trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(raw);
+    const cand = Array.isArray(parsed.rows) ? parsed.rows : [];
+    let dropped = 0, rejected = 0;
+    const rows = [];
+    cand.forEach(r => {
+      const clause = String(r.clause_ref || '').trim();
+      if (!clause) { dropped++; return; }   // untraceable = unusable, never inserted
+      let stream = null, status = 'proposed', text = String(r.value_text || '').trim() || null;
+      const rawStream = r.stream || r.stream_raw || null;
+      if (rawStream) {
+        stream = (typeof wsStreamId === 'function') ? wsStreamId(rawStream) : (CRQ_STREAMS.includes(rawStream) ? rawStream : null);
+        if (!stream) {
+          // do not invent streams: keep the row, visibly rejected, reason recorded
+          status = 'rejected'; rejected++;
+          text = (text ? text + ' ' : '') + `[stream “${rawStream}” did not resolve to a canonical stream]`;
+        }
+      }
+      rows.push({
+        council_guideline_id: doc.id,
+        requirement_type: CRQ_TYPES.includes(r.requirement_type) ? r.requirement_type : 'other',
+        use_class: String(r.use_class || '').trim() || null,
+        stream,
+        value_num: (r.value_num === 0 || r.value_num) && !isNaN(+r.value_num) ? +r.value_num : null,
+        unit: String(r.unit || '').trim() || null,
+        value_text: text,
+        clause_ref: clause,
+        status,
+      });
+    });
+    if (!rows.length) { crqMsg('No citable requirements found in that PDF.', true); return; }
+    const { error: insErr } = await sb.from('council_requirements').insert(rows);
+    if (insErr) { crqMsg('Insert failed: ' + insErr.message + ' — has sql/2026-08-25-package-c3-council-requirements.sql been run?', true); return; }
+    crqMsg(`✓ ${rows.filter(r => r.status === 'proposed').length} proposed rows queued for ${doc.council_name} v${doc.version}` +
+      (rejected ? ` · ${rejected} auto-rejected (unresolvable stream)` : '') +
+      (dropped ? ` · ${dropped} dropped (no clause reference)` : ''));
+    crqLoad();
+  } catch (err) { crqMsg('Extraction failed: ' + (err.message || err), true); }
+}
+
+// ── approved rows → the checker's serving format ────────────────────────────
+// The compliance checker and WMP consume the guideline row's JSONB
+// `requirements`. Approved council_requirements rows are projected into that
+// shape by an EXPLICIT admin action (crqServe) — never automatically — which
+// is what finally flips consumers off the previous version's requirements.
+// Pure: rows in, legacy items out.
+function crqToLegacy(rows) {
+  const cat = { generation_rate: 'generation_rates', room_dimension: 'storage',
+    aisle_width: 'storage', chute_spec: 'chutes', collection_limit: 'collection',
+    equipment_rule: 'other', stream_split: 'generation_rates', other: 'other' };
+  const applies = u => {
+    const s = String(u || '').toLowerCase();
+    if (/res/.test(s)) return 'residential';
+    if (/com|retail|office/.test(s)) return 'commercial';
+    if (/mix|mud/.test(s)) return 'mixed';
+    return 'all';
+  };
+  return (rows || []).filter(r => r && r.status === 'approved' && r.clause_ref).map(r => {
+    const pg = /p\.?\s*(\d+)/i.exec(r.clause_ref || '');
+    return {
+      clause: r.clause_ref,
+      page: pg ? parseInt(pg[1], 10) : null,
+      category: cat[r.requirement_type] || 'other',
+      applies_to: applies(r.use_class),
+      requirement: r.value_text || '',
+      quantitative: (r.value_num === 0 || r.value_num) ? { value: +r.value_num, unit: r.unit || null } : null,
+      stream: r.stream || null,
+    };
+  });
+}
+async function crqServe(gid) {
+  const { data: appr, error } = await sb.from('council_requirements')
+    .select('*').eq('council_guideline_id', gid).eq('status', 'approved');
+  if (error) { crqMsg('Load failed: ' + error.message, true); return; }
+  const legacy = crqToLegacy(appr);
+  if (!legacy.length) { crqMsg('Nothing approved for this document yet — approve rows first.', true); return; }
+  if (!confirm(`Serve ${legacy.length} approved requirements to the compliance checker and WMP for this document? This replaces what its previous version was serving.`)) return;
+  const { error: upErr } = await sb.from('council_guidelines')
+    .update({ requirements: legacy, updated_at: new Date().toISOString() }).eq('id', gid);
+  if (upErr) { crqMsg('Serve failed: ' + upErr.message, true); return; }
+  crqMsg(`✓ ${legacy.length} approved requirements now serving — the older version stops being used.`);
+  cgLoad();
+}
+
+// ── C4: APPROVED RATES → DIFF AGAINST THE LIVE R2 RATES ────────────────────
+// Approved generation_rate / stream_split rows NEVER auto-publish. This
+// produces a reviewable diff against the live waste_rates.json — new /
+// changed / same / conflicting / unmapped, per council, use and stream — to
+// be applied by hand through the existing spreadsheet → PublishRatesToJSON →
+// R2 flow. Per-use split percentages surfaced here are the sourced values
+// that should eventually replace the unsourced defaults in SPLIT_DEFS — via
+// this review path only.
+// Pure: approved rows + their guideline docs + the live rates JSON in,
+// diff rows out. No DOM, no network, no writes.
+const CRX_STREAM_TO_RATES = { garbage: 'GW', recycling: 'REC', fogo: 'ORG', glass: 'GLS', paper: 'CARD', soft: 'SOFT' };
+const CRX_SPLIT_FOR_STREAM = { fogo: 'GW_ORG', soft: 'GW_SOFT', paper: 'REC_CARD', glass: 'REC_GLS' };
+function crxNorm(s) { return String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
+function crxResUnit(useClass) {
+  const s = String(useClass || '').toLowerCase();
+  if (/town\s*house|townhouse/.test(s)) return 'townhouse';
+  if (/(^|\D)1\s*(br|bed)/.test(s)) return 'apt_1br';
+  if (/(^|\D)2\s*(br|bed)/.test(s)) return 'apt_2br';
+  if (/(^|\D)3\s*(br|bed)/.test(s)) return 'apt_3br';
+  return null;   // "residential" alone is not one unit type — never guess one
+}
+function crxDiffRates(rows, docsById, remote, commTable) {
+  const out = [];
+  const profiles = (remote && remote.PROFILES) || {};
+  const councilProfiles = (remote && remote.COUNCIL_PROFILES) || {};
+  const councils = (remote && remote.COUNCILS) || {};
+  const comm = commTable || {};
+  const seen = {};   // conflict detection: same target approved twice with different values
+  (rows || []).forEach(r => {
+    if (!r || r.status !== 'approved') return;
+    if (r.requirement_type !== 'generation_rate' && r.requirement_type !== 'stream_split') return;
+    const doc = docsById[r.council_guideline_id] || {};
+    const state = doc.state || null;
+    // council_value resolves by normalised label against the live councils list
+    const clist = (state && councils[state]) || [];
+    const cv = clist.find(c => crxNorm(c.label) === crxNorm(doc.council_name))
+            || clist.find(c => crxNorm(c.label).includes(crxNorm(doc.council_name)) || crxNorm(doc.council_name).includes(crxNorm(c.label)));
+    const councilValue = cv ? cv.value : null;
+    const profile = state ? (profiles[state] || {}) : {};
+    const override = (state && councilValue) ? (councilProfiles[state + '|' + councilValue] || {}) : {};
+    const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
+    const base = {
+      kind: r.requirement_type, council: doc.council_name || '?', state,
+      councilValue, guidelineVersion: doc.version ?? null,
+      useClass: r.use_class || null, stream: r.stream || null, streamKey,
+      value: r.value_num, unit: r.unit || null, clauseRef: r.clause_ref,
+    };
+    if (r.value_num == null) { out.push({ ...base, status: 'unmapped', why: 'no numeric value' }); return; }
+    let target = null, current = null, currentSrc = null;
+    if (r.requirement_type === 'stream_split') {
+      const splitId = r.stream ? CRX_SPLIT_FOR_STREAM[r.stream] : null;
+      if (!splitId) { out.push({ ...base, status: 'unmapped', why: 'stream has no split definition' }); return; }
+      const useKey = Object.keys(comm).find(k => crxNorm(comm[k].label) === crxNorm(r.use_class))
+                  || Object.keys(comm).find(k => r.use_class && crxNorm(comm[k].label).includes(crxNorm(r.use_class)));
+      if (!useKey) { out.push({ ...base, status: 'unmapped', why: 'use class not matched to a commercial use — assign manually' }); return; }
+      target = 'splits.' + useKey + '.' + splitId;
+      const uc = (override.comRates && override.comRates[useKey]) || (profile.comRates && profile.comRates[useKey]) || {};
+      current = uc.splits && uc.splits[splitId] != null ? +uc.splits[splitId] : null;
+      currentSrc = current == null ? 'code default (unsourced)' : 'rates data';
+    } else {
+      const resUnit = crxResUnit(r.use_class);
+      if (resUnit) {
+        if (!streamKey) { out.push({ ...base, status: 'unmapped', why: 'no stream on a residential rate' }); return; }
+        target = 'resRates.' + resUnit + '.' + streamKey;
+        const res = (override.resRates && override.resRates[resUnit]) || (profile.resRates && profile.resRates[resUnit]) || null;
+        current = res && res[streamKey] != null ? +res[streamKey] : null;
+        currentSrc = (override.resRates && override.resRates[resUnit]) ? 'council override' : 'state profile';
+      } else {
+        const useKey = Object.keys(comm).find(k => crxNorm(comm[k].label) === crxNorm(r.use_class))
+                    || Object.keys(comm).find(k => r.use_class && crxNorm(comm[k].label).includes(crxNorm(r.use_class)));
+        if (!useKey || !streamKey) { out.push({ ...base, status: 'unmapped', why: !useKey ? 'use class not matched — assign manually' : 'no stream' }); return; }
+        target = 'comRates.' + useKey + '.' + streamKey;
+        const uc = (override.comRates && override.comRates[useKey]) || (profile.comRates && profile.comRates[useKey]) || null;
+        current = uc && uc[streamKey] && uc[streamKey].rate != null ? +uc[streamKey].rate : null;
+        currentSrc = (override.comRates && override.comRates[useKey]) ? 'council override' : 'state profile';
+      }
+    }
+    const skey = (state || '?') + '|' + (councilValue || crxNorm(base.council)) + '|' + target;
+    if (seen[skey] != null && seen[skey] !== +r.value_num) {
+      out.push({ ...base, target, current, currentSrc, status: 'conflicting',
+                 why: 'another approved row set ' + seen[skey] + ' for the same target' });
+      return;
+    }
+    seen[skey] = +r.value_num;
+    const status = current == null ? 'new' : (Math.abs(current - +r.value_num) < 1e-9 ? 'same' : 'changed');
+    out.push({ ...base, target, current, currentSrc, status });
+  });
+  return out;
+}
+
+async function crxExport() {
+  crqMsg('Building rates diff…');
+  const { data: rows, error } = await sb.from('council_requirements')
+    .select('*').eq('status', 'approved').in('requirement_type', ['generation_rate', 'stream_split']);
+  if (error) { crqMsg('Load failed: ' + error.message, true); return; }
+  if (!rows?.length) { crqMsg('No approved generation_rate or stream_split rows yet.', true); return; }
+  const gids = [...new Set(rows.map(r => r.council_guideline_id))];
+  const { data: docs } = await sb.from('council_guidelines')
+    .select('id, council_name, state, version').in('id', gids);
+  const docsById = {}; (docs || []).forEach(d => { docsById[d.id] = d; });
+  let remote = null;
+  try { remote = await (await fetch(RATES_URL_PARENT, { cache: 'no-store' })).json(); }
+  catch (e) { crqMsg('Could not fetch the live rates JSON — no baseline, no diff. ' + (e.message || e), true); return; }
+  const comm = (typeof COMM !== 'undefined') ? COMM : {};
+  const diff = crxDiffRates(rows, docsById, remote, comm);
+  const wrap = document.getElementById('crx-out');
+  const counts = {};
+  diff.forEach(d => { counts[d.status] = (counts[d.status] || 0) + 1; });
+  const chip = s => ({ new: '#3DD68C', changed: '#EFB080', conflicting: '#EF8080', unmapped: '#B39DDB', same: '#78909C' })[s] || '#78909C';
+  wrap.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;margin-top:8px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+        <span style="font-weight:700;font-size:12px;">Approved rates vs live R2 data</span>
+        ${['new','changed','conflicting','unmapped','same'].filter(s => counts[s]).map(s =>
+          `<span style="font-size:10px;font-weight:700;color:${chip(s)};border:1px solid ${chip(s)};border-radius:9px;padding:1px 8px;">${counts[s]} ${s}</span>`).join('')}
+        <span style="flex:1"></span>
+        <button class="btn" onclick="crxDownload('csv')">⇩ CSV for the spreadsheet</button>
+        <button class="btn" onclick="crxDownload('json')">⇩ JSON</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;">Apply through the master spreadsheet → Publish Rates → R2 — nothing here writes anywhere. 'same' rows confirm the live data; split rows are the sourced values that should replace the code defaults.</div>
+      <div style="display:grid;grid-template-columns:110px 1fr 90px 70px 70px 90px 1fr;gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">
+        <span>Status</span><span>Council</span><span>Kind</span><span>Approved</span><span>Current</span><span>Stream</span><span>Target / clause</span>
+      </div>
+      ${diff.map(d => `
+      <div style="display:grid;grid-template-columns:110px 1fr 90px 70px 70px 90px 1fr;gap:6px;font-size:10.5px;align-items:center;border-top:1px solid #1e2a2a;padding:3px 0;">
+        <b style="color:${chip(d.status)};">${d.status}${d.why ? ' *' : ''}</b>
+        <span>${cgbEsc(d.council)} ${d.state ? '(' + d.state + ')' : ''} v${d.guidelineVersion ?? '?'}</span>
+        <span>${d.kind === 'stream_split' ? 'split %' : 'rate'}</span>
+        <span>${d.value ?? '—'}${d.unit ? ' ' + cgbEsc(d.unit) : ''}</span>
+        <span>${d.current ?? '—'}</span>
+        <span>${cgbEsc(d.stream || '—')}</span>
+        <span style="color:var(--muted);">${cgbEsc(d.target || d.why || '')} · ${cgbEsc(d.clauseRef)}${d.why && d.target ? ' · ' + cgbEsc(d.why) : ''}</span>
+      </div>`).join('')}
+    </div>`;
+  CRX_LAST = diff;
+  crqMsg(`Diff built — ${diff.length} approved rate rows compared against live data.`);
+}
+let CRX_LAST = null;
+function crxDownload(kind) {
+  if (!CRX_LAST) return;
+  let blob, name;
+  if (kind === 'csv') {
+    const head = 'status,council,state,council_value,guideline_version,kind,use_class,stream,rates_key,target,approved_value,unit,current_value,current_source,clause_ref,note';
+    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const lines = CRX_LAST.map(d => [d.status, d.council, d.state, d.councilValue, d.guidelineVersion, d.kind,
+      d.useClass, d.stream, d.streamKey, d.target, d.value, d.unit, d.current, d.currentSrc, d.clauseRef, d.why].map(q).join(','));
+    blob = new Blob([head + '\n' + lines.join('\n')], { type: 'text/csv' });
+    name = 'approved-rates-diff.csv';
+  } else {
+    blob = new Blob([JSON.stringify(CRX_LAST, null, 2)], { type: 'application/json' });
+    name = 'approved-rates-diff.json';
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+}
+
+// ── the review queue ────────────────────────────────────────────────────────
+const CRQ_Q = { rows: [], docs: {} };
+async function crqLoad() {
+  const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
+  const { data, error } = await sb.from('council_requirements')
+    .select('*').order('created_at');
+  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Queue load failed: ${error.message} — has sql/2026-08-25-package-c3-council-requirements.sql been run?</div>`; return; }
+  // Only PROPOSED rows are editable in the queue; approved/rejected are
+  // counted so a fully-reviewed document keeps its Serve button visible.
+  CRQ_Q.rows = (data || []).filter(r => r.status === 'proposed');
+  CRQ_Q.counts = {};
+  (data || []).forEach(r => {
+    const c = CRQ_Q.counts[r.council_guideline_id] = CRQ_Q.counts[r.council_guideline_id] || { approved: 0, rejected: 0, proposed: 0 };
+    c[r.status] = (c[r.status] || 0) + 1;
+  });
+  CRQ_Q.docs = {};
+  const gids = [...new Set((data || []).map(r => r.council_guideline_id))];
+  if (gids.length) {
+    const { data: docs } = await sb.from('council_guidelines')
+      .select('id, council_name, version, version_label, source_file, requirements').in('id', gids);
+    (docs || []).forEach(d => { CRQ_Q.docs[d.id] = d; });
+  }
+  crqRender();
+}
+function crqRender() {
+  const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
+  const gidsAll = Object.keys(CRQ_Q.counts || {});
+  if (!gidsAll.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Queue is empty — use 🧾 Extract to queue on a library document above.</div>'; return; }
+  const byDoc = {};
+  gidsAll.forEach(g => { byDoc[g] = []; });
+  CRQ_Q.rows.forEach(r => (byDoc[r.council_guideline_id] = byDoc[r.council_guideline_id] || []).push(r));
+  const streamOpts = s => `<option value="">— none —</option>` + CRQ_STREAMS.map(x => `<option ${x === s ? 'selected' : ''}>${x}</option>`).join('');
+  const typeOpts = t => CRQ_TYPES.map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('');
+  wrap.innerHTML = Object.keys(byDoc).map(gid => {
+    const d = CRQ_Q.docs[gid] || {};
+    const rows = byDoc[gid];
+    return `
+    <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <span style="font-weight:700;font-size:12px;">${cgbEsc(d.council_name || 'Unknown document')} v${d.version ?? '?'}${d.version_label ? ' (' + cgbEsc(d.version_label) + ')' : ''}</span>
+        <span style="font-size:10.5px;color:var(--muted);">${rows.length} proposed${(CRQ_Q.counts[gid]?.approved || 0) ? ' · ' + CRQ_Q.counts[gid].approved + ' approved' : ''}${(CRQ_Q.counts[gid]?.rejected || 0) ? ' · ' + CRQ_Q.counts[gid].rejected + ' rejected' : ''}${(d.requirements || []).length ? ' · serving ' + d.requirements.length : ' · serving nothing yet'}</span>
+        <span style="flex:1"></span>
+        ${(CRQ_Q.counts[gid]?.approved || 0) ? `<button class="btn" style="background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;" title="Publish the approved set to the compliance checker and WMP — this is the explicit step that stops the previous version serving" onclick="crqServe('${gid}')">⇧ Serve ${CRQ_Q.counts[gid].approved} approved</button>` : ''}
+        ${rows.length ? `<button class="btn" title="Approve every row in this document as it stands — verify them against the PDF first" onclick="crqBulkApprove('${gid}')">✓ Approve all ${rows.length}</button>` : ''}
+      </div>
+      <div style="display:grid;grid-template-columns:130px 90px 84px 70px 76px 1fr 96px 108px;gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">
+        <span>Type</span><span>Use class</span><span>Stream</span><span>Value</span><span>Unit</span><span>Text</span><span>Clause</span><span></span>
+      </div>
+      ${rows.map(r => `
+      <div id="crq-row-${r.id}" style="display:grid;grid-template-columns:130px 90px 84px 70px 76px 1fr 96px 108px;gap:6px;align-items:start;margin-bottom:5px;">
+        <select data-crq="${r.id}:requirement_type" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">${typeOpts(r.requirement_type)}</select>
+        <input type="text" data-crq="${r.id}:use_class" value="${cgbEsc(r.use_class)}" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">
+        <select data-crq="${r.id}:stream" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">${streamOpts(r.stream)}</select>
+        <input type="text" data-crq="${r.id}:value_num" value="${r.value_num ?? ''}" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">
+        <input type="text" data-crq="${r.id}:unit" value="${cgbEsc(r.unit)}" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">
+        <textarea data-crq="${r.id}:value_text" rows="2" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;resize:vertical;">${cgbEsc(r.value_text)}</textarea>
+        <input type="text" data-crq="${r.id}:clause_ref" value="${cgbEsc(r.clause_ref)}" title="Verify this against the source PDF — it is the whole audit trail" style="background:#101717;border:1px solid #4a5a3a;border-radius:6px;padding:4px 6px;font-size:10.5px;color:#C5E1A5;font-family:inherit;">
+        <span style="display:flex;gap:4px;">
+          <button class="btn" title="Approve (uses the values as edited here)" onclick="crqDecide('${r.id}','approved')" style="padding:3px 8px;font-size:10px;background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;">✓</button>
+          <button class="btn" title="Reject" onclick="crqDecide('${r.id}','rejected')" style="padding:3px 8px;font-size:10px;color:#EF8080;">✕</button>
+        </span>
+      </div>`).join('')}
+    </div>`;
+  }).join('');
+}
+function crqCollect(id) {
+  const out = {};
+  document.querySelectorAll(`[data-crq^="${id}:"]`).forEach(el => {
+    const key = el.getAttribute('data-crq').split(':')[1];
+    out[key] = el.value.trim() === '' ? null : el.value.trim();
+  });
+  if (out.value_num != null) out.value_num = isNaN(+out.value_num) ? null : +out.value_num;
+  return out;
+}
+async function crqDecide(id, status) {
+  const edits = crqCollect(id);
+  if (status === 'approved' && !edits.clause_ref) { crqMsg('A row cannot be approved without a clause reference.', true); return; }
+  const patch = { ...edits, status, reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() };
+  const { error } = await sb.from('council_requirements').update(patch).eq('id', id).eq('status', 'proposed');
+  if (error) { crqMsg('Update failed: ' + error.message, true); return; }
+  const row = CRQ_Q.rows.find(r => r.id === id);
+  CRQ_Q.rows = CRQ_Q.rows.filter(r => r.id !== id);
+  if (row && CRQ_Q.counts[row.council_guideline_id]) {
+    const c = CRQ_Q.counts[row.council_guideline_id];
+    c.proposed = Math.max(0, (c.proposed || 0) - 1);
+    c[status] = (c[status] || 0) + 1;
+  }
+  crqMsg(status === 'approved' ? '✓ Approved — use ⇧ Serve when the set is ready.' : 'Rejected.');
+  crqRender();
+}
+async function crqBulkApprove(gid) {
+  const rows = CRQ_Q.rows.filter(r => r.council_guideline_id === gid);
+  if (!rows.length) return;
+  if (!confirm(`Approve all ${rows.length} proposed rows for this document, with any edits you have made? Verify them against the PDF first — approval is what makes them machine-usable.`)) return;
+  let ok = 0, fail = 0;
+  for (const r of rows) {
+    const edits = crqCollect(r.id);
+    if (!edits.clause_ref) { fail++; continue; }   // untraceable rows stay in the queue
+    const { error } = await sb.from('council_requirements')
+      .update({ ...edits, status: 'approved', reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() })
+      .eq('id', r.id).eq('status', 'proposed');
+    if (error) fail++; else ok++;
+  }
+  crqMsg(`✓ ${ok} approved` + (fail ? ` · ${fail} skipped (missing clause reference or update failed)` : ''));
+  crqLoad();
+}
+
+// C1: guidelines are VERSIONED. A save is always a new row (version = max+1
+// for the council); the previous live row gets superseded_at. Nothing is ever
+// overwritten or deleted, so a check recorded against v2 stays auditable after
+// v3 lands. Shared by the single-doc flow here and the C2 bulk uploader.
+async function cgInsertVersion(row) {
+  const { data: prior, error: qerr } = await sb.from('council_guidelines')
+    .select('id, version').eq('council_key', row.council_key)
+    .order('version', { ascending: false }).limit(1);
+  if (qerr) throw qerr;
+  row.version = prior?.length ? (prior[0].version || 0) + 1 : 1;
+  const { data: ins, error } = await sb.from('council_guidelines').insert(row).select('id, version').single();
+  if (error) throw error;
+  const { error: supErr } = await sb.from('council_guidelines')
+    .update({ superseded_at: new Date().toISOString() })
+    .eq('council_key', row.council_key).neq('id', ins.id).is('superseded_at', null);
+  if (supErr) throw supErr;
+  return ins;
+}
+
 async function cgSave() {
   if (!CG.current) return;
   cgCollectReview();
@@ -8999,34 +9803,50 @@ async function cgSave() {
     council_key: cgSlug(name),
     council_name: name,
     state: document.getElementById('cg-state').value || null,
-    version: document.getElementById('cg-version').value.trim() || null,
+    version_label: document.getElementById('cg-version').value.trim() || null,
+    effective_date: document.getElementById('cg-effective')?.value || null,
+    source_url: document.getElementById('cg-source-url')?.value.trim() || null,
+    uploaded_by: currentUser?.id || null,
     source_file: CG.current.source_file || null,
     requirements: CG.current.requirements,
     updated_at: new Date().toISOString(),
   };
   cgMsg('Saving…');
-  const { error } = await sb.from('council_guidelines').upsert(row, { onConflict: 'council_key' });
-  if (error) { cgMsg('Save failed: ' + error.message, true); return; }
-  cgMsg(`✓ ${row.council_name} saved (${row.requirements.length} requirements) — live for all compliance scans.`);
+  try {
+    const ins = await cgInsertVersion(row);
+    cgMsg(`✓ ${row.council_name} saved as v${ins.version} (${row.requirements.length} requirements) — the previous version is superseded, not deleted.`);
+  } catch (error) {
+    cgMsg('Save failed: ' + error.message + ' — has sql/2026-08-25-package-c1-guideline-versioning.sql been run?', true);
+    return;
+  }
   CG.current = null; cgRenderReview(); cgLoad();
 }
 
 async function cgEdit(key) {
-  const { data, error } = await sb.from('council_guidelines').select('*').eq('council_key', key).single();
-  if (error || !data) { cgMsg('Could not load that council.', true); return; }
-  CG.current = { council_name: data.council_name, state: data.state, version: data.version, source_file: data.source_file, requirements: data.requirements || [] };
-  document.getElementById('cg-name').value = data.council_name;
-  document.getElementById('cg-state').value = data.state || '';
-  document.getElementById('cg-version').value = data.version || '';
-  cgMsg(`Editing ${data.council_name} — save to overwrite.`);
+  // Always edit from the LATEST live version; saving creates the next one.
+  const { data, error } = await sb.from('council_guidelines').select('*')
+    .eq('council_key', key).is('superseded_at', null)
+    .order('version', { ascending: false }).limit(1);
+  const row = data?.[0];
+  if (error || !row) { cgMsg('Could not load that council.', true); return; }
+  CG.current = { council_name: row.council_name, state: row.state, version: row.version, source_file: row.source_file, requirements: row.requirements || [] };
+  document.getElementById('cg-name').value = row.council_name;
+  document.getElementById('cg-state').value = row.state || '';
+  document.getElementById('cg-version').value = row.version_label || '';
+  if (document.getElementById('cg-effective')) document.getElementById('cg-effective').value = row.effective_date || '';
+  if (document.getElementById('cg-source-url')) document.getElementById('cg-source-url').value = row.source_url || '';
+  cgMsg(`Editing ${row.council_name} v${row.version} — saving creates v${(row.version || 0) + 1}; v${row.version} stays on record.`);
   cgRenderReview();
   document.getElementById('cg-review').scrollIntoView({ behavior: 'smooth' });
 }
 
+// C1: never delete. Retiring a council supersedes its live version, so scans
+// stop using it, but every recorded check keeps a row to point at.
 async function cgDelete(key) {
-  if (!confirm('Delete this council from the guidelines library? Compliance scans will fall back to manual uploads.')) return;
-  const { error } = await sb.from('council_guidelines').delete().eq('council_key', key);
-  if (error) { cgMsg('Delete failed: ' + error.message, true); return; }
+  if (!confirm('Retire this council from the guidelines library? Its versions stay on record for past checks, but compliance scans stop using it.')) return;
+  const { error } = await sb.from('council_guidelines')
+    .update({ superseded_at: new Date().toISOString() }).eq('council_key', key).is('superseded_at', null);
+  if (error) { cgMsg('Retire failed: ' + error.message, true); return; }
   cgLoad();
 }
 
@@ -9892,8 +10712,8 @@ function switchAdminTab(btn, panelId) {
   if (panel) panel.style.display = 'block';
   if (panelId === 'stab-analytics') loadAdminAnalytics();
   if (panelId === 'stab-users') loadAdminUsers();
-  if (panelId === 'stab-rates') { rdbLoad(); cgLoad(); }
-  if (panelId === 'stab-equipment') { eqlLoad(); ctlLoad(); }
+  if (panelId === 'stab-rates') { rdbLoad(); cgLoad(); if (typeof crqLoad === 'function') crqLoad(); }
+  if (panelId === 'stab-equipment') { eqlLoad(); ctlLoad(); if (typeof eqpLoad === 'function') eqpLoad(); }
 }
 
 // ── ADMIN: PLATFORM ANALYTICS ─────────────────────────────────────────────
@@ -12457,6 +13277,7 @@ function wsShowTab(name, btn) {
     if (sb) sb.style.display = ''; if (eb) eb.style.display = '';
     WS_LAYOUT.tabActive = true;
     if (WS_EQUIP_DB === null) wsLoadEquipmentDB(); else wsLayoutPopulateBins();
+    if (typeof wsCouncilReqsRefresh === 'function') wsCouncilReqsRefresh();
     wsLayoutBind();
     const osvg = document.getElementById('ws-overlay-svg');
     if (osvg) osvg.style.pointerEvents = 'all';
@@ -15744,6 +16565,8 @@ function wsLayoutUpdateStats(slot, mpp) {
     const uniq = [...new Set(cl)];
     el.textContent += ` · ⚠ ${cl.length} bin${cl.length === 1 ? '' : 's'} clashing with ${uniq.join(', ')}`;
   }
+  // C5: advisory council warnings track the same render cadence as the stats
+  if (typeof wsCouncilWarnRender === 'function') wsCouncilWarnRender();
 }
 // Emit each distinct item once as a BLOCK, then reference it per instance with
 // INSERT. Smaller files, and redefining the block in CAD restyles every copy.
@@ -16562,6 +17385,95 @@ function wsCanvasXY(e) {
   const rect = canvas.getBoundingClientRect();
   return { x: (e.clientX - rect.left) * (canvas.width / rect.width),
            y: (e.clientY - rect.top) * (canvas.height / rect.height) };
+}
+
+// ── C5: COUNCIL SOFT WARNINGS ────────────────────────────────────────────────
+// APPROVED aisle_width / room_dimension requirements for the project's council
+// surface as advisory lines in the layout side panel. Soft only, by design:
+// no blocking, no auto-resize, no canvas overlays — the drawing stays the
+// designer's. Only status='approved' rows are ever read (RLS enforces the
+// same), and each warning cites its clause and guideline version.
+// Pure: requirements + measured layout facts in, warning strings out.
+function wsCouncilLayoutWarnings(reqs, facts) {
+  const out = [];
+  const mm = r => r.unit && /^m$/i.test(r.unit.trim()) ? r.value_num * 1000
+             : r.unit && /mm/i.test(r.unit) ? r.value_num : null;
+  (reqs || []).forEach(r => {
+    if (!r || r.value_num == null) return;
+    const cite = `${r.clause_ref}${r._version ? ', guideline v' + r._version : ''}`;
+    if (r.requirement_type === 'aisle_width') {
+      const need = mm(r);
+      if (need == null) return;
+      (facts.aislesMm || []).forEach(got => {
+        if (got < need - 1e-9) out.push(`Council minimum aisle ${Math.round(need)}mm — current ${Math.round(got)}mm (${cite})`);
+      });
+    } else if (r.requirement_type === 'room_dimension') {
+      if (r.unit && /m2|m²/i.test(r.unit)) {
+        (facts.rooms || []).forEach(rm => {
+          if (rm.areaM2 != null && rm.areaM2 < r.value_num - 1e-9)
+            out.push(`Council minimum room area ${r.value_num} m² — ${rm.name || 'room'} is ${rm.areaM2.toFixed(1)} m² (${cite})`);
+        });
+      } else {
+        const need = mm(r);
+        if (need == null) return;
+        (facts.rooms || []).forEach(rm => {
+          if (rm.minSideM != null && rm.minSideM * 1000 < need - 1e-9)
+            out.push(`Council minimum room dimension ${Math.round(need)}mm — ${rm.name || 'room'} is ${Math.round(rm.minSideM * 1000)}mm at its narrowest (${cite})`);
+        });
+      }
+    }
+  });
+  return out;
+}
+// Cached fetch of the project council's approved layout requirements.
+const WS_CREQ5 = { council: null, rows: null };
+async function wsCouncilReqsRefresh() {
+  const council = (WS.extractData && WS.extractData.council) || null;
+  if (!council || typeof sb === 'undefined' || !sb) { WS_CREQ5.council = council; WS_CREQ5.rows = []; wsCouncilWarnRender(); return; }
+  if (WS_CREQ5.council === council && WS_CREQ5.rows) { wsCouncilWarnRender(); return; }
+  WS_CREQ5.council = council; WS_CREQ5.rows = [];
+  try {
+    const { data: reqs } = await sb.from('council_requirements')
+      .select('requirement_type, value_num, unit, value_text, clause_ref, council_guideline_id, status')
+      .eq('status', 'approved').in('requirement_type', ['aisle_width', 'room_dimension']);
+    if (reqs?.length) {
+      const gids = [...new Set(reqs.map(r => r.council_guideline_id))];
+      const { data: docs } = await sb.from('council_guidelines')
+        .select('id, council_name, version').in('id', gids);
+      const byId = {}; (docs || []).forEach(d => { byId[d.id] = d; });
+      const norm = s => String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, '');
+      const want = norm(council);
+      WS_CREQ5.rows = reqs.filter(r => {
+        const d = byId[r.council_guideline_id];
+        if (!d) return false;
+        const n = norm(d.council_name);
+        return n === want || n.includes(want) || want.includes(n);
+      }).map(r => ({ ...r, _version: (byId[r.council_guideline_id] || {}).version ?? null }));
+    }
+  } catch (e) { /* advisory only — a failed fetch warns about nothing */ }
+  wsCouncilWarnRender();
+}
+function wsCouncilWarnRender() {
+  const el = document.getElementById('ws-council-warn'); if (!el) return;
+  const rows = WS_CREQ5.rows || [];
+  if (!rows.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const mpp = wsSweptMpp();
+  const slot = wsLayoutSlot();
+  const facts = { aislesMm: [], rooms: [] };
+  if (mpp) {
+    (slot.equip || []).forEach(e => { if (e.aisle) facts.aislesMm.push(e.d * 1000); });
+    (slot.rooms || []).forEach(r => {
+      const pts = wsRoomPts(r), bb = wsPolyBBox(pts);
+      facts.rooms.push({ name: r.name || null, areaM2: wsPolyArea(pts, mpp),
+        minSideM: Math.min(bb.x2 - bb.x1, bb.y2 - bb.y1) * mpp });
+    });
+  }
+  const warns = wsCouncilLayoutWarnings(rows, facts);
+  if (!warns.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  el.innerHTML = `<div style="font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#FFB74D;">Council requirements — advisory</div>` +
+    warns.slice(0, 8).map(w => `<div>⚠ ${w.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('') +
+    (warns.length > 8 ? `<div style="color:rgba(255,255,255,0.5);">+ ${warns.length - 8} more</div>` : '');
 }
 
 // ── OBSTACLES & FIXTURES ─────────────────────────────────────────────────────
@@ -23521,14 +24433,39 @@ async function creqLoad(d) {
   CREQ.pack = null; CREQ.loadedFor = key;
   if (!d.council || typeof sb === 'undefined' || !sb) return null;
   try {
-    const { data } = await sb.from('council_guidelines')
-      .select('council_key,council_name,state,version,requirements');
+    // C1: the latest non-superseded version of each council is preferred — but
+    // a fresh upload arrives with NO structured requirements until a new
+    // extraction is approved and served, so a live-but-empty version falls
+    // back to the newest version that HAS requirements. The check still pins
+    // the version it actually used. Pre-migration fallback keeps the WMP
+    // working until the SQL is run.
+    let { data, error } = await sb.from('council_guidelines')
+      .select('id,council_key,council_name,state,version,version_label,superseded_at,requirements')
+      .order('version', { ascending: false });
+    if (error) ({ data } = await sb.from('council_guidelines')
+      .select('council_key,council_name,state,version,requirements'));
     if (!data?.length) return null;
+    const serving = {};
+    data.forEach(r => {
+      const k = r.council_key || r.council_name;
+      const g = serving[k] = serving[k] || {};
+      if (!r.superseded_at && !g.live) g.live = r;
+      if ((r.requirements || []).length && !g.withReqs) g.withReqs = r;
+    });
+    const packs = Object.values(serving).map(g =>
+      (g.live && (g.live.requirements || []).length) ? g.live
+        : g.withReqs ? { ...g.withReqs, servedFallback: !!g.live }
+        : g.live).filter(Boolean);
     const want = d.council.trim().toLowerCase();
-    const hit = data.find(r => (r.council_name || '').trim().toLowerCase() === want)
-             || data.find(r => want.includes((r.council_name || '').trim().toLowerCase()) && r.council_name)
+    const hit = packs.find(r => (r.council_name || '').trim().toLowerCase() === want)
+             || packs.find(r => want.includes((r.council_name || '').trim().toLowerCase()) && r.council_name)
              || null;
     CREQ.pack = hit;
+    // Record WHICH document this WMP is being checked against. p.wmp saves
+    // WMPG.data wholesale, so the pin persists with the generated WMP.
+    d.creqSource = hit ? { guidelineId: hit.id || null, councilKey: hit.council_key,
+      councilName: hit.council_name, version: hit.version ?? null,
+      versionLabel: hit.version_label || null, checkedAt: new Date().toISOString() } : null;
   } catch(e) { CREQ.pack = null; }
   return CREQ.pack;
 }
@@ -23588,7 +24525,7 @@ async function creqRun() {
     </li>`;
   el.innerHTML = `
     <div style="font-size:11px;color:#9BB0B0;margin-bottom:6px;">
-      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''} — ${f.length} requirements
+      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''}${pack.version_label ? ' (' + wmpgEsc(pack.version_label) + ')' : ''}${pack.servedFallback ? ' · <span style="color:#EFB080;">a newer upload exists — serving this version until its extraction is approved</span>' : ''} — ${f.length} requirements
       <span style="color:#EF8080;">${fails.length} not met</span> ·
       <span style="color:#EFB080;">${unk.length} unstated</span> ·
       <span style="color:#81C784;">${pass.length} met</span> ·
