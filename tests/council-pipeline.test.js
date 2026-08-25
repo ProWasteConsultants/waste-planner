@@ -14,6 +14,7 @@ const path = require('node:path');
 const { SOURCE } = require('./extract.js');
 
 const MIG_C1 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c1-guideline-versioning.sql'), 'utf8');
+const MIG_C2 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c2-guideline-storage.sql'), 'utf8');
 
 // ── C1: migration ───────────────────────────────────────────────────────
 test('C1 migration: lifecycle columns, version sequencing, grants', () => {
@@ -63,4 +64,27 @@ test('C1: the compliance checker fetches live versions and stamps the scan', () 
     'the iframe REST fetch filters superseded versions');
   assert.ok(SOURCE.includes('state.checkedAgainst = structuredGuidelines ? {'),
     'each AI check records which guideline version it ran against');
+});
+
+// ── C2: bulk upload ─────────────────────────────────────────────────────
+test('C2: bulk upload — councils assigned by hand, versioned through one path', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('const CGB = '), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
+  assert.ok(fn.includes("if (!name) { r.status = 'assign a council'; return false; }"),
+    'no council assigned, no upload — filenames are never auto-matched');
+  assert.ok(fn.includes('await cgInsertVersion({'),
+    'bulk uploads version through the same supersede path as single saves');
+  assert.ok(fn.includes('requirements: [],     // structured rows come from extraction + review (C3)'),
+    'no structured requirements are invented at upload time');
+  assert.ok(fn.includes('guidelines/${key}/'),
+    'files land under the guidelines/ prefix of the existing bucket');
+  assert.ok(fn.includes('sequential on purpose'),
+    'same-council files take sequential versions instead of racing max(version)');
+});
+
+test('C2 migration: storage policies for the guidelines prefix', () => {
+  assert.ok(MIG_C2.includes("(storage.foldername(name))[1] = 'guidelines'"),
+    'policies scope to the guidelines/ prefix only');
+  assert.ok(MIG_C2.includes('p.is_staff = true'), 'writes are staff-gated');
+  assert.ok(!/create policy.*for (update|delete)/i.test(MIG_C2),
+    'no update/delete policy — guideline files are never overwritten or removed');
 });

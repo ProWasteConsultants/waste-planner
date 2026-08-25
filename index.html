@@ -883,6 +883,22 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
             Upload a council's waste guideline or DCP chapter (PDF). Enforceable requirements are extracted with clause and page references, reviewed here, then saved to a shared library — the compliance checker cites them by clause for every user scanning that council, on any device.
           </div>
+
+          <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND -->
+          <div id="cgb-drop" ondragover="event.preventDefault();this.style.borderColor='var(--teal)';"
+               ondragleave="this.style.borderColor='var(--border)';"
+               ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbAddFiles(event.dataTransfer.files);"
+               onclick="document.getElementById('cgb-files').click()"
+               style="border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:8px;">
+            ⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.
+            <input type="file" id="cgb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbAddFiles(this.files);this.value='';">
+          </div>
+          <datalist id="cgb-councils"></datalist>
+          <div id="cgb-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
+          <div id="cgb-actions" style="display:none;gap:8px;align-items:center;margin-bottom:14px;">
+            <button class="btn" style="background:var(--teal);color:#fff;font-weight:700;" onclick="cgbUploadAll()">⇪ Upload assigned files</button>
+            <span style="font-size:10.5px;color:var(--muted);">Each upload becomes a NEW version of that council's guideline — the previous version is superseded, and its structured requirements stop being served until a new extraction is approved.</span>
+          </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
             <input type="text" id="cg-name" placeholder="Council name, e.g. Randwick City Council" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
             <select id="cg-state" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;color:var(--text);font-family:inherit;">
@@ -9016,6 +9032,88 @@ function cgCollectReview() {
     if (key === 'page') r.page = el.value.trim() === '' ? null : parseInt(el.value, 10) || null;
     else r[key] = el.value.trim() || null;
   });
+}
+
+// ── C2: BULK GUIDELINE UPLOAD ────────────────────────────────────────────────
+// Many PDFs in, one council assignment each — BY HAND, never matched from the
+// filename. Files land in the existing 'project-plans' bucket under
+// guidelines/<council_key>/, and each upload becomes a new guideline version
+// through the same cgInsertVersion path the single-doc flow uses.
+const CGB = { rows: [] };
+function cgbEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+async function cgbCouncilList() {
+  try {
+    const { data } = await sb.from('council_guidelines').select('council_name').is('superseded_at', null);
+    const names = [...new Set((data || []).map(r => r.council_name).filter(Boolean))].sort();
+    const dl = document.getElementById('cgb-councils');
+    if (dl) dl.innerHTML = names.map(n => `<option value="${cgbEsc(n)}">`).join('');
+  } catch (e) { /* datalist is a convenience — free text always works */ }
+}
+function cgbAddFiles(files) {
+  [...(files || [])].forEach(f => {
+    if (!/\.pdf$/i.test(f.name)) return;
+    if (f.size > 25 * 1024 * 1024) { CGB.rows.push({ file: f, status: 'Too large (25 MB max)', dead: true }); return; }
+    CGB.rows.push({ file: f, council: '', state: '', effective: '', status: 'assign a council' });
+  });
+  cgbCouncilList();
+  cgbRender();
+}
+function cgbRender() {
+  const wrap = document.getElementById('cgb-rows'), act = document.getElementById('cgb-actions');
+  if (!wrap) return;
+  wrap.innerHTML = CGB.rows.map((r, i) => `
+    <div style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,1.2fr) 70px 130px minmax(120px,1fr) 26px;gap:6px;align-items:center;border:1px solid var(--border);border-radius:7px;background:#182121;padding:6px 8px;">
+      <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${cgbEsc(r.file.name)}">📄 ${cgbEsc(r.file.name)}</span>
+      <input type="text" list="cgb-councils" placeholder="Council (pick or type)" value="${cgbEsc(r.council)}" ${r.done || r.dead ? 'disabled' : ''}
+             oninput="CGB.rows[${i}].council=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;">
+      <select ${r.done || r.dead ? 'disabled' : ''} onchange="CGB.rows[${i}].state=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:11px;color:var(--text);font-family:inherit;">
+        <option value="">St…</option>${['NSW','VIC','QLD','SA','WA','TAS','ACT','NT'].map(s => `<option ${r.state === s ? 'selected' : ''}>${s}</option>`).join('')}
+      </select>
+      <input type="date" ${r.done || r.dead ? 'disabled' : ''} value="${cgbEsc(r.effective)}" title="Effective date, if known"
+             onchange="CGB.rows[${i}].effective=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:11px;color:var(--text);font-family:inherit;">
+      <span style="font-size:10.5px;color:${r.dead ? '#EF8080' : r.done ? '#3DD68C' : 'var(--muted)'};">${cgbEsc(r.status)}</span>
+      <button class="btn" title="Remove from the batch" ${r.busy ? 'disabled' : ''} onclick="CGB.rows.splice(${i},1);cgbRender();" style="padding:2px 7px;font-size:10px;">✕</button>
+    </div>`).join('');
+  if (act) act.style.display = CGB.rows.some(r => !r.done && !r.dead) ? 'flex' : 'none';
+}
+async function cgbUploadOne(r) {
+  const name = (r.council || '').trim();
+  if (!name) { r.status = 'assign a council'; return false; }
+  const key = cgSlug(name);
+  r.busy = true; r.status = 'uploading…'; cgbRender();
+  try {
+    const safe = r.file.name.replace(/[^A-Za-z0-9._-]+/g, '_');
+    const path = `guidelines/${key}/${Date.now()}_${safe}`;
+    const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
+      .upload(path, r.file, { contentType: 'application/pdf' });
+    if (upErr) throw upErr;
+    const ins = await cgInsertVersion({
+      council_key: key, council_name: name,
+      state: r.state || null,
+      version_label: null,
+      effective_date: r.effective || null,
+      source_url: null,
+      uploaded_by: currentUser?.id || null,
+      source_file: path,
+      requirements: [],     // structured rows come from extraction + review (C3)
+      notes: 'bulk upload',
+      updated_at: new Date().toISOString(),
+    });
+    r.done = true; r.status = `✓ v${ins.version} — extract + review to serve requirements`;
+    return true;
+  } catch (err) {
+    r.status = 'failed: ' + (err.message || err);
+    return false;
+  } finally { r.busy = false; cgbRender(); }
+}
+async function cgbUploadAll() {
+  // sequential on purpose: two files for the same council must version 1, 2 —
+  // parallel inserts would race the max(version) read
+  for (const r of CGB.rows) {
+    if (r.done || r.dead) continue;
+    await cgbUploadOne(r);
+  }
+  cgLoad();
 }
 
 // C1: guidelines are VERSIONED. A save is always a new row (version = max+1
