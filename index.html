@@ -888,7 +888,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <select id="cg-state" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;color:var(--text);font-family:inherit;">
               <option value="">State…</option><option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
             </select>
-            <input type="text" id="cg-version" placeholder="Version / year" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;width:110px;">
+            <input type="text" id="cg-version" placeholder="Doc label, e.g. 2023 DCP" title="Free-text label from the document — the integer version number is sequenced automatically" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;width:130px;">
+            <input type="date" id="cg-effective" title="Effective date, if the document states one" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;">
+            <input type="url" id="cg-source-url" placeholder="Source URL (optional)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:200px;">
             <input type="file" id="cg-file" accept=".pdf,application/pdf" style="font-size:11px;color:var(--text);max-width:240px;">
             <button class="btn" onclick="cgExtract()">🤖 Extract requirements</button>
           </div>
@@ -6411,7 +6413,10 @@ function cgNorm(s) { return String(s || &#x27;&#x27;).toLowerCase().replace(/\b(
 async function cgFetchStructured(councilName) {
   try {
     if (!state._cgAll) {
-      const resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=council_name,state,version,requirements`, { headers: { apikey: CG_ANON } });
+      // C1: only the latest non-superseded version of each council is used;
+      // the fallback keeps working against a pre-migration table.
+      let resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=id,council_name,state,version,version_label,requirements&amp;superseded_at=is.null&amp;order=version.desc`, { headers: { apikey: CG_ANON } });
+      if (!resp.ok) resp = await fetch(`${CG_SUPA}/rest/v1/council_guidelines?select=council_name,state,version,requirements`, { headers: { apikey: CG_ANON } });
       state._cgAll = resp.ok ? await resp.json() : [];
     }
     const target = cgNorm(councilName);
@@ -6680,6 +6685,15 @@ async function startScan() {
   const _csel = document.getElementById(&#x27;council-select&#x27;);
   const _cname = document.getElementById(&#x27;custom-council-name&#x27;)?.value.trim() || _csel.options[_csel.selectedIndex]?.text || &#x27;&#x27;;
   const structuredGuidelines = await cgFetchStructured(_cname);
+  // C1: record WHICH guideline version this check runs against — it travels
+  // with the scan state and is shown on the checker header.
+  state.checkedAgainst = structuredGuidelines ? {
+    guidelineId: structuredGuidelines.id || null,
+    councilName: structuredGuidelines.council_name,
+    version: structuredGuidelines.version ?? null,
+    versionLabel: structuredGuidelines.version_label || null,
+    checkedAt: new Date().toISOString(),
+  } : null;
 
   // Switch to checker view
   document.getElementById(&#x27;setup-panel&#x27;).style.display = &#x27;none&#x27;;
@@ -6689,7 +6703,8 @@ async function startScan() {
   // Set title
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;Unnamed Project&#x27;;
   const ref = document.getElementById(&#x27;proj-ref&#x27;).value;
-  document.getElementById(&#x27;checker-title&#x27;).textContent = `${addr}${ref ? &#x27; — &#x27; + ref : &#x27;&#x27;}`;
+  document.getElementById(&#x27;checker-title&#x27;).textContent = `${addr}${ref ? &#x27; — &#x27; + ref : &#x27;&#x27;}` +
+    (state.checkedAgainst &amp;&amp; state.checkedAgainst.version ? ` · checked against ${state.checkedAgainst.councilName} v${state.checkedAgainst.version}` : &#x27;&#x27;);
 
   // Render PDF
   renderAllPages();
@@ -8892,18 +8907,32 @@ function cgSlug(name) { return String(name).toLowerCase().replace(/[^a-z0-9]+/g,
 async function cgLoad() {
   const wrap = document.getElementById('cg-library');
   wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Loading…</div>';
-  const { data, error } = await sb.from('council_guidelines').select('council_key, council_name, state, version, updated_at, requirements').order('council_name');
-  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Load failed: ${error.message} — has council_guidelines.sql been run?</div>`; return; }
+  const { data, error } = await sb.from('council_guidelines')
+    .select('council_key, council_name, state, version, version_label, effective_date, superseded_at, updated_at, requirements')
+    .order('council_name').order('version', { ascending: false });
+  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Load failed: ${error.message} — has sql/2026-08-25-package-c1-guideline-versioning.sql been run?</div>`; return; }
   if (!data?.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No councils in the library yet — extract one above.</div>'; return; }
-  wrap.innerHTML = data.map(r => `
-    <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;background:#182121;padding:8px 12px;">
+  // One card per council: its latest LIVE version, with the history counted.
+  const byKey = {};
+  data.forEach(r => {
+    const g = byKey[r.council_key] = byKey[r.council_key] || { live: null, total: 0 };
+    g.total++;
+    if (!r.superseded_at && (!g.live || r.version > g.live.version)) g.live = r;
+    g.any = g.any || r;
+  });
+  wrap.innerHTML = Object.keys(byKey).sort().map(k => {
+    const g = byKey[k], r = g.live || g.any;
+    const retired = !g.live;
+    return `
+    <div style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;background:#182121;padding:8px 12px;${retired ? 'opacity:0.55;' : ''}">
       <div style="flex:1;">
         <span style="font-weight:700;font-size:12px;">${ssxEsc(r.council_name)}</span>
-        <span style="font-size:10.5px;color:var(--muted);margin-left:8px;">${ssxEsc(r.state || '')} · v${ssxEsc(r.version || '—')} · ${(r.requirements || []).length} requirements · ${new Date(r.updated_at).toLocaleDateString('en-AU')}</span>
+        <span style="font-size:10.5px;color:var(--muted);margin-left:8px;">${ssxEsc(r.state || '')} · v${r.version}${r.version_label ? ' (' + ssxEsc(r.version_label) + ')' : ''} · ${(r.requirements || []).length} requirements${r.effective_date ? ' · effective ' + new Date(r.effective_date).toLocaleDateString('en-AU') : ''} · ${new Date(r.updated_at).toLocaleDateString('en-AU')}${g.total > 1 ? ' · ' + (g.total - 1) + ' older version' + (g.total > 2 ? 's' : '') + ' on record' : ''}${retired ? ' · RETIRED' : ''}</span>
       </div>
-      <button class="btn" onclick="cgEdit('${r.council_key}')">✎ Edit</button>
-      <button class="btn" onclick="cgDelete('${r.council_key}')">✕</button>
-    </div>`).join('');
+      ${retired ? '' : `<button class="btn" onclick="cgEdit('${k}')">✎ Edit</button>
+      <button class="btn" title="Retire — versions stay on record for past checks" onclick="cgDelete('${k}')">✕</button>`}
+    </div>`;
+  }).join('');
 }
 
 async function cgExtract() {
@@ -8989,6 +9018,25 @@ function cgCollectReview() {
   });
 }
 
+// C1: guidelines are VERSIONED. A save is always a new row (version = max+1
+// for the council); the previous live row gets superseded_at. Nothing is ever
+// overwritten or deleted, so a check recorded against v2 stays auditable after
+// v3 lands. Shared by the single-doc flow here and the C2 bulk uploader.
+async function cgInsertVersion(row) {
+  const { data: prior, error: qerr } = await sb.from('council_guidelines')
+    .select('id, version').eq('council_key', row.council_key)
+    .order('version', { ascending: false }).limit(1);
+  if (qerr) throw qerr;
+  row.version = prior?.length ? (prior[0].version || 0) + 1 : 1;
+  const { data: ins, error } = await sb.from('council_guidelines').insert(row).select('id, version').single();
+  if (error) throw error;
+  const { error: supErr } = await sb.from('council_guidelines')
+    .update({ superseded_at: new Date().toISOString() })
+    .eq('council_key', row.council_key).neq('id', ins.id).is('superseded_at', null);
+  if (supErr) throw supErr;
+  return ins;
+}
+
 async function cgSave() {
   if (!CG.current) return;
   cgCollectReview();
@@ -8999,34 +9047,50 @@ async function cgSave() {
     council_key: cgSlug(name),
     council_name: name,
     state: document.getElementById('cg-state').value || null,
-    version: document.getElementById('cg-version').value.trim() || null,
+    version_label: document.getElementById('cg-version').value.trim() || null,
+    effective_date: document.getElementById('cg-effective')?.value || null,
+    source_url: document.getElementById('cg-source-url')?.value.trim() || null,
+    uploaded_by: currentUser?.id || null,
     source_file: CG.current.source_file || null,
     requirements: CG.current.requirements,
     updated_at: new Date().toISOString(),
   };
   cgMsg('Saving…');
-  const { error } = await sb.from('council_guidelines').upsert(row, { onConflict: 'council_key' });
-  if (error) { cgMsg('Save failed: ' + error.message, true); return; }
-  cgMsg(`✓ ${row.council_name} saved (${row.requirements.length} requirements) — live for all compliance scans.`);
+  try {
+    const ins = await cgInsertVersion(row);
+    cgMsg(`✓ ${row.council_name} saved as v${ins.version} (${row.requirements.length} requirements) — the previous version is superseded, not deleted.`);
+  } catch (error) {
+    cgMsg('Save failed: ' + error.message + ' — has sql/2026-08-25-package-c1-guideline-versioning.sql been run?', true);
+    return;
+  }
   CG.current = null; cgRenderReview(); cgLoad();
 }
 
 async function cgEdit(key) {
-  const { data, error } = await sb.from('council_guidelines').select('*').eq('council_key', key).single();
-  if (error || !data) { cgMsg('Could not load that council.', true); return; }
-  CG.current = { council_name: data.council_name, state: data.state, version: data.version, source_file: data.source_file, requirements: data.requirements || [] };
-  document.getElementById('cg-name').value = data.council_name;
-  document.getElementById('cg-state').value = data.state || '';
-  document.getElementById('cg-version').value = data.version || '';
-  cgMsg(`Editing ${data.council_name} — save to overwrite.`);
+  // Always edit from the LATEST live version; saving creates the next one.
+  const { data, error } = await sb.from('council_guidelines').select('*')
+    .eq('council_key', key).is('superseded_at', null)
+    .order('version', { ascending: false }).limit(1);
+  const row = data?.[0];
+  if (error || !row) { cgMsg('Could not load that council.', true); return; }
+  CG.current = { council_name: row.council_name, state: row.state, version: row.version, source_file: row.source_file, requirements: row.requirements || [] };
+  document.getElementById('cg-name').value = row.council_name;
+  document.getElementById('cg-state').value = row.state || '';
+  document.getElementById('cg-version').value = row.version_label || '';
+  if (document.getElementById('cg-effective')) document.getElementById('cg-effective').value = row.effective_date || '';
+  if (document.getElementById('cg-source-url')) document.getElementById('cg-source-url').value = row.source_url || '';
+  cgMsg(`Editing ${row.council_name} v${row.version} — saving creates v${(row.version || 0) + 1}; v${row.version} stays on record.`);
   cgRenderReview();
   document.getElementById('cg-review').scrollIntoView({ behavior: 'smooth' });
 }
 
+// C1: never delete. Retiring a council supersedes its live version, so scans
+// stop using it, but every recorded check keeps a row to point at.
 async function cgDelete(key) {
-  if (!confirm('Delete this council from the guidelines library? Compliance scans will fall back to manual uploads.')) return;
-  const { error } = await sb.from('council_guidelines').delete().eq('council_key', key);
-  if (error) { cgMsg('Delete failed: ' + error.message, true); return; }
+  if (!confirm('Retire this council from the guidelines library? Its versions stay on record for past checks, but compliance scans stop using it.')) return;
+  const { error } = await sb.from('council_guidelines')
+    .update({ superseded_at: new Date().toISOString() }).eq('council_key', key).is('superseded_at', null);
+  if (error) { cgMsg('Retire failed: ' + error.message, true); return; }
   cgLoad();
 }
 
@@ -23521,14 +23585,24 @@ async function creqLoad(d) {
   CREQ.pack = null; CREQ.loadedFor = key;
   if (!d.council || typeof sb === 'undefined' || !sb) return null;
   try {
-    const { data } = await sb.from('council_guidelines')
-      .select('council_key,council_name,state,version,requirements');
+    // C1: only the latest non-superseded version of each council is consumed.
+    // The pre-migration fallback keeps the WMP working until the SQL is run.
+    let { data, error } = await sb.from('council_guidelines')
+      .select('id,council_key,council_name,state,version,version_label,requirements')
+      .is('superseded_at', null).order('version', { ascending: false });
+    if (error) ({ data } = await sb.from('council_guidelines')
+      .select('council_key,council_name,state,version,requirements'));
     if (!data?.length) return null;
     const want = d.council.trim().toLowerCase();
     const hit = data.find(r => (r.council_name || '').trim().toLowerCase() === want)
              || data.find(r => want.includes((r.council_name || '').trim().toLowerCase()) && r.council_name)
              || null;
     CREQ.pack = hit;
+    // Record WHICH document this WMP is being checked against. p.wmp saves
+    // WMPG.data wholesale, so the pin persists with the generated WMP.
+    d.creqSource = hit ? { guidelineId: hit.id || null, councilKey: hit.council_key,
+      councilName: hit.council_name, version: hit.version ?? null,
+      versionLabel: hit.version_label || null, checkedAt: new Date().toISOString() } : null;
   } catch(e) { CREQ.pack = null; }
   return CREQ.pack;
 }
@@ -23588,7 +23662,7 @@ async function creqRun() {
     </li>`;
   el.innerHTML = `
     <div style="font-size:11px;color:#9BB0B0;margin-bottom:6px;">
-      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''} — ${f.length} requirements
+      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''}${pack.version_label ? ' (' + wmpgEsc(pack.version_label) + ')' : ''} — ${f.length} requirements
       <span style="color:#EF8080;">${fails.length} not met</span> ·
       <span style="color:#EFB080;">${unk.length} unstated</span> ·
       <span style="color:#81C784;">${pass.length} met</span> ·
