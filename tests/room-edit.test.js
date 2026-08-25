@@ -413,7 +413,9 @@ test('room interior grab is tested after bins, chutes, equipment and callouts', 
 });
 
 test('room edits retag contents and re-render when the drag settles', () => {
-  assert.match(SOURCE, /if \(dg\.kind === 'room' \|\| dg\.kind === 'roomvert'\)[\s\S]{0,220}wsTagBinsToRooms\(slot3\.rooms, slot3\.bins\)/,
+  // aisleend joined the condition when allowance areas began reconciling off
+  // the room-containment tag: stretching a zone moves its centre.
+  assert.match(SOURCE, /if \(dg\.kind === 'room' \|\| dg\.kind === 'roomvert' \|\| dg\.kind === 'aisleend'\)[\s\S]{0,220}wsTagBinsToRooms\(slot3\.rooms, slot3\.bins\)/,
     'ending a room drag does not retag its contents');
 });
 

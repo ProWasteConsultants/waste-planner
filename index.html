@@ -13627,11 +13627,16 @@ function wsProvisionReconcile(roomId, assigned, items) {
 // A zone is a floor-area CLAIM, not an equipment record: it has no capacity,
 // no compaction ratio and never appears in a collection table. It exists to
 // reserve space and to satisfy a provision stream.
+// `allow` links a zone type to the bin calculator's area allowance code — by
+// id, never by label — so a placed zone's measured m² can reconcile against
+// the room's required area (wsAllowanceReconcile).
 const WS_ZONE_TYPES = {
-  HARDWASTE: { id: 'HARDWASTE', label: 'Hard waste zone',  col: '#7B1FA2', provision: 'hardwaste', w: 3.0, d: 2.0 },
-  BALE:      { id: 'BALE',      label: 'Bale storage',     col: '#00838F', provision: null,        w: 2.0, d: 1.2 },
-  UCO:       { id: 'UCO',       label: 'UCO vessel',       col: '#C9A227', provision: 'uco',       w: 0.8, d: 0.8 },
-  CUSTOM:    { id: 'CUSTOM',    label: 'Custom zone',      col: '#607D8B', provision: null,        w: 2.0, d: 2.0 },
+  HARDWASTE: { id: 'HARDWASTE', label: 'Hard waste zone',  col: '#7B1FA2', provision: 'hardwaste', allow: 'ALLOW_HARD',    w: 3.0, d: 2.0 },
+  EWASTE:    { id: 'EWASTE',    label: 'E-waste zone',     col: '#3949AB', provision: 'ewaste',    allow: 'ALLOW_EWASTE',  w: 1.2, d: 0.9 },
+  TEXTILE:   { id: 'TEXTILE',   label: 'Textiles zone',    col: '#AD1457', provision: null,        allow: 'ALLOW_TEXTILE', w: 1.2, d: 0.9 },
+  BALE:      { id: 'BALE',      label: 'Bale storage',     col: '#00838F', provision: null,        allow: null,            w: 2.0, d: 1.2 },
+  UCO:       { id: 'UCO',       label: 'UCO vessel',       col: '#C9A227', provision: 'uco',       allow: null,            w: 0.8, d: 0.8 },
+  CUSTOM:    { id: 'CUSTOM',    label: 'Custom zone',      col: '#607D8B', provision: null,        allow: null,            w: 2.0, d: 2.0 },
 };
 // The colour a placed zone draws in: its own override, else its type default.
 function wsZoneColour(zone) {
@@ -13673,6 +13678,44 @@ function wsZoneLegendItems(items) {
                                   style: 'hatch', col: wsZoneColour(z) };
   });
   return Object.values(seen);
+}
+
+// ── ALLOWANCE-AREA RECONCILIATION ────────────────────────────────────────────
+// The calculator's area allowances (ALLOW_HARD, ALLOW_EWASTE, ALLOW_TEXTILE)
+// are satisfied by AREA, never by presence: the measured m² of matching zones
+// (traced outline where one exists, W×D otherwise) plus any card-stamped
+// allowance rectangles, summed and compared against the required footprint.
+// Same refusal philosophy as compaction:
+//   - a unit with no required area reports ok:null ("area not set") — it is
+//     never assumed satisfied;
+//   - matching is by id (zone type `allow` ↔ ALLOW_ code), never by label — a
+//     custom zone captioned "Hard waste" counts for nothing.
+function wsAllowanceReconcile(units, items, mpp) {
+  const rows = [];
+  (units || []).forEach(u => {
+    const code = String((u && u.code) || '');
+    if (code.indexOf('ALLOW_') !== 0) return;
+    const zt = Object.keys(WS_ZONE_TYPES).map(k => WS_ZONE_TYPES[k]).find(z => z.allow === code) || null;
+    const req = (u.fpM2 > 0) ? u.fpM2 * (u.qty || 1) : null;
+    let got = 0, count = 0;
+    (items || []).forEach(it => {
+      if (!it || it.aisle) return;
+      if (!((zt && it.zoneType === zt.id) || it.code === code)) return;
+      count++;
+      got += (it.pts && it.pts.length >= 3 && mpp) ? wsPolyArea(it.pts, mpp) : ((it.w * it.d) || 0);
+    });
+    rows.push({ code, label: u.label || code, zoneType: zt ? zt.id : null,
+                requiredM2: req, placedM2: got, count,
+                ok: req == null ? null : got >= req - 1e-9 });
+  });
+  return rows;
+}
+// The items an allowance can draw on, for one CALCULATOR room: anything tagged
+// to a drawn room assigned to that schedule, plus card-stamped units carrying
+// the calcRoom directly. One pass, so an item matching both counts once.
+function wsAllowanceItems(calcRoomId, rooms, equip) {
+  const ids = (rooms || []).filter(r => r && r.calcRoom === calcRoomId).map(r => r.id);
+  return (equip || []).filter(it => it && (it.calcRoom === calcRoomId || ids.indexOf(it.roomId) >= 0));
 }
 
 // ══ B3: EQUIPMENT-AWARE RECONCILIATION ══════════════════════════════════════
@@ -14018,7 +14061,19 @@ function wsRoomReconcileLive(room) {
   const lib = wsEquipLibrary(WS_EQUIP_DB);
   const targets = wsRoomTargets(room, WS_CALC_ROOMS);
   const placed = (slot.bins || []).concat(slot.equip || []);
-  return wsRoomReconcileWithEquipment(room.id, targets, slot.bins, placed, lib);
+  const rec = wsRoomReconcileWithEquipment(room.id, targets, slot.bins, placed, lib);
+  // Area allowances ride the same single entry point, so the pill, the room
+  // card and the WMP snapshot can never disagree on the m².
+  rec.allowances = room.calcRoom ? wsAllowanceLive(room.calcRoom) : [];
+  return rec;
+}
+// Live allowance rows for one calculator room — the number the card and the
+// pill both print. Returns [] when the schedule has no ALLOW_ units.
+function wsAllowanceLive(calcRoomId) {
+  const rm = WS_CALC_ROOMS.find(r => r.id === calcRoomId);
+  if (!rm || !(rm.units || []).length) return [];
+  const slot = wsLayoutSlot();
+  return wsAllowanceReconcile(rm.units, wsAllowanceItems(calcRoomId, slot.rooms, slot.equip), wsSweptMpp());
 }
 function wsRoomReconcileWithEquipment(roomId, targets, bins, equip, library, opts) {
   const base = wsRoomReconcile(roomId, targets, bins);
@@ -14573,6 +14628,21 @@ function wsUpdateRoomPill() {
     'style="background:none;border:1px dashed #4a5a5a;border-radius:11px;color:rgba(255,255,255,0.5);' +
     'font-size:10px;padding:2px 8px;cursor:pointer;">+ add custom</button>' +
     '</div></div>';
+  // Area allowances: same rows the room card prints (rec.allowances comes
+  // from the one reconcile entry point), area against area.
+  const allowBlock = (rec.allowances || []).length
+    ? '<div style="margin-top:8px;border-top:1px solid #2c3636;padding-top:7px;">' +
+      '<div style="font-size:10px;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:4px;">Area allowances</div>' +
+      rec.allowances.map(a => {
+        const zt = a.zoneType ? WS_ZONE_TYPES[a.zoneType] : null;
+        const col = a.ok === true ? '#3DD68C' : a.ok === false ? '#FFB74D' : 'rgba(255,255,255,0.5)';
+        const right = a.requiredM2 == null ? 'area not set'
+          : a.placedM2.toFixed(1) + ' / ' + a.requiredM2.toFixed(1) + ' m²' + (a.ok ? ' ✓' : '');
+        return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:10.5px;">' +
+          '<span style="color:' + (zt ? zt.col : '#F5B400') + ';">' + esc(a.label) + '</span>' +
+          '<b style="color:' + col + ';">' + esc(right) + '</b></div>';
+      }).join('') + '</div>'
+    : '';
   const opts = ['<option value="">— no schedule —</option>'].concat(WS_CALC_ROOMS.map(c =>
     `<option value="${esc(c.id)}"${c.id === room.calcRoom ? ' selected' : ''}>${esc(c.name)}</option>`)).join('');
   const subset = allStreams.length > 1 ? `<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;">
@@ -14603,6 +14673,7 @@ function wsUpdateRoomPill() {
         + rec.problems.map(p => esc(p.message)).join('<br>') + `</div>` : ''}
     ${(rec.outputs || []).length ? `<div style="margin-top:6px;font-size:10px;color:rgba(255,255,255,0.55);">Produces: `
         + rec.outputs.map(o => esc((o.qty == null ? '?' : o.qty) + ' × ' + (o.label || o.equipmentId))).join(', ') + `</div>` : ''}
+    ${allowBlock}
     ${provisionBlock}
     ${subset}`;
 
@@ -15132,8 +15203,10 @@ function wsLayoutBind() {
       }
       if (dg.moved) {
         // A room edit changes what sits inside it, so tags (and therefore every
-        // reconciliation chip) are recomputed once the drag settles.
-        if (dg.kind === 'room' || dg.kind === 'roomvert') {
+        // reconciliation chip) are recomputed once the drag settles. An aisle
+        // or zone stretched by its end handles moves its centre the same way,
+        // and the allowance areas reconcile off that tag.
+        if (dg.kind === 'room' || dg.kind === 'roomvert' || dg.kind === 'aisleend') {
           const slot3 = wsLayoutSlot();
           wsTagBinsToRooms(slot3.rooms, slot3.bins);
           wsTagBinsToRooms(slot3.rooms, slot3.equip);
@@ -16957,7 +17030,12 @@ function wsLayoutRenderTargets() {
   wrap.innerHTML = WS_CALC_ROOMS.map(rm => {
     const need = rm.targets.reduce((s, t) => s + t.qty, 0);
     const got = rm.targets.reduce((s, t) => s + Math.min(t.qty, wsLayoutPlacedCount(t.stream, t.typeId, rm.id)), 0);
-    const done = need > 0 && got >= need;
+    // Area allowances reconcile like bins do: a room with its bins placed but
+    // its hard waste area missing is NOT done. ok:null ("area not set") shows
+    // but does not block — refusing on missing calculator data would nag.
+    const allowRows = wsAllowanceLive(rm.id);
+    const allowShort = allowRows.some(a => a.ok === false);
+    const done = need > 0 && got >= need && !allowShort;
     const kindCol = rm.kind === 'com' ? '#F5B400' : '#7FD8D8';
     const lines = rm.targets.map(t => {
       const bt = wsBinType(t.typeId);
@@ -16967,14 +17045,23 @@ function wsLayoutRenderTargets() {
       return `<div class="wsl-card-line"><span style="color:${st.col};">${st.label}</span>` +
         `<span><b style="color:${col};">${t.qty}</b> × ${bt ? bt.label : t.sizeL + 'L'}</span></div>`;
     }).join('');
-    const extras = (rm.units || []).filter(u => String(u.code).indexOf('CHUTE_') !== 0 && String(u.code).indexOf('RECV_') !== 0);
+    const allowLines = allowRows.map(a => {
+      const zt = a.zoneType ? WS_ZONE_TYPES[a.zoneType] : null;
+      const col = a.ok === true ? '#4BED12' : a.ok === false ? '#FFB74D' : 'rgba(255,255,255,0.5)';
+      const right = a.requiredM2 == null ? 'area not set'
+        : `${a.placedM2.toFixed(1)} / ${a.requiredM2.toFixed(1)} m²${a.ok ? ' ✓' : ''}`;
+      return `<div class="wsl-card-line" title="Place or draw a ${zt ? zt.label : 'zone'} in the room — its measured area counts toward this">` +
+        `<span style="color:${zt ? zt.col : '#F5B400'};">${a.label}</span><b style="color:${col};">${right}</b></div>`;
+    }).join('');
+    const extras = (rm.units || []).filter(u => String(u.code).indexOf('CHUTE_') !== 0 &&
+      String(u.code).indexOf('RECV_') !== 0 && String(u.code).indexOf('ALLOW_') !== 0);
     const extraLine = extras.length
       ? `<div class="wsl-card-line" style="color:#F5B400;"><span>+ ${extras.length} unit${extras.length === 1 ? '' : 's'}</span><span>${extras.map(u => u.label).join(', ').slice(0, 26)}</span></div>` : '';
     return `<div class="wsl-card${done ? ' done' : ''}" draggable="true" ondragstart="wsCardDragStart(event,'${rm.id}')" ` +
       `title="Drag onto the plan to place this room and lay its bins out inside" onclick="wsLayoutPickRoom('${rm.id}')">` +
       `<div class="wsl-card-hd"><span class="wsl-card-nm" style="color:${kindCol};">${rm.name}</span>` +
       `<span class="wsl-card-meta">${got}/${need}${done ? ' ✓' : ''}</span></div>` +
-      lines + extraLine +
+      lines + allowLines + extraLine +
       `<div class="wsl-card-ft">~${(rm.areaM2 || 0).toFixed(1)} m² · ${drawn[rm.id] ? 'drawn — drag to re-fill' : 'drag onto the plan'}</div></div>`;
   }).join('');
   const orphan = wsLayoutUntagged();

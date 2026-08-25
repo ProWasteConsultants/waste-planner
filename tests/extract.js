@@ -85,6 +85,8 @@ const LAYOUT_BLOCKS = [
   ['wsIsZone', /^function wsIsZone\(/],
   ['wsZoneDxfLayer', /^function wsZoneDxfLayer\(/],
   ['wsZoneLegendItems', /^function wsZoneLegendItems\(/],
+  ['wsAllowanceReconcile', /^function wsAllowanceReconcile\(/],
+  ['wsAllowanceItems', /^function wsAllowanceItems\(/],
   ['wsCompactedVolume', /^function wsCompactedVolume\(/],
   ['wsBinCount', /^function wsBinCount\(/],
   ['wsPairedOutputQty', /^function wsPairedOutputQty\(/],
