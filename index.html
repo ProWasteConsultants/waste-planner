@@ -1533,7 +1533,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
         <!-- Zoom controls -->
         <!-- Floating scale controls (layout mode only) -->
-        <div class="ws-float-bar" id="ws-float-bar" style="display:none;">
+        <div class="ws-float-bar" id="ws-float-bar" style="display:none;" onmousedown="wsPillDragStart(event,'ws-float-bar')">
           <span class="ws-project-name" id="ws-project-name">No project selected</span>
           <div class="ws-page-nav" id="ws-page-nav" style="display:none;">
             <button class="ws-page-btn" onclick="wsChangePage(-1)">‹</button>
@@ -1560,7 +1560,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             </select>
           </div>
         </div>
-        <div class="ws-zoom-ctrl">
+        <div class="ws-zoom-ctrl" id="ws-zoom-ctrl" onmousedown="wsPillDragStart(event,'ws-zoom-ctrl')">
           <button class="ws-zoom-btn" onclick="wsZoom(1.2)">+</button>
           <div class="ws-zoom-level" id="ws-zoom-label">100%</div>
           <button class="ws-zoom-btn" onclick="wsZoom(0.8)">−</button>
@@ -1572,7 +1572,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
         <!-- floating selection pill: verbs travel with the selected item -->
         <!-- Room selection pill: name, schedule assignment, stream subset, fill -->
-        <div id="ws-room-pill" onmousedown="event.stopPropagation()"
+        <div id="ws-room-pill" onmousedown="event.stopPropagation();wsPillDragStart(event,'ws-room-pill')"
              style="display:none;position:absolute;z-index:13;flex-direction:column;gap:4px;padding:6px;background:rgba(20,26,26,0.96);border:1px solid #3a4747;border-radius:9px;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:340px;"></div>
 
         <!-- Layout actions pill: floats over the canvas, minimisable, draggable by its header -->
@@ -13194,7 +13194,8 @@ function wsOnWheel(e) {
 }
 
 function wsOnMouseDown(e) {
-  if (e.target.closest('#ws-side-stack') || e.target.closest('.ws-zoom-ctrl')) return;
+  if (e.target.closest('#ws-side-stack') || e.target.closest('.ws-zoom-ctrl') ||
+      e.target.closest('#ws-float-bar') || e.target.closest('#ws-actions-pill')) return;
   if (WS._mode) return;   // drawing/drive modes own the pointer — no panning
   // Left-drag is SELECT. Pan is middle-drag, or space held — otherwise a marquee
   // could never be drawn over the plan.
@@ -15502,6 +15503,13 @@ function wsUpdateRoomPill() {
   const area = document.getElementById('ws-canvas-area');
   const toSX = v => v * WS.scale + WS.panX, toSY = v => v * WS.scale + WS.panY;
   pill.style.display = 'flex';
+  // A user drag pins the pill for THIS room — the re-anchor below is skipped
+  // until a different room is selected (the pin key stops matching).
+  const pin = (typeof WS_PILL_PIN !== 'undefined') ? WS_PILL_PIN['ws-room-pill'] : null;
+  if (pin && pin.key === WS_LAYOUT.sel) {
+    pill.style.left = pin.left + 'px'; pill.style.top = pin.top + 'px';
+    return;
+  }
   const pw = pill.offsetWidth || 260, ph = pill.offsetHeight || 60;
   let px = toSX((bb.x1 + bb.x2) / 2) - pw / 2;
   let py = toSY(bb.y2) + 12;
@@ -20502,12 +20510,16 @@ window.addEventListener('resize', wsPanelApplyWidth);
 // actually moved suppresses the header's click, so dragging never also
 // collapses the card.
 let _wsPillDragMoved = false;
+// The room/selection pill is re-anchored by wsUpdateRoomPill on every render;
+// a user drag PINS it (per selected room) so the next render leaves it where
+// it was put. Selecting a different room drops the pin.
+const WS_PILL_PIN = {};
 document.addEventListener('click', e => {
   if (_wsPillDragMoved) { e.stopPropagation(); e.preventDefault(); _wsPillDragMoved = false; }
 }, true);
 function wsPillDragStart(e, id) {
   if (e.button !== 0) return;
-  if (e.target.closest('button,select,input,label')) return;   // controls keep working
+  if (e.target.closest('button,select,input,label,textarea')) return;   // controls keep working
   const el = document.getElementById(id); if (!el) return;
   e.preventDefault(); e.stopPropagation();
   const stack = document.getElementById('ws-side-stack');
@@ -20530,6 +20542,10 @@ function wsPillDragStart(e, id) {
   };
   const up = () => {
     _wsPillDragMoved = moved;
+    if (moved && id === 'ws-room-pill') {
+      WS_PILL_PIN[id] = { key: (typeof WS_LAYOUT !== 'undefined' ? WS_LAYOUT.sel : null),
+                          left: parseFloat(el.style.left) || 0, top: parseFloat(el.style.top) || 0 };
+    }
     document.removeEventListener('mousemove', move);
     document.removeEventListener('mouseup', up);
   };

@@ -301,6 +301,19 @@ test('layout actions live in a draggable, minimisable pill on the canvas', () =>
   assert.ok(SOURCE.includes('_wsPillDragMoved'), 'drags suppress the click');
 });
 
+test('every canvas pill is draggable — float bar, zoom controls, room pill included', () => {
+  for (const id of ['ws-float-bar', 'ws-zoom-ctrl', 'ws-room-pill'])
+    assert.ok(SOURCE.includes(`wsPillDragStart(event,'${id}')`), id + ' is draggable');
+  // the room pill is re-anchored by code on every render, so a drag must PIN it
+  assert.ok(SOURCE.includes('if (pin && pin.key === WS_LAYOUT.sel)'),
+    'a dragged room pill stays where it was put until another room is selected');
+  assert.ok(SOURCE.includes("if (moved && id === 'ws-room-pill')"),
+    'the pin is stored only when the drag actually moved');
+  // pills must never start a canvas pan under their controls
+  assert.ok(SOURCE.includes("e.target.closest('#ws-float-bar') || e.target.closest('#ws-actions-pill')"),
+    'the pan guard covers the floating bars');
+});
+
 
 test('shift is read during both room drags', () => {
   assert.match(SOURCE, /if \(e\.shiftKey\)\s*\{\s*\r?\n\s*const lock = wsSnapAxis\(p\.x - dg\.startX, p\.y - dg\.startY\);/,
