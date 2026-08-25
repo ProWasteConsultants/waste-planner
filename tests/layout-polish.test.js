@@ -288,30 +288,45 @@ test('the tool tabs run vertically in a side rail and fill its height', () => {
     'the panel is rail + body, side by side');
 });
 
-test('layout actions live in a draggable, minimisable pill on the canvas', () => {
-  assert.ok(SOURCE.includes('id="ws-actions-pill"'), 'the pill exists');
-  assert.ok(SOURCE.includes("wsPillDragStart(event,'ws-actions-pill')"), 'draggable by its header');
-  assert.ok(SOURCE.includes('function wsActionsPillMin'), 'minimisable');
-  assert.ok(SOURCE.includes("wsPillDragStart(event,'ws-layer-panel')"), 'layers card draggable');
-  assert.ok(SOURCE.includes("wsPillDragStart(event,'ws-markup-panel')"), 'markups card draggable');
-  // the layout code drives these controls by id — they must exist exactly once
-  for (const id of ['ws-gen-btn', 'ws-layout-clr'])
-    assert.equal(SOURCE.split('id="' + id + '"').length, 2, id + ' exists exactly once');
-  // a drag that moved must not fire the header's collapse click
-  assert.ok(SOURCE.includes('_wsPillDragMoved'), 'drags suppress the click');
+test('Actions/Layers/Markups/Set Scale are strip tabs with one-at-a-time flyouts', () => {
+  for (const n of ['actions', 'layers', 'markups', 'scale'])
+    assert.ok(SOURCE.includes(`id="ws-strip-${n}"`), n + ' tab exists in the tool strip');
+  const fly = SOURCE.slice(SOURCE.indexOf('<div id="ws-fly-actions"'), SOURCE.indexOf('<div id="ws-fly-layers"'));
+  assert.ok(fly.includes("wsLayoutDo('undo')") && fly.includes("wsLayoutDo('redo')") &&
+            fly.includes('id="ws-layout-clr"') && fly.includes('wsLayoutClearPage()'),
+    'Actions flyout = Undo / Redo / spacing / Clear');
+  assert.ok(!fly.includes('Generate layout'), 'Generate lives ONLY in the Bin Rooms header');
+  assert.ok(!SOURCE.includes('ws-gen-btn'), 'the old full-page Generate button is gone');
+  assert.equal(SOURCE.split('id="ws-layout-clr"').length, 2, 'the spacing toggle has one home');
+  assert.ok(SOURCE.includes('_wsStripOpen = _wsStripOpen === name ? null : name;'),
+    'exactly one flyout open at a time');
+  assert.ok(SOURCE.includes('position:absolute;left:37px;'),
+    'flyouts overlay the canvas — opening or closing never moves the plan');
+  // the Layers/Markups cards and scale controls MOVE (same ids) into flyouts
+  for (const pair of [["'ws-layer-panel', 'ws-fly-layers'"], ["'ws-markup-panel', 'ws-fly-markups'"], ["'ws-scale-wrap', 'ws-scale-slot'"]])
+    assert.ok(SOURCE.includes('mv(' + pair[0] + ')'), pair[0] + ' docked into its flyout');
+  assert.ok(SOURCE.includes('_wsPillDragMoved'), 'remaining pills still drag-suppress clicks');
 });
 
 // ── design-canvas UI patch (Lachy, 25 Aug) ──────────────────────────────
-test('the screens nav is a LHS vertical sidebar; identity stays on the top edge', () => {
-  const nav = SOURCE.slice(SOURCE.indexOf('<div class="side-nav" id="side-nav">'), SOURCE.indexOf('<!-- MAIN CONTENT -->'));
-  assert.ok(nav.length > 0, 'the sidebar exists before the content column');
+test('the screens nav is a thin LHS rail with vertical labels; NO top header bar', () => {
+  const nav = SOURCE.slice(SOURCE.indexOf('<div class="side-nav" id="side-nav">'), SOURCE.indexOf('<!-- MAIN CONTENT'));
+  assert.ok(nav.length > 0, 'the rail exists before the content column');
   for (const id of ['nav-workspace', 'nav-compliance', 'nav-costcheck', 'nav-orgqueue', 'nav-wmp-queue', 'nav-admin'])
-    assert.ok(nav.includes(`id="${id}"`), id + ' lives in the sidebar');
-  const topbar = SOURCE.slice(SOURCE.indexOf('<div class="topbar">'), SOURCE.indexOf('<!-- PROJECTS SCREEN -->'));
-  assert.ok(!topbar.includes('id="nav-workspace"'), 'no nav items left in the topbar');
-  assert.ok(topbar.includes('id="user-pill-btn"') && topbar.includes('id="org-switcher"'),
-    'user chip and workspace selector stay on the top edge');
-  assert.ok(SOURCE.includes('.ws-embed .side-nav{display:none!important}'), 'embed mode hides the sidebar too');
+    assert.ok(nav.includes(`id="${id}"`), id + ' lives in the rail');
+  assert.ok(SOURCE.includes('.side-nav{\n  width:36px;'), 'same thickness as the RHS tool tabs');
+  assert.ok(SOURCE.includes('.side-nav .nav-item{\n  writing-mode:vertical-rl;'), 'vertical labels, same style');
+  assert.ok(nav.includes('class="rail-account"') && nav.includes('id="user-avatar-initials"'),
+    'the account chip is pinned in the rail');
+  assert.ok(SOURCE.includes('.rail-account{margin-top:auto;'), 'pinned at the BOTTOM of the rail');
+  assert.ok(SOURCE.includes('.rail-account:hover .rail-account-info{display:block;}'),
+    'name and role appear on hover');
+  assert.ok(!SOURCE.includes('<div class="topbar">'), 'no top header bar exists at all');
+  const chip = SOURCE.slice(SOURCE.indexOf('<div class="ws-top-chip" id="ws-top-chip">'), SOURCE.indexOf('<!-- PROJECTS SCREEN -->'));
+  assert.ok(chip.includes('id="breadcrumb"') && chip.includes('id="org-switcher"'),
+    'project name and workspace selector float in the collapsible top chip');
+  assert.ok(SOURCE.includes('function wsTopChipToggle()'), 'the chip collapses out of the way');
+  assert.ok(SOURCE.includes('.ws-embed .side-nav{display:none!important}'), 'embed mode hides the rail too');
 });
 
 test('the tool panel OVERLAYS the plan — panel changes can never resize or shift the PDF', () => {
@@ -331,11 +346,38 @@ test('section headings are enlarged teal; room cards are wide, short and minimal
   assert.ok(SOURCE.includes('flex:1 1 100%;min-width:0;cursor:grab'), 'cards run full panel width');
 });
 
-test('equipment and fixture pickers are square labelled tiles', () => {
+test('equipment and fixture pickers are compact square labelled tiles', () => {
   assert.ok(SOURCE.includes('.wsl-fx.wsl-tile{flex-direction:column'), 'tile layout: thumb above, label below');
-  assert.ok(SOURCE.includes(`'#78909C', 44)`) && SOURCE.includes(`'#B0BEC5', 44)`),
-    'fixture thumbs render at the larger tile size');
-  assert.ok(SOURCE.includes('!!r.roundShape, col, 44)'), 'equipment thumbs too');
+  assert.ok(SOURCE.includes(`'#78909C', 36)`) && SOURCE.includes(`'#B0BEC5', 36)`),
+    'fixture thumbs at the round-2 size — round 1 overshot');
+  assert.ok(SOURCE.includes('wsShapeThumb(code, w, d, round, col, 36)'), 'picker tiles too');
+  assert.ok((SOURCE.match(/minmax\(74px,1fr\)/g) || []).length >= 2,
+    'grids fit 3–4 tiles per row at the panel width');
+});
+
+test('one BINS & EQUIPMENT picker: searchable, scrollable, select-then-place', () => {
+  assert.ok(SOURCE.includes('id="ws-picker-search"'), 'search box at the top of the section');
+  assert.ok(SOURCE.includes('id="ws-layout-bin"') && SOURCE.includes('onchange="wsRenderBinThumb();wsPickerSyncSel();" style="display:none;"'),
+    'the bins dropdown is HIDDEN — it remains the selection state holder only');
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsEquipPaletteMode'), SOURCE.indexOf('function wsPickerStreamVis'));
+  assert.ok(!fn.includes('wsLayoutPlaceMode()'), 'a tile click SELECTS — it never arms placement by itself');
+  assert.ok(SOURCE.includes('function wsPickerPlace()'), 'Place on plan (or double-click) arms placement');
+  assert.ok(SOURCE.includes("ss.style.display = WS_LAYOUT._pickerKind === 'fixture' ? 'none' : '';"),
+    'the stream selector shows only for stream-carrying items');
+  assert.ok(SOURCE.includes('id="ws-layout-equipment" style="flex:1;min-height:60px;max-height:30vh;'),
+    'the picker scrolls internally with a fixed max height');
+});
+
+test('RHS section order and no-panel-scroll layout', () => {
+  const tab = SOURCE.slice(SOURCE.indexOf('id="ws-tab-layout"'), SOURCE.indexOf('id="ws-tab-swept"'));
+  const order = ['Bin rooms', 'Obstacles &amp; fixtures', 'Bins &amp; equipment', 'Zones']
+    .map(h => tab.indexOf('>' + h));
+  assert.ok(order.every(i => i >= 0), 'all four section headers present');
+  for (let i = 1; i < order.length; i++)
+    assert.ok(order[i] > order[i - 1], 'order is Bin Rooms → Obstacles → Bins & Equipment → Zones');
+  assert.ok(tab.includes('overflow:hidden;padding:6px 10px;'),
+    'the panel itself never scrolls — Zones is always reachable');
+  assert.ok((tab.match(/wsl-scroll/g) || []).length >= 4, 'sections scroll internally instead');
 });
 
 test('DXF/PDF exports live in the Layers pill', () => {
@@ -371,8 +413,8 @@ test('every canvas pill is draggable — float bar, zoom controls, room pill inc
   assert.ok(SOURCE.includes("if (moved && id === 'ws-room-pill')"),
     'the pin is stored only when the drag actually moved');
   // pills must never start a canvas pan under their controls
-  assert.ok(SOURCE.includes("e.target.closest('#ws-float-bar') || e.target.closest('#ws-actions-pill')"),
-    'the pan guard covers the floating bars');
+  assert.ok(SOURCE.includes("e.target.closest('#ws-float-bar')) return;"),
+    'the pan guard covers the float bar');
 });
 
 
