@@ -249,13 +249,15 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .side-nav .topbar-brand{padding:4px 0 10px;margin:0 4px 6px;border-bottom:1px solid #2C3838;cursor:pointer;text-align:center;}
 .side-nav .nav-item{
   writing-mode:vertical-rl;padding:12px 0;border-radius:0;
+  flex:1 1 0;min-height:0;max-height:170px;
   display:flex;align-items:center;justify-content:center;gap:6px;
-  font-size:11px;font-weight:600;letter-spacing:.4px;white-space:nowrap;
+  font-size:12px;font-weight:600;letter-spacing:.5px;white-space:nowrap;
   border-right:2px solid transparent;
 }
 .side-nav .nav-item.active{background:none;color:#4FC3C3;border-right:2px solid #4FC3C3;}
 .side-nav .nav-item .ni{display:none;}
-.side-nav .nav-badge{writing-mode:horizontal-tb;font-size:8px;padding:1px 4px;}
+/* badges flow with the vertical label — horizontal text overflows a 36px rail */
+.side-nav .nav-badge{writing-mode:vertical-rl;font-size:8px;padding:4px 1px;}
 /* account chip pinned at the rail's foot — initials always, name + role on hover */
 .rail-account{margin-top:auto;position:relative;display:flex;justify-content:center;padding:8px 0 2px;cursor:pointer;}
 .rail-account .rail-account-info{
@@ -267,23 +269,25 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-embed .side-nav{display:none!important}
 
 /* ── TOOL STRIP — Actions / Layers / Markups / Set Scale as a second thin rail
-   on the canvas's left edge. Each tab opens ONE flyout that OVERLAYS the
-   canvas; opening or closing never moves the plan. ── */
+   on the canvas's left edge. Clicking a tab expands the strip SIDEWAYS IN
+   PLACE (same behaviour as the RHS tool tabs): the expansion is a full-height
+   panel attached to the strip, one tab at a time, collapsing on second click.
+   It OVERLAYS the canvas — opening or closing never moves the plan. ── */
 .ws-tool-strip{
   width:36px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
   padding:8px 0;background:#1a1a1a;border-right:1px solid #333;z-index:15;
 }
 .ws-strip-tab{
-  flex:0 0 auto;writing-mode:vertical-rl;padding:14px 0;font-size:11px;cursor:pointer;
+  flex:1 1 0;min-height:0;writing-mode:vertical-rl;padding:14px 0;font-size:12px;cursor:pointer;
   color:rgba(255,255,255,0.4);white-space:nowrap;border:none;border-right:2px solid transparent;
-  background:none;font-family:inherit;text-align:center;letter-spacing:.4px;
+  background:none;font-family:inherit;text-align:center;letter-spacing:.5px;
 }
 .ws-strip-tab:hover{color:rgba(255,255,255,0.7);}
 .ws-strip-tab.active{color:var(--teal, #00d4d4);color:#00d4d4;border-right:2px solid #00d4d4;}
 .ws-flyout{
-  position:absolute;left:37px;top:0;bottom:auto;max-height:100%;overflow-y:auto;z-index:15;
-  background:#1a1a1a;border:1px solid #333;border-left:none;border-radius:0 0 10px 0;
-  box-shadow:10px 0 24px rgba(0,0,0,0.35);padding:10px 12px;min-width:190px;max-width:280px;
+  position:absolute;left:37px;top:0;bottom:0;overflow-y:auto;z-index:15;
+  background:#1a1a1a;border-right:1px solid #333;
+  box-shadow:10px 0 24px rgba(0,0,0,0.35);padding:10px 12px;width:238px;
 }
 .ws-flyout .ws-layer-panel{border:none;background:none;padding:0;min-width:0;}
 
@@ -645,8 +649,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
      pinned at the foot. There is no top header bar: the project/council chip
      floats on the canvas top edge instead. -->
 <div class="side-nav" id="side-nav">
-  <div class="topbar-brand" id="topbar-brand" onclick="showScreen('projects',null)" title="WastePlanner — all projects">
-    <span style="font-size:15px;font-weight:800;letter-spacing:-0.5px;line-height:1;"><span style="color:#14B8B8;">W</span><span style="color:var(--text);">P</span></span>
+  <div class="topbar-brand" id="topbar-brand" onclick="showScreen('projects',null)" title="WastePlanner">
+    <!-- the WP monogram is the favicon asset family — swapping favicon.svg rebrands here too -->
+    <img src="favicon.svg" alt="WastePlanner" style="width:24px;height:24px;display:block;margin:0 auto;border-radius:6px;">
   </div>
   <div class="nav-item" onclick="showScreen('tools',this)" id="nav-tools" style="display:none;">
     <span class="ni">⚙</span><span class="nl">Tools</span>
@@ -679,6 +684,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
     <div class="rail-account-info">
       <div class="user-name" id="user-display-name">Lachy Harris</div>
       <div class="user-tier" id="user-display-tier">Pro Waste Consultants</div>
+      <!-- the ORGANISATION lives here, on the account chip — never in the project pill -->
+      <select id="org-switcher" onchange="setOrgContext(this.value)" onclick="event.stopPropagation()" title="Workspace — personal or organisation"
+        style="display:none;margin-top:6px;width:100%;background:#182121;border:1px solid #2C3838;border-radius:8px;padding:4px 8px;font-size:11px;font-weight:600;color:#E8EFEF;font-family:inherit;cursor:pointer;">
+        <option value="">Personal</option>
+      </select>
     </div>
   </div>
 </div>
@@ -686,14 +696,16 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 <!-- MAIN CONTENT — no top header bar; the project/council chip floats over it -->
 <div class="content" style="position:relative;">
 
-  <!-- slim floating project + workspace chip, collapsible so it never blocks plan content -->
+  <!-- PROJECT PILL — present on every WastePlanner tool in the same position.
+       It answers "which project am I in": project name plus the project's
+       COUNCIL as read-only text. Council is a PROJECT SETTING (set at project
+       creation / project settings), never a chrome dropdown — clicking it
+       opens the project's settings. The organisation is NOT here: it lives on
+       the account chip at the foot of the nav rail. -->
   <div class="ws-top-chip" id="ws-top-chip">
     <button class="ws-top-chip-toggle" onclick="wsTopChipToggle()" title="Collapse / expand">◂</button>
     <div class="breadcrumb" id="breadcrumb"><span>Projects</span></div>
-    <select id="org-switcher" onchange="setOrgContext(this.value)" title="Workspace — personal or organisation"
-      style="display:none;background:#182121;border:1px solid #2C3838;border-radius:8px;padding:4px 8px;font-size:11px;font-weight:600;color:#E8EFEF;font-family:inherit;max-width:180px;cursor:pointer;">
-      <option value="">Personal</option>
-    </select>
+    <span id="ws-pill-council" onclick="wsPillCouncilOpen()" style="display:none;font-size:11px;color:#8CA3A3;cursor:pointer;border-left:1px solid #2C3838;padding-left:8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;"></span>
   </div>
 
   <!-- PROJECTS SCREEN -->
@@ -1678,6 +1690,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div class="ws-zoom-level" id="ws-zoom-label">100%</div>
           <button class="ws-zoom-btn" onclick="wsZoom(0.8)">−</button>
           <button class="ws-zoom-btn" onclick="wsFitPage()" style="font-size:10px;">⊡</button>
+          <button class="ws-zoom-btn" id="ws-fs-btn" onclick="wsFullscreenToggle()" title="Fullscreen — same layout, more pixels. Esc to exit." style="font-size:11px;">⛶</button>
         </div>
 
         <!-- floating status strip: mirrors tool status so it survives panel collapse -->
@@ -1703,9 +1716,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <iframe id="ws-swept-iframe" style="width:100%;height:100%;border:none;display:block;"></iframe>
       </div>
 
-      <!-- TOOL PANEL -->
+      <!-- TOOL PANEL — minimised is the DEFAULT: the panel starts as just its
+           vertical tab strip, so the plan spans rail-to-tab on load. Clicking
+           any tool tab expands it (overlaying the plan — never reflowing it). -->
       <div class="ws-tool-panel" id="ws-tool-panel">
-        <button id="ws-panel-expand" onclick="wsPanelToggle()" title="Expand tools" style="display:none;position:absolute;inset:0;background:#1a1a1a;border:none;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;font-family:inherit;writing-mode:vertical-rl;letter-spacing:1px;">◀ &nbsp;T O O L S</button>
         <button id="ws-panel-collapse" onclick="wsPanelToggle()" title="Hide tools panel" style="position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:15px;height:62px;background:#1a1a1a;border:1px solid #444;border-right:none;border-radius:8px 0 0 8px;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;z-index:3;padding:0;">▸</button>
         <div class="ws-tool-tabs">
           <button class="ws-tool-tab active" onclick="wsShowTab('calculator',this)" title="Bin Calculator">Bin Calculator</button>
@@ -1730,22 +1744,27 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div id="ws-tab-layout" style="display:none;flex:1;min-height:0;overflow:hidden;padding:6px 10px;flex-direction:column;gap:5px;">
             <div class="wsl-groups" style="display:flex;flex-direction:column;gap:7px;flex:1;min-height:0;overflow:hidden;align-items:stretch;">
 
-              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:0 1 auto;">
+              <!-- Sections share the panel height by FLEX WEIGHT, never by fixed
+                   vh caps: weighted flex always sums to the available height, so
+                   every header (ZONES included) is visible at 1080p with no
+                   panel scroll — fixed caps were what clipped Zones off the
+                   bottom. min-heights keep each header + a row grabbable. -->
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:80px;flex:3 1 0;">
                 <div class="wsl-group-hd">Bin rooms
                   <span style="flex:1"></span>
                   <button class="wsl-btn" id="ws-room-gen-btn" onclick="wsGenerateRoomLayout()" disabled
                           title="Select a bin room on the plan first"
                           style="background:#004d4d;border-color:#008080;color:#4BED12;font-weight:700;font-size:10.5px;">✦ Generate layout</button>
                 </div>
-                <div class="wsl-group-body wsl-scroll" style="max-height:24vh;">
+                <div class="wsl-group-body wsl-scroll" style="flex:1 1 auto;">
                   <button class="wsl-btn wsl-btn-lead" onclick="wsLayoutRoomMode()">▱ Draw bin room</button>
                   <div id="ws-layout-targets" class="wsl-cards"></div>
                 </div>
               </div>
 
-              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:0 1 auto;">
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:92px;flex:2 1 0;">
                 <div class="wsl-group-hd">Obstacles &amp; fixtures</div>
-                <div class="wsl-scroll" style="max-height:17vh;">
+                <div class="wsl-scroll" style="flex:1 1 auto;">
                   <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
                     <select id="ws-aisle-width" class="wsl-sel" style="max-width:150px;" title="Clearance aisle width">
                       <option value="900">Aisle 900mm (&lt;240L)</option>
@@ -1763,7 +1782,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
               <!-- One picker for everything placeable from the library: bins,
                    equipment (and any library fixtures), grouped and searchable.
                    The hidden select stays the single selection state holder. -->
-              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:1 1 auto;">
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:130px;flex:4 1 0;">
                 <div class="wsl-group-hd">Bins &amp; equipment</div>
                 <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-bottom:5px;">
                   <input type="search" id="ws-picker-search" class="wsl-sel" placeholder="Search…" oninput="wsPickerFilter()" style="flex:1;min-width:90px;">
@@ -1774,6 +1793,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                     <option value="b660">660L Bin</option>
                     <option value="b1100">1100L Bin</option>
                   </select>
+                  <!-- swatch = the colour the PLACED object gets; picker tiles stay neutral -->
+                  <span id="ws-stream-swatch" title="Stream colour — applied to the placed object on the plan, never to the picker tiles" style="width:12px;height:12px;border-radius:3px;flex-shrink:0;display:inline-block;background:#888;"></span>
                   <select id="ws-layout-stream" class="wsl-sel" onchange="wsRenderBinThumb();wsRenderEquipPalette();" title="Stream for the selected item">
                     <option value="garbage" selected>Garbage</option>
                     <option value="recycling">Recycling</option>
@@ -1785,12 +1806,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                   <span id="ws-bin-thumb" style="display:none;align-items:center;"></span>
                   <button class="wsl-btn" onclick="wsPickerPlace()" title="Place the selected tile on the plan">Place on plan</button>
                 </div>
-                <div class="wsl-scroll" id="ws-layout-equipment" style="flex:1;min-height:60px;max-height:30vh;display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:4px;align-items:start;align-content:start;"></div>
+                <div class="wsl-scroll" id="ws-layout-equipment" style="flex:1 1 auto;min-height:40px;display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:4px;align-items:start;align-content:start;"></div>
               </div>
 
-              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:0;flex:0 0 auto;">
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:88px;flex:2 1 0;">
                 <div class="wsl-group-hd">Zones</div>
-                <div class="wsl-scroll" style="max-height:15vh;">
+                <div class="wsl-scroll" style="flex:1 1 auto;">
                   <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
                     <input id="ws-zone-w" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone width in mm — applied when you click to place">
                     <span style="font-size:10px;color:rgba(255,255,255,0.4);">×</span>
@@ -7769,6 +7790,8 @@ function showScreen(name, navEl) {
   } else {
     document.getElementById('breadcrumb').innerHTML = `<span>${SCREEN_LABELS[name] || name}</span>`;
   }
+  // The pill's council readout follows the working project on every screen
+  if (typeof wsUpdateProjectPill === 'function') wsUpdateProjectPill();
   // Update topbar button
   const btn = document.querySelector('.topbar-actions .btn-green');
   if (btn) btn.style.display = FILL_SCREENS.includes(name) ? 'none' : 'block';
@@ -11456,12 +11479,9 @@ renderProjects();
 </svg>
   <div class="auth-card">
     <div class="auth-logo">
-      <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true" style="display:block;margin:0 auto 10px;">
-        <rect width="44" height="44" rx="10" fill="#0A3D38" stroke="rgba(127,216,216,0.35)" stroke-width="1"/>
-        <path d="M10 34 V12 H32" fill="none" stroke="#7FD8D8" stroke-width="2.4" stroke-linecap="round"/>
-        <rect x="16" y="17" width="14" height="16" rx="2.5" transform="rotate(-8 23 25)" fill="none" stroke="#4BED12" stroke-width="2.6"/>
-        <path d="M15 37 h14 M34 17 v16" fill="none" stroke="#008080" stroke-width="2" stroke-dasharray="2.5 3" stroke-linecap="round"/>
-      </svg>
+      <!-- the mark is the favicon asset — no inline copies of the logo anywhere,
+           so swapping favicon.svg rebrands every surface at once -->
+      <img src="favicon.svg" width="44" height="44" alt="" style="display:block;margin:0 auto 10px;border-radius:10px;">
       <div style="font-size:28px;font-weight:700;letter-spacing:-0.5px;color:#3FBFBF;">Waste<span style="color:var(--text);">Planner</span></div>
       <div class="auth-logo-sub">by Pro Waste Consultants</div>
     </div>
@@ -13243,21 +13263,54 @@ async function wsRenderPage(pageNum) {
   if (at) at.classList.add('active');
 }
 
+// Fit = the sheet fitted to the AVAILABLE canvas: the full shell minus the
+// RHS tool tab strip (the panel body overlays, so it never counts). This fit
+// is also the ZOOM FLOOR — zooming out past it is not possible, zooming in is.
+function wsFitScale() {
+  const canvas = document.getElementById('ws-pdf-canvas');
+  if (!canvas || !canvas.width) return null;
+  const area = document.getElementById('ws-canvas-area');
+  const aW = area.clientWidth - 38 - 40;   // 38 = RHS tab strip, 40 = margin
+  const aH = area.clientHeight - 40;
+  return Math.min(aW / canvas.width, aH / canvas.height, 1);
+}
 function wsFitPage() {
   const ov = wsActiveOverlayIframe();
   if (ov && ov.contentWindow) { ov.contentWindow.postMessage({ type: 'ws-fit' }, '*'); return; }
+  const fit = wsFitScale();
+  if (fit == null) return;
   const canvas = document.getElementById('ws-pdf-canvas');
-  if (!canvas.width) return;
   const area = document.getElementById('ws-canvas-area');
-  const aW = area.clientWidth - 40;
-  const aH = area.clientHeight - 40;
-  const scaleX = aW / canvas.width;
-  const scaleY = aH / canvas.height;
-  WS.scale = Math.min(scaleX, scaleY, 1);
-  WS.panX = Math.max(0, (area.clientWidth - canvas.width * WS.scale) / 2);
+  WS.fitScale = fit;
+  WS.scale = fit;
+  WS.panX = Math.max(0, (area.clientWidth - 38 - canvas.width * WS.scale) / 2);
   WS.panY = Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2);
   wsApplyTransform();
 }
+// The floor moves with the canvas: window resize and entering/leaving
+// fullscreen both change the available pixels, so re-derive it — and if the
+// current view has fallen below the new floor, snap back to fit.
+function wsZoomFloorRecalc() {
+  const fit = wsFitScale();
+  if (fit == null) return;
+  WS.fitScale = fit;
+  if (WS.scale < fit - 1e-9) wsFitPage();
+}
+window.addEventListener('resize', wsZoomFloorRecalc);
+// Fullscreen = more pixels for the SAME layout — rails, strips and panels all
+// stay. Esc (the browser's own exit) or the button toggles back.
+function wsFullscreenToggle() {
+  if (document.fullscreenElement) { document.exitFullscreen(); }
+  else document.documentElement.requestFullscreen().catch(() => {});
+}
+document.addEventListener('fullscreenchange', () => {
+  const b = document.getElementById('ws-fs-btn');
+  if (b) {
+    b.textContent = document.fullscreenElement ? '🗗' : '⛶';
+    b.title = document.fullscreenElement ? 'Exit fullscreen (Esc)' : 'Fullscreen — same layout, more pixels. Esc to exit.';
+  }
+  wsZoomFloorRecalc();
+});
 
 function wsApplyTransform() {
   const wrap = document.getElementById('ws-canvas-wrap');
@@ -13281,7 +13334,7 @@ function wsZoom(factor) {
   const area = document.getElementById('ws-canvas-area');
   const cx = area.clientWidth / 2;
   const cy = area.clientHeight / 2;
-  const newScale = Math.max(0.1, Math.min(5, WS.scale * factor));
+  const newScale = Math.max(WS.fitScale || 0.1, Math.min(5, WS.scale * factor));
   WS.panX = cx - (cx - WS.panX) * (newScale / WS.scale);
   WS.panY = cy - (cy - WS.panY) * (newScale / WS.scale);
   WS.scale = newScale;
@@ -13294,7 +13347,7 @@ function wsOnWheel(e) {
   const rect = e.currentTarget.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
-  const newScale = Math.max(0.1, Math.min(5, WS.scale * factor));
+  const newScale = Math.max(WS.fitScale || 0.1, Math.min(5, WS.scale * factor));
   WS.panX = mx - (mx - WS.panX) * (newScale / WS.scale);
   WS.panY = my - (my - WS.panY) * (newScale / WS.scale);
   WS.scale = newScale;
@@ -13405,7 +13458,8 @@ function wsShowTab(name, btn) {
 
   // Side panel: each tab has its own preset width (wsPanelWidthFor)
   _wsPanelTab = name;
-  if (!_wsPanelCollapsed) {
+  if (_wsPanelCollapsed) wsPanelToggle();   // a tab click expands the minimised panel
+  else {
     wsPanelApplyWidth();
     const body = document.querySelector('.ws-tool-body');
     if (body) body.style.display = '';
@@ -17739,18 +17793,18 @@ function wsRenderEquipPalette() {
   if (!el) return;
   const esc = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const selId = document.getElementById('ws-layout-bin')?.value || null;
-  const stSel = WS_STREAMS.find(x => x.id === document.getElementById('ws-layout-stream')?.value) || WS_STREAMS[0];
   const tile = (id, kind, code, w, d, round, col, label, tip) =>
     `<button class="wsl-fx wsl-tile${id === selId ? ' sel' : ''}" data-pick="${esc(id)}" data-kind="${kind}" data-label="${esc(String(label).toLowerCase())}" ` +
     `onclick="wsEquipPaletteMode('${esc(id)}','${kind}')" ondblclick="wsPickerPlace()" title="${esc(tip)}">` +
     wsShapeThumb(code, w, d, round, col, 36) +
     `<span class="wsl-fx-nm">${esc(label)}</span></button>`;
   let html = '';
-  // Bins — thumbed in the currently selected stream's colour
+  // Bins — NEUTRAL tiles: stream colour belongs to the PLACED object on the
+  // plan (and the little swatch by the stream selector), never to the picker.
   const bins = wsLayoutBinList();
   if (bins.length) {
     html += `<div class="wsl-fx-cat">Bins</div>` + bins.map(b =>
-      tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, stSel.col, b.label,
+      tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#90A4AE', b.label,
         `${b.label} — ${Math.round(b.w * 1000)}×${Math.round(b.d * 1000)} mm`)).join('');
   }
   // Equipment — grouped by category; detail lives in the tooltip
@@ -17765,8 +17819,7 @@ function wsRenderEquipPalette() {
       const tag = it.receiver ? 'receiver' : it.pairingType || null;
       const tip = [it.label, it.dims ? it.dims + ' mm' : 'no size in library', streams, tag]
         .filter(Boolean).join(' — ');
-      const col = it.pairingType ? '#F5B400' : '#90A4AE';
-      return tile(it.id, 'equip', r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, col, it.label, tip);
+      return tile(it.id, 'equip', r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, '#90A4AE', it.label, tip);
     }).join('');
   });
   // Library fixture rows (item_kind Fixture) that map onto placeable fixtures
@@ -17802,6 +17855,8 @@ function wsEquipPaletteMode(id, kind) {
 function wsPickerStreamVis() {
   const ss = document.getElementById('ws-layout-stream'); if (!ss) return;
   ss.style.display = WS_LAYOUT._pickerKind === 'fixture' ? 'none' : '';
+  const sw = document.getElementById('ws-stream-swatch');
+  if (sw) sw.style.display = ss.style.display === 'none' ? 'none' : '';
 }
 function wsPickerPlace() {
   if (WS_LAYOUT._pickerKind === 'fixture' && WS_LAYOUT._pickerFixture) { wsFixtureMode(WS_LAYOUT._pickerFixture); return; }
@@ -17905,9 +17960,11 @@ function wsRenderBinThumb() {
   const el = document.getElementById('ws-bin-thumb'); if (!el) return;
   const bt = wsBinType(document.getElementById('ws-layout-bin')?.value) || null;
   const st = WS_STREAMS.find(x => x.id === document.getElementById('ws-layout-stream')?.value) || WS_STREAMS[0];
-  // A library item's shape is keyed by its code (wsShapeFor), not its DB id.
-  const col = bt && bt.kind === 'equipment' ? (bt.pairingType ? '#F5B400' : '#90A4AE') : st.col;
-  el.innerHTML = bt ? wsShapeThumb(bt.code || bt.id, bt.w, bt.d, !!bt.roundShape, col, 24) : '';
+  // Picker artwork stays NEUTRAL; the stream swatch beside the selector is the
+  // one place the chosen stream's colour shows before the object lands on plan.
+  el.innerHTML = bt ? wsShapeThumb(bt.code || bt.id, bt.w, bt.d, !!bt.roundShape, '#90A4AE', 24) : '';
+  const sw = document.getElementById('ws-stream-swatch');
+  if (sw) sw.style.background = st.col;
 }
 function wsFixtureMode(code) {
   if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
@@ -20701,30 +20758,29 @@ function wsPanelMaxToggle() {
   if (_wsPanelCollapsed) { wsPanelToggle(); return; }   // expanding re-applies the width
   wsPanelApplyWidth();
 }
+// Minimised = the panel reduces to its vertical TAB STRIP (never disappears):
+// the tabs stay clickable, and clicking one expands the panel back out.
 function wsPanelToggle() {
   const panel = document.getElementById('ws-tool-panel');
   const body = document.querySelector('.ws-tool-body');
-  const tabs = document.querySelector('.ws-tool-tabs');
-  const exp = document.getElementById('ws-panel-expand');
   const col = document.getElementById('ws-panel-collapse');
   _wsPanelCollapsed = !_wsPanelCollapsed;
   if (_wsPanelCollapsed) {
-    panel.style.width = '26px';
+    panel.style.width = '37px';
     if (body) body.style.display = 'none';
-    if (tabs) tabs.style.display = 'none';
-    if (col) col.style.display = 'none';
-    if (exp) exp.style.display = '';
-    wsPanelSetW(26);
+    if (col) { col.textContent = '◂'; col.title = 'Expand tools panel'; }
+    wsPanelSetW(37);
   } else {
     if (body) body.style.display = '';
-    if (tabs) tabs.style.display = '';
-    if (col) col.style.display = '';
-    if (exp) exp.style.display = 'none';
+    if (col) { col.textContent = '▸'; col.title = 'Hide tools panel'; }
     wsPanelApplyWidth();
   }
 }
 // The calculator width tracks the window, so re-derive it on resize.
 window.addEventListener('resize', wsPanelApplyWidth);
+// DEFAULT ON LOAD: minimised to the tab strip — the plan claims every pixel
+// between the LHS rails and the RHS tabs until a tool is opened.
+wsPanelToggle();
 
 // ── TOOL STRIP FLYOUTS ──────────────────────────────────────────────────────
 // Actions / Layers / Markups / Set Scale live behind a thin vertical strip on
@@ -20768,6 +20824,27 @@ function wsTopChipToggle() {
   chip.classList.toggle('min');
   const btn = chip.querySelector('.ws-top-chip-toggle');
   if (btn) btn.textContent = chip.classList.contains('min') ? '▸' : '◂';
+}
+// ── PROJECT PILL — council readout ──────────────────────────────────────────
+// The council on the pill is READ-ONLY chrome: it displays the project's
+// council (a project setting, chosen at creation or in project settings) and
+// clicking it opens those settings. It is never a selector here.
+function wsUpdateProjectPill() {
+  const span = document.getElementById('ws-pill-council');
+  if (!span) return;
+  let p = null;
+  try {
+    const id = (typeof WS !== 'undefined' && WS.projectId) || (typeof currentProjectId !== 'undefined' && currentProjectId) || null;
+    p = id ? (getProjects() || []).find(x => x.id === id) || null : null;
+  } catch (e) {}
+  const c = p && p.council;
+  span.style.display = c ? '' : 'none';
+  span.textContent = c || '';
+  span.title = c ? 'Council: ' + c + ' — a project setting. Click to open project settings.' : '';
+}
+function wsPillCouncilOpen() {
+  const id = (typeof WS !== 'undefined' && WS.projectId) || (typeof currentProjectId !== 'undefined' && currentProjectId) || null;
+  if (id && typeof openProjectDetail === 'function') openProjectDetail(id);
 }
 wsStripInit();
 
