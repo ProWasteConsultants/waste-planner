@@ -547,6 +547,31 @@ test('the equipment palette renders on tab open and whenever the DB populates th
   assert.ok(SOURCE.includes('id="ws-layout-equipment"'), 'and it needs somewhere to render');
 });
 
+// ── fixture shape rows ──────────────────────────────────────────────────
+// A fixture drawn in admin saves as an item_kind='Fixture' row that ONLY
+// wsShapeFor reads (by code). It must never surface in a picker.
+test('fixture rows are shape carriers: three-way kind mapping, invisible to pickers', () => {
+  assert.ok(SOURCE.includes("k === 'equipment' ? 'equipment' : k === 'fixture' ? 'fixture' : 'bin'"),
+    'item_kind Fixture must not collapse into bin');
+  const g = ws.wsEquipPickerGroups([{ id: 'f1', kind: 'fixture', label: 'Column', category: 'Fixtures' }], ALL);
+  assert.deepEqual(g, [], 'the equipment palette never lists a fixture row');
+  assert.ok(SOURCE.includes("x.kind === 'bin' && x.placeable !== false"),
+    'the bin list filters by exact kind, so fixture rows stay out');
+});
+
+test('the admin shape drawer serves fixtures too', () => {
+  assert.ok(SOURCE.includes("'fx:' + f.code"), 'fixtures appear in the shape item picker');
+  assert.ok(SOURCE.includes('function shpFixtureItem('), 'a pseudo-item carries the WS_FIXTURES dims');
+  assert.ok(SOURCE.includes(".filter(f => !f.door)"),
+    'doors are excluded — their plan symbol is parametric and always correct');
+  assert.ok(SOURCE.includes("upsert(full, { onConflict: 'code' })"),
+    'the first save creates the fixture row');
+  assert.ok(SOURCE.includes('if (it._collision)'),
+    'an existing equipment/bin code is never silently converted to a fixture');
+  assert.ok(SOURCE.includes("if (typeof wsRenderFixturePalette === 'function') wsRenderFixturePalette();"),
+    'a saved shape refreshes the fixture thumbnails, not just the next tab open');
+});
+
 test('equipment options in the select are name-only — detail lives in the palette tooltip', () => {
   const fn = SOURCE.slice(SOURCE.indexOf('function wsLayoutPopulateBins'),
                           SOURCE.indexOf('function wsLayoutSlot'));
