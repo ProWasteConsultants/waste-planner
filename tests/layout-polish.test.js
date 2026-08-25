@@ -323,10 +323,64 @@ test('the screens nav is a thin LHS rail with vertical labels; NO top header bar
     'name and role appear on hover');
   assert.ok(!SOURCE.includes('<div class="topbar">'), 'no top header bar exists at all');
   const chip = SOURCE.slice(SOURCE.indexOf('<div class="ws-top-chip" id="ws-top-chip">'), SOURCE.indexOf('<!-- PROJECTS SCREEN -->'));
-  assert.ok(chip.includes('id="breadcrumb"') && chip.includes('id="org-switcher"'),
-    'project name and workspace selector float in the collapsible top chip');
+  assert.ok(chip.includes('id="breadcrumb"') && chip.includes('id="ws-pill-council"'),
+    'the pill = project name + read-only council');
+  assert.ok(!chip.includes('org-switcher'), 'the ORGANISATION is never in the project pill');
   assert.ok(SOURCE.includes('function wsTopChipToggle()'), 'the chip collapses out of the way');
   assert.ok(SOURCE.includes('.ws-embed .side-nav{display:none!important}'), 'embed mode hides the rail too');
+});
+
+// ── design-canvas UI patch 3 (Lachy, 25 Aug) ────────────────────────────
+test('rail tabs distribute over the full height and labels are legible', () => {
+  assert.ok(SOURCE.includes('.side-nav .nav-item{\n  writing-mode:vertical-rl;padding:12px 0;border-radius:0;\n  flex:1 1 0;'),
+    'nav tabs stretch to share the rail height');
+  assert.match(SOURCE, /\.side-nav \.nav-item\{[^}]*font-size:12px/s, 'rail text enlarged for legibility');
+  assert.ok(SOURCE.includes('.ws-strip-tab{\n  flex:1 1 0;min-height:0;'),
+    'tool-strip tabs distribute too');
+  const brand = SOURCE.slice(SOURCE.indexOf('id="topbar-brand"'), SOURCE.indexOf('id="nav-tools"'));
+  assert.ok(brand.includes('src="favicon.svg"'), 'the rail-top monogram IS the favicon asset');
+  assert.ok(brand.includes('title="WastePlanner"'), 'full name on hover');
+});
+
+test('tool strip tabs expand IN PLACE — full-height panel, no detached flyout', () => {
+  assert.ok(SOURCE.includes('position:absolute;left:37px;top:0;bottom:0;'),
+    'the expansion is attached to the strip and runs its full height');
+  assert.ok(!SOURCE.includes('border-radius:0 0 10px 0'), 'no floating card corner — it reads as the strip widening');
+  assert.ok(SOURCE.includes('_wsStripOpen = _wsStripOpen === name ? null : name;'),
+    'one tab at a time; second click collapses');
+});
+
+test('project pill: council is a read-only project setting; organisation lives on the account chip', () => {
+  const acct = SOURCE.slice(SOURCE.indexOf('<div class="rail-account"'), SOURCE.indexOf('<!-- MAIN CONTENT'));
+  assert.ok(acct.includes('id="org-switcher"'), 'the org switcher moved to the account chip');
+  assert.ok(SOURCE.includes('function wsUpdateProjectPill()'), 'pill follows the working project');
+  assert.ok(SOURCE.includes('function wsPillCouncilOpen()') && SOURCE.includes('openProjectDetail(id)'),
+    'clicking the council text opens project settings — it is never a chrome dropdown');
+  assert.ok(SOURCE.includes("p && p.council"), 'the council comes from the PROJECT record');
+});
+
+test('zoom floor = fit; fullscreen keeps the layout and recalculates the floor', () => {
+  assert.ok(SOURCE.includes('function wsFitScale()'), 'fit is derived once, from the available canvas');
+  assert.ok(SOURCE.includes('WS.fitScale = fit;'), 'the fitted zoom is remembered as the floor');
+  assert.equal((SOURCE.match(/Math\.max\(WS\.fitScale \|\| 0\.1, Math\.min\(5,/g) || []).length, 2,
+    'both zoom paths (buttons + wheel) clamp at the floor');
+  assert.ok(SOURCE.includes('function wsZoomFloorRecalc()'), 'the floor re-derives when the canvas changes');
+  assert.ok(SOURCE.includes("window.addEventListener('resize', wsZoomFloorRecalc);"), 'on resize');
+  assert.ok(SOURCE.includes("document.addEventListener('fullscreenchange'"), 'and on fullscreen toggle');
+  assert.ok(SOURCE.includes('function wsFullscreenToggle()') &&
+            SOURCE.includes('document.documentElement.requestFullscreen()'),
+    'fullscreen = the whole app (rails and panels included), not a bare canvas');
+  assert.ok(SOURCE.includes('id="ws-fs-btn"'), 'the fullscreen button exists and is wired');
+});
+
+test('the RHS panel starts minimised to its tab strip; a tab click expands it', () => {
+  assert.ok(SOURCE.includes('// DEFAULT ON LOAD: minimised to the tab strip'), 'documented default');
+  assert.ok(SOURCE.includes('wsPanelToggle();\n</script>') || /window\.addEventListener\('resize', wsPanelApplyWidth\);[\s\S]{0,200}wsPanelToggle\(\);/.test(SOURCE),
+    'the panel is collapsed once at startup');
+  assert.ok(!SOURCE.includes('ws-panel-expand'), 'no full-cover expand button — the tabs stay visible when minimised');
+  assert.ok(SOURCE.includes("panel.style.width = '37px';"), 'minimised width = the tab strip alone');
+  assert.ok(SOURCE.includes('if (_wsPanelCollapsed) wsPanelToggle();   // a tab click expands the minimised panel'),
+    'clicking a tool tab expands the panel');
 });
 
 test('the tool panel OVERLAYS the plan — panel changes can never resize or shift the PDF', () => {
@@ -364,8 +418,15 @@ test('one BINS & EQUIPMENT picker: searchable, scrollable, select-then-place', (
   assert.ok(SOURCE.includes('function wsPickerPlace()'), 'Place on plan (or double-click) arms placement');
   assert.ok(SOURCE.includes("ss.style.display = WS_LAYOUT._pickerKind === 'fixture' ? 'none' : '';"),
     'the stream selector shows only for stream-carrying items');
-  assert.ok(SOURCE.includes('id="ws-layout-equipment" style="flex:1;min-height:60px;max-height:30vh;'),
-    'the picker scrolls internally with a fixed max height');
+  assert.ok(SOURCE.includes('id="ws-layout-equipment" style="flex:1 1 auto;min-height:40px;'),
+    'the picker scrolls internally within its flex share of the panel');
+  // patch 3: picker artwork is NEUTRAL — stream colour is for the plan only
+  assert.ok(SOURCE.includes("tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#90A4AE'"),
+    'bin tiles never recolour with the selected stream');
+  assert.ok(!SOURCE.includes('stSel.col, b.label'), 'the stream-coloured tile path is gone');
+  assert.ok(SOURCE.includes('id="ws-stream-swatch"'),
+    'a small swatch beside the stream selector shows the colour the placed object will get');
+  assert.ok(SOURCE.includes('sw.style.background = st.col;'), 'the swatch tracks the selected stream');
 });
 
 test('RHS section order and no-panel-scroll layout', () => {
@@ -378,6 +439,13 @@ test('RHS section order and no-panel-scroll layout', () => {
   assert.ok(tab.includes('overflow:hidden;padding:6px 10px;'),
     'the panel itself never scrolls — Zones is always reachable');
   assert.ok((tab.match(/wsl-scroll/g) || []).length >= 4, 'sections scroll internally instead');
+  // patch 3 regression fix: fixed vh caps could sum past the panel height and
+  // clip ZONES off the bottom — sections now share the height by flex weight,
+  // which always sums to the space available.
+  assert.ok(!/max-height:\d+vh/.test(tab), 'no fixed vh caps anywhere in the layout tab');
+  assert.equal((tab.match(/flex:\d+ 1 0;/g) || []).length, 4, 'all four sections carry a flex weight');
+  assert.ok((tab.match(/min-height:\d{2,3}px/g) || []).length >= 4,
+    'each section reserves room for its header plus a row');
 });
 
 test('DXF/PDF exports live in the Layers pill', () => {
