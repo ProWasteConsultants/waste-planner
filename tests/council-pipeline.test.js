@@ -16,6 +16,7 @@ const { SOURCE } = require('./extract.js');
 const MIG_C1 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c1-guideline-versioning.sql'), 'utf8');
 const MIG_C2 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c2-guideline-storage.sql'), 'utf8');
 const MIG_C3 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c3-council-requirements.sql'), 'utf8');
+const MIG_C6 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-08-25-package-c6-equipment-proposals.sql'), 'utf8');
 
 // ── C1: migration ───────────────────────────────────────────────────────
 test('C1 migration: lifecycle columns, version sequencing, grants', () => {
@@ -256,4 +257,59 @@ test('C2 migration: storage policies for the guidelines prefix', () => {
   assert.ok(MIG_C2.includes('p.is_staff = true'), 'writes are staff-gated');
   assert.ok(!/create policy.*for (update|delete)/i.test(MIG_C2),
     'no update/delete policy — guideline files are never overwritten or removed');
+});
+
+// ── C6: equipment spec proposals ────────────────────────────────────────
+test('C6 migration: staging table cannot carry design decisions; category check is copied', () => {
+  for (const col of ['streams', 'pairing_type', 'output_equipment_id', 'receiver', 'collectable'])
+    assert.ok(!new RegExp('^\\s*' + col + '\\s', 'm').test(MIG_C6),
+      col + ' must have no column in the staging table — a proposal can never set it');
+  assert.ok(MIG_C6.includes("pg_get_constraintdef(oid)"),
+    'the category check is READ from equipment_category_check, never invented');
+  assert.ok(MIG_C6.includes('footprint_computed boolean'),
+    'a computed footprint is flagged as computed');
+  assert.ok(MIG_C6.includes('eqp_staff_all'), 'staff-only RLS');
+  assert.ok(MIG_C6.includes('grant select, insert, update, delete on public.equipment_proposals to authenticated'),
+    'GRANTs ship with the table');
+});
+
+test('C6: extraction reuses the spec-sheet path and flags computed footprints', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function eqpExtractOne'), SOURCE.indexOf('let _eqpCats'));
+  assert.ok(fn.includes('system: SSX_PROMPT'), 'ai-extract spec-sheet prompt is reused, not duplicated');
+  assert.ok(fn.includes('footprint_computed: stated == null && w > 0 && d > 0'),
+    'footprint from W×D is flagged as computed, a stated one is not');
+  assert.ok(fn.includes('cats.includes(catRaw) ? catRaw : null'),
+    'an AI category outside the live vocabulary lands null — never invented');
+  assert.ok(fn.includes('source_file: r.file.name'), 'every proposal carries its source document');
+});
+
+test('C6: approval inserts without design-decision fields and guards duplicates', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function eqpApprove'), SOURCE.indexOf('async function eqpReject'));
+  const rowObj = fn.slice(fn.indexOf('const row = {'), fn.indexOf("from('equipment').insert(row)"));
+  for (const field of ['streams', 'pairing_type', 'output_equipment_id', 'receiver', 'collectable'])
+    assert.ok(!new RegExp('\\b' + field + '\\s*:', 'm').test(rowObj),
+      field + ' must never be a key in the approval insert — design decisions are set by hand afterwards');
+  assert.ok(fn.includes('near-duplicates are never created silently'),
+    'a close match warns in the confirm, not silently');
+  assert.ok(fn.includes('already exists in the library — pick another'),
+    'code collisions are refused; codes are permanent');
+  assert.ok(fn.includes('if (!confirm(q)) return;'), 'insertion is confirmed, never automatic');
+});
+
+test('C6: the near-duplicate guard matches by label and by dimensions', () => {
+  const { loadEngine } = require('./extract.js');
+  const ws6 = loadEngine({ blocks: [
+    ['eqpNorm', /^function eqpNorm\(/],
+    ['eqpNearDuplicates', /^function eqpNearDuplicates\(/],
+  ] });
+  const live = [
+    { code: 'bin_1100', label: '1100L MGB', width_mm: 1370, depth_mm: 1070 },
+    { code: 'baler_x', label: 'Baler X', width_mm: 1800, depth_mm: 1000 },
+  ];
+  assert.equal(ws6.eqpNearDuplicates({ label: '1100l mgb!', width_mm: 0, depth_mm: 0 }, live).length, 1,
+    'normalised label match');
+  assert.equal(ws6.eqpNearDuplicates({ label: 'Different', width_mm: 1400, depth_mm: 1050 }, live).length, 1,
+    'both dims within 5%');
+  assert.equal(ws6.eqpNearDuplicates({ label: 'Different', width_mm: 2500, depth_mm: 900 }, live).length, 0,
+    'a genuinely different footprint passes clean');
 });

@@ -884,13 +884,18 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             Upload a council's waste guideline or DCP chapter (PDF). Enforceable requirements are extracted with clause and page references, reviewed here, then saved to a shared library — the compliance checker cites them by clause for every user scanning that council, on any device.
           </div>
 
-          <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND -->
+          <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND.
+               C6: a second mode routes spec sheets into equipment_proposals. -->
+          <div style="display:flex;gap:14px;align-items:center;margin-bottom:6px;font-size:11px;color:var(--muted);">
+            <label style="cursor:pointer;"><input type="radio" name="cgb-mode" value="guidelines" checked onchange="cgbSetMode('guidelines')"> Council guidelines</label>
+            <label style="cursor:pointer;"><input type="radio" name="cgb-mode" value="equipment" onchange="cgbSetMode('equipment')"> Equipment spec sheets → proposals queue</label>
+          </div>
           <div id="cgb-drop" ondragover="event.preventDefault();this.style.borderColor='var(--teal)';"
                ondragleave="this.style.borderColor='var(--border)';"
                ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbAddFiles(event.dataTransfer.files);"
                onclick="document.getElementById('cgb-files').click()"
                style="border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:8px;">
-            ⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.
+            <span id="cgb-drop-hint">⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.</span>
             <input type="file" id="cgb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbAddFiles(this.files);this.value='';">
           </div>
           <datalist id="cgb-councils"></datalist>
@@ -982,6 +987,18 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="btn" onclick="ssxExtract()">🤖 Extract with AI</button>
           </div>
           <div id="ssx-results"></div>
+
+          <!-- C6: bulk spec-sheet proposals review queue -->
+          <div style="display:flex;align-items:center;gap:10px;margin:18px 0 6px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Equipment proposals queue</div>
+            <div id="eqp-status" style="font-size:11px;color:var(--muted);"></div>
+            <span style="flex:1"></span>
+            <button class="btn" onclick="eqpLoad()">↻ Refresh</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;">
+            Bulk spec-sheet extractions land here as proposals. Verify against the cited source, edit, set the permanent <b>code</b>, then approve to insert into the library. Streams, pairing, receiver and collectable are design decisions — set them in the table above <i>after</i> approval; a proposal can never carry them.
+          </div>
+          <div id="eqp-wrap" style="display:flex;flex-direction:column;gap:8px;"></div>
 
           <!-- ── SHAPE EDITOR ─────────────────────────────────────────── -->
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:24px 0 4px;">
@@ -9069,8 +9086,17 @@ function cgCollectReview() {
 // filename. Files land in the existing 'project-plans' bucket under
 // guidelines/<council_key>/, and each upload becomes a new guideline version
 // through the same cgInsertVersion path the single-doc flow uses.
-const CGB = { rows: [] };
+const CGB = { rows: [], mode: 'guidelines' };
 function cgbEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+// C6: the same drop zone serves equipment spec sheets — those route into the
+// equipment_proposals staging table instead of the guidelines library.
+function cgbSetMode(m) {
+  CGB.mode = m === 'equipment' ? 'equipment' : 'guidelines';
+  const hint = document.getElementById('cgb-drop-hint');
+  if (hint) hint.textContent = CGB.mode === 'equipment'
+    ? '⇪ Drop manufacturer spec-sheet PDFs here (or click) — each is AI-extracted into the equipment proposals queue for review. Nothing lands in the library until approved.'
+    : '⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.';
+}
 async function cgbCouncilList() {
   try {
     const { data } = await sb.from('council_guidelines').select('council_name').is('superseded_at', null);
@@ -9082,8 +9108,9 @@ async function cgbCouncilList() {
 function cgbAddFiles(files) {
   [...(files || [])].forEach(f => {
     if (!/\.pdf$/i.test(f.name)) return;
-    if (f.size > 25 * 1024 * 1024) { CGB.rows.push({ file: f, status: 'Too large (25 MB max)', dead: true }); return; }
-    CGB.rows.push({ file: f, council: '', state: '', effective: '', status: 'assign a council' });
+    if (f.size > 25 * 1024 * 1024) { CGB.rows.push({ file: f, mode: CGB.mode, status: 'Too large (25 MB max)', dead: true }); return; }
+    CGB.rows.push({ file: f, mode: CGB.mode, council: '', state: '', effective: '',
+      status: CGB.mode === 'equipment' ? 'spec sheet — ready to extract' : 'assign a council' });
   });
   cgbCouncilList();
   cgbRender();
@@ -9094,13 +9121,16 @@ function cgbRender() {
   wrap.innerHTML = CGB.rows.map((r, i) => `
     <div style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,1.2fr) 70px 130px minmax(120px,1fr) 26px;gap:6px;align-items:center;border:1px solid var(--border);border-radius:7px;background:#182121;padding:6px 8px;">
       <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${cgbEsc(r.file.name)}">📄 ${cgbEsc(r.file.name)}</span>
+      ${r.mode === 'equipment' ? `
+      <span style="font-size:10.5px;color:#9FA8DA;">spec sheet → proposals queue</span>
+      <span></span><span></span>` : `
       <input type="text" list="cgb-councils" placeholder="Council (pick or type)" value="${cgbEsc(r.council)}" ${r.done || r.dead ? 'disabled' : ''}
              oninput="CGB.rows[${i}].council=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;">
       <select ${r.done || r.dead ? 'disabled' : ''} onchange="CGB.rows[${i}].state=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:11px;color:var(--text);font-family:inherit;">
         <option value="">St…</option>${['NSW','VIC','QLD','SA','WA','TAS','ACT','NT'].map(s => `<option ${r.state === s ? 'selected' : ''}>${s}</option>`).join('')}
       </select>
       <input type="date" ${r.done || r.dead ? 'disabled' : ''} value="${cgbEsc(r.effective)}" title="Effective date, if known"
-             onchange="CGB.rows[${i}].effective=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:11px;color:var(--text);font-family:inherit;">
+             onchange="CGB.rows[${i}].effective=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:11px;color:var(--text);font-family:inherit;">`}
       <span style="font-size:10.5px;color:${r.dead ? '#EF8080' : r.done ? '#3DD68C' : 'var(--muted)'};">${cgbEsc(r.status)}</span>
       <button class="btn" title="Remove from the batch" ${r.busy ? 'disabled' : ''} onclick="CGB.rows.splice(${i},1);cgbRender();" style="padding:2px 7px;font-size:10px;">✕</button>
     </div>`).join('');
@@ -9141,9 +9171,200 @@ async function cgbUploadAll() {
   // parallel inserts would race the max(version) read
   for (const r of CGB.rows) {
     if (r.done || r.dead) continue;
-    await cgbUploadOne(r);
+    if (r.mode === 'equipment') await eqpExtractOne(r);
+    else await cgbUploadOne(r);
   }
   cgLoad();
+  if (typeof eqpLoad === 'function' && CGB.rows.some(r => r.mode === 'equipment')) eqpLoad();
+}
+
+// ── C6: spec sheet → equipment_proposals ────────────────────────────────────
+// Reuses SSX_PROMPT — ai-extract was originally built for spec-sheet
+// extraction. Every proposal carries the source document and where in it the
+// values were read. Design decisions (streams, pairing, receiver, collectable)
+// have no columns in the staging table, so a proposal can never set them.
+async function eqpExtractOne(r) {
+  r.busy = true; r.status = 'extracting…'; cgbRender();
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const rd = new FileReader();
+      rd.onload = () => res(rd.result.split(',')[1]);
+      rd.onerror = () => rej(new Error('Could not read file'));
+      rd.readAsDataURL(r.file);
+    });
+    const data = await aiProxy({
+      max_tokens: 4096,
+      system: SSX_PROMPT,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: 'Extract every equipment item from this spec sheet. JSON only — start your response with {' },
+      ]}],
+    });
+    const raw = (data.content?.[0]?.text || '').trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    if (!items.length) { r.status = 'no items found'; return; }
+    // The live table's category vocabulary is read from the data, never
+    // invented: an AI value outside it lands null for the reviewer to assign.
+    const cats = await eqpKnownCategories();
+    const num = v => (v === 0 || v) && !isNaN(+v) ? +v : null;
+    const rows = items.map(it => {
+      const w = num(it.width_mm), d = num(it.depth_mm);
+      const stated = num(it.footprint_m2);
+      // SSX vocabulary: its "item_kind" noun matches the table's category
+      // list; its "category" (bin|equipment) is the loader's item_kind.
+      const catRaw = String(it.item_kind || '').toLowerCase().trim();
+      return {
+        source_file: r.file.name,
+        source_ref: it.source_note || null,
+        label: String(it.label || '').trim() || 'Unnamed item',
+        category: cats.includes(catRaw) ? catRaw : null,
+        item_kind: it.category === 'equipment' ? 'Equipment' : 'Bin',
+        capacity_l: num(it.capacity_l),
+        width_mm: w, depth_mm: d, height_mm: num(it.height_mm),
+        footprint_m2: stated != null ? stated : (w > 0 && d > 0 ? +((w / 1000) * (d / 1000)).toFixed(3) : null),
+        footprint_computed: stated == null && w > 0 && d > 0,
+        compaction_ratio: num(it.compaction_ratio),
+        company: it.company || parsed.manufacturer || null,
+        website: it.website || null, phone: it.phone || null,
+        status: 'proposed',
+      };
+    });
+    const { error } = await sb.from('equipment_proposals').insert(rows);
+    if (error) throw new Error(error.message + ' — has sql/2026-08-25-package-c6-equipment-proposals.sql been run?');
+    r.done = true; r.status = `✓ ${rows.length} proposal${rows.length === 1 ? '' : 's'} queued`;
+  } catch (err) {
+    r.status = 'failed: ' + (err.message || err);
+  } finally { r.busy = false; cgbRender(); }
+}
+let _eqpCats = null;
+async function eqpKnownCategories() {
+  if (_eqpCats) return _eqpCats;
+  try {
+    const { data } = await sb.from('equipment').select('category');
+    _eqpCats = [...new Set((data || []).map(r => r.category).filter(Boolean))].sort();
+  } catch (e) { _eqpCats = []; }
+  return _eqpCats;
+}
+
+// ── C6: proposals review queue ──────────────────────────────────────────────
+// Duplicate guard is a WARNING the reviewer must read, never a silent skip and
+// never a silent create: a close label or footprint match to a live record is
+// shown on the row, and approving one asks again.
+const EQP = { rows: [] };
+function eqpMsg(t, warn) { const el = document.getElementById('eqp-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
+function eqpNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+// Close-match test against the live library: same normalised label, or both
+// dimensions within 5%. Pure; covered by tests.
+function eqpNearDuplicates(p, live) {
+  const nl = eqpNorm(p.label);
+  return (live || []).filter(e => {
+    if (!e) return false;
+    if (nl && eqpNorm(e.label) === nl) return true;
+    const w1 = +p.width_mm, d1 = +p.depth_mm, w2 = +e.width_mm, d2 = +e.depth_mm;
+    if (w1 > 0 && d1 > 0 && w2 > 0 && d2 > 0) {
+      const close = (a, b) => Math.abs(a - b) <= 0.05 * Math.max(a, b);
+      if (close(w1, w2) && close(d1, d2)) return true;
+    }
+    return false;
+  });
+}
+async function eqpLoad() {
+  const wrap = document.getElementById('eqp-wrap'); if (!wrap) return;
+  const { data, error } = await sb.from('equipment_proposals')
+    .select('*').eq('status', 'proposed').order('created_at');
+  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Queue load failed: ${error.message} — has sql/2026-08-25-package-c6-equipment-proposals.sql been run?</div>`; return; }
+  EQP.rows = data || [];
+  await eqpKnownCategories();
+  eqpRender();
+}
+function eqpField(id, key, val, w, title) {
+  return `<input type="text" data-eqp="${id}:${key}" value="${cgbEsc(val)}" ${title ? `title="${cgbEsc(title)}"` : ''} style="width:${w || '100%'};background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;">`;
+}
+function eqpRender() {
+  const wrap = document.getElementById('eqp-wrap'); if (!wrap) return;
+  if (!EQP.rows.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No proposals — use the bulk uploader (Rates &amp; Guidelines tab) in spec-sheet mode.</div>'; return; }
+  const cats = _eqpCats || [];
+  const taken = new Set(EQL.items.map(x => x.code).filter(Boolean));
+  wrap.innerHTML = EQP.rows.map(p => {
+    const dupes = eqpNearDuplicates(p, EQL.items);
+    const code = p.proposed_code || slugCode(p.label, new Set(taken));
+    return `
+    <div style="border:1px solid ${dupes.length ? '#8a6a3a' : 'var(--border)'};border-radius:8px;background:#141c1c;padding:10px 12px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+        <span style="font-weight:700;font-size:12px;">${cgbEsc(p.label)}</span>
+        <span style="font-size:10px;color:var(--muted);">📄 ${cgbEsc(p.source_file)}${p.source_ref ? ' · ' + cgbEsc(p.source_ref) : ''}</span>
+        ${p.footprint_computed ? '<span style="font-size:9.5px;color:#EFB080;border:1px solid #8a6a3a;border-radius:8px;padding:0 6px;" title="Footprint derived from W×D, not stated in the document">footprint computed</span>' : ''}
+        <span style="flex:1"></span>
+        <button class="btn" style="background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;padding:3px 10px;font-size:10.5px;" onclick="eqpApprove('${p.id}')">✓ Approve → insert</button>
+        <button class="btn" style="color:#EF8080;padding:3px 10px;font-size:10.5px;" onclick="eqpReject('${p.id}')">✕ Reject</button>
+      </div>
+      ${dupes.length ? `<div style="font-size:10.5px;color:#FFB74D;margin-bottom:6px;">⚠ Close match in the library: ${dupes.slice(0, 3).map(d => cgbEsc(d.label) + ' (' + cgbEsc(d.code) + ')').join(', ')} — approve only if this is genuinely a different item.</div>` : ''}
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:5px 8px;">
+        <label style="font-size:9.5px;color:var(--muted);">Label ${eqpField(p.id, 'label', p.label)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Code (permanent) <input type="text" data-eqp="${p.id}:proposed_code" value="${cgbEsc(code)}" style="width:100%;background:#101717;border:1px solid #4a5a3a;border-radius:6px;padding:4px 6px;font-size:10.5px;color:#C5E1A5;font-family:monospace;"></label>
+        <label style="font-size:9.5px;color:var(--muted);">Category <select data-eqp="${p.id}:category" style="width:100%;background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">
+          <option value="">— pick —</option>${cats.map(c => `<option ${c === p.category ? 'selected' : ''}>${cgbEsc(c)}</option>`).join('')}</select></label>
+        <label style="font-size:9.5px;color:var(--muted);">Kind <select data-eqp="${p.id}:item_kind" style="width:100%;background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:10.5px;color:var(--text);font-family:inherit;">
+          ${['Bin','Equipment'].map(k => `<option ${k === p.item_kind ? 'selected' : ''}>${k}</option>`).join('')}</select></label>
+        <label style="font-size:9.5px;color:var(--muted);">Capacity L ${eqpField(p.id, 'capacity_l', p.capacity_l)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Width mm ${eqpField(p.id, 'width_mm', p.width_mm)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Depth mm ${eqpField(p.id, 'depth_mm', p.depth_mm)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Height mm ${eqpField(p.id, 'height_mm', p.height_mm)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Footprint m² ${eqpField(p.id, 'footprint_m2', p.footprint_m2)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Compaction ${eqpField(p.id, 'compaction_ratio', p.compaction_ratio)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Company ${eqpField(p.id, 'company', p.company)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Website ${eqpField(p.id, 'website', p.website)}</label>
+        <label style="font-size:9.5px;color:var(--muted);">Phone ${eqpField(p.id, 'phone', p.phone)}</label>
+      </div>
+    </div>`;
+  }).join('');
+}
+function eqpCollect(id) {
+  const out = {};
+  document.querySelectorAll(`[data-eqp^="${id}:"]`).forEach(el => {
+    const key = el.getAttribute('data-eqp').split(':')[1];
+    const v = el.value.trim();
+    out[key] = v === '' ? null : (['capacity_l', 'width_mm', 'depth_mm', 'height_mm', 'footprint_m2', 'compaction_ratio'].includes(key) ? (isNaN(+v) ? null : +v) : v);
+  });
+  return out;
+}
+async function eqpApprove(id) {
+  const p = EQP.rows.find(r => r.id === id); if (!p) return;
+  const e = eqpCollect(id);
+  if (!e.label) { eqpMsg('A proposal needs a label.', true); return; }
+  const code = String(e.proposed_code || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  if (!code) { eqpMsg('Set the code before approving — codes are permanent.', true); return; }
+  if (EQL.items.some(x => x.code === code)) { eqpMsg(`Code “${code}” already exists in the library — pick another.`, true); return; }
+  const dupes = eqpNearDuplicates({ ...p, ...e }, EQL.items);
+  const q = `Insert “${e.label}” into the equipment library as code “${code}”?` +
+    (dupes.length ? `\n\n⚠ Close match: ${dupes.map(d => d.label + ' (' + d.code + ')').join(', ')} — near-duplicates are never created silently.` : '') +
+    `\n\nStreams, pairing, receiver and collectable stay unset — assign them in the equipment table afterwards.`;
+  if (!confirm(q)) return;
+  // Deliberately absent from this insert: streams, pairing_type,
+  // output_equipment_id, receiver, collectable — design decisions, not
+  // spec-sheet facts. They are set by hand after approval.
+  const row = {
+    code, label: e.label, category: e.category || null, item_kind: e.item_kind || 'Equipment',
+    capacity_l: e.capacity_l, width_mm: e.width_mm, depth_mm: e.depth_mm, height_mm: e.height_mm,
+    footprint_m2: e.footprint_m2, compaction_ratio: e.compaction_ratio,
+    company: e.company, website: e.website, phone: e.phone,
+    include_in_supplier_table: false, active: true,
+  };
+  const { error } = await sb.from('equipment').insert(row);
+  if (error) { eqpMsg('Insert failed: ' + error.message, true); return; }
+  await sb.from('equipment_proposals').update({ status: 'approved', proposed_code: code,
+    reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() }).eq('id', id).eq('status', 'proposed');
+  _eqpCats = null;
+  eqpMsg(`✓ ${e.label} inserted as ${code} — set streams/pairing in the table, then Save.`);
+  eqlLoad(); eqpLoad();
+}
+async function eqpReject(id) {
+  const { error } = await sb.from('equipment_proposals').update({ status: 'rejected',
+    reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() }).eq('id', id).eq('status', 'proposed');
+  if (error) { eqpMsg('Reject failed: ' + error.message, true); return; }
+  EQP.rows = EQP.rows.filter(r => r.id !== id);
+  eqpRender();
 }
 
 // ── C3: STRUCTURED REQUIREMENTS — EXTRACTION + REVIEW QUEUE ─────────────────
@@ -10492,7 +10713,7 @@ function switchAdminTab(btn, panelId) {
   if (panelId === 'stab-analytics') loadAdminAnalytics();
   if (panelId === 'stab-users') loadAdminUsers();
   if (panelId === 'stab-rates') { rdbLoad(); cgLoad(); if (typeof crqLoad === 'function') crqLoad(); }
-  if (panelId === 'stab-equipment') { eqlLoad(); ctlLoad(); }
+  if (panelId === 'stab-equipment') { eqlLoad(); ctlLoad(); if (typeof eqpLoad === 'function') eqpLoad(); }
 }
 
 // ── ADMIN: PLATFORM ANALYTICS ─────────────────────────────────────────────
