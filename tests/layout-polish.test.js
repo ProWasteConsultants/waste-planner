@@ -214,6 +214,26 @@ test('the door kinds offered match the fixtures list', () => {
   assert.match(SOURCE, /door: 'ROLLER'/);
 });
 
+// ── door palette thumbnails ─────────────────────────────────────────────
+test('door palette thumbnails are the plan door symbol, not the squashed profile', () => {
+  assert.ok(SOURCE.includes('f.door ? wsDoorThumb(f.door, f.w, f.d,'),
+    'door fixtures must route to wsDoorThumb');
+  const svg = ws.wsDoorThumb('SINGLE', 0.92, 0.10, '#B0BEC5', 26);
+  assert.match(svg, /<path d="M[\d.-]+,[\d.-]+ A/, 'the swing arc is drawn');
+  assert.ok((svg.match(/<line /g) || []).length >= 3, 'both jambs and the open leaf are drawn');
+  const dbl = ws.wsDoorThumb('DOUBLE', 1.84, 0.10, '#B0BEC5', 26);
+  assert.equal((dbl.match(/ A[\d.]+,/g) || []).length, 2, 'a double door swings two arcs');
+  const roller = ws.wsDoorThumb('ROLLER', 2.4, 0.15, '#B0BEC5', 26);
+  assert.match(roller, /<polygon /, 'roller panel sits in the wall');
+  assert.match(roller, /stroke-dasharray="2 2"/, 'dashed curtain line');
+  assert.ok(!/ A[\d.]+,/.test(roller), 'a roller door has no swing arc');
+  // the symbol must fit its box — the swing arc is the part the old profile lost
+  for (const sv of [svg, dbl, roller]) {
+    const nums = [...sv.matchAll(/(?:x1|y1|x2|y2)="(-?[\d.]+)"/g)].map(m => +m[1]);
+    nums.forEach(v => assert.ok(v >= -0.5 && v <= 26.5, 'coordinate inside the box: ' + v));
+  }
+});
+
 // ── unit-box path parsing (shared by SVG, DXF and palette thumbnails) ───
 test('wsPathPolys: Z followed by M starts a clean subpath', () => {
   // The baler detail shape: a closed chamber plus a separate ejection line.
@@ -236,6 +256,29 @@ test('wsShapePolys: normalises the unit box to the real footprint, centred', () 
 });
 
 // ── wiring guards ───────────────────────────────────────────────────────
+test('the tool panel has preset widths per tab, not a drag handle', () => {
+  assert.ok(!SOURCE.includes('wsStartResize'), 'free drag-resize is removed');
+  assert.ok(!SOURCE.includes('ws-resize-handle'), 'the resize handle element is gone');
+  assert.match(SOURCE, /function wsPanelWidthFor\(tab\)/, 'widths are predefined per tab');
+  assert.ok(SOURCE.includes("if (tab === 'calculator') return Math.min("),
+    'the bin calculator runs wide');
+  assert.ok(SOURCE.includes('return 440;   // layout + swept: one column of tool groups'),
+    'layout and swept paths get the single-column width');
+  assert.ok(SOURCE.includes('function wsPanelMaxToggle()'), 'maximise/restore control exists');
+  assert.ok(SOURCE.includes("window.addEventListener('resize', wsPanelApplyWidth);"),
+    'the window-relative widths re-derive on resize');
+});
+
+test('the tool tabs run vertically in a side rail', () => {
+  assert.ok(SOURCE.includes('.ws-tool-tab{writing-mode:vertical-rl'),
+    'tab labels are vertical');
+  assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column'),
+    'the rail stacks tabs vertically');
+  assert.ok(SOURCE.includes('.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row'),
+    'the panel is rail + body, side by side');
+});
+
+
 test('shift is read during both room drags', () => {
   assert.match(SOURCE, /if \(e\.shiftKey\)\s*\{\s*\r?\n\s*const lock = wsSnapAxis\(p\.x - dg\.startX, p\.y - dg\.startY\);/,
     'whole-room drag does not axis-lock on shift');
