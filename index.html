@@ -319,6 +319,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   display:flex;align-items:center;gap:8px;
   background:rgba(26,26,26,0.92);border:1px solid #333;border-radius:9px;
   padding:4px 10px;backdrop-filter:blur(4px);max-width:60%;
+  /* the chip is dark chrome on every screen — it must carry its OWN colour
+     tokens: the page :root is the light theme, and inheriting its near-black
+     --text made the breadcrumb invisible when the topbar (which used to
+     provide the dark tokens) was removed. */
+  --text:#E8EFEF;--muted:#8CA3A3;color:#E8EFEF;
 }
 .ws-top-chip.min > *:not(.ws-top-chip-toggle){display:none!important;}
 .ws-top-chip .breadcrumb{font-size:12px;}

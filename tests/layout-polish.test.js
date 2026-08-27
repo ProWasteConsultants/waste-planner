@@ -332,6 +332,8 @@ test('the screens nav is a thin LHS rail with vertical labels; NO top header bar
     'the pill = project name + read-only council');
   assert.ok(!chip.includes('org-switcher'), 'the ORGANISATION is never in the project pill');
   assert.ok(SOURCE.includes('function wsTopChipToggle()'), 'the chip collapses out of the way');
+  assert.match(SOURCE, /\.ws-top-chip\{[^}]*--text:#E8EFEF;--muted:#8CA3A3;color:#E8EFEF;/s,
+    'the chip carries its own dark-theme tokens — the page :root is the light theme');
   assert.ok(SOURCE.includes('.ws-embed .side-nav{display:none!important}'), 'embed mode hides the rail too');
 });
 
