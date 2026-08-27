@@ -1704,7 +1704,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="ws-zoom-btn" onclick="wsZoom(1.2)">+</button>
           <div class="ws-zoom-level" id="ws-zoom-label">100%</div>
           <button class="ws-zoom-btn" onclick="wsZoom(0.8)">−</button>
-          <button class="ws-zoom-btn" onclick="wsFitPage()" style="font-size:10px;">⊡</button>
+          <button class="ws-zoom-btn" onclick="wsFitToggle()" title="Fit — toggles whole sheet / full width" style="font-size:10px;">⊡</button>
           <button class="ws-zoom-btn" id="ws-fs-btn" onclick="wsFullscreenToggle()" title="Fullscreen — same layout, more pixels. Esc to exit." style="font-size:11px;">⛶</button>
         </div>
 
@@ -13255,7 +13255,7 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   }
 
   await wsRenderPage(WS.currentPage);
-  wsFitPage();
+  wsFitWidth();
 }
 
 async function wsRenderPage(pageNum) {
@@ -13290,9 +13290,28 @@ function wsFitScale() {
   const canvas = document.getElementById('ws-pdf-canvas');
   if (!canvas || !canvas.width) return null;
   const area = document.getElementById('ws-canvas-area');
-  const aW = area.clientWidth - wsPanelOccupies() - 40;   // 40 = margin
-  const aH = area.clientHeight - 40;
+  const aW = area.clientWidth - wsPanelOccupies() - 24;   // 24 = margin
+  const aH = area.clientHeight - 24;
   return Math.min(aW / canvas.width, aH / canvas.height, 1);
+}
+// DEFAULT VIEW: fit the sheet's WIDTH. Plans are landscape pages on wide
+// screens — whole-page fit leaves dead gutters either side while the drawing
+// stays small, so the default fills the abundant dimension and the user pans
+// vertically for the title block. Whole-page fit stays one click away (⊡)
+// and remains the zoom-out FLOOR.
+function wsFitWidth() {
+  const fit = wsFitScale();
+  if (fit == null) return;
+  const canvas = document.getElementById('ws-pdf-canvas');
+  const area = document.getElementById('ws-canvas-area');
+  WS.fitScale = fit;
+  const availW = area.clientWidth - wsPanelOccupies();
+  WS.scale = Math.max(fit, Math.min((availW - 24) / canvas.width, 1));
+  WS.panX = Math.max(0, (availW - canvas.width * WS.scale) / 2);
+  WS.panY = canvas.height * WS.scale <= area.clientHeight - 24
+    ? Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2)
+    : 12;   // taller than the viewport: start at the top, pan for the rest
+  wsApplyTransform();
 }
 function wsFitPage() {
   const ov = wsActiveOverlayIframe();
@@ -13306,6 +13325,12 @@ function wsFitPage() {
   WS.panX = Math.max(0, (area.clientWidth - wsPanelOccupies() - canvas.width * WS.scale) / 2);
   WS.panY = Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2);
   wsApplyTransform();
+}
+// ⊡ toggles between the two fits: at the whole-sheet floor it goes to full
+// width, anywhere else it returns to the whole sheet.
+function wsFitToggle() {
+  const atPage = Math.abs(WS.scale - (WS.fitScale || 0)) < 1e-6;
+  if (atPage) wsFitWidth(); else wsFitPage();
 }
 // The floor moves with the canvas: window resize and entering/leaving
 // fullscreen both change the available pixels, so re-derive it — and if the
