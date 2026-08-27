@@ -388,6 +388,18 @@ test('panel changes never move the plan: fit is rail-to-tab, the expanded body j
   assert.ok(!SOURCE.includes('wsPanelOccupies'), 'the panel-tracking fit is gone');
 });
 
+test('panning is bounded: a fitted axis is locked centred, a zoomed axis stays within the sheet', () => {
+  assert.ok(SOURCE.includes('function wsClampPan()'), 'one clamp for every pan/zoom/fit path');
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsClampPan()'), SOURCE.indexOf('function wsApplyTransform()'));
+  assert.ok(fn.includes('WS.panX = w <= availW ? Math.max(0, (availW - w) / 2)'),
+    'sheet fits horizontally -> locked centred, no horizontal pan (the fit-width floor)');
+  assert.ok(fn.includes('Math.min(12, Math.max(availW - w - 12, WS.panX))') &&
+            fn.includes('Math.min(12, Math.max(availH - h - 12, WS.panY))'),
+    'zoomed axes pan only within the sheet edges — never off into dead space');
+  const at = SOURCE.slice(SOURCE.indexOf('function wsApplyTransform()'), SOURCE.indexOf('function wsSweptAction'));
+  assert.ok(at.includes('wsClampPan();'), 'applied in wsApplyTransform, the single choke point');
+});
+
 test('the RHS panel starts minimised to its tab strip; a tab click expands it', () => {
   assert.ok(SOURCE.includes('// DEFAULT ON LOAD: minimised to the tab strip'), 'documented default');
   assert.ok(SOURCE.includes('wsPanelToggle();\n</script>') || /window\.addEventListener\('resize', wsPanelApplyWidth\);[\s\S]{0,200}wsPanelToggle\(\);/.test(SOURCE),
