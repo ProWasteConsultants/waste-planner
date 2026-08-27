@@ -114,6 +114,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-cta-white:hover{background:#fff;border-color:#fff;}
 .wsl-cta-teal{background:#167E7E;border:1px solid #167E7E;color:#fff;}
 .wsl-cta-teal:hover{background:#1B9898;border-color:#1B9898;}
+.wsl-cta-teal:disabled{background:#2C5654;border-color:#2C5654;color:rgba(255,255,255,0.75);cursor:not-allowed;}
 .wsl-btn-danger{color:#EF8080;}
 .wsl-sel{background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.85);padding:5px 7px;font-size:10.5px;border-radius:6px;font-family:inherit;}
 .wsl-editrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
@@ -154,8 +155,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-empty{font-size:10.5px;color:rgba(255,255,255,0.3);}
 /* Vertical tab rail on the panel's canvas-facing edge. Same thickness and
    type as the LHS rails so both sides read identically. */
-.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:44px;flex-shrink:0;border-left:1px solid #333;padding:8px 0 6px;}
-.ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:13px;font-weight:600;cursor:pointer;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-left:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.6px;min-height:0;}
+.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;justify-content:space-evenly;width:44px;flex-shrink:0;border-left:1px solid #333;padding:8px 0 6px;}
+.ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:13px;font-weight:600;cursor:pointer;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-left:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.6px;min-height:0;max-height:170px;}
 .ws-tool-tab:hover{color:#fff;}
 .ws-tool-tab.active{background:#167E7E;color:#fff;border-left:2px solid #167E7E;}
 .ws-rail-btn{writing-mode:vertical-rl;padding:9px 0;margin:2px 5px;border-radius:5px;border:1px solid #444;background:#2a2a2a;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.8);font-family:inherit;letter-spacing:.5px;white-space:nowrap;}
@@ -295,10 +296,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
    open. Flyouts OVERLAY the canvas; opening or closing never moves the plan. ── */
 .ws-tool-strip{
   width:44px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
+  justify-content:space-evenly;
   padding:8px 0;background:#1a1a1a;border-right:1px solid #333;z-index:15;
 }
 .ws-strip-tab{
-  flex:1 1 0;min-height:0;writing-mode:vertical-rl;padding:14px 0;font-size:13px;cursor:pointer;
+  flex:1 1 0;min-height:0;max-height:170px;writing-mode:vertical-rl;padding:14px 0;font-size:13px;cursor:pointer;
   font-weight:600;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-right:2px solid transparent;
   background:none;font-family:inherit;text-align:center;letter-spacing:.6px;
 }
@@ -330,10 +332,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
      tokens: the page :root is the light theme, and inheriting its near-black
      --text made the breadcrumb invisible when the topbar (which used to
      provide the dark tokens) was removed. */
-  --text:#E8EFEF;--muted:#8CA3A3;color:#E8EFEF;
+  --text:#fff;--muted:#D7E2E2;color:#fff;
 }
 .ws-top-chip.min > *:not(.ws-top-chip-toggle){display:none!important;}
-.ws-top-chip .breadcrumb{font-size:12px;}
+.ws-top-chip .breadcrumb{font-size:13.5px;}
 .ws-top-chip-toggle{background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:11px;padding:0 2px;font-family:inherit;}
 
 /* ── MAIN CONTENT ── */
@@ -740,8 +742,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   <div class="ws-top-chip" id="ws-top-chip">
     <button class="ws-top-chip-toggle" onclick="wsTopChipToggle()" title="Collapse / expand">◂</button>
     <div class="breadcrumb" id="breadcrumb"><span>Projects</span></div>
-    <span id="ws-pill-address" style="display:none;font-size:11px;color:#8CA3A3;border-left:1px solid #2C3838;padding-left:8px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;"></span>
-    <span id="ws-pill-council" onclick="wsPillCouncilOpen()" style="display:none;font-size:11px;color:#8CA3A3;cursor:pointer;border-left:1px solid #2C3838;padding-left:8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;"></span>
+    <span id="ws-pill-address" style="display:none;font-size:12.5px;color:#fff;border-left:1px solid #2C3838;padding-left:8px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;"></span>
+    <span id="ws-pill-council" onclick="wsPillCouncilOpen()" style="display:none;font-size:12.5px;color:#fff;cursor:pointer;border-left:1px solid #2C3838;padding-left:8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;"></span>
   </div>
 
   <!-- PROJECTS SCREEN -->
@@ -17383,7 +17385,7 @@ function wsUpdateRoomGenBtn() {
   const btn = document.getElementById('ws-room-gen-btn'); if (!btn) return;
   const el = wsGenRoomEligible();
   btn.disabled = !el.ok;
-  btn.style.opacity = el.ok ? '' : '0.45';
+  btn.style.opacity = '';   // the :disabled fill carries the state — no ghosting
   btn.title = el.ok
     ? `Arrange ${el.room.name || 'this room'}'s items inside its boundary — locked items stay put; re-run for another arrangement`
     : el.why === 'Room has no items'
@@ -20881,6 +20883,25 @@ function wsStripToggle(name) {
   fly.style.display = open ? 'block' : 'none';
   tab.classList.toggle('active', open);
   if (open) {
+    // The docked Layers/Markups cards start hidden until a plan is up — an
+    // open flyout must never be an empty dark bar: reveal the card when a
+    // PDF is loaded, otherwise say why there is nothing here yet.
+    const card = fly.querySelector('.ws-layer-panel');
+    let hint = fly.querySelector('.ws-fly-hint');
+    if (card) {
+      const havePdf = typeof WS !== 'undefined' && WS.pdfDoc;
+      if (havePdf && card.style.display === 'none') card.style.display = '';
+      if (!havePdf && card.style.display === 'none') {
+        if (!hint) {
+          hint = document.createElement('div');
+          hint.className = 'ws-fly-hint';
+          hint.style.cssText = 'font-size:12px;color:rgba(255,255,255,0.6);line-height:1.5;';
+          hint.textContent = 'Open a project with a plan to use this.';
+          fly.appendChild(hint);
+        }
+        hint.style.display = '';
+      } else if (hint) hint.style.display = 'none';
+    }
     const shell = document.querySelector('.ws-shell');
     const h = shell ? shell.clientHeight : window.innerHeight;
     fly.style.top = Math.max(8, Math.min(tab.offsetTop, h - fly.offsetHeight - 8)) + 'px';
