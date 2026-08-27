@@ -1704,7 +1704,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="ws-zoom-btn" onclick="wsZoom(1.2)">+</button>
           <div class="ws-zoom-level" id="ws-zoom-label">100%</div>
           <button class="ws-zoom-btn" onclick="wsZoom(0.8)">−</button>
-          <button class="ws-zoom-btn" onclick="wsFitWidth()" title="Fit the sheet to the full width" style="font-size:10px;">⊡</button>
+          <button class="ws-zoom-btn" onclick="wsFitToggle()" title="Fit — toggles whole sheet / full width" style="font-size:10px;">⊡</button>
           <button class="ws-zoom-btn" id="ws-fs-btn" onclick="wsFullscreenToggle()" title="Fullscreen — same layout, more pixels. Esc to exit." style="font-size:11px;">⛶</button>
         </div>
 
@@ -13255,7 +13255,7 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   }
 
   await wsRenderPage(WS.currentPage);
-  wsFitWidth();
+  wsFitPage();
 }
 
 async function wsRenderPage(pageNum) {
@@ -13278,31 +13278,45 @@ async function wsRenderPage(pageNum) {
   if (at) at.classList.add('active');
 }
 
-// FIT-WIDTH is the default view AND the zoom floor: the sheet fills the space
-// between the LHS rails and the RHS tab strip, and zooming out past that is
-// not possible. The tool panel body OVERLAYS the plan when expanded — the
-// plan never resizes, reflows or shifts for it (the sovereignty rule).
+// The WHOLE-SHEET fit is the default view AND the zoom floor: nothing is
+// cropped at rest, and zooming out past it is not possible. The ⊡ button
+// toggles to FIT-WIDTH — the sheet fills the rail-to-tab span for working,
+// panning vertically for the title block. The tool panel body OVERLAYS the
+// plan when expanded — the plan never resizes, reflows or shifts for it.
 function wsFitScale() {
   const canvas = document.getElementById('ws-pdf-canvas');
   if (!canvas || !canvas.width) return null;
   const area = document.getElementById('ws-canvas-area');
   const aW = area.clientWidth - 38 - 24;   // 38 = RHS tab strip, 24 = margin
-  return Math.min(aW / canvas.width, 1);
+  const aH = area.clientHeight - 24;
+  return Math.min(aW / canvas.width, aH / canvas.height, 1);
 }
-function wsFitWidth() {
+function wsFitPage() {
   const ov = wsActiveOverlayIframe();
   if (ov && ov.contentWindow) { ov.contentWindow.postMessage({ type: 'ws-fit' }, '*'); return; }
+  const fit = wsFitScale();
+  if (fit == null) return;
+  WS.fitScale = fit;
+  WS.scale = fit;
+  wsApplyTransform();   // the pan clamp centres both fitted axes
+}
+function wsFitWidth() {
   const fit = wsFitScale();
   if (fit == null) return;
   const canvas = document.getElementById('ws-pdf-canvas');
   const area = document.getElementById('ws-canvas-area');
   WS.fitScale = fit;
-  WS.scale = fit;
-  WS.panX = Math.max(0, (area.clientWidth - 38 - canvas.width * WS.scale) / 2);
-  WS.panY = canvas.height * WS.scale <= area.clientHeight - 24
-    ? Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2)
-    : 12;   // taller than the viewport: start at the top, pan for the rest
+  WS.scale = Math.max(fit, Math.min((area.clientWidth - 38 - 24) / canvas.width, 1));
+  WS.panY = 12;   // start at the top; the clamp handles the rest
   wsApplyTransform();
+}
+// ⊡ toggles: at the whole-sheet floor it fills the width; anywhere else it
+// returns to the whole sheet.
+function wsFitToggle() {
+  const ov = wsActiveOverlayIframe();
+  if (ov && ov.contentWindow) { ov.contentWindow.postMessage({ type: 'ws-fit' }, '*'); return; }
+  const atPage = Math.abs(WS.scale - (WS.fitScale || 0)) < 1e-6;
+  if (atPage) wsFitWidth(); else wsFitPage();
 }
 // The floor moves with the canvas: window resize and entering/leaving
 // fullscreen both change the available pixels, so re-derive it — and if the
@@ -13311,7 +13325,7 @@ function wsZoomFloorRecalc() {
   const fit = wsFitScale();
   if (fit == null) return;
   WS.fitScale = fit;
-  if (WS.scale < fit - 1e-9) wsFitWidth();
+  if (WS.scale < fit - 1e-9) wsFitPage();
 }
 window.addEventListener('resize', wsZoomFloorRecalc);
 // Fullscreen = more pixels for the SAME layout — rails, strips and panels all

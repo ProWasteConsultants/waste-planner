@@ -413,16 +413,18 @@ test('the RHS panel starts minimised to its tab strip; a tab click expands it', 
 test('the tool panel OVERLAYS the plan — panel changes can never resize or shift the PDF', () => {
   assert.ok(SOURCE.includes('position:absolute;right:0;top:0;bottom:0;z-index:14;'),
     'the panel floats over the canvas instead of sharing the flex row');
-  // default view fills the WIDTH (plans are landscape sheets on wide screens),
-  // and that fit IS the zoom-out floor — no whole-page zoom-out below it
-  assert.ok(SOURCE.includes('await wsRenderPage(WS.currentPage);\n  wsFitWidth();'),
-    'default view is fit-to-width on load');
-  assert.ok(SOURCE.includes('function wsFitWidth()'), 'fit-width exists');
-  const fs = SOURCE.slice(SOURCE.indexOf('function wsFitScale()'), SOURCE.indexOf('function wsFitWidth()'));
-  assert.ok(fs.includes('Math.min(aW / canvas.width, 1)') && !fs.includes('canvas.height'),
-    'the floor is the WIDTH fit — height never lowers it');
-  assert.ok(!SOURCE.includes('wsFitToggle') && !SOURCE.includes('function wsFitPage()'),
-    'no whole-page view below the floor — the fit button re-fits width');
+  // the DEFAULT shows the whole sheet — nothing cropped at rest — and that
+  // fit is the zoom-out floor; ⊡ toggles to fit-width for working
+  assert.ok(SOURCE.includes('await wsRenderPage(WS.currentPage);\n  wsFitPage();'),
+    'default view is the whole sheet on load');
+  const fs = SOURCE.slice(SOURCE.indexOf('function wsFitScale()'), SOURCE.indexOf('function wsFitPage()'));
+  assert.ok(fs.includes('Math.min(aW / canvas.width, aH / canvas.height, 1)'),
+    'the floor is the whole-sheet fit — both dimensions visible');
+  assert.ok(SOURCE.includes('function wsFitWidth()') && SOURCE.includes('function wsFitToggle()'),
+    'fit-width stays one click away on the fit toggle');
+  const fw = SOURCE.slice(SOURCE.indexOf('function wsFitWidth()'), SOURCE.indexOf('function wsFitToggle()'));
+  assert.ok(fw.includes('Math.max(fit, Math.min((area.clientWidth - 38 - 24) / canvas.width, 1))'),
+    'fit-width never drops below the whole-sheet floor');
 });
 
 test('section headings are enlarged teal; room cards are wide, short and minimal', () => {
