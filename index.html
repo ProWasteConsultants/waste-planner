@@ -155,8 +155,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-empty{font-size:10.5px;color:rgba(255,255,255,0.3);}
 /* Vertical tab rail on the panel's canvas-facing edge. Same thickness and
    type as the LHS rails so both sides read identically. */
-.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;justify-content:space-evenly;width:44px;flex-shrink:0;border-left:1px solid #333;padding:8px 0 6px;}
-.ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:13px;font-weight:600;cursor:pointer;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-left:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.6px;min-height:0;max-height:170px;}
+.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:44px;flex-shrink:0;border-left:1px solid #333;padding:8px 0 6px;}
+.ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:13px;font-weight:600;cursor:pointer;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-left:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.6px;min-height:0;}
 .ws-tool-tab:hover{color:#fff;}
 .ws-tool-tab.active{background:#167E7E;color:#fff;border-left:2px solid #167E7E;}
 .ws-rail-btn{writing-mode:vertical-rl;padding:9px 0;margin:2px 5px;border-radius:5px;border:1px solid #444;background:#2a2a2a;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.8);font-family:inherit;letter-spacing:.5px;white-space:nowrap;}
@@ -269,7 +269,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .side-nav .topbar-brand{padding:4px 0 10px;margin:0 4px 6px;border-bottom:1px solid #2C3838;cursor:pointer;text-align:center;}
 .side-nav .nav-item{
   writing-mode:vertical-rl;padding:12px 0;border-radius:0;
-  flex:1 1 0;min-height:0;max-height:170px;
+  flex:1 1 0;min-height:0;
   display:flex;align-items:center;justify-content:center;gap:6px;
   font-size:13px;font-weight:600;letter-spacing:.6px;white-space:nowrap;
   color:#D3E2E2;
@@ -280,7 +280,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* badges flow with the vertical label — horizontal text overflows a 36px rail */
 .side-nav .nav-badge{writing-mode:vertical-rl;font-size:8px;padding:4px 1px;}
 /* account chip pinned at the rail's foot — initials always, name + role on hover */
-.rail-account .user-avatar{width:36px;height:36px;font-size:13px;}
+.rail-account .user-avatar{width:36px;height:36px;font-size:13px;color:#fff;}
 .rail-account{margin-top:auto;position:relative;display:flex;justify-content:center;padding:8px 0 2px;cursor:pointer;}
 .rail-account .rail-account-info{
   display:none;position:absolute;left:50px;bottom:2px;z-index:40;white-space:nowrap;
@@ -296,11 +296,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
    open. Flyouts OVERLAY the canvas; opening or closing never moves the plan. ── */
 .ws-tool-strip{
   width:44px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
-  justify-content:space-evenly;
   padding:8px 0;background:#1a1a1a;border-right:1px solid #333;z-index:15;
 }
 .ws-strip-tab{
-  flex:1 1 0;min-height:0;max-height:170px;writing-mode:vertical-rl;padding:14px 0;font-size:13px;cursor:pointer;
+  flex:1 1 0;min-height:0;writing-mode:vertical-rl;padding:14px 0;font-size:13px;cursor:pointer;
   font-weight:600;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-right:2px solid transparent;
   background:none;font-family:inherit;text-align:center;letter-spacing:.6px;
 }
@@ -14378,7 +14377,11 @@ function wsLayoutStatus(t) {
 function wsFloatStatus(t) {
   const fs = document.getElementById('ws-float-status');
   if (!fs) return;
-  if (t && String(t).trim()) { fs.textContent = t; fs.style.display = ''; }
+  if (t && String(t).trim()) fs.textContent = t;
+  // The pill exists so status survives panel collapse. With the panel OPEN
+  // the panel's own status line shows the same text — never both at once.
+  const collapsed = typeof _wsPanelCollapsed !== 'undefined' && _wsPanelCollapsed;
+  fs.style.display = collapsed && fs.textContent.trim() ? '' : 'none';
 }
 function wsLayoutAutosave() { if (typeof wsScheduleAutosave === 'function') wsScheduleAutosave(); }
 function wsLayoutSnap(v, mpp) { const g = 0.025 / mpp; return Math.round(v / g) * g; }
@@ -20842,6 +20845,7 @@ function wsPanelToggle() {
     if (col) { col.textContent = '▸'; col.title = 'Hide tools panel'; }
     wsPanelApplyWidth();
   }
+  if (typeof wsFloatStatus === 'function') wsFloatStatus('');   // mirror follows the collapsed state
 }
 // The calculator width tracks the window, so re-derive it on resize.
 window.addEventListener('resize', wsPanelApplyWidth);
