@@ -145,13 +145,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-card-line b{font-weight:700;}
 .wsl-card-ft{font-size:9.5px;color:rgba(255,255,255,0.4);margin-top:3px;border-top:1px solid #2b3434;padding-top:3px;}
 .wsl-empty{font-size:10.5px;color:rgba(255,255,255,0.3);}
-/* Vertical tab rail on the panel's canvas-facing edge. Labels run vertically so
-   the rail stays 36px wide at any panel width. */
-.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:36px;flex-shrink:0;border-left:1px solid #333;padding:8px 0 6px;}
-.ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:12px;cursor:pointer;color:rgba(255,255,255,0.65);white-space:nowrap;border:none;border-left:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.5px;min-height:0;}
+/* Vertical tab rail on the panel's canvas-facing edge. Same thickness and
+   type as the LHS rails so both sides read identically. */
+.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:44px;flex-shrink:0;border-left:1px solid #333;padding:8px 0 6px;}
+.ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:13px;font-weight:600;cursor:pointer;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-left:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.6px;min-height:0;}
 .ws-tool-tab:hover{color:#fff;}
 .ws-tool-tab.active{color:var(--teal);border-left:2px solid var(--teal);}
-.ws-rail-btn{writing-mode:vertical-rl;padding:9px 0;margin:2px 5px;border-radius:5px;border:1px solid #444;background:#2a2a2a;font-size:10px;cursor:pointer;color:rgba(255,255,255,0.7);font-family:inherit;letter-spacing:.5px;white-space:nowrap;}
+.ws-rail-btn{writing-mode:vertical-rl;padding:9px 0;margin:2px 5px;border-radius:5px;border:1px solid #444;background:#2a2a2a;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.8);font-family:inherit;letter-spacing:.5px;white-space:nowrap;}
 .ws-rail-btn:hover{border-color:#008080;color:#fff;}
 .ws-tool-body{flex:1;display:flex;overflow:auto;min-height:0;}
 .ws-tool-col{flex:1;padding:12px 14px;border-right:1px solid #333;overflow-y:auto;min-width:0;}
@@ -174,9 +174,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-extract-drop{border:2px dashed #333;border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:border-color 0.2s;}
 .ws-extract-drop:hover{border-color:var(--teal);}
 .ws-extract-drop p{font-size:12px;color:rgba(255,255,255,0.4);margin-bottom:8px;}
-.ws-page-thumb-bar{position:absolute;left:0;top:0;bottom:0;z-index:11;display:flex;flex-direction:column;gap:4px;padding:8px 6px;background:rgba(17,17,17,0.94);border-right:1px solid #333;overflow-y:auto;width:50px;align-items:center;}
-.ws-thumb{width:36px;height:36px;border-radius:3px;border:1px solid #444;background:#333;cursor:pointer;flex-shrink:0;object-fit:cover;display:flex;align-items:center;justify-content:center;font-size:9px;color:rgba(255,255,255,0.3);}
-.ws-thumb.active{border-color:var(--teal);}
+/* Page filmstrip — a horizontal bar of real page previews along the canvas
+   bottom, each badged with its page number; the current page is highlighted. */
+.ws-page-thumb-bar{position:absolute;left:50%;transform:translateX(-50%);bottom:44px;z-index:12;display:flex;flex-direction:row;gap:6px;padding:6px 8px;background:rgba(17,17,17,0.94);border:1px solid #333;border-radius:9px;overflow-x:auto;max-width:72%;}
+.ws-thumb{position:relative;height:64px;min-width:46px;border-radius:4px;border:1px solid #444;background:#222;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:rgba(255,255,255,0.55);overflow:hidden;}
+.ws-thumb canvas{height:100%;width:auto;display:block;}
+.ws-thumb .ws-thumb-n{position:absolute;bottom:2px;right:3px;font-size:9.5px;font-weight:700;color:#fff;background:rgba(0,0,0,0.6);border-radius:3px;padding:0 4px;line-height:1.5;}
+.ws-thumb:hover{border-color:#008080;}
+.ws-thumb.active{border-color:var(--teal);box-shadow:0 0 0 1px var(--teal);}
 
 /* ── WORKSPACE CANVAS SVG LAYERS ── */
 #ws-overlay-svg.ws-hide-labels text{display:none;}
@@ -7807,6 +7812,15 @@ function showScreen(name, navEl) {
   }
   // The pill's council readout follows the working project on every screen
   if (typeof wsUpdateProjectPill === 'function') wsUpdateProjectPill();
+  // The Design tab runs FULLSCREEN as its standing mode: entering it (a user
+  // click, so the browser allows the request) goes fullscreen; leaving it
+  // exits. Esc is the browser's own escape hatch and cannot be blocked — the
+  // ⛶ button re-enters. Requests outside a user gesture reject harmlessly.
+  if (name === 'workspace') {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+  } else if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
   // Update topbar button
   const btn = document.querySelector('.topbar-actions .btn-green');
   if (btn) btn.style.display = FILL_SCREENS.includes(name) ? 'none' : 'block';
@@ -13241,7 +13255,8 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
     const b = document.getElementById(id); if (b) b.style.display = '';
   });
 
-  // Build thumbnail bar
+  // Build the page filmstrip: numbered slots immediately, real page previews
+  // rendered in behind them (wsRenderThumbs) so the bar is usable at once.
   const thumbBar = document.getElementById('ws-thumb-bar');
   thumbBar.style.display = WS.totalPages > 1 ? 'flex' : 'none';
   thumbBar.innerHTML = '';
@@ -13249,15 +13264,41 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
     const th = document.createElement('div');
     th.className = 'ws-thumb' + (i === 1 ? ' active' : '');
     th.textContent = i;
+    th.title = 'Page ' + i;
     th.onclick = () => wsGoToPage(i);
     th.id = 'ws-thumb-' + i;
     thumbBar.appendChild(th);
   }
+  if (WS.totalPages > 1) wsRenderThumbs();   // async, fire-and-forget
 
   await wsRenderPage(WS.currentPage);
   wsFitPage();
 }
 
+// Render each page's actual image into its filmstrip slot, sequentially so a
+// 30-page set never spikes memory; the page-number badge stays on top.
+async function wsRenderThumbs() {
+  if (!WS.pdfDoc) return;
+  const doc = WS.pdfDoc;
+  for (let i = 1; i <= WS.totalPages; i++) {
+    if (WS.pdfDoc !== doc) return;   // a new document replaced this one — stop
+    const slot = document.getElementById('ws-thumb-' + i);
+    if (!slot || slot.querySelector('canvas')) continue;
+    try {
+      const page = await doc.getPage(i);
+      const vp0 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: 62 / vp0.height });
+      const c = document.createElement('canvas');
+      c.width = vp.width; c.height = vp.height;
+      await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      slot.textContent = '';
+      slot.appendChild(c);
+      const n = document.createElement('span');
+      n.className = 'ws-thumb-n'; n.textContent = i;
+      slot.appendChild(n);
+    } catch (e) { /* keep the numbered slot — still clickable */ }
+  }
+}
 async function wsRenderPage(pageNum) {
   if (!WS.pdfDoc) return;
   const page = await WS.pdfDoc.getPage(pageNum);
@@ -13287,7 +13328,7 @@ function wsFitScale() {
   const canvas = document.getElementById('ws-pdf-canvas');
   if (!canvas || !canvas.width) return null;
   const area = document.getElementById('ws-canvas-area');
-  const aW = area.clientWidth - 38 - 24;   // 38 = RHS tab strip, 24 = margin
+  const aW = area.clientWidth - 46 - 24;   // 46 = RHS tab strip, 24 = margin
   const aH = area.clientHeight - 24;
   return Math.min(aW / canvas.width, aH / canvas.height, 1);
 }
@@ -13306,7 +13347,7 @@ function wsFitWidth() {
   const canvas = document.getElementById('ws-pdf-canvas');
   const area = document.getElementById('ws-canvas-area');
   WS.fitScale = fit;
-  WS.scale = Math.max(fit, Math.min((area.clientWidth - 38 - 24) / canvas.width, 1));
+  WS.scale = Math.max(fit, Math.min((area.clientWidth - 46 - 24) / canvas.width, 1));
   WS.panY = 12;   // start at the top; the clamp handles the rest
   wsApplyTransform();
 }
@@ -13352,7 +13393,7 @@ function wsClampPan() {
   const canvas = document.getElementById('ws-pdf-canvas');
   if (!canvas || !canvas.width || !WS.scale) return;
   const area = document.getElementById('ws-canvas-area');
-  const availW = area.clientWidth - 38, availH = area.clientHeight;
+  const availW = area.clientWidth - 46, availH = area.clientHeight;
   const w = canvas.width * WS.scale, h = canvas.height * WS.scale;
   WS.panX = w <= availW ? Math.max(0, (availW - w) / 2)
                         : Math.min(12, Math.max(availW - w - 12, WS.panX));
@@ -20816,10 +20857,10 @@ function wsPanelToggle() {
   const col = document.getElementById('ws-panel-collapse');
   _wsPanelCollapsed = !_wsPanelCollapsed;
   if (_wsPanelCollapsed) {
-    panel.style.width = '37px';
+    panel.style.width = '45px';
     if (body) body.style.display = 'none';
     if (col) { col.textContent = '◂'; col.title = 'Expand tools panel'; }
-    wsPanelSetW(37);
+    wsPanelSetW(45);
   } else {
     if (body) body.style.display = '';
     if (col) { col.textContent = '▸'; col.title = 'Hide tools panel'; }
