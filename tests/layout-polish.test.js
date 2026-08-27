@@ -284,22 +284,24 @@ test('the tool tabs run vertically in a side rail and fill its height', () => {
     'tab labels are vertical');
   assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column'),
     'the rail stacks tabs vertically');
-  assert.ok(SOURCE.includes('.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row'),
-    'the panel is rail + body, side by side');
+  assert.ok(SOURCE.includes('.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row-reverse'),
+    'row-reverse pins the tab strip to the far right; the body pops out to its LEFT');
+  assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:36px;flex-shrink:0;border-left:1px solid #333;'),
+    'the rail borders face the body on its left');
+  assert.ok(SOURCE.includes('.ws-tool-tab.active{color:var(--teal);border-left:2px solid var(--teal);}'),
+    'the active indicator faces the body too');
 });
 
-test('Actions/Layers/Markups/Set Scale are strip tabs with one-at-a-time flyouts', () => {
+test('Actions/Layers/Markups/Set Scale are strip tabs with independent flyouts', () => {
   for (const n of ['actions', 'layers', 'markups', 'scale'])
     assert.ok(SOURCE.includes(`id="ws-strip-${n}"`), n + ' tab exists in the tool strip');
-  const fly = SOURCE.slice(SOURCE.indexOf('<div id="ws-fly-actions"'), SOURCE.indexOf('<div id="ws-fly-layers"'));
+  const fly = SOURCE.slice(SOURCE.indexOf('id="ws-fly-actions"'), SOURCE.indexOf('id="ws-fly-layers"'));
   assert.ok(fly.includes("wsLayoutDo('undo')") && fly.includes("wsLayoutDo('redo')") &&
             fly.includes('id="ws-layout-clr"') && fly.includes('wsLayoutClearPage()'),
     'Actions flyout = Undo / Redo / spacing / Clear');
   assert.ok(!fly.includes('Generate layout'), 'Generate lives ONLY in the Bin Rooms header');
   assert.ok(!SOURCE.includes('ws-gen-btn'), 'the old full-page Generate button is gone');
   assert.equal(SOURCE.split('id="ws-layout-clr"').length, 2, 'the spacing toggle has one home');
-  assert.ok(SOURCE.includes('_wsStripOpen = _wsStripOpen === name ? null : name;'),
-    'exactly one flyout open at a time');
   assert.ok(SOURCE.includes('position:absolute;left:37px;'),
     'flyouts overlay the canvas — opening or closing never moves the plan');
   // the Layers/Markups cards and scale controls MOVE (same ids) into flyouts
@@ -342,12 +344,16 @@ test('rail tabs distribute over the full height and labels are legible', () => {
   assert.ok(brand.includes('title="WastePlanner"'), 'full name on hover');
 });
 
-test('tool strip tabs expand IN PLACE — full-height panel, no detached flyout', () => {
-  assert.ok(SOURCE.includes('position:absolute;left:37px;top:0;bottom:0;'),
-    'the expansion is attached to the strip and runs its full height');
-  assert.ok(!SOURCE.includes('border-radius:0 0 10px 0'), 'no floating card corner — it reads as the strip widening');
-  assert.ok(SOURCE.includes('_wsStripOpen = _wsStripOpen === name ? null : name;'),
-    'one tab at a time; second click collapses');
+test('tool strip flyouts open independently, each at its own tab height', () => {
+  assert.equal((SOURCE.match(/<div class="ws-flyout" id="ws-fly-/g) || []).length, 4,
+    'each tab owns its own flyout element');
+  assert.ok(!SOURCE.includes('_wsStripOpen'), 'no shared one-at-a-time state — the four toggle independently');
+  assert.ok(SOURCE.includes("const open = fly.style.display === 'none';"),
+    'a click toggles just that flyout');
+  assert.ok(SOURCE.includes('Math.min(tab.offsetTop, h - fly.offsetHeight - 8)'),
+    "the flyout opens at its tab's height, clamped to the shell");
+  assert.match(SOURCE, /\.ws-flyout\{[^}]*font-size:12px/s, 'flyout text enlarged for legibility');
+  assert.match(SOURCE, /\.ws-flyout\{[^}]*width:290px/s, 'flyout panels widened');
 });
 
 test('project pill: council is a read-only project setting; organisation lives on the account chip', () => {
@@ -405,8 +411,10 @@ test('equipment and fixture pickers are compact square labelled tiles', () => {
   assert.ok(SOURCE.includes(`'#78909C', 36)`) && SOURCE.includes(`'#B0BEC5', 36)`),
     'fixture thumbs at the round-2 size — round 1 overshot');
   assert.ok(SOURCE.includes('wsShapeThumb(code, w, d, round, col, 36)'), 'picker tiles too');
-  assert.ok((SOURCE.match(/minmax\(74px,1fr\)/g) || []).length >= 2,
-    'grids fit 3–4 tiles per row at the panel width');
+  assert.ok((SOURCE.match(/minmax\(88px,1fr\)/g) || []).length >= 2,
+    'tile grids give each tile room — no crowding or icon overlap');
+  assert.match(SOURCE, /\.wsl-fx\.wsl-tile\{[^}]*min-height:62px;overflow:hidden;/s,
+    'tiles reserve their height and clip — icons can never bleed into a neighbour');
 });
 
 test('one BINS & EQUIPMENT picker: searchable, scrollable, select-then-place', () => {
