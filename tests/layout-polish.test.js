@@ -402,6 +402,14 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
   assert.ok(SOURCE.includes("ul.style.display='none';"), 'and re-collapses on every recalculation');
   assert.ok(SOURCE.includes("if (tab === 'calculator') return Math.min(Math.round(shellW * 0.55), 920);"),
     'the calculator panel is narrower — the table no longer sprawls');
+  // round 2: larger type throughout, and a per-room footprint strip
+  assert.ok(SOURCE.includes('.wsr-table{width:100%;border-collapse:collapse;font-size:13.5px;}'),
+    'result table type is 13.5px — height is abundant, use it');
+  assert.ok(SOURCE.includes('class=&quot;wsr-roomtotal&quot; id=&quot;roomfp_${rr.id}&quot;'),
+    'every room block carries a footprint strip');
+  assert.ok(SOURCE.includes('if(allowOn(room,id))aF+=Number(allowanceArea(room,id,prof).m2)||0;'),
+    'room footprint = bin footprints + enabled additional-storage areas');
+  assert.ok(SOURCE.includes('Total room footprint'), 'and says so in plain words');
 });
 
 test('Cost Check is off the nav until it ships; the queue tabs carry pending badges', () => {
