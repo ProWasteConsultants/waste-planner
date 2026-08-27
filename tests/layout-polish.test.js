@@ -379,18 +379,13 @@ test('zoom floor = fit; fullscreen keeps the layout and recalculates the floor',
   assert.ok(SOURCE.includes('id="ws-fs-btn"'), 'the fullscreen button exists and is wired');
 });
 
-test('the plan viewport is panel-aware: fit ends at the panel edge and width changes shift the sheet', () => {
-  assert.ok(SOURCE.includes('function wsPanelOccupies()'), 'one source of truth for how much the panel occupies');
-  assert.ok(SOURCE.includes('area.clientWidth - wsPanelOccupies() - 24'),
-    'the fit (and zoom floor) is computed against the space LEFT of the panel');
-  assert.ok(SOURCE.includes('area.clientWidth - wsPanelOccupies() - canvas.width * WS.scale'),
-    'fit centres in that same space — flush with the panel, never under it');
+test('panel changes never move the plan: fit is rail-to-tab, the expanded body just overlays', () => {
+  assert.ok(SOURCE.includes('area.clientWidth - 38 - 24'),
+    'fit is computed against rail-to-tab space — the minimised strip, never the expanded body');
   const setw = SOURCE.slice(SOURCE.indexOf('function wsPanelSetW'), SOURCE.indexOf('function wsPanelWidthFor'));
-  assert.ok(setw.includes('WS.panX += (prev - w);'),
-    'a zoomed-in view translates by exactly the panel width delta');
-  assert.ok(setw.includes('const wasAtFit = Math.abs(WS.scale - (WS.fitScale || 0)) < 1e-6;') &&
-            setw.includes('if (wasAtFit && typeof wsFitPage === '),
-    'a fitted view re-fits to the new available space instead');
+  assert.ok(!setw.includes('WS.panX') && !setw.includes('wsFitPage') && !setw.includes('WS.scale'),
+    'panel width changes touch NO view state — the body overlays the sheet');
+  assert.ok(!SOURCE.includes('wsPanelOccupies'), 'the panel-tracking fit is gone');
 });
 
 test('the RHS panel starts minimised to its tab strip; a tab click expands it', () => {
@@ -406,15 +401,16 @@ test('the RHS panel starts minimised to its tab strip; a tab click expands it', 
 test('the tool panel OVERLAYS the plan — panel changes can never resize or shift the PDF', () => {
   assert.ok(SOURCE.includes('position:absolute;right:0;top:0;bottom:0;z-index:14;'),
     'the panel floats over the canvas instead of sharing the flex row');
-  // default view fills the WIDTH (plans are landscape sheets on wide screens);
-  // whole-page fit stays one click away and remains the zoom floor
+  // default view fills the WIDTH (plans are landscape sheets on wide screens),
+  // and that fit IS the zoom-out floor — no whole-page zoom-out below it
   assert.ok(SOURCE.includes('await wsRenderPage(WS.currentPage);\n  wsFitWidth();'),
     'default view is fit-to-width on load');
   assert.ok(SOURCE.includes('function wsFitWidth()'), 'fit-width exists');
-  assert.ok(SOURCE.includes('WS.scale = Math.max(fit, Math.min((availW - 24) / canvas.width, 1));'),
-    'fit-width fills the available width but never drops below the whole-page floor');
-  assert.ok(SOURCE.includes('function wsFitToggle()'),
-    'the fit button toggles whole sheet / full width');
+  const fs = SOURCE.slice(SOURCE.indexOf('function wsFitScale()'), SOURCE.indexOf('function wsFitWidth()'));
+  assert.ok(fs.includes('Math.min(aW / canvas.width, 1)') && !fs.includes('canvas.height'),
+    'the floor is the WIDTH fit — height never lowers it');
+  assert.ok(!SOURCE.includes('wsFitToggle') && !SOURCE.includes('function wsFitPage()'),
+    'no whole-page view below the floor — the fit button re-fits width');
 });
 
 test('section headings are enlarged teal; room cards are wide, short and minimal', () => {
