@@ -248,7 +248,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
    account chip is pinned at its foot, and the project/council chip floats on
    the canvas top edge. ── */
 .side-nav{
-  width:36px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
+  width:44px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
   padding:8px 0 6px;overflow:hidden;
   --white:#1A2424;--grey:#243030;--border:#2C3838;--text:#E8EFEF;--muted:#8CA3A3;--lt:rgba(22,126,126,0.35);
   background:#1A2424;border-right:1px solid #2C3838;
@@ -258,8 +258,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   writing-mode:vertical-rl;padding:12px 0;border-radius:0;
   flex:1 1 0;min-height:0;max-height:170px;
   display:flex;align-items:center;justify-content:center;gap:6px;
-  font-size:12px;font-weight:600;letter-spacing:.5px;white-space:nowrap;
-  color:#A9C0C0;
+  font-size:13px;font-weight:600;letter-spacing:.6px;white-space:nowrap;
+  color:#D3E2E2;
   border-right:2px solid transparent;
 }
 .side-nav .nav-item.active{background:none;color:#4FC3C3;border-right:2px solid #4FC3C3;}
@@ -269,7 +269,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* account chip pinned at the rail's foot — initials always, name + role on hover */
 .rail-account{margin-top:auto;position:relative;display:flex;justify-content:center;padding:8px 0 2px;cursor:pointer;}
 .rail-account .rail-account-info{
-  display:none;position:absolute;left:34px;bottom:2px;z-index:40;white-space:nowrap;
+  display:none;position:absolute;left:42px;bottom:2px;z-index:40;white-space:nowrap;
   background:#1A2424;border:1px solid #2C3838;border-radius:8px;padding:7px 12px;
   box-shadow:0 4px 14px rgba(0,0,0,0.5);
 }
@@ -281,18 +281,18 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
    tab's height, and the four toggle independently — any combination can be
    open. Flyouts OVERLAY the canvas; opening or closing never moves the plan. ── */
 .ws-tool-strip{
-  width:36px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
+  width:44px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
   padding:8px 0;background:#1a1a1a;border-right:1px solid #333;z-index:15;
 }
 .ws-strip-tab{
-  flex:1 1 0;min-height:0;writing-mode:vertical-rl;padding:14px 0;font-size:12px;cursor:pointer;
-  color:rgba(255,255,255,0.65);white-space:nowrap;border:none;border-right:2px solid transparent;
-  background:none;font-family:inherit;text-align:center;letter-spacing:.5px;
+  flex:1 1 0;min-height:0;writing-mode:vertical-rl;padding:14px 0;font-size:13px;cursor:pointer;
+  font-weight:600;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-right:2px solid transparent;
+  background:none;font-family:inherit;text-align:center;letter-spacing:.6px;
 }
 .ws-strip-tab:hover{color:#fff;}
 .ws-strip-tab.active{color:var(--teal, #00d4d4);color:#00d4d4;border-right:2px solid #00d4d4;}
 .ws-flyout{
-  position:absolute;left:37px;z-index:15;overflow-y:auto;
+  position:absolute;left:45px;z-index:15;overflow-y:auto;
   background:#1a1a1a;border:1px solid #333;border-left:none;border-radius:0 9px 9px 0;
   box-shadow:10px 0 24px rgba(0,0,0,0.35);padding:12px 14px;width:290px;
   max-height:calc(100% - 16px);font-size:12px;color:rgba(255,255,255,0.85);
@@ -13278,14 +13278,19 @@ async function wsRenderPage(pageNum) {
   if (at) at.classList.add('active');
 }
 
-// Fit = the sheet fitted to the AVAILABLE canvas: the full shell minus the
-// RHS tool tab strip (the panel body overlays, so it never counts). This fit
-// is also the ZOOM FLOOR — zooming out past it is not possible, zooming in is.
+// Fit = the sheet fitted to the AVAILABLE canvas: the full shell minus
+// however much the RHS tool panel currently occupies — its tab strip when
+// minimised, its full width when expanded — so the sheet always sits flush
+// with the panel's left edge instead of running under it. This fit is also
+// the ZOOM FLOOR — zooming out past it is not possible, zooming in is.
+function wsPanelOccupies() {
+  return (typeof _wsPanelW !== 'undefined' && _wsPanelW) ? _wsPanelW + 1 : 38;
+}
 function wsFitScale() {
   const canvas = document.getElementById('ws-pdf-canvas');
   if (!canvas || !canvas.width) return null;
   const area = document.getElementById('ws-canvas-area');
-  const aW = area.clientWidth - 38 - 40;   // 38 = RHS tab strip, 40 = margin
+  const aW = area.clientWidth - wsPanelOccupies() - 40;   // 40 = margin
   const aH = area.clientHeight - 40;
   return Math.min(aW / canvas.width, aH / canvas.height, 1);
 }
@@ -13298,7 +13303,7 @@ function wsFitPage() {
   const area = document.getElementById('ws-canvas-area');
   WS.fitScale = fit;
   WS.scale = fit;
-  WS.panX = Math.max(0, (area.clientWidth - 38 - canvas.width * WS.scale) / 2);
+  WS.panX = Math.max(0, (area.clientWidth - wsPanelOccupies() - canvas.width * WS.scale) / 2);
   WS.panY = Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2);
   wsApplyTransform();
 }
@@ -20740,9 +20745,23 @@ function wsOpenProject(project) {
 let _wsPanelCollapsed = false;
 let _wsPanelMax = false;
 let _wsPanelTab = 'calculator';
+let _wsPanelW = 501;
 function wsPanelSetW(w) {
   const shell = document.querySelector('.ws-shell');
   if (shell) shell.style.setProperty('--ws-panel-w', (w + 1) + 'px');
+  // The plan viewport ends where the panel begins: when the panel widens the
+  // sheet shifts LEFT by exactly the growth (and back on collapse), so the
+  // visible plan sits flush with the panel's left edge instead of under it.
+  const prev = _wsPanelW; _wsPanelW = w;
+  if (prev !== w && typeof WS !== 'undefined' && WS.scale &&
+      document.getElementById('ws-pdf-canvas')?.width) {
+    // Sitting at the fit → stay fitted to the NEW available space; zoomed in →
+    // keep the zoom and translate by the width delta so the flush edge holds.
+    const wasAtFit = Math.abs(WS.scale - (WS.fitScale || 0)) < 1e-6;
+    if (typeof wsZoomFloorRecalc === 'function') wsZoomFloorRecalc();
+    if (wasAtFit && typeof wsFitPage === 'function') wsFitPage();
+    else { WS.panX += (prev - w); wsApplyTransform(); }
+  }
 }
 // The panel is not free-resizable: each tool has a predefined width. The bin
 // calculator runs wide — the PDF matters little while calculating — while the

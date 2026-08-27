@@ -302,7 +302,7 @@ test('Actions/Layers/Markups/Set Scale are strip tabs with independent flyouts',
   assert.ok(!fly.includes('Generate layout'), 'Generate lives ONLY in the Bin Rooms header');
   assert.ok(!SOURCE.includes('ws-gen-btn'), 'the old full-page Generate button is gone');
   assert.equal(SOURCE.split('id="ws-layout-clr"').length, 2, 'the spacing toggle has one home');
-  assert.ok(SOURCE.includes('position:absolute;left:37px;'),
+  assert.ok(SOURCE.includes('position:absolute;left:45px;'),
     'flyouts overlay the canvas — opening or closing never moves the plan');
   // the Layers/Markups cards and scale controls MOVE (same ids) into flyouts
   for (const pair of [["'ws-layer-panel', 'ws-fly-layers'"], ["'ws-markup-panel', 'ws-fly-markups'"], ["'ws-scale-wrap', 'ws-scale-slot'"]])
@@ -316,7 +316,7 @@ test('the screens nav is a thin LHS rail with vertical labels; NO top header bar
   assert.ok(nav.length > 0, 'the rail exists before the content column');
   for (const id of ['nav-workspace', 'nav-compliance', 'nav-costcheck', 'nav-orgqueue', 'nav-wmp-queue', 'nav-admin'])
     assert.ok(nav.includes(`id="${id}"`), id + ' lives in the rail');
-  assert.ok(SOURCE.includes('.side-nav{\n  width:36px;'), 'same thickness as the RHS tool tabs');
+  assert.ok(SOURCE.includes('.side-nav{\n  width:44px;'), 'widened for legible 13px labels');
   assert.ok(SOURCE.includes('.side-nav .nav-item{\n  writing-mode:vertical-rl;'), 'vertical labels, same style');
   assert.ok(nav.includes('class="rail-account"') && nav.includes('id="user-avatar-initials"'),
     'the account chip is pinned in the rail');
@@ -336,7 +336,7 @@ test('the screens nav is a thin LHS rail with vertical labels; NO top header bar
 test('rail tabs distribute over the full height and labels are legible', () => {
   assert.ok(SOURCE.includes('.side-nav .nav-item{\n  writing-mode:vertical-rl;padding:12px 0;border-radius:0;\n  flex:1 1 0;'),
     'nav tabs stretch to share the rail height');
-  assert.match(SOURCE, /\.side-nav \.nav-item\{[^}]*font-size:12px/s, 'rail text enlarged for legibility');
+  assert.match(SOURCE, /\.side-nav \.nav-item\{[^}]*font-size:13px/s, 'rail text enlarged for legibility');
   assert.ok(SOURCE.includes('.ws-strip-tab{\n  flex:1 1 0;min-height:0;'),
     'tool-strip tabs distribute too');
   const brand = SOURCE.slice(SOURCE.indexOf('id="topbar-brand"'), SOURCE.indexOf('id="nav-tools"'));
@@ -377,6 +377,20 @@ test('zoom floor = fit; fullscreen keeps the layout and recalculates the floor',
             SOURCE.includes('document.documentElement.requestFullscreen()'),
     'fullscreen = the whole app (rails and panels included), not a bare canvas');
   assert.ok(SOURCE.includes('id="ws-fs-btn"'), 'the fullscreen button exists and is wired');
+});
+
+test('the plan viewport is panel-aware: fit ends at the panel edge and width changes shift the sheet', () => {
+  assert.ok(SOURCE.includes('function wsPanelOccupies()'), 'one source of truth for how much the panel occupies');
+  assert.ok(SOURCE.includes('area.clientWidth - wsPanelOccupies() - 40'),
+    'the fit (and zoom floor) is computed against the space LEFT of the panel');
+  assert.ok(SOURCE.includes('area.clientWidth - wsPanelOccupies() - canvas.width * WS.scale'),
+    'fit centres in that same space — flush with the panel, never under it');
+  const setw = SOURCE.slice(SOURCE.indexOf('function wsPanelSetW'), SOURCE.indexOf('function wsPanelWidthFor'));
+  assert.ok(setw.includes('WS.panX += (prev - w);'),
+    'a zoomed-in view translates by exactly the panel width delta');
+  assert.ok(setw.includes('const wasAtFit = Math.abs(WS.scale - (WS.fitScale || 0)) < 1e-6;') &&
+            setw.includes('if (wasAtFit && typeof wsFitPage === '),
+    'a fitted view re-fits to the new available space instead');
 });
 
 test('the RHS panel starts minimised to its tab strip; a tab click expands it', () => {
