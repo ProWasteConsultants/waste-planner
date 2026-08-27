@@ -393,6 +393,17 @@ test('panel changes never move the plan: fit is rail-to-tab, the expanded body j
   assert.ok(!SOURCE.includes('wsPanelOccupies'), 'the panel-tracking fit is gone');
 });
 
+test('bin calculator: white headings, collapsed advisory notes, narrower panel', () => {
+  assert.match(SOURCE, /\.ws-vol-title\{[^}]*color:#fff/s, 'DEV SUMMARY / DWELLING MIX headings are white');
+  assert.match(SOURCE, /\.wsr-title\{font-size:12px;font-weight:700;color:#fff;/, 'RESIDENTIAL / ADDITIONAL STORAGE headings are white and larger');
+  assert.ok(SOURCE.includes('id=&quot;notesToggle&quot;'), 'advisory notes sit behind a one-line toggle');
+  assert.ok(SOURCE.includes('&lt;ul id=&quot;notesList&quot; style=&quot;display:none;&quot;&gt;'),
+    'the bullet list starts collapsed');
+  assert.ok(SOURCE.includes("ul.style.display='none';"), 'and re-collapses on every recalculation');
+  assert.ok(SOURCE.includes("if (tab === 'calculator') return Math.min(Math.round(shellW * 0.55), 920);"),
+    'the calculator panel is narrower — the table no longer sprawls');
+});
+
 test('Cost Check is off the nav until it ships; the queue tabs carry pending badges', () => {
   assert.match(SOURCE, /id="nav-costcheck" style="display:none;"/, 'Cost Check hidden until the feature ships');
   const list = SOURCE.slice(SOURCE.indexOf("['nav-tools', 'nav-upload'"), SOURCE.indexOf("'btn-new-project-empty']"));
