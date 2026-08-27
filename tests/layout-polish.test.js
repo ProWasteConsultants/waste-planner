@@ -288,8 +288,8 @@ test('the tool tabs run vertically in a side rail and fill its height', () => {
     'row-reverse pins the tab strip to the far right; the body pops out to its LEFT');
   assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:44px;flex-shrink:0;border-left:1px solid #333;'),
     'the rail borders face the body on its left');
-  assert.ok(SOURCE.includes('.ws-tool-tab.active{color:var(--teal);border-left:2px solid var(--teal);}'),
-    'the active indicator faces the body too');
+  assert.ok(SOURCE.includes('.ws-tool-tab.active{background:#167E7E;color:#fff;border-left:2px solid #167E7E;}'),
+    'the selected tab is solid teal with white text');
 });
 
 test('Actions/Layers/Markups/Set Scale are strip tabs with independent flyouts', () => {
@@ -321,6 +321,9 @@ test('the screens nav is a thin LHS rail with vertical labels; NO top header bar
   assert.ok(nav.includes('class="rail-account"') && nav.includes('id="user-avatar-initials"'),
     'the account chip is pinned in the rail');
   assert.ok(SOURCE.includes('.rail-account{margin-top:auto;'), 'pinned at the BOTTOM of the rail');
+  assert.ok(SOURCE.includes('.side-nav .nav-item.active{background:#167E7E;color:#fff;') &&
+            SOURCE.includes('.ws-strip-tab.active{background:#167E7E;color:#fff;'),
+    'selected tabs on both LHS rails are solid teal with white text');
   assert.ok(SOURCE.includes('.rail-account:hover .rail-account-info{display:block;}'),
     'name and role appear on hover');
   assert.ok(!SOURCE.includes('<div class="topbar">'), 'no top header bar exists at all');
@@ -400,8 +403,13 @@ test('the Design tab runs fullscreen as its standing mode', () => {
 test('page filmstrip: real page previews with page numbers along the canvas bottom', () => {
   assert.ok(SOURCE.includes('function wsRenderThumbs()') || SOURCE.includes('async function wsRenderThumbs()'),
     'thumbnails render the actual page images');
-  assert.ok(SOURCE.includes("thumbBar.style.display = WS.totalPages > 1 ? 'flex' : 'none';"),
-    'the filmstrip shows whenever the document has more than one page');
+  assert.ok(SOURCE.includes("thumbBar.style.display = 'none';"),
+    'the filmstrip starts COLLAPSED — the Page pill expands it');
+  assert.ok(SOURCE.includes('function wsThumbsToggle(force)'), 'the Page x of y pill toggles it');
+  assert.ok(SOURCE.includes('onclick="wsThumbsToggle()"'), 'wired on the page label');
+  assert.ok(SOURCE.includes('wsGoToPage(i); wsThumbsToggle(false);'), 'picking a page collapses it');
+  assert.ok(SOURCE.includes('wsThumbsToggle(false);   // touching the canvas collapses the filmstrip'),
+    'touching the canvas collapses it too');
   assert.match(SOURCE, /\.ws-page-thumb-bar\{[^}]*bottom:44px/s, 'it runs along the canvas bottom');
   assert.match(SOURCE, /\.ws-page-thumb-bar\{[^}]*flex-direction:row/s, 'as a horizontal strip');
   assert.ok(SOURCE.includes("n.className = 'ws-thumb-n'; n.textContent = i;"),
