@@ -1963,10 +1963,30 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
 #pwcalc a{color:#00b3b3;}
 /* ── workspace results table (dark) ── */
 .wsr-title{font-size:12px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:0.7px;margin:2px 0 6px;}
-.wsr-table{width:100%;border-collapse:collapse;font-size:13.5px;}
+/* STREAM ROWS AS CARDS: the DOM stays a table (row selectors everywhere
+   depend on it) — separate borders + a transparent top border on each stream
+   row fake the card gap, equipment sub-rows attach flush beneath their
+   stream, and the stream's colour rides the leading edge. */
+.wsr-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13.5px;}
+.wsr-table tbody tr{background:#1e2727;}
+.wsr-table tr.wsr-srow td{border-top:6px solid #1e1e1e;}
+.wsr-table tr.wsr-srow td:first-child{border-top-left-radius:7px;}
+.wsr-table tr.wsr-srow td:last-child{border-top-right-radius:7px;}
+.wsr-table tbody td:first-child{border-left:3px solid #4a5a5a;}
+.wsr-table tr[data-stream=GW]&gt;td:first-child{border-left-color:#b91c1c;}
+.wsr-table tr[data-stream=REC]&gt;td:first-child{border-left-color:#f5b400;}
+.wsr-table tr[data-stream=ORG]&gt;td:first-child{border-left-color:#22c55e;}
+.wsr-table tr[data-stream=GLS]&gt;td:first-child{border-left-color:#8b5cf6;}
+.wsr-table tr[data-stream=CARD]&gt;td:first-child{border-left-color:#2563eb;}
+.wsr-table tr[data-stream=SOFT]&gt;td:first-child{border-left-color:#06b6d4;}
+/* numbers right-aligned in tabular figures; units are small and quiet */
+.wsr-table td:nth-child(2),.wsr-table th:nth-child(2),
+.wsr-table td:nth-child(6),.wsr-table th:nth-child(6),
+.wsr-table td:nth-child(7),.wsr-table th:nth-child(7){text-align:right;font-variant-numeric:tabular-nums;}
+.wsr-table small{font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-left:1px;}
 .wsr-table th{font-size:11px;font-weight:700;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.5px;text-align:left;padding:5px 10px;border-bottom:1px solid #333;}
-.wsr-table td{padding:8px 10px;border-bottom:1px solid #2a2a2a;color:#e2e8e8 !important;vertical-align:middle;}
-.wsr-table tfoot td{border-top:1px solid #444;border-bottom:none;font-weight:700;color:#fff !important;}
+.wsr-table td{padding:8px 10px;border-bottom:none;color:#e2e8e8 !important;vertical-align:middle;}
+.wsr-table tfoot td{border-top:6px solid #1e1e1e;border-bottom:none;font-weight:700;color:#fff !important;background:transparent;}
 .wsr-table select,.wsr-table input{background:#2a2a2a !important;border:1px solid #444 !important;color:#e2e8e8 !important;border-radius:5px !important;padding:4px 7px !important;font-size:13px !important;font-family:inherit;}
 .wsr-table input[type=number]{width:58px;}
 .pwProvChip{display:block;font-size:10px;color:#FFB74D;margin-top:2px;white-space:nowrap;}
@@ -1997,7 +2017,7 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
 .pwViaChute{display:block;font-size:10px;color:#F5B400;margin-top:2px;white-space:nowrap;}
 .wsr-table optgroup{background:#1e1e1e;color:rgba(255,255,255,0.4);font-size:10px;}
 .wsr-warn{font-size:11px;color:#FF8A50;margin-top:3px;}
-.wsr-eqrow td{border-top:none!important;padding-top:0!important;padding-bottom:6px!important;font-size:11px;line-height:1.5;}
+.wsr-eqrow td{border-top:none!important;background:#1e2727;padding-top:0!important;padding-bottom:6px!important;font-size:11px;line-height:1.5;}
 .wsr-eq-ico{display:inline-block;width:14px;opacity:.8;}
 .wsr-eq-comp td{color:#F5B400;}
 .wsr-eq-chute td{color:#7FD8D8;}
@@ -3155,6 +3175,8 @@ function fmtVol(l){
   if(l&gt;=1000)return Math.round(l).toLocaleString('en-AU')+'L';
   return Math.round(l)+'L';
 }
+// numeric cells de-emphasise the unit — the value is the signal
+function unitHtml(v){return String(v).replace(/L$/,'&lt;small&gt;L&lt;/small&gt;');}
 function capProvided(binCount,binSize,collPerWk){
   return binCount*binSize*collPerWk;
 }
@@ -3307,13 +3329,13 @@ function roomTableHtml(rr,sec,streams){
     const p=provision(rr,sec,s,streams);
     const capClass=p.cap&gt;=p.vol?'pvd-capacity-ok':'pvd-capacity-tight';
     const chip=provHtml(rr.id,sec,s,p.nCalc);
-    rows+=`&lt;tr data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; data-vol=&quot;${p.vol}&quot;&gt;`+
+    rows+=`&lt;tr class=&quot;wsr-srow&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; data-vol=&quot;${p.vol}&quot;&gt;`+
       `&lt;td&gt;${streamCell(rr,sec,s)}&lt;/td&gt;`+
-      `&lt;td style=&quot;font-family:monospace;font-size:12.5px;font-weight:600;&quot;&gt;${p.vol&gt;0?fmtVol(p.vol):'—'}&lt;/td&gt;`+
+      `&lt;td style=&quot;font-family:monospace;font-size:12.5px;font-weight:600;&quot;&gt;${p.vol&gt;0?unitHtml(fmtVol(p.vol)):'—'}&lt;/td&gt;`+
       `&lt;td&gt;&lt;select class=&quot;pwStreamSel&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot;${p.viaCompactor?' disabled':''}&gt;${unitOpts(rr,sec,s)}&lt;/select&gt;&lt;/td&gt;`+
       `&lt;td&gt;&lt;input class=&quot;pwStreamCw&quot; type=&quot;number&quot; min=&quot;1&quot; max=&quot;14&quot; value=&quot;${p.cw}&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;numeric&quot;&gt;&lt;/td&gt;`+
       `&lt;td&gt;&lt;input class=&quot;pwBinInput&quot; type=&quot;number&quot; min=&quot;0&quot; max=&quot;999&quot; value=&quot;${p.n}&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;numeric&quot; oninput=&quot;onBinInput(this)&quot;&gt;&lt;div class=&quot;pwBinProv&quot;&gt;${chip}&lt;/div&gt;&lt;/td&gt;`+
-      `&lt;td class=&quot;pwCapProvided&quot;&gt;&lt;span class=&quot;${capClass}&quot;&gt;${fmtVol(p.cap)}&lt;/span&gt;&lt;/td&gt;`+
+      `&lt;td class=&quot;pwCapProvided&quot;&gt;&lt;span class=&quot;${capClass}&quot;&gt;${unitHtml(fmtVol(p.cap))}&lt;/span&gt;&lt;/td&gt;`+
       `&lt;td class=&quot;pwFootprint&quot;&gt;${p.fp==null?'—':fmtM2(p.fp)}&lt;/td&gt;&lt;/tr&gt;`;
     rows+=splitMenuRowHtml(rr,sec,s);
     rows+=eqRowHtml(rr,sec,s,p);
@@ -3392,7 +3414,7 @@ function refreshDerived(){
       });
       roomF+=tF;
       const ft=g('foot_'+rr.id+'_'+sec);
-      if(ft&amp;&amp;ft.parentNode)ft.innerHTML=`&lt;tr&gt;&lt;td&gt;Total&lt;/td&gt;&lt;td style=&quot;font-family:monospace;font-size:12.5px;&quot;&gt;${fmtVol(tV)}&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td class=&quot;pwFotTotal&quot;&gt;${tB}&lt;/td&gt;&lt;td style=&quot;font-family:monospace;font-size:12.5px;&quot;&gt;${fmtVol(tC)}&lt;/td&gt;&lt;td&gt;${fmtM2(tF)}&lt;/td&gt;&lt;/tr&gt;`;
+      if(ft&amp;&amp;ft.parentNode)ft.innerHTML=`&lt;tr&gt;&lt;td&gt;Total&lt;/td&gt;&lt;td style=&quot;font-family:monospace;font-size:12.5px;&quot;&gt;${unitHtml(fmtVol(tV))}&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td&gt;&lt;/td&gt;&lt;td class=&quot;pwFotTotal&quot;&gt;${tB}&lt;/td&gt;&lt;td style=&quot;font-family:monospace;font-size:12.5px;&quot;&gt;${unitHtml(fmtVol(tC))}&lt;/td&gt;&lt;td&gt;${fmtM2(tF)}&lt;/td&gt;&lt;/tr&gt;`;
     });
     // TOTAL ROOM FOOTPRINT = bin footprints + enabled additional-storage areas,
     // per room — the number a designer sizes the bin room against.
@@ -3403,7 +3425,7 @@ function refreshDerived(){
       Object.keys(ALLOWANCES).forEach(id=&gt;{if(allowOn(room,id))aF+=Number(allowanceArea(room,id,prof).m2)||0;});
     }
     const rf=g('roomfp_'+rr.id);
-    if(rf)rf.innerHTML=`&lt;span&gt;Total room footprint&lt;/span&gt;&lt;span&gt;${fmtM2(roomF+aF)}${aF?` &lt;small&gt;bins ${fmtM2(roomF)} + storage ${fmtM2(aF)}&lt;/small&gt;`:''}&lt;/span&gt;`;
+    if(rf)rf.innerHTML=`&lt;span&gt;Total room footprint&lt;/span&gt;&lt;span&gt;${fmtM2(roomF+aF)} m²${aF?` &lt;small&gt;bins ${fmtM2(roomF)} + storage ${fmtM2(aF)} m²&lt;/small&gt;`:''}&lt;/span&gt;`;
   });
   rebuildRoomCards();
 }
