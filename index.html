@@ -13329,7 +13329,24 @@ document.addEventListener('fullscreenchange', () => {
   wsZoomFloorRecalc();
 });
 
+// Panning is BOUNDED, per axis: an axis where the sheet already fits is
+// locked centred (so at the fit-width floor there is no horizontal pan at
+// all), and a zoomed axis pans only within the sheet's edges — the sheet can
+// never be dragged off into dead space. Clamped here, the one place every
+// pan, zoom and fit path flows through.
+function wsClampPan() {
+  const canvas = document.getElementById('ws-pdf-canvas');
+  if (!canvas || !canvas.width || !WS.scale) return;
+  const area = document.getElementById('ws-canvas-area');
+  const availW = area.clientWidth - 38, availH = area.clientHeight;
+  const w = canvas.width * WS.scale, h = canvas.height * WS.scale;
+  WS.panX = w <= availW ? Math.max(0, (availW - w) / 2)
+                        : Math.min(12, Math.max(availW - w - 12, WS.panX));
+  WS.panY = h <= availH ? Math.max(0, (availH - h) / 2)
+                        : Math.min(12, Math.max(availH - h - 12, WS.panY));
+}
 function wsApplyTransform() {
+  wsClampPan();
   const wrap = document.getElementById('ws-canvas-wrap');
   wrap.style.transform = `translate(${WS.panX}px, ${WS.panY}px) scale(${WS.scale})`;
   document.getElementById('ws-zoom-label').textContent = Math.round(WS.scale * 100) + '%';
