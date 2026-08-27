@@ -286,7 +286,7 @@ test('the tool tabs run vertically in a side rail and fill its height', () => {
     'the rail stacks tabs vertically');
   assert.ok(SOURCE.includes('.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row-reverse'),
     'row-reverse pins the tab strip to the far right; the body pops out to its LEFT');
-  assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;justify-content:space-evenly;width:44px;flex-shrink:0;border-left:1px solid #333;'),
+  assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:44px;flex-shrink:0;border-left:1px solid #333;'),
     'the rail borders face the body on its left');
   assert.ok(SOURCE.includes('.ws-tool-tab.active{background:#167E7E;color:#fff;border-left:2px solid #167E7E;}'),
     'the selected tab is solid teal with white text');
