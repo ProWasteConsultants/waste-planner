@@ -150,7 +150,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:44px;flex-shrink:0;border-left:1px solid #333;padding:8px 0 6px;}
 .ws-tool-tab{flex:1 1 0;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;padding:13px 0;font-size:13px;font-weight:600;cursor:pointer;color:rgba(255,255,255,0.85);white-space:nowrap;border:none;border-left:2px solid transparent;background:none;font-family:inherit;text-align:center;letter-spacing:.6px;min-height:0;}
 .ws-tool-tab:hover{color:#fff;}
-.ws-tool-tab.active{color:var(--teal);border-left:2px solid var(--teal);}
+.ws-tool-tab.active{background:#167E7E;color:#fff;border-left:2px solid #167E7E;}
 .ws-rail-btn{writing-mode:vertical-rl;padding:9px 0;margin:2px 5px;border-radius:5px;border:1px solid #444;background:#2a2a2a;font-size:11px;cursor:pointer;color:rgba(255,255,255,0.8);font-family:inherit;letter-spacing:.5px;white-space:nowrap;}
 .ws-rail-btn:hover{border-color:#008080;color:#fff;}
 .ws-tool-body{flex:1;display:flex;overflow:auto;min-height:0;}
@@ -267,7 +267,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   color:#D3E2E2;
   border-right:2px solid transparent;
 }
-.side-nav .nav-item.active{background:none;color:#4FC3C3;border-right:2px solid #4FC3C3;}
+.side-nav .nav-item.active{background:#167E7E;color:#fff;border-right:2px solid #167E7E;}
 .side-nav .nav-item .ni{display:none;}
 /* badges flow with the vertical label — horizontal text overflows a 36px rail */
 .side-nav .nav-badge{writing-mode:vertical-rl;font-size:8px;padding:4px 1px;}
@@ -295,7 +295,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   background:none;font-family:inherit;text-align:center;letter-spacing:.6px;
 }
 .ws-strip-tab:hover{color:#fff;}
-.ws-strip-tab.active{color:var(--teal, #00d4d4);color:#00d4d4;border-right:2px solid #00d4d4;}
+.ws-strip-tab.active{background:#167E7E;color:#fff;border-right:2px solid #167E7E;}
 .ws-flyout{
   position:absolute;left:45px;z-index:15;overflow-y:auto;
   background:#1a1a1a;border:1px solid #333;border-left:none;border-radius:0 9px 9px 0;
@@ -1682,7 +1682,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <span class="ws-project-name" id="ws-project-name">No project selected</span>
           <div class="ws-page-nav" id="ws-page-nav" style="display:none;">
             <button class="ws-page-btn" onclick="wsChangePage(-1)">‹</button>
-            <span id="ws-page-label">Page 1 of 1</span>
+            <span id="ws-page-label" onclick="wsThumbsToggle()" title="Show page thumbnails" style="cursor:pointer;">Page 1 of 1</span>
             <button class="ws-page-btn" onclick="wsChangePage(1)">›</button>
           </div>
           <div id="ws-scale-wrap" style="display:none;align-items:center;gap:6px;">
@@ -13256,16 +13256,19 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   });
 
   // Build the page filmstrip: numbered slots immediately, real page previews
-  // rendered in behind them (wsRenderThumbs) so the bar is usable at once.
+  // rendered in behind them (wsRenderThumbs). The strip stays COLLAPSED —
+  // navigation is the "Page x of y" pill; clicking it expands the previews,
+  // and picking a page (or touching the canvas) collapses them again, so the
+  // strip never sits over the sheet's title block.
   const thumbBar = document.getElementById('ws-thumb-bar');
-  thumbBar.style.display = WS.totalPages > 1 ? 'flex' : 'none';
+  thumbBar.style.display = 'none';
   thumbBar.innerHTML = '';
   for (let i = 1; i <= WS.totalPages; i++) {
     const th = document.createElement('div');
     th.className = 'ws-thumb' + (i === 1 ? ' active' : '');
     th.textContent = i;
     th.title = 'Page ' + i;
-    th.onclick = () => wsGoToPage(i);
+    th.onclick = () => { wsGoToPage(i); wsThumbsToggle(false); };
     th.id = 'ws-thumb-' + i;
     thumbBar.appendChild(th);
   }
@@ -13275,6 +13278,14 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   wsFitPage();
 }
 
+// The filmstrip expands from the "Page x of y" pill and collapses on use —
+// force=false collapses, force=true expands, no argument toggles.
+function wsThumbsToggle(force) {
+  const bar = document.getElementById('ws-thumb-bar');
+  if (!bar || WS.totalPages < 2) return;
+  const open = force !== undefined ? force : bar.style.display === 'none';
+  bar.style.display = open ? 'flex' : 'none';
+}
 // Render each page's actual image into its filmstrip slot, sequentially so a
 // 30-page set never spikes memory; the page-number badge stays on top.
 async function wsRenderThumbs() {
@@ -13446,6 +13457,7 @@ function wsOnWheel(e) {
 function wsOnMouseDown(e) {
   if (e.target.closest('#ws-side-stack') || e.target.closest('.ws-zoom-ctrl') ||
       e.target.closest('#ws-float-bar')) return;
+  if (typeof wsThumbsToggle === 'function') wsThumbsToggle(false);   // touching the canvas collapses the filmstrip
   if (WS._mode) return;   // drawing/drive modes own the pointer — no panning
   // Left-drag is SELECT. Pan is middle-drag, or space held — otherwise a marquee
   // could never be drawn over the plan.
