@@ -89,9 +89,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* Bottom-left, above the float bar: the tool panel now overlays the canvas's
    right edge, so anything defaulted there would sit underneath it. Draggable. */
 .ws-zoom-ctrl{position:absolute;bottom:64px;left:12px;z-index:12;display:flex;flex-direction:column;gap:4px;}
-.ws-zoom-btn{width:28px;height:28px;border-radius:6px;background:#1a1a1a;border:1px solid #333;color:rgba(255,255,255,0.6);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.ws-zoom-btn{width:38px;height:38px;border-radius:8px;background:#1a1a1a;border:1px solid #3a3a3a;color:rgba(255,255,255,0.85);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
 .ws-zoom-btn:hover{background:#2a2a2a;}
-.ws-zoom-level{width:28px;height:24px;background:#1a1a1a;border:1px solid #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:10px;color:rgba(255,255,255,0.4);}
+.ws-zoom-level{width:38px;height:28px;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.85);}
 /* The tool panel OVERLAYS the plan viewport: opening, resizing or switching
    panels never resizes, reflows or shifts the PDF — the canvas area always
    spans the full shell, so minimising the panel reveals plan that was already
@@ -107,6 +107,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-btn:hover{border-color:#008080;color:#7FD8D8;}
 .wsl-btn.on{background:#0d3333;border-color:#008080;color:#7FD8D8;}
 .wsl-btn-lead{background:#0d3333;border:1px dashed #008080;color:#7FD8D8;}
+/* The Bin Rooms CTA pair: identical size and style, one white one teal,
+   side by side. Not .wsl-btn — its hover recolour would fight the fills. */
+.wsl-cta{flex:1 1 0;min-width:0;padding:9px 10px;font-size:12.5px;font-weight:700;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap;text-align:center;}
+.wsl-cta-white{background:#E8EFEF;border:1px solid #E8EFEF;color:#12312F;}
+.wsl-cta-white:hover{background:#fff;border-color:#fff;}
+.wsl-cta-teal{background:#167E7E;border:1px solid #167E7E;color:#fff;}
+.wsl-cta-teal:hover{background:#1B9898;border-color:#1B9898;}
 .wsl-btn-danger{color:#EF8080;}
 .wsl-sel{background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.85);padding:5px 7px;font-size:10.5px;border-radius:6px;font-family:inherit;}
 .wsl-editrow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
@@ -1747,12 +1754,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
            vertical tab strip, so the plan spans rail-to-tab on load. Clicking
            any tool tab expands it (overlaying the plan — never reflowing it). -->
       <div class="ws-tool-panel" id="ws-tool-panel">
-        <button id="ws-panel-collapse" onclick="wsPanelToggle()" title="Hide tools panel" style="position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:15px;height:62px;background:#1a1a1a;border:1px solid #444;border-right:none;border-radius:8px 0 0 8px;color:rgba(255,255,255,0.55);cursor:pointer;font-size:11px;z-index:3;padding:0;">▸</button>
+        <button id="ws-panel-collapse" onclick="wsPanelToggle()" title="Hide tools panel" style="position:absolute;left:-22px;top:50%;transform:translateY(-50%);width:23px;height:104px;background:#1a1a1a;border:1px solid #444;border-right:none;border-radius:10px 0 0 10px;color:#00d4d4;cursor:pointer;font-size:16px;font-weight:700;z-index:3;padding:0;">▸</button>
         <div class="ws-tool-tabs">
           <button class="ws-tool-tab active" onclick="wsShowTab('calculator',this)" title="Bin Calculator">Bin Calculator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('layout',this)" title="Waste Layout Generator">Layout Generator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('swept',this)" title="Swept Path Generator">Swept Paths</button>
-          <button class="ws-rail-btn" id="ws-save-btn" onclick="wsSaveProject()" style="display:none;" title="Save project">💾 Save</button>
         </div>
         <div class="ws-tool-body">
 
@@ -1775,15 +1781,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                    every header (ZONES included) is visible at 1080p with no
                    panel scroll — fixed caps were what clipped Zones off the
                    bottom. min-heights keep each header + a row grabbable. -->
-              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:80px;flex:3 1 0;">
-                <div class="wsl-group-hd">Bin rooms
-                  <span style="flex:1"></span>
-                  <button class="wsl-btn" id="ws-room-gen-btn" onclick="wsGenerateRoomLayout()" disabled
-                          title="Select a bin room on the plan first"
-                          style="background:#004d4d;border-color:#008080;color:#4BED12;font-weight:700;font-size:10.5px;">✦ Generate layout</button>
+              <div class="wsl-group" style="display:flex;flex-direction:column;min-height:104px;flex:3 1 0;">
+                <div class="wsl-group-hd">Bin rooms</div>
+                <div style="display:flex;gap:7px;margin-bottom:7px;">
+                  <button class="wsl-cta wsl-cta-white" onclick="wsLayoutRoomMode()">▱ Draw bin room</button>
+                  <button class="wsl-cta wsl-cta-teal" id="ws-room-gen-btn" onclick="wsGenerateRoomLayout()" disabled
+                          title="Select a bin room on the plan first">✦ Generate layout</button>
                 </div>
                 <div class="wsl-group-body wsl-scroll" style="flex:1 1 auto;">
-                  <button class="wsl-btn wsl-btn-lead" onclick="wsLayoutRoomMode()">▱ Draw bin room</button>
                   <div id="ws-layout-targets" class="wsl-cards"></div>
                 </div>
               </div>
@@ -13262,7 +13267,7 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   // while the tool panel sits minimised.
   const fb = document.getElementById('ws-float-bar');
   if (fb) fb.style.display = 'flex';
-  ['ws-save-btn', 'ws-export-btn', 'ws-exportpdf-btn'].forEach(id => {
+  ['ws-export-btn', 'ws-exportpdf-btn'].forEach(id => {
     const b = document.getElementById(id); if (b) b.style.display = '';
   });
 
@@ -13544,9 +13549,8 @@ function wsShowTab(name, btn) {
   if (name === 'layout') {
     if (sweptOverlay) sweptOverlay.style.display = 'none';   // native tool — draws on the plan
     if (scaleWrap) scaleWrap.style.display = 'flex';
-    const sb = document.getElementById('ws-save-btn'), eb = document.getElementById('ws-export-btn');
-    void sb; void eb;
-    if (sb) sb.style.display = ''; if (eb) eb.style.display = '';
+    const eb = document.getElementById('ws-export-btn');
+    if (eb) eb.style.display = '';
     WS_LAYOUT.tabActive = true;
     if (WS_EQUIP_DB === null) wsLoadEquipmentDB(); else wsLayoutPopulateBins();
     if (typeof wsCouncilReqsRefresh === 'function') wsCouncilReqsRefresh();
@@ -13558,9 +13562,8 @@ function wsShowTab(name, btn) {
   } else if (name === 'swept') {
     if (sweptOverlay) sweptOverlay.style.display = 'none';   // native tool — no iframe
     if (scaleWrap) scaleWrap.style.display = 'flex';          // scale drives real-world units
-    const sb2 = document.getElementById('ws-save-btn'), eb2 = document.getElementById('ws-export-btn');
-    void sb2; void eb2;
-    if (sb2) sb2.style.display = 'none'; if (eb2) eb2.style.display = 'none';
+    const eb2 = document.getElementById('ws-export-btn');
+    if (eb2) eb2.style.display = 'none';
     if (WS_VEH_DB === null) wsLoadVehiclesDB();
     wsSweptPopulateVehicles();
   } else {
@@ -19968,51 +19971,8 @@ function wsOnCanvasDblClick(e) {
   }
 }
 
-async function wsSaveProject() {
-  if (!currentUser) { alert('Sign in to save projects.'); return; }
-  const name = prompt('Project name:', document.getElementById('ws-project-name').textContent === 'No project selected' ? '' : document.getElementById('ws-project-name').textContent);
-  if (!name) return;
-
-  const wsState = {
-    currentPage: WS.currentPage,
-    layers: WS.layers,
-  };
-
-  const payload = {
-    user_id: currentUser.id,
-    name,
-    workspace_state: wsState,
-    ai_extract: WS.extractData || {},
-    unit_mix: {
-      apt_1br: parseInt(document.getElementById('ws-calc-1br').value) || 0,
-      apt_2br: parseInt(document.getElementById('ws-calc-2br').value) || 0,
-      apt_3br: parseInt(document.getElementById('ws-calc-3br').value) || 0,
-      townhouses: parseInt(document.getElementById('ws-calc-th').value) || 0,
-    },
-    updated_at: new Date().toISOString(),
-    ...(WS.extractData?.address && { address: WS.extractData.address }),
-    ...(WS.extractData?.council && { council: WS.extractData.council }),
-    ...(WS.extractData?.state && { state: WS.extractData.state }),
-  };
-
-  try {
-    let result;
-    if (WS.projectId) {
-      result = await _supabase.from('projects').update(payload).eq('id', WS.projectId);
-    } else {
-      result = await _supabase.from('projects').insert(payload).select().single();
-      if (result.data) WS.projectId = result.data.id;
-    }
-    if (result.error) throw result.error;
-    document.getElementById('ws-project-name').textContent = name;
-    const btn = document.getElementById('ws-save-btn');
-    btn.textContent = '✓ Saved';
-    setTimeout(() => { btn.textContent = '💾 Save'; }, 2000);
-  } catch(err) {
-    alert('Save failed: ' + err.message);
-  }
-}
-
+// Saving is AUTOMATIC: edits debounce into wsFlushState (localStorage +
+// saveProjectToDB), so the legacy prompt-for-a-name Save flow is gone.
 // Print-to-PDF of the current sheet: the browser's own print pipeline keeps the
 // PDF vector where the source is vector, and needs no extra library.
 // ═══ SHEET EXPORT ════════════════════════════════════════════════════════════

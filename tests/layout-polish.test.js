@@ -421,6 +421,19 @@ test('page filmstrip: real page previews with page numbers along the canvas bott
   assert.ok(SOURCE.includes('Page ${pageNum} of ${WS.totalPages}'), 'the Page x of y label stays');
 });
 
+test('Bin Rooms CTA pair: Draw and Generate are twins — one white, one teal, side by side', () => {
+  const row = SOURCE.slice(SOURCE.indexOf('<div class="wsl-group-hd">Bin rooms</div>'), SOURCE.indexOf('id="ws-layout-targets"'));
+  assert.ok(row.includes('class="wsl-cta wsl-cta-white" onclick="wsLayoutRoomMode()"'),
+    'Draw bin room is the white CTA');
+  assert.ok(row.includes('class="wsl-cta wsl-cta-teal" id="ws-room-gen-btn"'),
+    'Generate layout is the teal CTA');
+  assert.ok(SOURCE.includes('.wsl-cta{flex:1 1 0;'), 'both share one size: flex twins in a row');
+  assert.ok(!SOURCE.includes('wsl-btn-lead" onclick="wsLayoutRoomMode()"'), 'the old dashed lead button is gone');
+  assert.ok(!SOURCE.includes('ws-save-btn') && !SOURCE.includes('wsSaveProject'),
+    'the legacy Save button is gone — autosave (wsFlushState debounce) owns persistence');
+  assert.ok(SOURCE.includes('setTimeout(wsFlushState, 30000)'), 'the autosave it relies on exists');
+});
+
 test('panning is bounded: a fitted axis is locked centred, a zoomed axis stays within the sheet', () => {
   assert.ok(SOURCE.includes('function wsClampPan()'), 'one clamp for every pan/zoom/fit path');
   const fn = SOURCE.slice(SOURCE.indexOf('function wsClampPan()'), SOURCE.indexOf('function wsApplyTransform()'));
