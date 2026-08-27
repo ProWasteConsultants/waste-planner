@@ -286,7 +286,7 @@ test('the tool tabs run vertically in a side rail and fill its height', () => {
     'the rail stacks tabs vertically');
   assert.ok(SOURCE.includes('.ws-tool-panel{width:500px;flex-shrink:0;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:row-reverse'),
     'row-reverse pins the tab strip to the far right; the body pops out to its LEFT');
-  assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:36px;flex-shrink:0;border-left:1px solid #333;'),
+  assert.ok(SOURCE.includes('.ws-tool-tabs{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:44px;flex-shrink:0;border-left:1px solid #333;'),
     'the rail borders face the body on its left');
   assert.ok(SOURCE.includes('.ws-tool-tab.active{color:var(--teal);border-left:2px solid var(--teal);}'),
     'the active indicator faces the body too');
@@ -380,12 +380,35 @@ test('zoom floor = fit; fullscreen keeps the layout and recalculates the floor',
 });
 
 test('panel changes never move the plan: fit is rail-to-tab, the expanded body just overlays', () => {
-  assert.ok(SOURCE.includes('area.clientWidth - 38 - 24'),
+  assert.ok(SOURCE.includes('area.clientWidth - 46 - 24'),
     'fit is computed against rail-to-tab space — the minimised strip, never the expanded body');
   const setw = SOURCE.slice(SOURCE.indexOf('function wsPanelSetW'), SOURCE.indexOf('function wsPanelWidthFor'));
   assert.ok(!setw.includes('WS.panX') && !setw.includes('wsFitPage') && !setw.includes('WS.scale'),
     'panel width changes touch NO view state — the body overlays the sheet');
   assert.ok(!SOURCE.includes('wsPanelOccupies'), 'the panel-tracking fit is gone');
+});
+
+test('the Design tab runs fullscreen as its standing mode', () => {
+  const ss = SOURCE.slice(SOURCE.indexOf("function showScreen(name, navEl)"), SOURCE.indexOf('function openNewProject'));
+  assert.ok(ss.includes("if (name === 'workspace') {\n    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});"),
+    'entering Design requests fullscreen (inside the click gesture)');
+  assert.ok(ss.includes('} else if (document.fullscreenElement) {\n    document.exitFullscreen().catch(() => {});'),
+    'leaving Design exits fullscreen');
+  assert.ok(SOURCE.includes('id="ws-fs-btn"'), 'the ⛶ button re-enters after the browser Esc');
+});
+
+test('page filmstrip: real page previews with page numbers along the canvas bottom', () => {
+  assert.ok(SOURCE.includes('function wsRenderThumbs()') || SOURCE.includes('async function wsRenderThumbs()'),
+    'thumbnails render the actual page images');
+  assert.ok(SOURCE.includes("thumbBar.style.display = WS.totalPages > 1 ? 'flex' : 'none';"),
+    'the filmstrip shows whenever the document has more than one page');
+  assert.match(SOURCE, /\.ws-page-thumb-bar\{[^}]*bottom:44px/s, 'it runs along the canvas bottom');
+  assert.match(SOURCE, /\.ws-page-thumb-bar\{[^}]*flex-direction:row/s, 'as a horizontal strip');
+  assert.ok(SOURCE.includes("n.className = 'ws-thumb-n'; n.textContent = i;"),
+    'every preview is badged with its page number');
+  assert.ok(SOURCE.includes('if (WS.pdfDoc !== doc) return;'),
+    'a replaced document stops the old render loop');
+  assert.ok(SOURCE.includes('Page ${pageNum} of ${WS.totalPages}'), 'the Page x of y label stays');
 });
 
 test('panning is bounded: a fitted axis is locked centred, a zoomed axis stays within the sheet', () => {
@@ -405,7 +428,7 @@ test('the RHS panel starts minimised to its tab strip; a tab click expands it', 
   assert.ok(SOURCE.includes('wsPanelToggle();\n</script>') || /window\.addEventListener\('resize', wsPanelApplyWidth\);[\s\S]{0,200}wsPanelToggle\(\);/.test(SOURCE),
     'the panel is collapsed once at startup');
   assert.ok(!SOURCE.includes('ws-panel-expand'), 'no full-cover expand button — the tabs stay visible when minimised');
-  assert.ok(SOURCE.includes("panel.style.width = '37px';"), 'minimised width = the tab strip alone');
+  assert.ok(SOURCE.includes("panel.style.width = '45px';"), 'minimised width = the tab strip alone');
   assert.ok(SOURCE.includes('if (_wsPanelCollapsed) wsPanelToggle();   // a tab click expands the minimised panel'),
     'clicking a tool tab expands the panel');
 });
@@ -423,7 +446,7 @@ test('the tool panel OVERLAYS the plan — panel changes can never resize or shi
   assert.ok(SOURCE.includes('function wsFitWidth()') && SOURCE.includes('function wsFitToggle()'),
     'fit-width stays one click away on the fit toggle');
   const fw = SOURCE.slice(SOURCE.indexOf('function wsFitWidth()'), SOURCE.indexOf('function wsFitToggle()'));
-  assert.ok(fw.includes('Math.max(fit, Math.min((area.clientWidth - 38 - 24) / canvas.width, 1))'),
+  assert.ok(fw.includes('Math.max(fit, Math.min((area.clientWidth - 46 - 24) / canvas.width, 1))'),
     'fit-width never drops below the whole-sheet floor');
 });
 
