@@ -403,8 +403,16 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
   assert.ok(SOURCE.includes("if (tab === 'calculator') return Math.min(Math.round(shellW * 0.55), 920);"),
     'the calculator panel is narrower — the table no longer sprawls');
   // round 2: larger type throughout, and a per-room footprint strip
-  assert.ok(SOURCE.includes('.wsr-table{width:100%;border-collapse:collapse;font-size:13.5px;}'),
+  assert.ok(SOURCE.includes('.wsr-table{width:100%;border-collapse:separate;border-spacing:0;font-size:13.5px;}'),
     'result table type is 13.5px — height is abundant, use it');
+  // direction (a): stream rows read as colour-edged cards, numbers right-aligned
+  assert.ok(SOURCE.includes('class=&quot;wsr-srow&quot;'), 'stream rows carry the card class');
+  for (const pair of [['GW','#b91c1c'],['REC','#f5b400'],['ORG','#22c55e'],['GLS','#8b5cf6'],['CARD','#2563eb'],['SOFT','#06b6d4']])
+    assert.ok(SOURCE.includes(`tr[data-stream=${pair[0]}]&gt;td:first-child{border-left-color:${pair[1]};}`),
+      pair[0] + ' row wears its stream colour on the leading edge');
+  assert.ok(SOURCE.includes('text-align:right;font-variant-numeric:tabular-nums;'),
+    'numeric columns right-align in tabular figures');
+  assert.ok(SOURCE.includes('function unitHtml(v)'), 'units render small and quiet next to the value');
   assert.ok(SOURCE.includes('class=&quot;wsr-roomtotal&quot; id=&quot;roomfp_${rr.id}&quot;'),
     'every room block carries a footprint strip');
   assert.ok(SOURCE.includes('if(allowOn(room,id))aF+=Number(allowanceArea(room,id,prof).m2)||0;'),
