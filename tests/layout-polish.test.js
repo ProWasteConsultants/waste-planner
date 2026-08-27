@@ -420,6 +420,25 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
   assert.ok(SOURCE.includes('Total room footprint'), 'and says so in plain words');
 });
 
+test('swept panel is sectioned with a live vehicle diagram', () => {
+  const tab = SOURCE.slice(SOURCE.indexOf('id="ws-tab-swept"'), SOURCE.indexOf('<div class="screen fill" id="screen-calculator">'));
+  for (const hd of ['>Vehicle<', '>Path<', '>Options<', '>Output<'])
+    assert.ok(tab.includes(hd), hd + ' section exists — no more one flat button row');
+  assert.ok(tab.includes('id="ws-veh-diagram"'), 'the selected vehicle renders as a diagram');
+  assert.ok(tab.includes('onchange="wsSweptVehDiagram()"'), 'the diagram follows the selection');
+  assert.ok(SOURCE.includes('function wsSweptVehDiagram()'), 'renderer exists');
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsSweptVehDiagram()'), SOURCE.indexOf('function wsSweptPopulateVehicles'));
+  assert.ok(fn.includes('const L = (v.fo || 0) + (v.wb || 0) + (v.ro || 0);'),
+    'drawn from the record\'s true dimensions — the same numbers the kinematics use');
+  assert.ok(fn.includes("(v.rww * 2).toFixed(1) + ' m w2w'"),
+    'turn diameter states wall-to-wall when present (it governs), kerb-to-kerb otherwise');
+  // every path/option/output control keeps its id and handler
+  for (const c of ['wsSweptDriveStart()', 'wsAutoPathStart()', 'wsSweptGenerate()', 'wsUndoLastNode()', 'wsClearSweptPath()',
+                   'id="ws-swept-gear"', 'id="ws-swept-clr"', 'id="ws-swept-smooth"', 'id="ws-swept-lock"',
+                   'wsCalibrationCircle()', 'id="ws-swept-dxf"', 'id="ws-swept-status"', 'id="ws-swept-metrics"'])
+    assert.ok(tab.includes(c), c + ' survives the restructure');
+});
+
 test('status pill is the one status home; Design uploads plans and runs AI extract', () => {
   const tab = SOURCE.slice(SOURCE.indexOf('id="ws-tab-layout"'), SOURCE.indexOf('id="ws-tab-swept"'));
   assert.ok(!tab.includes('id="ws-layout-status"'), 'no status line at the panel foot beneath Zones');
