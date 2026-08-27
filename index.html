@@ -1704,7 +1704,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="ws-zoom-btn" onclick="wsZoom(1.2)">+</button>
           <div class="ws-zoom-level" id="ws-zoom-label">100%</div>
           <button class="ws-zoom-btn" onclick="wsZoom(0.8)">−</button>
-          <button class="ws-zoom-btn" onclick="wsFitToggle()" title="Fit — toggles whole sheet / full width" style="font-size:10px;">⊡</button>
+          <button class="ws-zoom-btn" onclick="wsFitWidth()" title="Fit the sheet to the full width" style="font-size:10px;">⊡</button>
           <button class="ws-zoom-btn" id="ws-fs-btn" onclick="wsFullscreenToggle()" title="Fullscreen — same layout, more pixels. Esc to exit." style="font-size:11px;">⛶</button>
         </div>
 
@@ -13278,42 +13278,18 @@ async function wsRenderPage(pageNum) {
   if (at) at.classList.add('active');
 }
 
-// Fit = the sheet fitted to the AVAILABLE canvas: the full shell minus
-// however much the RHS tool panel currently occupies — its tab strip when
-// minimised, its full width when expanded — so the sheet always sits flush
-// with the panel's left edge instead of running under it. This fit is also
-// the ZOOM FLOOR — zooming out past it is not possible, zooming in is.
-function wsPanelOccupies() {
-  return (typeof _wsPanelW !== 'undefined' && _wsPanelW) ? _wsPanelW + 1 : 38;
-}
+// FIT-WIDTH is the default view AND the zoom floor: the sheet fills the space
+// between the LHS rails and the RHS tab strip, and zooming out past that is
+// not possible. The tool panel body OVERLAYS the plan when expanded — the
+// plan never resizes, reflows or shifts for it (the sovereignty rule).
 function wsFitScale() {
   const canvas = document.getElementById('ws-pdf-canvas');
   if (!canvas || !canvas.width) return null;
   const area = document.getElementById('ws-canvas-area');
-  const aW = area.clientWidth - wsPanelOccupies() - 24;   // 24 = margin
-  const aH = area.clientHeight - 24;
-  return Math.min(aW / canvas.width, aH / canvas.height, 1);
+  const aW = area.clientWidth - 38 - 24;   // 38 = RHS tab strip, 24 = margin
+  return Math.min(aW / canvas.width, 1);
 }
-// DEFAULT VIEW: fit the sheet's WIDTH. Plans are landscape pages on wide
-// screens — whole-page fit leaves dead gutters either side while the drawing
-// stays small, so the default fills the abundant dimension and the user pans
-// vertically for the title block. Whole-page fit stays one click away (⊡)
-// and remains the zoom-out FLOOR.
 function wsFitWidth() {
-  const fit = wsFitScale();
-  if (fit == null) return;
-  const canvas = document.getElementById('ws-pdf-canvas');
-  const area = document.getElementById('ws-canvas-area');
-  WS.fitScale = fit;
-  const availW = area.clientWidth - wsPanelOccupies();
-  WS.scale = Math.max(fit, Math.min((availW - 24) / canvas.width, 1));
-  WS.panX = Math.max(0, (availW - canvas.width * WS.scale) / 2);
-  WS.panY = canvas.height * WS.scale <= area.clientHeight - 24
-    ? Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2)
-    : 12;   // taller than the viewport: start at the top, pan for the rest
-  wsApplyTransform();
-}
-function wsFitPage() {
   const ov = wsActiveOverlayIframe();
   if (ov && ov.contentWindow) { ov.contentWindow.postMessage({ type: 'ws-fit' }, '*'); return; }
   const fit = wsFitScale();
@@ -13322,15 +13298,11 @@ function wsFitPage() {
   const area = document.getElementById('ws-canvas-area');
   WS.fitScale = fit;
   WS.scale = fit;
-  WS.panX = Math.max(0, (area.clientWidth - wsPanelOccupies() - canvas.width * WS.scale) / 2);
-  WS.panY = Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2);
+  WS.panX = Math.max(0, (area.clientWidth - 38 - canvas.width * WS.scale) / 2);
+  WS.panY = canvas.height * WS.scale <= area.clientHeight - 24
+    ? Math.max(0, (area.clientHeight - canvas.height * WS.scale) / 2)
+    : 12;   // taller than the viewport: start at the top, pan for the rest
   wsApplyTransform();
-}
-// ⊡ toggles between the two fits: at the whole-sheet floor it goes to full
-// width, anywhere else it returns to the whole sheet.
-function wsFitToggle() {
-  const atPage = Math.abs(WS.scale - (WS.fitScale || 0)) < 1e-6;
-  if (atPage) wsFitWidth(); else wsFitPage();
 }
 // The floor moves with the canvas: window resize and entering/leaving
 // fullscreen both change the available pixels, so re-derive it — and if the
@@ -13339,7 +13311,7 @@ function wsZoomFloorRecalc() {
   const fit = wsFitScale();
   if (fit == null) return;
   WS.fitScale = fit;
-  if (WS.scale < fit - 1e-9) wsFitPage();
+  if (WS.scale < fit - 1e-9) wsFitWidth();
 }
 window.addEventListener('resize', wsZoomFloorRecalc);
 // Fullscreen = more pixels for the SAME layout — rails, strips and panels all
@@ -20770,23 +20742,11 @@ function wsOpenProject(project) {
 let _wsPanelCollapsed = false;
 let _wsPanelMax = false;
 let _wsPanelTab = 'calculator';
-let _wsPanelW = 501;
+// The panel body OVERLAYS the plan (sovereignty rule): expanding, collapsing
+// or resizing it never resizes, reflows or shifts the sheet.
 function wsPanelSetW(w) {
   const shell = document.querySelector('.ws-shell');
   if (shell) shell.style.setProperty('--ws-panel-w', (w + 1) + 'px');
-  // The plan viewport ends where the panel begins: when the panel widens the
-  // sheet shifts LEFT by exactly the growth (and back on collapse), so the
-  // visible plan sits flush with the panel's left edge instead of under it.
-  const prev = _wsPanelW; _wsPanelW = w;
-  if (prev !== w && typeof WS !== 'undefined' && WS.scale &&
-      document.getElementById('ws-pdf-canvas')?.width) {
-    // Sitting at the fit → stay fitted to the NEW available space; zoomed in →
-    // keep the zoom and translate by the width delta so the flush edge holds.
-    const wasAtFit = Math.abs(WS.scale - (WS.fitScale || 0)) < 1e-6;
-    if (typeof wsZoomFloorRecalc === 'function') wsZoomFloorRecalc();
-    if (wasAtFit && typeof wsFitPage === 'function') wsFitPage();
-    else { WS.panX += (prev - w); wsApplyTransform(); }
-  }
 }
 // The panel is not free-resizable: each tool has a predefined width. The bin
 // calculator runs wide — the PDF matters little while calculating — while the
