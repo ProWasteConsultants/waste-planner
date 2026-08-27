@@ -420,6 +420,25 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
   assert.ok(SOURCE.includes('Total room footprint'), 'and says so in plain words');
 });
 
+test('status pill is the one status home; Design uploads plans and runs AI extract', () => {
+  const tab = SOURCE.slice(SOURCE.indexOf('id="ws-tab-layout"'), SOURCE.indexOf('id="ws-tab-swept"'));
+  assert.ok(!tab.includes('id="ws-layout-status"'), 'no status line at the panel foot beneath Zones');
+  assert.ok(SOURCE.includes('id="ws-float-status-txt"') && SOURCE.includes('<span id="ws-layout-stats" class="wsl-stats" style="display:block;margin-left:0;"></span>'),
+    'the pill carries instructions AND the live stats line');
+  const fx = SOURCE.slice(SOURCE.indexOf('function wsFloatStatus'), SOURCE.indexOf('function wsLayoutAutosave'));
+  assert.ok(!fx.includes('_wsPanelCollapsed'), 'the pill shows regardless of the panel state');
+  assert.ok(SOURCE.includes('.wsl-cta-teal{background:#00A5A5;'), 'Generate layout is bright teal');
+  assert.ok(SOURCE.includes('id="ws-plan-file"') && SOURCE.includes('onchange="wsLoadPdfFile(this.files[0]);'),
+    'plans upload straight from Design (attaching to the project, or starting a draft)');
+  assert.ok(SOURCE.includes("if (e.data && e.data.type === 'ws-ai-extract') wsRunAiExtract();") &&
+            SOURCE.includes('function wsRunAiExtract()'),
+    'the calculator Dev Summary triggers AI extraction against the open plan');
+  assert.ok(SOURCE.includes("parent.postMessage({type:'ws-ai-extract'},'*')"),
+    'via a button in the Dev Summary pane');
+  assert.ok(!SOURCE.includes('<div class="dc-title">Project Tools</div>'),
+    'the Project Tools card is gone from the project page');
+});
+
 test('Cost Check is off the nav until it ships; the queue tabs carry pending badges', () => {
   assert.match(SOURCE, /id="nav-costcheck" style="display:none;"/, 'Cost Check hidden until the feature ships');
   const list = SOURCE.slice(SOURCE.indexOf("['nav-tools', 'nav-upload'"), SOURCE.indexOf("'btn-new-project-empty']"));

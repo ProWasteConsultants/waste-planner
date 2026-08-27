@@ -112,8 +112,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-cta{flex:1 1 0;min-width:0;padding:9px 10px;font-size:12.5px;font-weight:700;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap;text-align:center;}
 .wsl-cta-white{background:#E8EFEF;border:1px solid #E8EFEF;color:#12312F;}
 .wsl-cta-white:hover{background:#fff;border-color:#fff;}
-.wsl-cta-teal{background:#167E7E;border:1px solid #167E7E;color:#fff;}
-.wsl-cta-teal:hover{background:#1B9898;border-color:#1B9898;}
+.wsl-cta-teal{background:#00A5A5;border:1px solid #00A5A5;color:#fff;}
+.wsl-cta-teal:hover{background:#00BFBF;border-color:#00BFBF;}
 .wsl-cta-teal:disabled{background:#2C5654;border-color:#2C5654;color:rgba(255,255,255,0.75);cursor:not-allowed;}
 .wsl-btn-danger{color:#EF8080;}
 .wsl-sel{background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.85);padding:5px 7px;font-size:10.5px;border-radius:6px;font-family:inherit;}
@@ -882,29 +882,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
         </div>
 
-        <div class="detail-card">
-          <div class="dc-title">Project Tools</div>
-            <div class="tool-row">
-              <div class="tool-icon" style="background:#E8F5E9">🗑</div>
-              <div class="tool-row-text"><span class="tool-row-label">Bin Calculator</span><span class="tool-row-sub">Calculate bin numbers and volumes</span></div>
-              <button class="tool-action" style="background:#E8F5E9;color:#2E7D32" onclick="showScreen('workspace',document.getElementById('nav-workspace'))">Open</button>
-            </div>
-            <div class="tool-row">
-              <div class="tool-icon" style="background:var(--lt)">⊞</div>
-              <div class="tool-row-text"><span class="tool-row-label">Layout Generator</span><span class="tool-row-sub">Design bin room layout</span></div>
-              <button class="tool-action" style="background:var(--lt);color:var(--teal)" onclick="showScreen('workspace',document.getElementById('nav-workspace'))">Open</button>
-            </div>
-            <div class="tool-row">
-              <div class="tool-icon" style="background:var(--lt)">↻</div>
-              <div class="tool-row-text"><span class="tool-row-label">Swept Path Generator</span><span class="tool-row-sub">Vehicle access diagram</span></div>
-              <button class="tool-action" style="background:var(--lt);color:var(--teal)" onclick="showScreen('workspace',document.getElementById('nav-workspace'))">Open</button>
-            </div>
-            <div class="tool-row">
-              <div class="tool-icon" style="background:#F3E5F5">✓</div>
-              <div class="tool-row-text"><span class="tool-row-label">Compliance Checker</span><span class="tool-row-sub">Check WMP against council requirements</span></div>
-              <button class="tool-action" style="background:#F3E5F5;color:#6A1B9A" onclick="showScreen('compliance',document.getElementById('nav-compliance'))">Open</button>
-            </div>
-          </div>
+        <!-- Project Tools card removed: every tool is one click away on the nav rail. -->
 
         <!-- Documents grow into a list in their own column -->
         <div class="detail-card">
@@ -1589,8 +1567,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <div class="ws-canvas-empty" id="ws-empty-state">
           <div class="ws-upload-zone" style="cursor:default;">
             <div class="ws-upload-zone-title">No plans loaded</div>
-            <div class="ws-upload-zone-sub">Plans are uploaded and managed from the project. Open a project to view its plan set here.</div>
-            <button class="ws-upload-zone-btn" onclick="showScreen('projects',document.getElementById('nav-projects'))">Go to Projects</button>
+            <div class="ws-upload-zone-sub">Upload a plan PDF — it attaches to the open project, or starts a draft project if none is open.</div>
+            <input type="file" id="ws-plan-file" accept=".pdf" style="display:none;" onchange="wsLoadPdfFile(this.files[0]);this.value='';">
+            <button class="ws-upload-zone-btn" onclick="document.getElementById('ws-plan-file').click()">⬆ Upload plan PDF</button>
+            <div style="margin-top:10px;"><a href="#" onclick="showScreen('projects',document.getElementById('nav-projects'));return false;" style="font-size:11.5px;color:#7FD8D8;">or open a project with plans attached</a></div>
           </div>
           <div style="font-size:11px;color:rgba(255,255,255,0.2);margin-top:8px;">or use the bin calculator without a plan — it reads the project's dev summary</div>
         </div>
@@ -1731,7 +1711,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         </div>
 
         <!-- floating status strip: mirrors tool status so it survives panel collapse -->
-        <div id="ws-float-status" style="display:none;position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:12;background:rgba(20,26,26,0.92);border:1px solid #333;border-radius:8px;padding:5px 14px;font-size:11.5px;color:rgba(255,255,255,0.75);max-width:56%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;"></div>
+        <!-- THE status home: instructions on top, live stats beneath — the
+             panel itself carries no status line. -->
+        <div id="ws-float-status" style="display:none;position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:12;background:rgba(20,26,26,0.92);border:1px solid #333;border-radius:8px;padding:6px 16px;font-size:12px;color:rgba(255,255,255,0.8);max-width:60%;text-align:center;pointer-events:none;">
+          <span id="ws-float-status-txt" style="display:block;"></span>
+          <span id="ws-layout-stats" class="wsl-stats" style="display:block;margin-left:0;"></span>
+        </div>
 
         <!-- floating selection pill: verbs travel with the selected item -->
         <!-- Room selection pill: name, schedule assignment, stream subset, fill -->
@@ -1864,10 +1849,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
             <span id="ws-gen-variants" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;align-self:flex-start;padding:6px 8px;background:#0d3333;border:1px solid #008080;border-radius:7px;"></span>
 
-            <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:2px 2px 0;">
-              <span id="ws-layout-status" class="wsl-status"></span>
-              <span id="ws-layout-stats" class="wsl-stats"></span>
-            </div>
           </div>
 
           <!-- SWEPT PATH TAB — full swept path embedded -->
@@ -2116,6 +2097,7 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
       &lt;/style&gt;
       &lt;div id=&quot;ws-devsum&quot;&gt;
         &lt;div class=&quot;ws-vol-title&quot;&gt;Dev Summary&lt;span id=&quot;roomCount&quot; style=&quot;float:right;font-weight:700;color:#7FD8D8;letter-spacing:0;text-transform:none;&quot;&gt;&lt;/span&gt;&lt;/div&gt;
+        &lt;button type=&quot;button&quot; class=&quot;ws-calcbtn&quot; style=&quot;width:100%;margin:2px 0 8px;align-self:stretch;&quot; onclick=&quot;parent.postMessage({type:'ws-ai-extract'},'*')&quot; title=&quot;Read the unit mix, address and council from the plan open on the canvas&quot;&gt;🤖 AI extract from plan&lt;/button&gt;
         &lt;div class=&quot;ws-row&quot;&gt;
           &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;State&lt;/span&gt;&lt;select id=&quot;state&quot; class=&quot;ws-sel&quot;&gt;&lt;option value=&quot;VIC&quot;&gt;VIC&lt;/option&gt;&lt;option value=&quot;NSW&quot;&gt;NSW&lt;/option&gt;&lt;option value=&quot;QLD&quot;&gt;QLD&lt;/option&gt;&lt;option value=&quot;SA&quot;&gt;SA&lt;/option&gt;&lt;option value=&quot;WA&quot;&gt;WA&lt;/option&gt;&lt;option value=&quot;TAS&quot;&gt;TAS&lt;/option&gt;&lt;option value=&quot;ACT&quot;&gt;ACT&lt;/option&gt;&lt;option value=&quot;NT&quot;&gt;NT&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
           &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;Council&lt;/span&gt;&lt;select id=&quot;council&quot; class=&quot;ws-sel&quot; onchange=&quot;wsCalcTrigger()&quot;&gt;&lt;option value=&quot;&quot;&gt;—&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
@@ -13670,7 +13652,42 @@ window.addEventListener('message', (e) => {
 // Handshake: calculator announces readiness, we reply with the project dev summary
 window.addEventListener('message', (e) => {
   if (e.data && e.data.type === 'ws-calc-ready') { wsPushSummaryToCalc(); wsPushEquipToCalc(); }
+  if (e.data && e.data.type === 'ws-ai-extract') wsRunAiExtract();
 });
+
+// AI extraction FROM DESIGN: same core and entitlement rules as the project
+// page, but against the plan already open on the canvas; results land in the
+// project summary and flow straight back into the calculator.
+async function wsRunAiExtract() {
+  if (!WS.pdfDoc) { wsFloatStatus('Load a plan PDF first — AI extraction reads the open plan.'); return; }
+  const apiKey = localStorage.getItem('pw_api_key');
+  if (!apiKey && !(typeof aiEntitled === 'function' && aiEntitled())) {
+    wsFloatStatus('AI extraction needs an account (1 free use) or an API key — set one on the project page.');
+    return;
+  }
+  wsFloatStatus('Analysing plans with AI…');
+  try {
+    const extracted = await aiExtractCore(WS.pdfDoc, WS.totalPages, apiKey);
+    if (WS.projectId && typeof writeProjectSummary === 'function') {
+      writeProjectSummary(WS.projectId, {
+        ...(extracted.address && { address: extracted.address }),
+        ...(extracted.council && { council: extracted.council }),
+        ...(extracted.state && { state: extracted.state }),
+        apt_1br: extracted.apt_1br || 0,
+        apt_2br: extracted.apt_2br || 0,
+        apt_3br: extracted.apt_3br || 0,
+        townhouses: extracted.townhouses || 0,
+      });
+    }
+    WS.extractData = { ...(WS.extractData || {}), ...extracted };
+    if (typeof wsPushSummaryToCalc === 'function') wsPushSummaryToCalc();
+    if (typeof wsUpdateProjectPill === 'function') wsUpdateProjectPill();
+    wsFloatStatus('✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence) — review every figure against the plans.');
+  } catch (err) {
+    console.error('design extraction error:', err);
+    wsFloatStatus('⚠ ' + (err.message || 'Extraction failed'));
+  }
+}
 
 function wsPushSummaryToCalc() {
   const s = WS.extractData;
@@ -14421,17 +14438,15 @@ function wsLayoutSlot() {
   return s;
 }
 function wsLayoutStatus(t) {
-  const el = document.getElementById('ws-layout-status'); if (el) el.textContent = t;
   wsFloatStatus(t);
 }
 function wsFloatStatus(t) {
   const fs = document.getElementById('ws-float-status');
-  if (!fs) return;
-  if (t && String(t).trim()) fs.textContent = t;
-  // The pill exists so status survives panel collapse. With the panel OPEN
-  // the panel's own status line shows the same text — never both at once.
-  const collapsed = typeof _wsPanelCollapsed !== 'undefined' && _wsPanelCollapsed;
-  fs.style.display = collapsed && fs.textContent.trim() ? '' : 'none';
+  const tx = document.getElementById('ws-float-status-txt');
+  if (!fs || !tx) return;
+  if (t && String(t).trim()) tx.textContent = t;
+  const stats = (document.getElementById('ws-layout-stats')?.textContent || '').trim();
+  fs.style.display = (tx.textContent.trim() || stats) ? '' : 'none';
 }
 function wsLayoutAutosave() { if (typeof wsScheduleAutosave === 'function') wsScheduleAutosave(); }
 function wsLayoutSnap(v, mpp) { const g = 0.025 / mpp; return Math.round(v / g) * g; }
@@ -16878,7 +16893,7 @@ function wsRenderLayoutLayer() {
 }
 function wsLayoutUpdateStats(slot, mpp) {
   const el = document.getElementById('ws-layout-stats'); if (!el) return;
-  if (!slot.bins.length && !slot.rooms.length && !slot.chutes.length && !slot.equip.length) { el.textContent = ''; return; }
+  if (!slot.bins.length && !slot.rooms.length && !slot.chutes.length && !slot.equip.length) { el.textContent = ''; if (typeof wsFloatStatus === 'function') wsFloatStatus(''); return; }
   const byStream = {};
   let fp = 0;
   slot.bins.forEach(b => {
@@ -16912,6 +16927,7 @@ function wsLayoutUpdateStats(slot, mpp) {
   if (typeof wsCouncilWarnRender === 'function') wsCouncilWarnRender();
   // Generate-for-room enablement follows selection, on the same cadence
   if (typeof wsUpdateRoomGenBtn === 'function') wsUpdateRoomGenBtn();
+  if (typeof wsFloatStatus === 'function') wsFloatStatus('');   // stats line lives in the pill
 }
 // Emit each distinct item once as a BLOCK, then reference it per instance with
 // INSERT. Smaller files, and redefining the block in CAD restyles every copy.
