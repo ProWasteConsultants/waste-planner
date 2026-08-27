@@ -695,8 +695,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   <div class="nav-item" onclick="showScreen('compliance',this)" id="nav-compliance">
     <span class="nl">Compliance Checker</span>
   </div>
-  <div class="nav-item" onclick="showScreen('costcheck',this)" id="nav-costcheck">
-    <span class="nl">Cost Check</span><span class="nav-badge" style="background:var(--lt);color:var(--teal);">Coming soon</span>
+  <!-- Cost Check is OFF THE NAV until the feature ships: flip display to
+       re-list it. The screen and iframe stay wired underneath. -->
+  <div class="nav-item" onclick="showScreen('costcheck',this)" id="nav-costcheck" style="display:none;">
+    <span class="nl">Cost Check</span>
   </div>
   <div class="nav-item" onclick="showScreen('orgqueue',this)" id="nav-orgqueue" style="display:none;">
     <span class="nl">Review Queue</span><span class="nav-badge" id="orgqueue-badge" style="background:#E65100;color:#fff;display:none;">0</span>
@@ -12071,7 +12073,10 @@ function updateProfileUI() {
   const _inCouncilOrg = (typeof currentOrg !== 'undefined' && currentOrg?.kind === 'council');
   const councilAcct = _inCouncilOrg
     || ((currentProfile?.tier === 'council_paid' || currentProfile?.role === 'council') && !_staff);
-  ['nav-tools', 'nav-upload', 'nav-workspace', 'nav-costcheck', 'nav-calculator', 'nav-layout', 'nav-swept',
+  // nav-costcheck is NOT in this list: it is statically hidden until the
+  // feature ships, and the un-hide branch below would re-reveal it after a
+  // round-trip through a council org.
+  ['nav-tools', 'nav-upload', 'nav-workspace', 'nav-calculator', 'nav-layout', 'nav-swept',
    'btn-new-project', 'btn-new-project-empty'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;

@@ -393,6 +393,17 @@ test('panel changes never move the plan: fit is rail-to-tab, the expanded body j
   assert.ok(!SOURCE.includes('wsPanelOccupies'), 'the panel-tracking fit is gone');
 });
 
+test('Cost Check is off the nav until it ships; the queue tabs carry pending badges', () => {
+  assert.match(SOURCE, /id="nav-costcheck" style="display:none;"/, 'Cost Check hidden until the feature ships');
+  const list = SOURCE.slice(SOURCE.indexOf("['nav-tools', 'nav-upload'"), SOURCE.indexOf("'btn-new-project-empty']"));
+  assert.ok(!list.includes('nav-costcheck'),
+    'and OUT of the council-view toggle, whose un-hide branch would re-reveal it');
+  assert.ok(SOURCE.includes('id="orgqueue-badge"') && SOURCE.includes('function updateOrgQueueBadge(n)'),
+    'Review Queue pending badge exists and is wired');
+  assert.ok(SOURCE.includes('id="wmpqueue-badge"') && SOURCE.includes('function updateWmpQueueBadge(n)'),
+    'WMP Queue pending badge exists and is wired');
+});
+
 test('the Design tab runs fullscreen as its standing mode', () => {
   const ss = SOURCE.slice(SOURCE.indexOf("function showScreen(name, navEl)"), SOURCE.indexOf('function openNewProject'));
   assert.ok(ss.includes("if (name === 'workspace') {\n    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});"),
