@@ -272,7 +272,7 @@ test('the tool panel has preset widths per tab, not a drag handle', () => {
     'the bin calculator runs wide');
   assert.ok(SOURCE.includes('return 348;   // layout + swept: one room-card-wide column'),
     'layout and swept paths get the single-column width');
-  assert.ok(SOURCE.includes('function wsPanelMaxToggle()'), 'maximise/restore control exists');
+  assert.ok(!SOURCE.includes('wsPanelMaxToggle'), 'the Max control is gone — collapse is the only panel verb');
   assert.ok(SOURCE.includes("window.addEventListener('resize', wsPanelApplyWidth);"),
     'the window-relative widths re-derive on resize');
 });
@@ -316,7 +316,7 @@ test('the screens nav is a thin LHS rail with vertical labels; NO top header bar
   assert.ok(nav.length > 0, 'the rail exists before the content column');
   for (const id of ['nav-workspace', 'nav-compliance', 'nav-costcheck', 'nav-orgqueue', 'nav-wmp-queue', 'nav-admin'])
     assert.ok(nav.includes(`id="${id}"`), id + ' lives in the rail');
-  assert.ok(SOURCE.includes('.side-nav{\n  width:44px;'), 'widened for legible 13px labels');
+  assert.ok(SOURCE.includes('.side-nav{\n  width:52px;'), 'widened for legible labels and a larger mark');
   assert.ok(SOURCE.includes('.side-nav .nav-item{\n  writing-mode:vertical-rl;'), 'vertical labels, same style');
   assert.ok(nav.includes('class="rail-account"') && nav.includes('id="user-avatar-initials"'),
     'the account chip is pinned in the rail');

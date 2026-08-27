@@ -253,7 +253,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
    account chip is pinned at its foot, and the project/council chip floats on
    the canvas top edge. ── */
 .side-nav{
-  width:44px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
+  width:52px;flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:2px;
   padding:8px 0 6px;overflow:hidden;
   --white:#1A2424;--grey:#243030;--border:#2C3838;--text:#E8EFEF;--muted:#8CA3A3;--lt:rgba(22,126,126,0.35);
   background:#1A2424;border-right:1px solid #2C3838;
@@ -272,9 +272,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* badges flow with the vertical label — horizontal text overflows a 36px rail */
 .side-nav .nav-badge{writing-mode:vertical-rl;font-size:8px;padding:4px 1px;}
 /* account chip pinned at the rail's foot — initials always, name + role on hover */
+.rail-account .user-avatar{width:36px;height:36px;font-size:13px;}
 .rail-account{margin-top:auto;position:relative;display:flex;justify-content:center;padding:8px 0 2px;cursor:pointer;}
 .rail-account .rail-account-info{
-  display:none;position:absolute;left:42px;bottom:2px;z-index:40;white-space:nowrap;
+  display:none;position:absolute;left:50px;bottom:2px;z-index:40;white-space:nowrap;
   background:#1A2424;border:1px solid #2C3838;border-radius:8px;padding:7px 12px;
   box-shadow:0 4px 14px rgba(0,0,0,0.5);
 }
@@ -671,7 +672,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 <div class="side-nav" id="side-nav">
   <div class="topbar-brand" id="topbar-brand" onclick="showScreen('projects',null)" title="WastePlanner">
     <!-- the WP monogram is the favicon asset family — swapping favicon.svg rebrands here too -->
-    <img src="favicon.svg" alt="WastePlanner" style="width:24px;height:24px;display:block;margin:0 auto;border-radius:6px;">
+    <img src="favicon.svg" alt="WastePlanner" style="width:34px;height:34px;display:block;margin:0 auto;border-radius:8px;">
   </div>
   <div class="nav-item" onclick="showScreen('tools',this)" id="nav-tools" style="display:none;">
     <span class="ni">⚙</span><span class="nl">Tools</span>
@@ -725,6 +726,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   <div class="ws-top-chip" id="ws-top-chip">
     <button class="ws-top-chip-toggle" onclick="wsTopChipToggle()" title="Collapse / expand">◂</button>
     <div class="breadcrumb" id="breadcrumb"><span>Projects</span></div>
+    <span id="ws-pill-address" style="display:none;font-size:11px;color:#8CA3A3;border-left:1px solid #2C3838;padding-left:8px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;"></span>
     <span id="ws-pill-council" onclick="wsPillCouncilOpen()" style="display:none;font-size:11px;color:#8CA3A3;cursor:pointer;border-left:1px solid #2C3838;padding-left:8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;"></span>
   </div>
 
@@ -1745,7 +1747,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <button class="ws-tool-tab active" onclick="wsShowTab('calculator',this)" title="Bin Calculator">Bin Calculator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('layout',this)" title="Waste Layout Generator">Layout Generator</button>
           <button class="ws-tool-tab" onclick="wsShowTab('swept',this)" title="Swept Path Generator">Swept Paths</button>
-          <button class="ws-rail-btn" id="ws-panel-max" onclick="wsPanelMaxToggle()" title="Maximise the tools panel">⛶ Max</button>
           <button class="ws-rail-btn" id="ws-save-btn" onclick="wsSaveProject()" style="display:none;" title="Save project">💾 Save</button>
         </div>
         <div class="ws-tool-body">
@@ -13251,6 +13252,11 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   const mkp = document.getElementById('ws-markup-panel');
   if (mkp) mkp.style.display = '';   // markups are available from every tab
   document.getElementById('ws-page-nav').style.display = WS.totalPages > 1 ? 'flex' : 'none';
+  // The float bar (project name + Page pill) shows as soon as a PDF is up —
+  // NOT only after a tool tab is clicked, or the Page pill is unreachable
+  // while the tool panel sits minimised.
+  const fb = document.getElementById('ws-float-bar');
+  if (fb) fb.style.display = 'flex';
   ['ws-save-btn', 'ws-export-btn', 'ws-exportpdf-btn'].forEach(id => {
     const b = document.getElementById(id); if (b) b.style.display = '';
   });
@@ -20824,7 +20830,6 @@ function wsOpenProject(project) {
   }
 }
 let _wsPanelCollapsed = false;
-let _wsPanelMax = false;
 let _wsPanelTab = 'calculator';
 // The panel body OVERLAYS the plan (sovereignty rule): expanding, collapsing
 // or resizing it never resizes, reflows or shifts the sheet.
@@ -20839,7 +20844,6 @@ function wsPanelSetW(w) {
 function wsPanelWidthFor(tab) {
   const shell = document.querySelector('.ws-shell');
   const shellW = (shell && shell.clientWidth) || window.innerWidth;
-  if (_wsPanelMax) return Math.max(360, shellW - 48);
   if (tab === 'calculator') return Math.min(Math.round(shellW * 0.66), 1100);
   return 348;   // layout + swept: one room-card-wide column, plan stays visible
 }
@@ -20851,18 +20855,6 @@ function wsPanelApplyWidth() {
   panel.style.width = w + 'px';
   wsPanelSetW(w);
 }
-function wsPanelMaxToggle() {
-  _wsPanelMax = !_wsPanelMax;
-  const b = document.getElementById('ws-panel-max');
-  if (b) {
-    b.textContent = _wsPanelMax ? '🗗 Restore' : '⛶ Max';
-    b.title = _wsPanelMax ? 'Restore the panel to its preset width' : 'Maximise the tools panel';
-  }
-  if (_wsPanelCollapsed) { wsPanelToggle(); return; }   // expanding re-applies the width
-  wsPanelApplyWidth();
-}
-// Minimised = the panel reduces to its vertical TAB STRIP (never disappears):
-// the tabs stay clickable, and clicking one expands the panel back out.
 function wsPanelToggle() {
   const panel = document.getElementById('ws-tool-panel');
   const body = document.querySelector('.ws-tool-body');
@@ -20949,6 +20941,17 @@ function wsUpdateProjectPill() {
   span.style.display = c ? '' : 'none';
   span.textContent = c || '';
   span.title = c ? 'Council: ' + c + ' — a project setting. Click to open project settings.' : '';
+  // The job ADDRESS rides in the pill too — skipped when the project is
+  // simply named after its address, so the pill never says the same thing twice.
+  const ad = document.getElementById('ws-pill-address');
+  if (ad) {
+    const addr = p && p.address;
+    const dup = addr && p.name && p.name.replace(/\s+/g, ' ').trim().toLowerCase()
+      .startsWith(addr.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 12));
+    ad.style.display = addr && !dup ? '' : 'none';
+    ad.textContent = addr || '';
+    ad.title = addr ? 'Site address: ' + addr : '';
+  }
 }
 function wsPillCouncilOpen() {
   const id = (typeof WS !== 'undefined' && WS.projectId) || (typeof currentProjectId !== 'undefined' && currentProjectId) || null;
