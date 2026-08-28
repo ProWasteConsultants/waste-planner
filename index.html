@@ -2122,7 +2122,8 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
       &lt;/style&gt;
       &lt;div id=&quot;ws-devsum&quot;&gt;
         &lt;div class=&quot;ws-vol-title&quot;&gt;Dev Summary&lt;span id=&quot;roomCount&quot; style=&quot;float:right;font-weight:700;color:#7FD8D8;letter-spacing:0;text-transform:none;&quot;&gt;&lt;/span&gt;&lt;/div&gt;
-        &lt;button type=&quot;button&quot; class=&quot;ws-calcbtn&quot; style=&quot;width:100%;margin:2px 0 8px;align-self:stretch;&quot; onclick=&quot;parent.postMessage({type:'ws-ai-extract'},'*')&quot; title=&quot;Read the unit mix, address and council from the plan open on the canvas&quot;&gt;🤖 AI extract from plan&lt;/button&gt;
+        &lt;button type=&quot;button&quot; id=&quot;wsAiExtractBtn&quot; class=&quot;ws-calcbtn&quot; style=&quot;width:100%;margin:2px 0 2px;align-self:stretch;&quot; onclick=&quot;parent.postMessage({type:'ws-ai-extract'},'*')&quot; title=&quot;Read the unit mix, address and council from the plan open on the canvas&quot;&gt;🤖 AI extract from plan&lt;/button&gt;
+        &lt;div id=&quot;aiExtractMsg&quot; style=&quot;font-size:.72rem;color:rgba(255,255,255,0.6);margin:0 0 6px;min-height:13px;line-height:1.4;&quot;&gt;&lt;/div&gt;
         &lt;div class=&quot;ws-row&quot;&gt;
           &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;State&lt;/span&gt;&lt;select id=&quot;state&quot; class=&quot;ws-sel&quot;&gt;&lt;option value=&quot;VIC&quot;&gt;VIC&lt;/option&gt;&lt;option value=&quot;NSW&quot;&gt;NSW&lt;/option&gt;&lt;option value=&quot;QLD&quot;&gt;QLD&lt;/option&gt;&lt;option value=&quot;SA&quot;&gt;SA&lt;/option&gt;&lt;option value=&quot;WA&quot;&gt;WA&lt;/option&gt;&lt;option value=&quot;TAS&quot;&gt;TAS&lt;/option&gt;&lt;option value=&quot;ACT&quot;&gt;ACT&lt;/option&gt;&lt;option value=&quot;NT&quot;&gt;NT&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
           &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;Council&lt;/span&gt;&lt;select id=&quot;council&quot; class=&quot;ws-sel&quot; onchange=&quot;wsCalcTrigger()&quot;&gt;&lt;option value=&quot;&quot;&gt;—&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
@@ -3782,6 +3783,15 @@ if (typeof renderResults === 'function') {
 &lt;script&gt;
 // Bridge: receive unit mix + state/council from parent workspace via postMessage
 window.addEventListener('message', function(e) {
+  // extraction progress/results echo back INTO this pane — the canvas status
+  // pill sits under the expanded panel, so feedback must live here
+  if (e.data &amp;&amp; e.data.type === 'ws-ai-extract-status') {
+    const m = document.getElementById('aiExtractMsg');
+    if (m) m.textContent = e.data.text || '';
+    const b = document.getElementById('wsAiExtractBtn');
+    if (b) b.disabled = !!e.data.busy;
+    return;
+  }
   if (e.data &amp;&amp; e.data.type === 'ws-calc-fill') {
     const d = e.data;
     if (Array.isArray(d.equipment)) {
@@ -13683,14 +13693,23 @@ window.addEventListener('message', (e) => {
 // AI extraction FROM DESIGN: same core and entitlement rules as the project
 // page, but against the plan already open on the canvas; results land in the
 // project summary and flow straight back into the calculator.
+// Feedback lands INSIDE the calculator pane: the canvas pill is covered by
+// the expanded panel, which is exactly where the user is looking.
+function wsCalcExtractSay(text, busy) {
+  wsFloatStatus(text);
+  ['ws-calc-iframe', 'calc-iframe'].forEach(id => {
+    const f = document.getElementById(id);
+    if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'ws-ai-extract-status', text, busy: !!busy }, '*');
+  });
+}
 async function wsRunAiExtract() {
-  if (!WS.pdfDoc) { wsFloatStatus('Load a plan PDF first — AI extraction reads the open plan.'); return; }
+  if (!WS.pdfDoc) { wsCalcExtractSay('Load a plan PDF first — AI extraction reads the plan open on the Design canvas.'); return; }
   const apiKey = localStorage.getItem('pw_api_key');
   if (!apiKey && !(typeof aiEntitled === 'function' && aiEntitled())) {
-    wsFloatStatus('AI extraction needs an account (1 free use) or an API key — set one on the project page.');
+    wsCalcExtractSay('AI extraction needs an account (1 free use) or an API key — set one on the project page.');
     return;
   }
-  wsFloatStatus('Analysing plans with AI…');
+  wsCalcExtractSay('Analysing plans with AI — up to a minute…', true);
   try {
     const extracted = await aiExtractCore(WS.pdfDoc, WS.totalPages, apiKey);
     if (WS.projectId && typeof writeProjectSummary === 'function') {
@@ -13707,10 +13726,10 @@ async function wsRunAiExtract() {
     WS.extractData = { ...(WS.extractData || {}), ...extracted };
     if (typeof wsPushSummaryToCalc === 'function') wsPushSummaryToCalc();
     if (typeof wsUpdateProjectPill === 'function') wsUpdateProjectPill();
-    wsFloatStatus('✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence) — review every figure against the plans.');
+    wsCalcExtractSay('✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence) — review every figure against the plans.');
   } catch (err) {
     console.error('design extraction error:', err);
-    wsFloatStatus('⚠ ' + (err.message || 'Extraction failed'));
+    wsCalcExtractSay('⚠ ' + (err.message || 'Extraction failed'));
   }
 }
 

@@ -454,6 +454,16 @@ test('status pill is the one status home; Design uploads plans and runs AI extra
     'the calculator Dev Summary triggers AI extraction against the open plan');
   assert.ok(SOURCE.includes("parent.postMessage({type:'ws-ai-extract'},'*')"),
     'via a button in the Dev Summary pane');
+  // extraction feedback must land IN the pane: the canvas pill sits under the
+  // expanded panel, which made a silent success/failure look like a dead button
+  assert.ok(SOURCE.includes('function wsCalcExtractSay(text, busy)'), 'one reporter for every stage');
+  assert.ok(SOURCE.includes("f.contentWindow.postMessage({ type: 'ws-ai-extract-status', text, busy: !!busy }, '*')"),
+    'stages post back into the calculator iframes');
+  assert.ok(SOURCE.includes('id=&quot;aiExtractMsg&quot;'), 'the pane has a status line under the button');
+  assert.ok(SOURCE.includes("e.data.type === 'ws-ai-extract-status'"), 'and the calc bridge renders it');
+  const fn2 = SOURCE.slice(SOURCE.indexOf('async function wsRunAiExtract()'), SOURCE.indexOf('function wsPushSummaryToCalc'));
+  assert.ok(!/wsFloatStatus\(/.test(fn2.replace(/wsCalcExtractSay/g, '')),
+    'every wsRunAiExtract message goes through the pane reporter');
   assert.ok(!SOURCE.includes('<div class="dc-title">Project Tools</div>'),
     'the Project Tools card is gone from the project page');
 });
