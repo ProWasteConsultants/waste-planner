@@ -122,6 +122,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/layout-polish.test.js` | Shift-snap maths, room dimensions, door geometry, selection |
 | `tests/reconcile-equipment.test.js` | Compaction maths, invariants, snapshot, WMP obligations |
 | `tests/provision-zones.test.js` | Provision streams, zone types, and their four UI surfaces |
+| `tests/ai-extract.test.js` | AI plan-extraction prompt; commercial-use resolution and room seeding |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`

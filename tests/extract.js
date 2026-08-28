@@ -142,7 +142,9 @@ const LAYOUT_BLOCKS = [
   ['wsUngroupItems', /^function wsUngroupItems\(/],
   ['wsMarqueeRect', /^function wsMarqueeRect\(/],
   ['wsMarqueeHits', /^function wsMarqueeHits\(/],
-  ['wsCloneItem',       /^function wsCloneItem\(/],    ['wsSnapVertexOrtho', /^function wsSnapVertexOrtho\(/],
+  ['wsCloneItem',       /^function wsCloneItem\(/],
+  
+  ['wsSnapVertexOrtho', /^function wsSnapVertexOrtho\(/],
   ['wsSnapAxis',        /^function wsSnapAxis\(/],
   ['WS_DIM_COLOUR',     /^const WS_DIM_COLOUR = /],
   ['wsDimText',         /^function wsDimText\(/],
@@ -214,12 +216,59 @@ const BLOCKS = [
   ['wsCalibrationNumbers', /^function wsCalibrationNumbers\(/],
 ];
 
+// ── escaped (iframe srcdoc) blocks ──
+// The bin calculator lives in an <iframe srcdoc="…"> whose source is
+// HTML-entity-escaped inside index.html. Same anchor discipline as
+// extractBlock, but each line is decoded before brace-scanning and the
+// decoded text is what evaluates. One level of decoding only — `&amp;quot;`
+// in the file is `&quot;` in the calculator's own source.
+function decodeEntities(s) {
+  return s
+    .replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+function extractEscapedBlock(pattern) {
+  const hits = [];
+  for (let i = 0; i < LINES.length; i++) if (pattern.test(LINES[i])) hits.push(i);
+  if (hits.length === 0) throw new Error(`extract: no line in index.html matches ${pattern} — has it been renamed?`);
+  if (hits.length > 1) throw new Error(`extract: ${pattern} matched ${hits.length} lines (${hits.map(i => i + 1).join(', ')}) — anchor is ambiguous`);
+
+  const start = hits[0];
+  const st = { depth: 0, inString: false, inBlockComment: false, quote: null };
+  for (let i = start; i < LINES.length; i++) {
+    scanLine(decodeEntities(LINES[i]), st);
+    if (st.depth === 0 && !st.inString && !st.inBlockComment) {
+      return { text: LINES.slice(start, i + 1).map(decodeEntities).join('\n'), startLine: start + 1, endLine: i + 1 };
+    }
+  }
+  throw new Error(`extract: unterminated block starting at index.html:${start + 1}`);
+}
+
+// The calculator's commercial-use core: the COMM rate table, the AI-extraction
+// resolver (comUseKey) and the room seeding it feeds (seedComRoom), plus the
+// minimal room-model dependencies those pull in.
+const CALC_BLOCKS = [
+  ['ALLOWANCES',        /^const ALLOWANCES=\{/],
+  ['normAllow',         /^function normAllow\(/],
+  ['COMM',              /^const COMM=\{/],
+  ['comUseNorm',        /^function comUseNorm\(/],
+  ['COM_USE_RETAIL',    /^const COM_USE_RETAIL=/],
+  ['COM_USE_ALIAS',     /^const COM_USE_ALIAS=\{/],
+  ['comUseKey',         /^function comUseKey\(/],
+  ['seedComRoom',       /^function seedComRoom\(/],
+  ['DEFAULT_COMPONENT', /^const DEFAULT_COMPONENT=/],
+  ['ROOMS',             /^let ROOMS=\[\]/],
+  ['mkRoom',            /^function mkRoom\(/],
+];
+
 const EXPORTED = BLOCKS.map(([name]) => name);
 
-function buildSource(blocks) {
+function buildSource(blocks, extractor) {
   const list = blocks || BLOCKS;
+  const lift = extractor || extractBlock;
   const parts = list.map(([name, pattern]) => {
-    const b = extractBlock(pattern);
+    const b = lift(pattern);
     return { name, ...b };
   });
   parts.sort((a, b) => a.startLine - b.startLine);
@@ -258,7 +307,7 @@ function createDom(initial = {}) {
  * @returns {object} the exported bindings plus `dom` (the stub) and `meta`.
  */
 function loadEngine(opts = {}) {
-  const { code, parts } = buildSource(opts.blocks);
+  const { code, parts } = buildSource(opts.blocks, opts.extractor);
   const dom = createDom(opts.elements);
   let factory;
   try {
@@ -304,4 +353,9 @@ function loadSheet(opts = {}) {
   return loadEngine({ ...opts, blocks: SHEET_BLOCKS });
 }
 
-module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, buildSource, loadEngine, loadLayout, loadSheet, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS, SHEET_BLOCKS };
+/** The calculator's commercial-use core, lifted out of the escaped iframe srcdoc. */
+function loadCalc(opts = {}) {
+  return loadEngine({ ...opts, blocks: CALC_BLOCKS, extractor: extractEscapedBlock });
+}
+
+module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, extractEscapedBlock, decodeEntities, buildSource, loadEngine, loadLayout, loadSheet, loadCalc, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS, SHEET_BLOCKS, CALC_BLOCKS };

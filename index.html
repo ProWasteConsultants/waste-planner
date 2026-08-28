@@ -2479,6 +2479,80 @@ const COMM={
   warehouse:                {label:&quot;Warehouse&quot;,                                      metric:&quot;m² (NLA)&quot;,             defaultDays:5},
 };
 
+// ── AI → COMM RESOLUTION ─────────────────────────────────────────────────────
+// AI-extracted commercial tenancies arrive as {label,type,sqm,days_per_week}
+// with free-text types ('cafe', 'coffee shop', 'medical'). comUseKey resolves
+// them onto a COMM rate key the same way wsStreamId resolves stream vocab:
+// normalise, then exact key, then alias, then label match. A use that cannot
+// be resolved returns null and is REPORTED by seedComRoom, never guessed onto
+// a rate it doesn't have — a wrong rate on a bin schedule is worse than a gap.
+function comUseNorm(v){return String(v==null?'':v).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'');}
+// 'retail' is sized, not guessed: COMM prices small (≤100m²) and large (&gt;100m²)
+// retail differently, so this sentinel resolves against the tenancy's sqm.
+const COM_USE_RETAIL='retail_by_area';
+const COM_USE_ALIAS={
+  retail:COM_USE_RETAIL,shop:COM_USE_RETAIL,shops:COM_USE_RETAIL,generalretail:COM_USE_RETAIL,
+  coffee:'cafe',coffeeshop:'cafe',espressobar:'cafe',
+  bistro:'restaurant',eatery:'restaurant',dining:'restaurant',
+  takeawayfood:'takeaway',fastfood:'takeaway',
+  grocery:'supermarket',groceries:'supermarket',
+  offices:'office',commercialoffice:'office',coworking:'office',
+  fitness:'gym',fitnesscentre:'gym',fitnesscenter:'gym',
+  bar:'bar_club_function',pub:'bar_club_function',tavern:'bar_club_function',club:'bar_club_function',nightclub:'bar_club_function',
+  functioncentre:'function_room',functionroom:'function_room',
+  daycare:'childcare',earlylearning:'childcare',childcarecentre:'childcare',
+  butchery:'butcher',
+  salon:'hairdresser',barber:'hairdresser',beautysalon:'hairdresser',
+  hotel:'hotel_area',motel:'hotel_area',
+  convenience:'convenience_store',conveniencestore:'convenience_store',
+  bottleshop:'retail_nonfood',liquorstore:'retail_nonfood',pharmacy:'retail_nonfood',chemist:'retail_nonfood',newsagency:'retail_nonfood',
+  showroom:'show_room',bank:'banks',library:'community_library',
+  deli:'delicatessen',fishmonger:'fish_shop',fishshop:'fish_shop',seafood:'fish_shop',
+  cinema:'entertainment_venue',theatre:'entertainment_venue',
+  studentaccommodation:'student_accommodation',servicedapartments:'serviced_apartments',
+  factory:'factories',
+};
+function comUseKey(c){
+  const sqm=Math.max(0,Number(c&amp;&amp;c.sqm)||0);
+  const sized=k=&gt;k===COM_USE_RETAIL?(sqm&gt;100?'general_retail_large':'general_retail_small'):k;
+  const cand=[comUseNorm(c&amp;&amp;c.type),comUseNorm(c&amp;&amp;c.label)].filter(Boolean);
+  for(const n of cand){
+    if(COMM[n])return n;                       // already a COMM key
+    if(COM_USE_ALIAS[n])return sized(COM_USE_ALIAS[n]);
+  }
+  for(const n of cand)for(const k in COMM){    // label match ('Cafe' → cafe)
+    if(comUseNorm(COMM[k].label).indexOf(n)===0)return k;
+  }
+  return null;
+}
+// Fold AI-extracted tenancies into the room allocation. Additive only: a row
+// already present (same use, same qty — in any room) is left alone, so pushing
+// an unchanged summary on project open is a no-op; new rows land in the first
+// commercial room (created if none exists). Unresolved uses go to the drift
+// note — reported to the user, never silently dropped and never guessed.
+function seedComRoom(list){
+  const missed=[],add=[],pool=[];
+  ROOMS.forEach(r=&gt;(r.com||[]).forEach(c=&gt;pool.push(c)));
+  (Array.isArray(list)?list:[]).forEach(c=&gt;{
+    const u=comUseKey(c);
+    if(!u){missed.push(String((c&amp;&amp;(c.label||c.type))||'unnamed use'));return;}
+    const v=Math.max(0,Number(c&amp;&amp;c.sqm)||0);
+    const k=pool.findIndex(p=&gt;p.use===u&amp;&amp;(Number(p.value)||0)===v);
+    if(k&gt;=0){pool.splice(k,1);return;}
+    add.push({use:u,value:v,days:Math.max(1,Math.min(7,Number(c&amp;&amp;c.days_per_week)||COMM[u].defaultDays))});
+  });
+  if(add.length){
+    let room=ROOMS.find(r=&gt;r.kind==='com');
+    if(!room){room=mkRoom(null,'com');ROOMS.push(room);}
+    room.com=room.com.concat(add);
+  }
+  if(missed.length){
+    const m='Commercial uses read from the plan but not matched to a rate category: '+missed.join(', ')+' — add them to a commercial room manually.';
+    _driftNote=_driftNote?_driftNote+' '+m:m;
+  }
+  return{added:add,missed:missed};
+}
+
 // ── STATE PROFILES ────────────────────────────────────────────────────────────
 // streams: which waste streams this state/territory uses.
 // resRates: L/week per dwelling (all residential types).
@@ -3842,6 +3916,8 @@ window.addEventListener('message', function(e) {
       ROOMS=[mkRoom('Bin Room 1','res')];
       ROOMS[0].alloc={...agg};
     }
+    // AI-extracted commercial tenancies — additive fold, see seedComRoom
+    if(Array.isArray(d.commercial)&amp;&amp;d.commercial.length)seedComRoom(d.commercial);
     renderRooms();
     wsCalcTrigger();
   }
@@ -3888,6 +3964,12 @@ function wsUpdateVolumes() {
         council: document.getElementById('council')?.value || '',
         apt_1br: _a.apt_1br, apt_2br: _a.apt_2br, apt_3br: _a.apt_3br, townhouses: _a.townhouse,
         bin_rooms: serialiseRooms(),
+        // echoed in the AI-extract shape so the stored summary always mirrors
+        // the rooms: a use the user deletes here never resurrects on reopen
+        commercial: ROOMS.reduce((out, r) =&gt; out.concat((r.com || []).map(c =&gt; ({
+          type: c.use, label: (COMM[c.use] || {}).label || c.use,
+          sqm: Number(c.value) || 0, days_per_week: Number(c.days) || 7,
+        }))), []),
       };
       // per-room bins + footprints, for the layout generator
       const roomsOut = ((typeof lastResults !== 'undefined' &amp;&amp; lastResults) ? lastResults.rooms : []).map(r =&gt; ({
@@ -8158,7 +8240,7 @@ async function npExtract() {
     if (extracted.address) document.getElementById('np-address').value = extracted.address;
     if (extracted.council) populateCouncilSelect('np-council', extracted.state || document.getElementById('np-state').value || 'NSW', extracted.council);
     if (extracted.state) document.getElementById('np-state').value = extracted.state;
-    const mix = ['1-bed×' + (extracted.apt_1br||0), '2-bed×' + (extracted.apt_2br||0), '3-bed×' + (extracted.apt_3br||0), 'TH×' + (extracted.townhouses||0)].join('  ');
+    const mix = ['1-bed×' + (extracted.apt_1br||0), '2-bed×' + (extracted.apt_2br||0), '3-bed×' + (extracted.apt_3br||0), 'TH×' + (extracted.townhouses||0), 'Com×' + (Array.isArray(extracted.commercial) ? extracted.commercial.length : 0)].join('  ');
     msg.textContent = '✓ Extracted (' + (extracted.confidence || 'medium') + ' confidence): ' + mix + ' — review before creating.';
   } catch(err) {
     console.error('np extraction error:', err);
@@ -8198,6 +8280,7 @@ function createProject() {
       apt_2br: NP.summary?.apt_2br || 0,
       apt_3br: NP.summary?.apt_3br || 0,
       townhouses: NP.summary?.townhouses || 0,
+      commercial: Array.isArray(NP.summary?.commercial) ? NP.summary.commercial : [],
     },
     ...(NP.name && { pdf_name: NP.name }),
     complianceRuns: 0,
@@ -8491,7 +8574,7 @@ function writeProjectSummary(projectId, summary) {
   if (!p) return false;
   // Only stamp when a field that drives downstream numbers actually changed —
   // stamping on every no-op write would make everything look permanently stale.
-  const watched = ['apt_1br','apt_2br','apt_3br','townhouses','bin_rooms','council','state','address'];
+  const watched = ['apt_1br','apt_2br','apt_3br','townhouses','commercial','bin_rooms','council','state','address'];
   const changed = watched.some(k => summary[k] !== undefined &&
     JSON.stringify(summary[k]) !== JSON.stringify((p.summary || {})[k]));
   p.summary = { ...(p.summary || {}), ...summary };
@@ -8649,12 +8732,14 @@ async function detailRunExtraction() {
       apt_2br: extracted.apt_2br || 0,
       apt_3br: extracted.apt_3br || 0,
       townhouses: extracted.townhouses || 0,
+      ...(Array.isArray(extracted.commercial) && { commercial: extracted.commercial }),
     });
     const p = getProjects().find(x => x.id === currentProjectId);
     if (p) { fillSummaryForm(p); document.getElementById('detail-meta').textContent = [p.address, p.council, p.devType].filter(Boolean).join(' · '); }
     renderProjects();
     if (typeof renderAllocSummary === 'function') renderAllocSummary();
-    msg.textContent = '✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence) — review every figure against the plans before relying on it.';
+    const comN = Array.isArray(extracted.commercial) ? extracted.commercial.length : 0;
+    msg.textContent = '✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence' + (comN ? ', ' + comN + ' commercial use' + (comN > 1 ? 's' : '') : '') + ') — review every figure against the plans before relying on it.';
   } catch(err) {
     console.error('detail extraction error:', err);
     msg.textContent = '⚠️ ' + (err.message || 'Extraction failed');
@@ -12326,6 +12411,7 @@ window.createProject = async function() {
       apt_2br: NP.summary?.apt_2br || 0,
       apt_3br: NP.summary?.apt_3br || 0,
       townhouses: NP.summary?.townhouses || 0,
+      commercial: Array.isArray(NP.summary?.commercial) ? NP.summary.commercial : [],
     },
     ...(NP.name && { pdf_name: NP.name }),
     complianceRuns: 0,
@@ -13721,6 +13807,7 @@ async function wsRunAiExtract() {
         apt_2br: extracted.apt_2br || 0,
         apt_3br: extracted.apt_3br || 0,
         townhouses: extracted.townhouses || 0,
+        ...(Array.isArray(extracted.commercial) && { commercial: extracted.commercial }),
       });
     }
     WS.extractData = { ...(WS.extractData || {}), ...extracted };
@@ -13747,6 +13834,7 @@ function wsPushSummaryToCalc() {
       res_2br: s.apt_2br || 0,
       res_3br: s.apt_3br || 0,
       bin_rooms: s.bin_rooms || null,
+      commercial: Array.isArray(s.commercial) ? s.commercial : null,
     }, '*');
   }
 }
@@ -13832,6 +13920,52 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden;height
 }
 
 // ── AI EXTRACTION ──────────────────────────────────────────────
+// The ONE plan-extraction prompt, shared by aiExtractCore (new-project modal,
+// project detail, Design canvas) and runPlanExtraction (plan-upload tool).
+// It used to exist as two inline copies; the copy in aiExtractCore had been
+// trimmed and lost the commercial-tenancy rule entirely, so three of the four
+// extraction paths returned "commercial": [] on every plan set. One const,
+// referenced from both call sites, is the fix for that class of drift.
+const AIX_PROMPT = `You are a data extraction engine. You ONLY output valid JSON. You NEVER write sentences, explanations, apologies, or any text outside the JSON object. If you are uncertain about a value, use 0 or null — do NOT explain why.
+
+Extract development data from the provided Australian DA floor plan set.
+
+CRITICAL COUNTING RULES:
+- Count ONLY units that have a unit number label (e.g. G01, 101, 202) on the plan
+- Read the bedroom count from the text label on each unit (e.g. "1 BED", "2 BED", "3 BED")
+- Do NOT infer bedroom count from room layout or unit size — only use the explicit label
+- Each floor plan sheet shows ONE level — do not multiply unless the sheet notes "TYPICAL"
+- If a floor plan is labelled "TYPICAL FLOOR" or "LEVELS X-Y", multiply accordingly
+- Do NOT count the same unit twice across sheets
+- Ignore roof plans, lower ground, mezzanine, and plant room levels for unit counts
+- For each floor, list the unit numbers and their bedroom type in the notes field
+
+EXTRACTION RULES:
+1. ADDRESS — full street address, suburb, state, postcode from the title block
+2. COUNCIL/LGA — from title block or plan notes
+3. STATE — two-letter abbreviation (NSW, VIC, QLD, etc.)
+4. RESIDENTIAL UNITS — count by reading unit number labels and their bedroom text on every residential floor plan
+5. COMMERCIAL TENANCIES — one entry in "commercial" per non-residential tenancy labelled on the plan (retail, shop, cafe, restaurant, takeaway, supermarket, office, gym, medical, childcare, bar, hotel, …). Do not skip labelled tenancies, and do not invent tenancies that are not labelled. Each entry:
+   - "label": the tenancy name exactly as printed on the plan (e.g. "Retail 1", "Cafe")
+   - "type": lowercase category, one word where possible — e.g. "cafe", "restaurant", "takeaway", "supermarket", "retail", "office", "gym", "medical", "childcare", "bar", "bakery", "hairdresser", "hotel"
+   - "sqm": floor area in m² from the tenancy's area label or dimensions, or 0 if not stated
+   - "days_per_week": estimated trading days per week (7 for food/retail, 5 for office)
+
+OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
+{
+  "address": "string or null",
+  "council": "string or null",
+  "state": "NSW",
+  "townhouses": 0,
+  "apt_1br": 0,
+  "apt_2br": 0,
+  "apt_3br": 0,
+  "commercial": [{"label": "Retail 1", "type": "retail", "sqm": 120, "days_per_week": 7}],
+  "confidence": "high",
+  "notes": "list units counted per floor e.g. Ground: G01(1b),G02(1b),G03(2b). L01: 101(1b),102(2b). Total: 1b=X, 2b=Y, 3b=Z"
+}
+If the plan set has no commercial tenancies, "commercial" is [].`;
+
 // Shared AI extraction core — used by the Planner and the project detail screen
 async function aiExtractCore(pdfDoc, totalPages, apiKey) {
     // Render up to 20 pages as images
@@ -13847,37 +13981,11 @@ async function aiExtractCore(pdfDoc, totalPages, apiKey) {
     }
     contentBlocks.push({ type: 'text', text: 'Respond with only the JSON object. Start your response with {' });
 
-    const prompt = `You are a data extraction engine. You ONLY output valid JSON. You NEVER write sentences, explanations, apologies, or any text outside the JSON object. If you are uncertain about a value, use 0 or null — do NOT explain why.
-
-Extract development data from the provided Australian DA floor plan set.
-
-CRITICAL COUNTING RULES:
-- Count ONLY units that have a unit number label (e.g. G01, 101, 202) on the plan
-- Read the bedroom count from the text label on each unit (e.g. "1 BED", "2 BED", "3 BED")
-- Do NOT infer bedroom count from room layout or unit size — only use the explicit label
-- Each floor plan sheet shows ONE level — do not multiply unless the sheet notes "TYPICAL"
-- Do NOT count the same unit twice across sheets
-- Ignore roof plans, lower ground, mezzanine, and plant room levels for unit counts
-
-OUTPUT FORMAT — return ONLY this JSON:
-{
-  "address": "string or null",
-  "council": "string or null",
-  "state": "NSW",
-  "townhouses": 0,
-  "apt_1br": 0,
-  "apt_2br": 0,
-  "apt_3br": 0,
-  "commercial": [],
-  "confidence": "high",
-  "notes": "list units counted per floor"
-}`;
-
     const data = await anthropicMessages({
       tool: 'extract',
       model: 'claude-sonnet-4-6',
       max_tokens: 2048,
-      system: prompt,
+      system: AIX_PROMPT,
       messages: [{ role: 'user', content: contentBlocks }]
     }, apiKey);
 
@@ -21291,51 +21399,13 @@ async function runPlanExtraction() {
 
   setProgress(40, `Sending ${Math.min(_planPdfData.pageCount, 20)} page${_planPdfData.pageCount !== 1 ? 's' : ''} to Claude…`);
 
-  const prompt = `You are a data extraction engine. You ONLY output valid JSON. You NEVER write sentences, explanations, apologies, or any text outside the JSON object. If you are uncertain about a value, use 0 or null — do NOT explain why.
-
-Extract development data from the provided Australian DA floor plan set.
-
-CRITICAL COUNTING RULES:
-- Count ONLY units that have a unit number label (e.g. G01, 101, 202) on the plan
-- Read the bedroom count from the text label on each unit (e.g. "1 BED", "2 BED", "3 BED")
-- Do NOT infer bedroom count from room layout or unit size — only use the explicit label
-- Each floor plan sheet shows ONE level — do not multiply unless the sheet notes "TYPICAL"
-- If a floor plan is labelled "TYPICAL FLOOR" or "LEVELS X-Y", multiply accordingly
-- Do NOT count the same unit twice across sheets
-- Ignore roof plans, lower ground, mezzanine, and plant room levels for unit counts
-- For each floor, list the unit numbers and their bedroom type in the notes field
-
-EXTRACTION RULES:
-1. ADDRESS — full street address, suburb, state, postcode from the title block
-2. COUNCIL/LGA — from title block or plan notes
-3. STATE — two-letter abbreviation (NSW, VIC, QLD, etc.)
-4. RESIDENTIAL UNITS — count by reading unit number labels and their bedroom text on every residential floor plan
-5. COMMERCIAL TENANCIES — for any retail, café, restaurant, office, gym, medical use:
-   - Use type, NLA in m² (from label or dimension), estimated days/week
-
-OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
-{
-  "address": "string or null",
-  "council": "string or null",
-  "state": "NSW",
-  "townhouses": 0,
-  "apt_1br": 0,
-  "apt_2br": 0,
-  "apt_3br": 0,
-  "commercial": [],
-  "confidence": "high",
-  "notes": "list units counted per floor e.g. Ground: G01(1b),G02(1b),G03(2b). L01: 101(1b),102(2b). Total: 1b=X, 2b=Y, 3b=Z"
-}`;
-
-  // Note: prompt is sent as system param below
-
   try {
     setProgress(55, 'Analysing with Claude AI…');
     const data = await anthropicMessages({
       tool: 'extract',
       model: 'claude-sonnet-4-6',
       max_tokens: 2048,
-      system: prompt,
+      system: AIX_PROMPT,
       messages: [{role:'user', content: [...contentBlocks, {type:'text', text:'Respond with only the JSON object. Start your response with {'}]}]
     }, apiKey);
 
@@ -21441,31 +21511,22 @@ function applyPlanPrefill() {
   setTimeout(() => {
     try {
       const frame = document.getElementById('calc-iframe');
-      if (!frame) return;
-      const doc = frame.contentDocument || frame.contentWindow?.document;
-      if (!doc) return;
+      if (!frame || !frame.contentWindow) return;
 
-      const setVal = (id, val) => {
-        const el = doc.getElementById(id);
-        if (!el) return;
-        el.value = val;
-        el.dispatchEvent(new Event('input', {bubbles:true}));
-        el.dispatchEvent(new Event('change', {bubbles:true}));
-      };
-
-      setVal('res_townhouse', document.getElementById('pu-townhouses').value || 0);
-      setVal('res_1br', document.getElementById('pu-1br').value || 0);
-      setVal('res_2br', document.getElementById('pu-2br').value || 0);
-      setVal('res_3br', document.getElementById('pu-3br').value || 0);
-
-      // Set state if detected
-      if (data.state) {
-        const stateEl = doc.getElementById('state');
-        if (stateEl) {
-          stateEl.value = data.state;
-          stateEl.dispatchEvent(new Event('change', {bubbles:true}));
-        }
-      }
+      // Same bridge the Design canvas uses (ws-calc-fill) — the calculator's
+      // room model owns seeding, including resolving commercial uses onto
+      // rate categories. Unit counts come from the pu- inputs because the
+      // user can correct them on the review card before applying.
+      frame.contentWindow.postMessage({
+        type: 'ws-calc-fill',
+        state: data.state || undefined,
+        council: data.council || undefined,
+        res_townhouse: parseInt(document.getElementById('pu-townhouses').value) || 0,
+        res_1br: parseInt(document.getElementById('pu-1br').value) || 0,
+        res_2br: parseInt(document.getElementById('pu-2br').value) || 0,
+        res_3br: parseInt(document.getElementById('pu-3br').value) || 0,
+        commercial: Array.isArray(data.commercial) ? data.commercial : null,
+      }, '*');
 
       // Update apply button to show success
       const applyBtn = document.getElementById('pu-apply-btn');
