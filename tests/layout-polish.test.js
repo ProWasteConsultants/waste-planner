@@ -420,6 +420,22 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
   assert.ok(SOURCE.includes('Total room footprint'), 'and says so in plain words');
 });
 
+test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
+  const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
+  const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;', '&lt;!-- Mode --&gt;',
+                 '&gt;Project&lt;', 'Council &amp; Guidelines', '&lt;!-- Optional submission --&gt;']
+    .map(m => panel.indexOf(m));
+  assert.ok(order.every(i => i >= 0), 'all setup cards present');
+  for (let i = 1; i < order.length; i++)
+    assert.ok(order[i] > order[i - 1], 'document upload and scan lead; details follow');
+  assert.ok(SOURCE.includes('.setup-title{font-size:12px;font-weight:700;color:#00d4d4;text-transform:uppercase;'),
+    'card headings match the workspace toolbar language');
+  assert.ok(SOURCE.includes('.setup-card{background:#1c2222;border:1px solid #2f3a3a;border-radius:8px;'),
+    'cards match the workspace group cards');
+  assert.equal(SOURCE.split('id=&quot;wmp-drop-zone&quot;').length, 2, 'exactly one upload zone survived the move');
+  assert.equal(SOURCE.split('id=&quot;scan-btn&quot;').length, 2, 'exactly one scan button survived the move');
+});
+
 test('swept panel is sectioned with a live vehicle diagram', () => {
   const tab = SOURCE.slice(SOURCE.indexOf('id="ws-tab-swept"'), SOURCE.indexOf('<div class="screen fill" id="screen-calculator">'));
   for (const hd of ['>Vehicle<', '>Path<', '>Options<', '>Output<'])
