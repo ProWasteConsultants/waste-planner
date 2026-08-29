@@ -6272,6 +6272,7 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
     &lt;!-- Scan button --&gt;
     &lt;div style=&quot;display:flex;justify-content:flex-end;gap:10px;margin:-2px 0 14px;&quot;&gt;
       &lt;button class=&quot;btn&quot; onclick=&quot;resetAll()&quot;&gt;Reset&lt;/button&gt;
+      &lt;button class=&quot;btn&quot; id=&quot;browse-btn&quot; onclick=&quot;openDocViewer()&quot; title=&quot;Open the WMP and the guideline document side by side without running a scan&quot;&gt;View side by side&lt;/button&gt;
       &lt;button class=&quot;btn btn-primary btn-lg&quot; id=&quot;scan-btn&quot; onclick=&quot;startScan()&quot;&gt;Scan WMP for Compliance →&lt;/button&gt;
     &lt;/div&gt;
 
@@ -6485,6 +6486,12 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 
       &lt;!-- SUMMARY TAB --&gt;
       &lt;div class=&quot;panel-content&quot; id=&quot;tab-content-summary&quot;&gt;
+        &lt;div id=&quot;browse-note&quot; style=&quot;display:none;padding:40px 24px;text-align:center;&quot;&gt;
+          &lt;div style=&quot;font-size:24px;margin-bottom:10px;&quot;&gt;⇆&lt;/div&gt;
+          &lt;div style=&quot;font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px;&quot;&gt;Side-by-side view&lt;/div&gt;
+          &lt;div style=&quot;font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:16px;&quot;&gt;No scan has been run — this is document viewing only. Run the scan to get findings linked to both documents.&lt;/div&gt;
+          &lt;button class=&quot;btn btn-primary&quot; onclick=&quot;browseRunScan()&quot;&gt;Scan WMP for Compliance →&lt;/button&gt;
+        &lt;/div&gt;
         &lt;div id=&quot;scan-loading-panel&quot; class=&quot;scan-loading&quot;&gt;
           &lt;div class=&quot;scan-spinner&quot;&gt;&lt;/div&gt;
           &lt;div class=&quot;scan-title&quot;&gt;Scanning WMP&lt;/div&gt;
@@ -7042,18 +7049,19 @@ function docTab(which) {
 
 // Bring both panes up for the checker view: WMP always; guideline only when
 // the checked-against document actually has a PDF (never a stand-in).
+// Decide single/dual BEFORE loading the WMP pane — each pane picks its
+// fit-to-width zoom from its own measured width, so loading the WMP while
+// it still spans the full body would leave it over-zoomed once it halves.
 async function paneShowDocs() {
-  if (state.pdfDoc) paneLoad(PANE.wmp, state.pdfDoc);
   const panes = document.getElementById(&#x27;doc-panes&#x27;);
   const gdoc = await glEnsureGuidelineDoc();
+  panes.classList.toggle(&#x27;dual&#x27;, !!gdoc);
   if (gdoc) {
-    panes.classList.add(&#x27;dual&#x27;);
     const t = document.getElementById(&#x27;pane-guide-title&#x27;);
     if (t &amp;&amp; state.checkedDoc) t.textContent = state.checkedDoc.label;
-    await paneLoad(PANE.guide, gdoc);
-  } else {
-    panes.classList.remove(&#x27;dual&#x27;);
   }
+  if (state.pdfDoc) await paneLoad(PANE.wmp, state.pdfDoc);
+  if (gdoc) await paneLoad(PANE.guide, gdoc);
 }
 
 async function glEnsureGuidelineDoc() {
@@ -7079,6 +7087,31 @@ async function glOpenViewer() {
   await paneLoad(PANE.view, doc);
 }
 function glCloseViewer() { document.getElementById(&#x27;gl-viewer&#x27;).style.display = &#x27;none&#x27;; }
+
+// ── SIDE-BY-SIDE WITHOUT A SCAN ───────────────────────────────────────────
+// The dual review layout, opened straight from setup with no findings — for
+// reading the WMP against the guideline before (or instead of) scanning.
+// Everything says &quot;no scan has been run&quot;; nothing pretends to be a result.
+async function openDocViewer() {
+  if (!state.pdfDoc) { alert(&#x27;Upload a WMP PDF first.&#x27;); return; }
+  state.checkedDoc = guidelineSourceInfo();
+  document.getElementById(&#x27;setup-panel&#x27;).style.display = &#x27;none&#x27;;
+  document.getElementById(&#x27;checker-wrap&#x27;).classList.add(&#x27;active&#x27;);
+  const addr = document.getElementById(&#x27;dev-address&#x27;).value || state.wmpFileName || &#x27;Documents&#x27;;
+  document.getElementById(&#x27;checker-title&#x27;).textContent = addr;
+  document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;Guidelines: &#x27; + state.checkedDoc.short;
+  const badge = document.getElementById(&#x27;readiness-badge&#x27;);
+  badge.className = &#x27;score-badge score-ready&#x27;;
+  badge.textContent = &#x27;Not scanned&#x27;;
+  document.getElementById(&#x27;scan-loading-panel&#x27;).style.display = &#x27;none&#x27;;
+  document.getElementById(&#x27;summary-content&#x27;).style.display = &#x27;none&#x27;;
+  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;block&#x27;;
+  paneShowDocs();
+}
+function browseRunScan() {
+  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;none&#x27;;
+  startScan();
+}
 
 // ── SNIPPET MATCHING (strict, never fuzzy) ────────────────────────────────
 // Both sides are normalised the same way — lowercase, every non-alphanumeric
@@ -7438,10 +7471,22 @@ async function startScan() {
   // the result screen names exactly the document the setup card showed.
   state.checkedDoc = guidelineSourceInfo();
 
-  // Switch to checker view
+  // Switch to checker view — resetting the summary panel to its scanning
+  // state, because a previous scan or a side-by-side browse may have left
+  // the loading spinner hidden or old results showing.
   document.getElementById(&#x27;setup-panel&#x27;).style.display = &#x27;none&#x27;;
   const cw = document.getElementById(&#x27;checker-wrap&#x27;);
   cw.classList.add(&#x27;active&#x27;);
+  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;none&#x27;;
+  const slp = document.getElementById(&#x27;scan-loading-panel&#x27;);
+  // a failed scan replaces this panel&#x27;s contents with the error message —
+  // without restoring it, the next scan&#x27;s #scan-bar lookup dies
+  slp.innerHTML = SCAN_PANEL_HTML;
+  slp.style.display = &#x27;flex&#x27;;
+  document.getElementById(&#x27;summary-content&#x27;).style.display = &#x27;none&#x27;;
+  const rbadge = document.getElementById(&#x27;readiness-badge&#x27;);
+  rbadge.className = &#x27;score-badge score-ready&#x27;;
+  rbadge.textContent = &#x27;Scanning…&#x27;;
 
   // Set title + checked-against echo
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;Unnamed Project&#x27;;
@@ -7965,6 +8010,7 @@ function switchTab(name, el) {
 function backToSetup() {
   document.getElementById(&#x27;setup-panel&#x27;).style.display=&#x27;block&#x27;;
   document.getElementById(&#x27;checker-wrap&#x27;).classList.remove(&#x27;active&#x27;);
+  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;none&#x27;;
   state.scanComplete = false; state.comments = [];
   state.hl = { wmp: {}, guide: {} };
 }
@@ -7977,6 +8023,10 @@ function resetAll() {
   document.getElementById(&#x27;council-select&#x27;).value=&#x27;&#x27;;
   document.getElementById(&#x27;guideline-status&#x27;).style.display=&#x27;none&#x27;;
 }
+
+// Pristine copy of the scan spinner panel — restored on every scan start,
+// because the error path overwrites the panel (spinner, bar and all).
+const SCAN_PANEL_HTML = document.getElementById(&#x27;scan-loading-panel&#x27;).innerHTML;
 
 // Init
 setRole(&#x27;planner&#x27;, document.querySelector(&#x27;.role-tab&#x27;));
