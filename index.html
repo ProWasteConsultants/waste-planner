@@ -909,76 +909,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
         <!-- RATES & COUNCILS TAB -->
         <div class="admin-screen-panel" id="stab-rates" style="padding:20px;display:none;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Central Rates Database</div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <select id="rdb-state" onchange="rdbLoad()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
-                <option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
-              </select>
-              <select id="rdb-council" onchange="rdbLoadRates()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:180px;">
-                <option value="">State defaults</option>
-              </select>
-              <button class="btn" onclick="rdbLoad()">↻ Load</button>
-              <button class="btn btn-primary" onclick="rdbPublish()" style="background:var(--green);color:var(--dark);font-weight:700;">⬆ Publish to live</button>
-            </div>
-          </div>
-          <div id="rdb-status" style="font-size:11px;color:var(--muted);min-height:16px;margin-bottom:10px;"></div>
-
-          <div class="dc-title" style="margin-top:4px;">Residential rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">L/week per dwelling</span></div>
-          <table style="border-collapse:collapse;font-size:12px;margin-bottom:6px;">
-            <thead><tr id="rdb-res-head"><th style="text-align:left;padding:5px 10px;color:var(--muted);font-size:10px;">UNIT TYPE</th></tr></thead>
-            <tbody id="rdb-res-body"></tbody>
-          </table>
-          <button class="btn" onclick="rdbSaveRes()">💾 Save residential rates</button>
-
-          <div class="dc-title" style="margin-top:20px;">Councils <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">for the selected state</span></div>
-          <div id="rdb-councils-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <input id="rdb-new-council-label" type="text" placeholder="Council label, e.g. City of Camden" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
-            <button class="btn" onclick="rdbAddCouncil()">+ Add council</button>
-          </div>
-
-          <div class="dc-title" style="margin-top:22px;">Commercial rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">for the selected state / council scope</span></div>
-          <table style="border-collapse:collapse;font-size:11px;width:100%;">
-            <thead><tr>
-              <th style="text-align:left;padding:4px 8px;color:var(--muted);font-size:10px;">USE</th>
-              <th style="padding:4px 8px;color:var(--muted);font-size:10px;">STREAM</th>
-              <th style="padding:4px 8px;color:var(--muted);font-size:10px;">RATE</th>
-              <th style="padding:4px 8px;color:var(--muted);font-size:10px;">PER</th>
-              <th style="text-align:left;padding:4px 8px;color:var(--muted);font-size:10px;">UNIT</th>
-              <th></th>
-            </tr></thead>
-            <tbody id="rdb-com-body"></tbody>
-          </table>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
-            <select id="rdb-com-new-use" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;max-width:260px;"></select>
-            <select id="rdb-com-new-stream" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;">
-              <option>GW</option><option>REC</option><option>ORG</option><option>GLS</option>
-            </select>
-            <button class="btn" onclick="rdbAddComRow()">+ Add rate</button>
-            <button class="btn" onclick="rdbSaveCom()">💾 Save commercial rates</button>
-          </div>
-
-          <div class="dc-title" style="margin-top:22px;">State &amp; council info <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">officer contacts, guidelines, bin colours, frequencies — used by WMP generation</span></div>
-          <div id="rdb-meta-grid" style="display:grid;grid-template-columns:170px 1fr;gap:6px 10px;max-width:860px;align-items:start;"></div>
-          <button class="btn" style="margin-top:8px;" onclick="rdbSaveMeta()">💾 Save info</button>
-
-          <div class="dc-title" style="margin-top:22px;">Database viewer <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">read-only browse of any table</span></div>
-          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-            <select id="rdb-view-table" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
-              <option>res_rates</option><option>com_rates</option><option>com_uses</option><option>councils</option><option>waste_meta</option><option>equipment</option><option>wmp_content</option><option>review_requests</option><option>profiles</option>
-            </select>
-            <button class="btn" onclick="rdbViewTable()">Browse</button>
-            <span id="rdb-view-count" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="rdb-view-wrap" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;display:none;"></div>
-
-          <div style="margin-top:20px;font-size:11px;color:var(--muted);line-height:1.7;">
-            Commercial rates and WMP content are edited the same way — this panel covers the two datasets that change most.
-            Publishing regenerates <code style="background:#182121;padding:1px 5px;border-radius:4px;">waste_rates.json</code> on R2 so the calculator and your Excel generator pick up changes immediately.
-          </div>
-
-          <div style="border-top:1px solid var(--border);margin:24px 0 20px;"></div>
 
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Council Guidelines — AI Extraction</div>
@@ -1035,6 +965,83 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
           <div id="crq-wrap" style="display:flex;flex-direction:column;gap:10px;"></div>
           <div id="crx-out"></div>
+          <div style="border-top:1px solid var(--border);margin:26px 0 20px;"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Central Rates Database</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <select id="rdb-state" onchange="rdbLoad()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
+                <option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
+              </select>
+              <select id="rdb-council" onchange="rdbLoadRates()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:180px;">
+                <option value="">State defaults</option>
+              </select>
+              <button class="btn" onclick="rdbLoad()">↻ Load</button>
+              <button class="btn btn-primary" onclick="rdbPublish()" style="background:var(--green);color:var(--dark);font-weight:700;">⬆ Publish to live</button>
+            </div>
+          </div>
+          <div id="rdb-status" style="font-size:11px;color:var(--muted);min-height:16px;margin-bottom:10px;"></div>
+          <!-- What guideline document this council has on file. Selecting a
+               council for its rates and not knowing whether its guidelines
+               exist is how the same PDF gets uploaded twice. -->
+          <div id="rdb-guideline-card" style="margin-bottom:14px;"></div>
+
+          <div class="dc-title" style="margin-top:4px;">Residential rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">L/week per dwelling</span></div>
+          <table style="border-collapse:collapse;font-size:12px;margin-bottom:6px;">
+            <thead><tr id="rdb-res-head"><th style="text-align:left;padding:5px 10px;color:var(--muted);font-size:10px;">UNIT TYPE</th></tr></thead>
+            <tbody id="rdb-res-body"></tbody>
+          </table>
+          <button class="btn" onclick="rdbSaveRes()">💾 Save residential rates</button>
+
+          <div class="dc-title" style="margin-top:20px;">Council registry <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">councils in this state, across the whole platform</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;max-width:760px;">
+            The one list every council picker reads — project setup, the compliance checker, the guideline uploader above and the rate overrides here. Add a council once and it appears in all of them; removing one hides it everywhere (its rates and guidelines are kept).
+          </div>
+          <div id="rdb-councils-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input id="rdb-new-council-label" type="text" placeholder="Council label, e.g. City of Camden" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
+            <button class="btn" onclick="rdbAddCouncil()">+ Add council</button>
+          </div>
+
+          <div class="dc-title" style="margin-top:22px;">Commercial rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">for the selected state / council scope</span></div>
+          <table style="border-collapse:collapse;font-size:11px;width:100%;">
+            <thead><tr>
+              <th style="text-align:left;padding:4px 8px;color:var(--muted);font-size:10px;">USE</th>
+              <th style="padding:4px 8px;color:var(--muted);font-size:10px;">STREAM</th>
+              <th style="padding:4px 8px;color:var(--muted);font-size:10px;">RATE</th>
+              <th style="padding:4px 8px;color:var(--muted);font-size:10px;">PER</th>
+              <th style="text-align:left;padding:4px 8px;color:var(--muted);font-size:10px;">UNIT</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="rdb-com-body"></tbody>
+          </table>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+            <select id="rdb-com-new-use" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;max-width:260px;"></select>
+            <select id="rdb-com-new-stream" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;">
+              <option>GW</option><option>REC</option><option>ORG</option><option>GLS</option>
+            </select>
+            <button class="btn" onclick="rdbAddComRow()">+ Add rate</button>
+            <button class="btn" onclick="rdbSaveCom()">💾 Save commercial rates</button>
+          </div>
+
+          <div class="dc-title" style="margin-top:22px;">State &amp; council info <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">officer contacts, guidelines, bin colours, frequencies — used by WMP generation</span></div>
+          <div id="rdb-meta-grid" style="display:grid;grid-template-columns:170px 1fr;gap:6px 10px;max-width:860px;align-items:start;"></div>
+          <button class="btn" style="margin-top:8px;" onclick="rdbSaveMeta()">💾 Save info</button>
+
+          <div class="dc-title" style="margin-top:22px;">Database viewer <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">read-only browse of any table</span></div>
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+            <select id="rdb-view-table" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
+              <option>res_rates</option><option>com_rates</option><option>com_uses</option><option>councils</option><option>waste_meta</option><option>equipment</option><option>wmp_content</option><option>review_requests</option><option>profiles</option>
+            </select>
+            <button class="btn" onclick="rdbViewTable()">Browse</button>
+            <span id="rdb-view-count" style="font-size:11px;color:var(--muted);"></span>
+          </div>
+          <div id="rdb-view-wrap" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;display:none;"></div>
+
+          <div style="margin-top:20px;font-size:11px;color:var(--muted);line-height:1.7;">
+            Commercial rates and WMP content are edited the same way — this panel covers the two datasets that change most.
+            Publishing regenerates <code style="background:#182121;padding:1px 5px;border-radius:4px;">waste_rates.json</code> on R2 so the calculator and your Excel generator pick up changes immediately.
+          </div>
+
         </div>
 
         <!-- REVIEWS TAB (removed — global oversight lives in the Review Queue's staff "All organisations" scope) -->
@@ -7219,6 +7226,38 @@ function paneApplyHl(pane, n) {
   });
 }
 
+// ── COUNCIL REGISTRY FROM THE PLATFORM ────────────────────────────────────
+// The dropdown was a hard-coded list of 15 councils, so a council that exists
+// in the platform registry (the same list the guideline uploader assigns to)
+// could be UNSELECTABLE here — a guideline uploaded for it was unreachable by
+// every user. The parent pushes the live registry on open; the hard-coded
+// options remain as the offline fallback for the standalone page.
+function applyCouncilRegistry(list) {
+  const sel = document.getElementById(&#x27;council-select&#x27;);
+  if (!sel || !Array.isArray(list) || !list.length) return;
+  const cur = sel.value;
+  const byState = {};
+  list.forEach(c =&gt; {
+    if (!c || !c.value || !c.label) return;
+    const st = c.state || &#x27;Other&#x27;;
+    (byState[st] = byState[st] || []).push(c);
+    // register so updateGuidelineStatus() can resolve it — never clobber a
+    // council that already carries loaded guidelines
+    if (!GUIDELINE_DB[c.value]) GUIDELINE_DB[c.value] = { loaded: false, name: c.label, version: null, state: c.state || null };
+    else if (!GUIDELINE_DB[c.value].state &amp;&amp; c.state) GUIDELINE_DB[c.value].state = c.state;
+  });
+  let html = &#x27;&lt;option value=&quot;&quot;&gt;— Select council —&lt;/option&gt;&#x27;;
+  Object.keys(byState).sort().forEach(st =&gt; {
+    html += &#x27;&lt;optgroup label=&quot;&#x27; + st + &#x27;&quot;&gt;&#x27; +
+      byState[st].sort((a, b) =&gt; a.label.localeCompare(b.label))
+        .map(c =&gt; &#x27;&lt;option value=&quot;&#x27; + c.value + &#x27;&quot;&gt;&#x27; + c.label + &#x27;&lt;/option&gt;&#x27;).join(&#x27;&#x27;) +
+      &#x27;&lt;/optgroup&gt;&#x27;;
+  });
+  html += &#x27;&lt;optgroup label=&quot;Not listed&quot;&gt;&lt;option value=&quot;other&quot;&gt;My council isn\&#x27;t listed&lt;/option&gt;&lt;/optgroup&gt;&#x27;;
+  sel.innerHTML = html;
+  if (cur &amp;&amp; [...sel.options].some(o =&gt; o.value === cur)) sel.value = cur;
+}
+
 // ── GUIDELINE STATUS ──────────────────────────────────────────────────────
 function updateGuidelineStatus() {
   const sel = document.getElementById(&#x27;council-select&#x27;).value;
@@ -8101,6 +8140,7 @@ setRole(&#x27;planner&#x27;, document.querySelector(&#x27;.role-tab&#x27;));
 
 // ── ROLE LOCK FROM PARENT PLATFORM ───────────────────────────────────────
 window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
+  if (e.data?.type === &#x27;wp-councils&#x27;) { applyCouncilRegistry(e.data.list); return; }
   if (e.data?.type === &#x27;wp-guideline-doc&#x27;) {
     // Parent reply with the library guideline document (signed URL, cached
     // thumbnail, metadata). Only the reply to the LATEST request counts — a
@@ -8405,6 +8445,22 @@ function showScreen(name, navEl) {
       if (aiEntitled()) {
         try { const { data: { session } } = await sb.auth.getSession(); aiToken = session?.access_token || null; } catch {}
       }
+      // The checker's council list is the platform registry, not a hard-coded
+      // list — otherwise a council added in the admin panel (and assigned a
+      // guideline there) cannot be selected here.
+      const cregistry = [];
+      Object.entries(COUNCILS_BY_STATE_P).forEach(([st, list]) =>
+        (list || []).forEach(c => cregistry.push({ value: c.value, label: c.label, state: st })));
+      try {
+        const { data: crows } = await sb.from('councils').select('value,label,state');
+        (crows || []).forEach(r => {
+          if (!r.value || !r.label) return;
+          const hit = cregistry.find(c => c.value === r.value);
+          if (hit) { hit.label = r.label; hit.state = r.state || hit.state; }
+          else cregistry.push({ value: r.value, label: r.label, state: r.state || null });
+        });
+      } catch (e) { /* offline — the embedded + R2-merged list still applies */ }
+      iframe.contentWindow?.postMessage({ type: 'wp-councils', list: cregistry }, '*');
       iframe.contentWindow?.postMessage({
         type: 'wp-set-role',
         role: isCouncil ? 'council' : 'planner',
@@ -9417,6 +9473,7 @@ function rdbMsg(t, ok) {
 async function rdbLoad() {
   const st = document.getElementById('rdb-state').value;
   rdbMsg('Loading…');
+  _glBridgeAll = null;   // re-read guidelines: an upload may have just landed
   try {
     const { data: councils, error: e1 } = await sb.from('councils').select('*').eq('state', st).order('label');
     if (e1) throw e1;
@@ -9433,9 +9490,55 @@ async function rdbLoad() {
   } catch(err) { rdbMsg('Load failed: ' + (err.message || err) + ' — have you run the schema SQL?', false); }
 }
 
+// Guideline document on file for the council whose rates are being edited.
+// Same serving row and same cached thumbnail the compliance checker shows —
+// one source of truth, so the two panels can never disagree about what
+// exists.
+async function rdbGuidelineCard() {
+  const wrap = document.getElementById('rdb-guideline-card');
+  if (!wrap) return;
+  const sel = document.getElementById('rdb-council');
+  const label = sel.value ? (sel.options[sel.selectedIndex]?.text || '') : '';
+  if (!label) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Checking guidelines for ' + cgbEsc(label) + '…</div>';
+  let row = null;
+  try { row = await glBridgeServingRow(label); } catch (e) {}
+  if (!row) {
+    wrap.innerHTML = '<div style="display:flex;align-items:center;gap:10px;border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
+      '<span style="font-size:18px;opacity:.6;">📋</span>' +
+      '<div><div style="font-size:12px;font-weight:600;color:var(--text);">No guidelines stored for ' + cgbEsc(label) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);">The compliance checker will fall back to state guidelines. Upload a PDF in <b>Council Guidelines</b> above.</div></div></div>';
+    return;
+  }
+  const reqs = (row.requirements || []).length;
+  const file = row.source_file ? String(row.source_file).split('/').pop().replace(/^\d+_/, '') : null;
+  const when = row.effective_date ? 'effective ' + row.effective_date
+    : (row.created_at || row.updated_at) ? 'uploaded ' + String(row.created_at || row.updated_at).slice(0, 10) : '';
+  let url = null, thumb = null;
+  if (row.source_file) {
+    try {
+      const { data: sig } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(row.source_file, 60 * 60);
+      url = sig?.signedUrl || null;
+      if (url) thumb = await glBridgeThumb(row, url);
+    } catch (e) {}
+  }
+  wrap.innerHTML = '<div style="display:flex;gap:12px;border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
+    '<div style="width:64px;height:64px;flex-shrink:0;border:1px solid var(--border);border-radius:5px;background:#101717;display:flex;align-items:center;justify-content:center;overflow:hidden;">' +
+      (thumb ? '<img src="' + thumb + '" style="width:100%;height:100%;object-fit:cover;object-position:top;">' : '<span style="font-size:20px;opacity:.55;">📋</span>') +
+    '</div>' +
+    '<div style="min-width:0;">' +
+      '<div style="font-size:12px;font-weight:600;color:var(--text);">' + cgbEsc(row.council_name) + (row.version ? ' — v' + row.version : '') + '</div>' +
+      '<div style="font-size:11px;color:' + (reqs ? '#3DD68C' : 'var(--flag)') + ';">' +
+        (reqs ? reqs + ' approved requirements serving the checker' : 'PDF on file — no approved requirements yet, so the checker still falls back to state guidelines') + '</div>' +
+      (file || when ? '<div style="font-size:11px;color:var(--muted);">' + cgbEsc([file, when].filter(Boolean).join(' · ')) + '</div>' : '') +
+      (url ? '<a href="' + url + '" target="_blank" rel="noopener" class="btn" style="display:inline-block;margin-top:6px;padding:3px 10px;font-size:10.5px;text-decoration:none;">View PDF</a>' : '') +
+    '</div></div>';
+}
+
 async function rdbLoadRates() {
   const st = document.getElementById('rdb-state').value;
   const cv = document.getElementById('rdb-council').value || null;
+  rdbGuidelineCard();
   try {
     let q = sb.from('res_rates').select('*').eq('state', st);
     q = cv === null ? q.is('council_value', null) : q.eq('council_value', cv);
@@ -9970,13 +10073,45 @@ function cgbSetMode(m) {
     ? '⇪ Drop manufacturer spec-sheet PDFs here (or click) — each is AI-extracted into the equipment proposals queue for review. Nothing lands in the library until approved.'
     : '⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.';
 }
+// The picker offers EVERY council the platform knows: the councils registry
+// (what the rates DB and the project pickers use), plus any council that
+// already has a guideline, plus the embedded offline list. Sourcing it from
+// council_guidelines alone was a catch-22 — only councils that already had a
+// guideline could be assigned one, so a brand-new council was unreachable.
+const CGB_COUNCIL_STATE = {};       // label -> state, for the row's state autofill
 async function cgbCouncilList() {
+  const names = new Set();
+  const add = (label, state) => {
+    if (!label) return;
+    names.add(label);
+    if (state && !CGB_COUNCIL_STATE[label]) CGB_COUNCIL_STATE[label] = state;
+  };
   try {
-    const { data } = await sb.from('council_guidelines').select('council_name').is('superseded_at', null);
-    const names = [...new Set((data || []).map(r => r.council_name).filter(Boolean))].sort();
-    const dl = document.getElementById('cgb-councils');
-    if (dl) dl.innerHTML = names.map(n => `<option value="${cgbEsc(n)}">`).join('');
-  } catch (e) { /* datalist is a convenience — free text always works */ }
+    const { data } = await sb.from('councils').select('label,state').order('label');
+    (data || []).forEach(r => add(r.label, r.state));
+  } catch (e) { /* registry unreachable — the other sources still fill the list */ }
+  try {
+    const { data } = await sb.from('council_guidelines').select('council_name,state').is('superseded_at', null);
+    (data || []).forEach(r => add(r.council_name, r.state));
+  } catch (e) { /* ditto */ }
+  Object.entries(COUNCILS_BY_STATE_P).forEach(([st, list]) =>
+    (list || []).forEach(c => add(c.label, st)));
+  const dl = document.getElementById('cgb-councils');
+  if (dl) dl.innerHTML = [...names].sort().map(n => `<option value="${cgbEsc(n)}">`).join('');
+}
+// Picking a known council fills its state — the state select stays editable,
+// it is just no longer a second thing to remember.
+function cgbSetCouncil(i, el) {
+  const r = CGB.rows[i];
+  if (!r) return;
+  r.council = el.value;
+  const st = CGB_COUNCIL_STATE[el.value];
+  if (!st || r.state === st) return;
+  r.state = st;
+  // set the sibling select directly rather than re-rendering — a re-render
+  // mid-type would steal focus from the field being edited
+  const sel = el.parentElement && el.parentElement.querySelector('select');
+  if (sel) sel.value = st;
 }
 function cgbAddFiles(files) {
   [...(files || [])].forEach(f => {
@@ -9998,7 +10133,7 @@ function cgbRender() {
       <span style="font-size:10.5px;color:#9FA8DA;">spec sheet → proposals queue</span>
       <span></span><span></span>` : `
       <input type="text" list="cgb-councils" placeholder="Council (pick or type)" value="${cgbEsc(r.council)}" ${r.done || r.dead ? 'disabled' : ''}
-             oninput="CGB.rows[${i}].council=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;">
+             oninput="cgbSetCouncil(${i}, this)" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;">
       <select ${r.done || r.dead ? 'disabled' : ''} onchange="CGB.rows[${i}].state=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:11px;color:var(--text);font-family:inherit;">
         <option value="">St…</option>${['NSW','VIC','QLD','SA','WA','TAS','ACT','NT'].map(s => `<option ${r.state === s ? 'selected' : ''}>${s}</option>`).join('')}
       </select>

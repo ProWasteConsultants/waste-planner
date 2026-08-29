@@ -590,6 +590,40 @@ test('dual document view: two panes, independent controls, tabs when narrow', ()
   assert.ok(cs.includes('slp.innerHTML = SCAN_PANEL_HTML'), 'scan panel restored on every scan start');
 });
 
+test('council registry is one list: uploader, checker and rates DB all read it', () => {
+  const cs = checkerScript();
+  // the checker dropdown is filled from the platform registry — a hard-coded
+  // list made councils added in admin (and given guidelines there) unselectable
+  assert.ok(cs.includes('function applyCouncilRegistry(list)'), 'the checker accepts a council registry');
+  assert.ok(cs.includes("if (e.data?.type === 'wp-councils')"), 'and listens for it');
+  assert.ok(SOURCE.includes("type: 'wp-councils', list: cregistry"), 'the parent pushes it when the checker opens');
+  assert.ok(SOURCE.includes("sb.from('councils').select('value,label,state')"),
+    'the registry comes from the councils table, merged over the embedded list');
+  assert.ok(cs.includes('GUIDELINE_DB[c.value] = { loaded: false'),
+    'registry councils register so the guideline hierarchy resolves for them');
+  assert.ok(cs.includes("html += '<optgroup label=\"Not listed\">"), '"not listed" survives the rebuild');
+  // the guideline uploader offers every known council, not just ones that
+  // already have a guideline (that was a catch-22)
+  assert.ok(SOURCE.includes("sb.from('councils').select('label,state')"),
+    'the uploader datalist reads the registry');
+  assert.ok(SOURCE.includes('const CGB_COUNCIL_STATE = {}') && SOURCE.includes('function cgbSetCouncil(i, el)'),
+    'picking a known council fills its state');
+  assert.ok(!SOURCE.includes("const names = [...new Set((data || []).map(r => r.council_name).filter(Boolean))].sort();"),
+    'the guidelines-only datalist source is gone');
+  // admin ordering + the stored-guideline card on a council's rates
+  const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
+  assert.ok(rates.indexOf('Council Guidelines — AI Extraction') < rates.indexOf('Central Rates Database'),
+    'guideline upload/extraction leads the admin tab, above the rates');
+  assert.ok(SOURCE.includes('async function rdbGuidelineCard()') && SOURCE.includes('id="rdb-guideline-card"'),
+    'selecting a council shows what guideline it has on file');
+  assert.ok(SOURCE.includes('rdbGuidelineCard();'), 'and it refreshes with the rates');
+  assert.ok(SOURCE.includes('row = await glBridgeServingRow(label)'),
+    'the card resolves the same serving row the checker uses — one source of truth');
+  assert.ok(SOURCE.includes('_glBridgeAll = null;   // re-read guidelines'),
+    'a Load re-reads, so a just-uploaded guideline shows');
+  assert.ok(SOURCE.includes('Council registry <span'), 'the councils list says what it is for');
+});
+
 test('finding cross-references: verbatim schema, three-tier degrade, strict matching', () => {
   const cs = checkerScript();
   // schema: per-document page + VERBATIM snippet, and the prompt says so
