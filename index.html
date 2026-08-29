@@ -871,33 +871,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div class="dc-title" style="margin-top:16px;">Waste Volumes <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">from Bin Calculator</span></div>
           <div id="ds-volumes" style="font-size:12px;color:var(--muted);margin-bottom:4px;">Not calculated yet — open the project in Design and run the Bin Calculator.</div>
 
-          <div class="dc-title" style="margin-top:16px;">Plans</div>
-          <input type="file" id="ds-pdf-input" accept=".pdf" style="display:none;" onchange="detailUploadPdf(event)">
-          <div id="ds-pdf-none">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">No plans attached to this project yet.</div>
-            <button class="btn" onclick="document.getElementById('ds-pdf-input').click()">⬆ Upload PDF plan set</button>
-          </div>
-          <div id="ds-pdf-info" style="display:none;">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-              <span style="font-size:16px;">📄</span>
-              <span id="ds-pdf-name" style="font-size:12px;font-weight:600;color:var(--text);"></span>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn btn-primary" onclick="openCurrentProjectInPlanner()">Open in Design</button>
-              <button class="btn" id="ds-extract-btn" onclick="detailRunExtraction()">🤖 Extract summary with AI</button>
-              <button class="btn" onclick="document.getElementById('ds-pdf-input').click()">Replace</button>
-              <button class="btn" onclick="detailRemovePdf()" style="color:#EF8080;">Remove</button>
-            </div>
-            <div id="ds-key-row" style="display:none;margin-top:8px;">
-              <button class="btn" onclick="promptFreeSignup()" style="background:var(--teal);color:#fff;font-weight:700;width:100%;max-width:420px;margin-bottom:6px;">Create a free account — includes 1 free AI use of each tool</button>
-              <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;">Takes 30 seconds. Paid plans include 10 AI uses per tool, per day. Or paste your own Anthropic API key:</div>
-              <div style="display:flex;gap:6px;max-width:420px;">
-                <input type="password" id="ds-key-input" placeholder="sk-ant-api03-…" style="flex:1;border:1.5px solid var(--border);border-radius:7px;padding:7px 10px;font-size:11px;font-family:monospace;background:#182121;color:var(--text);outline:none;">
-                <button class="btn" onclick="dsSaveKey()">Save</button>
-              </div>
-            </div>
-            <div id="ds-extract-msg" style="font-size:11px;margin-top:8px;min-height:14px;color:var(--muted);"></div>
-          </div>
+          <!-- Plans section removed: the Documents grid below carries the
+               plan thumbnails, Open in Design and AI extraction. -->
         </div>
 
         <!-- Project Tools card removed: every tool is one click away on the nav rail. -->
@@ -8368,7 +8343,7 @@ async function removeProjectPdf(projectId) {
 function docKind(name) {
   const n = (name || '').toLowerCase();
   if (/advice|_adv/.test(n)) return 'Advice';
-  if (/wmp|waste management plan/.test(n)) return 'WMP';
+  if (/wmp|waste[ _-]?management/.test(n)) return 'WMP';
   if (/rfi/.test(n)) return 'RFI';
   if (/\.dxf$/.test(n)) return 'Export';
   if (/plan|arch|drawing|dwg/.test(n)) return 'Plans';
@@ -8464,6 +8439,7 @@ function docCardHtml(p, d) {
     `<div class="doc-menu" id="docmenu_${d.id}">` +
     `<div class="doc-menu-item" onclick="docDownload('${d.id}')">⬇ Download</div>` +
     `<div class="doc-menu-item" onclick="docShare('${d.id}')">🔗 Share link</div>` +
+    (isPdf && !isWmp ? `<div class="doc-menu-item" onclick="docOpenInCompliance('${d.id}')">✓ Open in Compliance Checker</div>` : '') +
     (isWmp ? `<div class="doc-menu-item" onclick="openCouncilSubmit()">📮 Submit WMP</div>` : '') +
     `<div class="doc-menu-sep">Treat as</div>` +
     ['Plans', 'WMP', 'Other'].map(k =>
@@ -8745,6 +8721,7 @@ function fillSummaryForm(p) {
 }
 
 async function refreshPlansUI(projectId) {
+  if (!document.getElementById('ds-pdf-none')) return;   // Plans section removed — Documents grid owns this now
   const p = getProjects().find(x => x.id === projectId);
   let rec = null;
   try { rec = await idbGetPdf(projectId); } catch(e) {}
@@ -8754,89 +8731,10 @@ async function refreshPlansUI(projectId) {
   if (has) document.getElementById('ds-pdf-name').textContent = rec?.name || p?.pdf_name || 'plans.pdf';
 }
 
-async function detailUploadPdf(event) {
-  const file = event.target.files[0];
-  event.target.value = '';
-  if (!file || !currentProjectId) return;
-  if (!file.name.toLowerCase().endsWith('.pdf')) { alert('Please select a PDF file.'); return; }
-  const buf = await file.arrayBuffer();
-  await storeProjectPdf(currentProjectId, buf, file.name);
-  const projects = getProjects();
-  const p = projects.find(x => x.id === currentProjectId);
-  if (p) { p.pdf_name = file.name; saveProjects(projects); }
-  // Invalidate the workspace's session copy so Open in Design reloads the NEW plan —
-  // without this, wsOpenProject's loadedProjectPdfFor guard keeps showing the old PDF.
-  if (typeof WS !== 'undefined') {
-    if (WS.loadedProjectPdfFor === currentProjectId) WS.loadedProjectPdfFor = null;
-    if (WS.projectId === currentProjectId && typeof wsLoadPdfBytes === 'function') {
-      WS.loadedProjectPdfFor = currentProjectId;
-      wsLoadPdfBytes(buf.slice(0), file.name).catch(() => { WS.loadedProjectPdfFor = null; });
-    }
-  }
-  await refreshPlansUI(currentProjectId);
-}
-
-async function detailRemovePdf() {
-  if (!currentProjectId) return;
-  if (!confirm('Remove the plans from this project?')) return;
-  await removeProjectPdf(currentProjectId);
-  const projects = getProjects();
-  const p = projects.find(x => x.id === currentProjectId);
-  if (p) { delete p.pdf_name; saveProjects(projects); }
-  if (typeof WS !== 'undefined' && WS.loadedProjectPdfFor === currentProjectId) WS.loadedProjectPdfFor = null;
-  await refreshPlansUI(currentProjectId);
-}
-
-function openCurrentProjectInPlanner() {
-  const p = getProjects().find(x => x.id === currentProjectId);
-  if (p) wsOpenProject(p);
-}
-
-function dsSaveKey() {
-  const key = document.getElementById('ds-key-input').value.trim();
-  if (!key.startsWith('sk-ant-')) { document.getElementById('ds-extract-msg').textContent = 'Key should start with sk-ant-'; return; }
-  localStorage.setItem('pw_api_key', key);
-  document.getElementById('ds-key-input').value = '';
-  document.getElementById('ds-key-row').style.display = 'none';
-  document.getElementById('ds-extract-msg').textContent = '✓ Key saved — run extraction again.';
-}
-
-async function detailRunExtraction() {
-  const msg = document.getElementById('ds-extract-msg');
-  const btn = document.getElementById('ds-extract-btn');
-  const apiKey = localStorage.getItem('pw_api_key');
-  if (!apiKey && !aiEntitled()) { document.getElementById('ds-key-row').style.display = ''; msg.textContent = 'Create a free account to try AI extraction (1 free use) — paid plans include 10/day. Or enter your own API key.'; return; }
-  const rec = await loadProjectPdf(currentProjectId);
-  if (!rec) { msg.textContent = '⚠️ No plans attached.'; return; }
-  btn.disabled = true;
-  msg.textContent = 'Analysing plans with AI…';
-  try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    const pdfDoc = await pdfjsLib.getDocument({ data: rec.buf.slice(0) }).promise;
-    const extracted = await aiExtractCore(pdfDoc, pdfDoc.numPages, apiKey);
-    writeProjectSummary(currentProjectId, {
-      ...(extracted.address && { address: extracted.address }),
-      ...(extracted.council && { council: extracted.council }),
-      ...(extracted.state && { state: extracted.state }),
-      apt_1br: extracted.apt_1br || 0,
-      apt_2br: extracted.apt_2br || 0,
-      apt_3br: extracted.apt_3br || 0,
-      townhouses: extracted.townhouses || 0,
-    });
-    const p = getProjects().find(x => x.id === currentProjectId);
-    if (p) { fillSummaryForm(p); document.getElementById('detail-meta').textContent = [p.address, p.council, p.devType].filter(Boolean).join(' · '); }
-    renderProjects();
-    if (typeof renderAllocSummary === 'function') renderAllocSummary();
-    msg.textContent = '✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence) — review every figure against the plans before relying on it.';
-  } catch(err) {
-    console.error('detail extraction error:', err);
-    msg.textContent = '⚠️ ' + (err.message || 'Extraction failed');
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-
+// The Plans-section helpers (upload/remove/open/extract/key entry) were
+// deleted with their card: the Documents grid + the Design tab own every
+// one of those actions now, and dead handlers with missing DOM would only
+// throw if something ever called them.
 // ── PROJECT DETAIL ────────────────────────────────────────────────────────
 function openProjectDetail(id) {
   setTimeout(docsRender, 0);
@@ -8874,7 +8772,6 @@ function openProjectDetail(id) {
   } else {
     volEl.textContent = 'Not calculated yet — open the project in Design and run the Bin Calculator.';
   }
-  document.getElementById('ds-extract-msg').textContent = '';
   refreshPlansUI(p.id);
 
   updateProgressTracker(p.status);

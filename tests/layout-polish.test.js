@@ -441,6 +441,16 @@ test('project documents are a visual card grid with cached thumbnails', () => {
   assert.ok(SOURCE.includes("cards.push(`<div class=\"doc-card doc-add\""), 'upload is a dashed tile in the grid');
   assert.ok(SOURCE.includes('function wsDxfLoadText(text)'),
     'the DXF loader is shared: file input and the grid card both use it');
+  // the old Plans section is gone — the grid owns upload/open/extract now
+  assert.ok(!SOURCE.includes('<div class="dc-title" style="margin-top:16px;">Plans</div>') &&
+            !SOURCE.includes('detailRunExtraction'),
+    'no separate Plans section or its orphaned handlers');
+  assert.ok(SOURCE.includes("if (!document.getElementById('ds-pdf-none')) return;"),
+    'refreshPlansUI no-ops safely for its remaining callers');
+  // every PDF can reach the checker: WMPs as primary, others from the menu
+  assert.ok(SOURCE.includes("docOpenInCompliance('${d.id}')") && SOURCE.includes('✓ Open in Compliance Checker'),
+    'non-WMP PDFs get the checker in the overflow menu');
+  assert.ok(SOURCE.includes("/wmp|waste[ _-]?management/"), 'WMP name inference widened');
   assert.ok(SOURCE.includes("<button class=\"doc-primary\" onclick=\"viewReviewResponse(currentProjectId)\">View response</button>"),
     'review responses render as tagged cards keeping their behaviour');
 });
