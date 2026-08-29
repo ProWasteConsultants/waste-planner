@@ -6070,7 +6070,7 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 .pdf-page-container{position:relative;box-shadow:0 2px 12px rgba(0,0,0,0.4);}
 .pdf-page-container canvas{display:block;}
 .highlight-overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}
-.hl-mark{position:absolute;border-radius:2px;cursor:pointer;transition:opacity 0.2s;}
+.hl-mark{position:absolute;border-radius:2px;cursor:pointer;transition:opacity 0.2s;pointer-events:auto;}
 .hl-mark.pass{background:var(--hl-pass);border:1px solid rgba(76,175,80,0.4);}
 .hl-mark.flag{background:var(--hl-flag);border:1px solid rgba(255,152,0,0.5);}
 .hl-mark.fail{background:var(--hl-fail);border:1px solid rgba(198,40,40,0.4);}
@@ -6177,6 +6177,43 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 .pu-field label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;}
 .pu-field input{border:1.5px solid var(--border);border-radius:7px;padding:7px 10px;font-size:13px;font-family:inherit;color:var(--text);outline:none;background:var(--white);width:100%;}
 .pu-field input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,126,126,0.1);}
+
+/* GUIDELINE SOURCE CARD */
+.gl-card{display:flex;gap:12px;padding:10px 11px;border:1px solid #2f3a3a;border-radius:7px;background:#182121;margin-top:8px;align-items:stretch;}
+.gl-card.gl-empty{border-style:dashed;border-color:#3a4747;}
+.gl-thumb{width:74px;min-height:74px;flex-shrink:0;border-radius:5px;background:#101717;border:1px solid #2C3838;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:default;}
+.gl-thumb.has-pdf{cursor:pointer;}
+.gl-thumb.has-pdf:hover{border-color:var(--teal);}
+.gl-thumb img{width:100%;height:100%;object-fit:cover;object-position:top;display:none;}
+.gl-thumb-glyph{font-size:24px;opacity:0.55;}
+.gl-card-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.gl-card-top{display:flex;align-items:center;gap:10px;}
+.gl-file{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gl-tag{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:var(--flag-bg);color:var(--flag);}
+.gl-note{font-size:10.5px;color:var(--muted);font-style:italic;}
+.gl-actions{display:flex;gap:6px;margin-top:3px;}
+.gl-actions .btn{font-size:10.5px;padding:3px 10px;}
+
+/* DUAL DOCUMENT PANES */
+.doc-panes{display:flex;overflow:hidden;min-width:0;}
+.doc-panes .pdf-viewer{flex:1;min-width:0;}
+.doc-panes #pane-guide-viewer{border-left:1px solid #222;display:none;}
+.doc-panes.dual #pane-guide-viewer{display:flex;}
+.pane-pages{display:flex;flex-direction:column;align-items:center;gap:8px;}
+.pane-title{font-size:10px;font-weight:700;color:#ddd;letter-spacing:0.5px;text-transform:uppercase;margin-right:4px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;}
+.doc-tabbar{display:none;background:#242A2A;border-bottom:1px solid var(--border);flex-shrink:0;}
+.doc-tab{flex:1;padding:8px 6px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit;border-bottom:2px solid transparent;}
+.doc-tab.tab-active{color:var(--teal);border-bottom-color:var(--teal);}
+@media (max-width:1100px){
+  .doc-panes.dual{flex-direction:column;}
+  .doc-panes.dual .doc-tabbar{display:flex;}
+  .doc-panes.dual .pdf-viewer{display:none !important;}
+  .doc-panes.dual .pdf-viewer.tab-active{display:flex !important;}
+}
+
+/* GUIDELINE INLINE VIEWER (scroll/zoom only, no annotation) */
+.glv-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:60;display:flex;align-items:center;justify-content:center;padding:20px;}
+.glv-box{width:min(920px,96vw);height:92vh;background:#525659;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.5);}
 &lt;/style&gt;
 &lt;/head&gt;
 &lt;body&gt;
@@ -6317,11 +6354,26 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
         &lt;div style=&quot;font-size:11px;color:var(--muted);margin-top:4px;&quot;&gt;Upload this council&#x27;s WMP guidelines below — they&#x27;ll be saved permanently for all future scans of this council.&lt;/div&gt;
       &lt;/div&gt;
 
+      &lt;!-- Guideline source card: shows exactly what the scan will run against.
+           gdot/gname/gmeta keep the existing status hierarchy text; the card
+           adds thumbnail, filename + date, fallback tag and the inline viewer. --&gt;
       &lt;div id=&quot;guideline-status&quot; style=&quot;display:none;&quot;&gt;
-        &lt;div class=&quot;guideline-row&quot;&gt;
-          &lt;div class=&quot;guideline-dot&quot; id=&quot;gdot&quot; style=&quot;background:#ccc;&quot;&gt;&lt;/div&gt;
-          &lt;div class=&quot;guideline-name&quot; id=&quot;gname&quot;&gt;—&lt;/div&gt;
-          &lt;div class=&quot;guideline-meta&quot; id=&quot;gmeta&quot;&gt;—&lt;/div&gt;
+        &lt;div class=&quot;gl-card&quot; id=&quot;gl-card&quot;&gt;
+          &lt;div class=&quot;gl-thumb&quot; id=&quot;gl-thumb&quot; onclick=&quot;glOpenViewer()&quot; title=&quot;&quot;&gt;
+            &lt;img id=&quot;gl-thumb-img&quot; alt=&quot;&quot;&gt;
+            &lt;div class=&quot;gl-thumb-glyph&quot; id=&quot;gl-thumb-glyph&quot;&gt;📋&lt;/div&gt;
+          &lt;/div&gt;
+          &lt;div class=&quot;gl-card-main&quot;&gt;
+            &lt;div class=&quot;gl-card-top&quot;&gt;
+              &lt;div class=&quot;guideline-dot&quot; id=&quot;gdot&quot; style=&quot;background:#ccc;&quot;&gt;&lt;/div&gt;
+              &lt;div class=&quot;guideline-name&quot; id=&quot;gname&quot;&gt;—&lt;/div&gt;
+            &lt;/div&gt;
+            &lt;div class=&quot;guideline-meta&quot; id=&quot;gmeta&quot;&gt;—&lt;/div&gt;
+            &lt;div class=&quot;gl-file&quot; id=&quot;gl-file&quot; style=&quot;display:none;&quot;&gt;&lt;/div&gt;
+            &lt;div id=&quot;gl-tags&quot; style=&quot;display:none;&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;gl-note&quot; id=&quot;gl-note&quot; style=&quot;display:none;&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;gl-actions&quot; id=&quot;gl-actions&quot; style=&quot;display:none;&quot;&gt;&lt;/div&gt;
+          &lt;/div&gt;
         &lt;/div&gt;
       &lt;/div&gt;
 
@@ -6379,19 +6431,42 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
   &lt;!-- Body --&gt;
   &lt;div class=&quot;checker-body&quot;&gt;
 
-    &lt;!-- PDF Viewer --&gt;
-    &lt;div class=&quot;pdf-viewer&quot;&gt;
-      &lt;div class=&quot;pdf-controls&quot;&gt;
-        &lt;button class=&quot;pdf-btn&quot; onclick=&quot;prevPage()&quot;&gt;◀ Prev&lt;/button&gt;
-        &lt;span class=&quot;pdf-page-info&quot; id=&quot;page-info&quot;&gt;Page 1 of 1&lt;/span&gt;
-        &lt;button class=&quot;pdf-btn&quot; onclick=&quot;nextPage()&quot;&gt;Next ▶&lt;/button&gt;
-        &lt;button class=&quot;pdf-btn&quot; onclick=&quot;zoomOut()&quot;&gt;−&lt;/button&gt;
-        &lt;span class=&quot;pdf-page-info&quot; id=&quot;zoom-info&quot;&gt;100%&lt;/span&gt;
-        &lt;button class=&quot;pdf-btn&quot; onclick=&quot;zoomIn()&quot;&gt;+&lt;/button&gt;
-        &lt;span style=&quot;margin-left:auto;font-size:10px;color:#aaa;&quot; id=&quot;hl-legend&quot;&gt;&lt;/span&gt;
+    &lt;!-- Document panes: WMP always; the guideline pane joins when the
+         checked-against document has a PDF. Narrow screens collapse the
+         pair to WMP / Guideline tabs. --&gt;
+    &lt;div class=&quot;doc-panes&quot; id=&quot;doc-panes&quot;&gt;
+      &lt;div class=&quot;doc-tabbar&quot; id=&quot;doc-tabbar&quot;&gt;
+        &lt;button class=&quot;doc-tab tab-active&quot; id=&quot;doc-tab-wmp&quot; onclick=&quot;docTab(&#x27;wmp&#x27;)&quot;&gt;WMP&lt;/button&gt;
+        &lt;button class=&quot;doc-tab&quot; id=&quot;doc-tab-guide&quot; onclick=&quot;docTab(&#x27;guide&#x27;)&quot;&gt;Guideline&lt;/button&gt;
       &lt;/div&gt;
-      &lt;div class=&quot;pdf-canvas-wrap&quot; id=&quot;pdf-canvas-wrap&quot;&gt;
-        &lt;div id=&quot;pdf-pages-container&quot;&gt;&lt;/div&gt;
+      &lt;div class=&quot;pdf-viewer tab-active&quot; id=&quot;pane-wmp-viewer&quot;&gt;
+        &lt;div class=&quot;pdf-controls&quot;&gt;
+          &lt;span class=&quot;pane-title&quot;&gt;WMP&lt;/span&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneNav(&#x27;wmp&#x27;,-1)&quot;&gt;◀&lt;/button&gt;
+          &lt;span class=&quot;pdf-page-info&quot; id=&quot;pane-wmp-info&quot;&gt;—&lt;/span&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneNav(&#x27;wmp&#x27;,1)&quot;&gt;▶&lt;/button&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneZoomBtn(&#x27;wmp&#x27;,-0.2)&quot;&gt;−&lt;/button&gt;
+          &lt;span class=&quot;pdf-page-info&quot; id=&quot;pane-wmp-zoom&quot;&gt;100%&lt;/span&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneZoomBtn(&#x27;wmp&#x27;,0.2)&quot;&gt;+&lt;/button&gt;
+          &lt;span style=&quot;margin-left:auto;font-size:10px;color:#aaa;&quot; id=&quot;hl-legend&quot;&gt;&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;pdf-canvas-wrap&quot; id=&quot;pane-wmp-wrap&quot;&gt;
+          &lt;div class=&quot;pane-pages&quot; id=&quot;pane-wmp-pages&quot;&gt;&lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;pdf-viewer&quot; id=&quot;pane-guide-viewer&quot;&gt;
+        &lt;div class=&quot;pdf-controls&quot;&gt;
+          &lt;span class=&quot;pane-title&quot; id=&quot;pane-guide-title&quot;&gt;Guideline&lt;/span&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneNav(&#x27;guide&#x27;,-1)&quot;&gt;◀&lt;/button&gt;
+          &lt;span class=&quot;pdf-page-info&quot; id=&quot;pane-guide-info&quot;&gt;—&lt;/span&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneNav(&#x27;guide&#x27;,1)&quot;&gt;▶&lt;/button&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneZoomBtn(&#x27;guide&#x27;,-0.2)&quot;&gt;−&lt;/button&gt;
+          &lt;span class=&quot;pdf-page-info&quot; id=&quot;pane-guide-zoom&quot;&gt;100%&lt;/span&gt;
+          &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneZoomBtn(&#x27;guide&#x27;,0.2)&quot;&gt;+&lt;/button&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;pdf-canvas-wrap&quot; id=&quot;pane-guide-wrap&quot;&gt;
+          &lt;div class=&quot;pane-pages&quot; id=&quot;pane-guide-pages&quot;&gt;&lt;/div&gt;
+        &lt;/div&gt;
       &lt;/div&gt;
     &lt;/div&gt;
 
@@ -6426,6 +6501,7 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
           &lt;/div&gt;
           &lt;div class=&quot;readiness-bar-wrap&quot;&gt;&lt;div class=&quot;readiness-bar&quot; id=&quot;readiness-bar&quot; style=&quot;width:0%&quot;&gt;&lt;/div&gt;&lt;/div&gt;
           &lt;div class=&quot;ai-summary-box&quot; id=&quot;ai-summary-text&quot;&gt;—&lt;/div&gt;
+          &lt;div id=&quot;checked-against-line&quot; style=&quot;font-size:11px;color:var(--muted);margin-bottom:10px;display:none;&quot;&gt;&lt;/div&gt;
           &lt;div class=&quot;action-row&quot;&gt;
             &lt;button class=&quot;btn btn-primary&quot; onclick=&quot;switchTab(&#x27;comments&#x27;,document.querySelectorAll(&#x27;.panel-tab&#x27;)[1])&quot;&gt;View All Comments&lt;/button&gt;
             &lt;button class=&quot;btn&quot; onclick=&quot;switchTab(&#x27;rfi&#x27;,document.getElementById(&#x27;tab-rfi&#x27;))&quot; id=&quot;rfi-btn&quot; style=&quot;display:none;&quot;&gt;Generate RFI&lt;/button&gt;
@@ -6509,6 +6585,25 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
   &lt;/div&gt;
 &lt;/div&gt;
 
+&lt;!-- Inline guideline viewer — scroll/zoom only, no annotation --&gt;
+&lt;div id=&quot;gl-viewer&quot; class=&quot;glv-overlay&quot; style=&quot;display:none;&quot; onclick=&quot;if(event.target===this)glCloseViewer()&quot;&gt;
+  &lt;div class=&quot;glv-box&quot;&gt;
+    &lt;div class=&quot;pdf-controls&quot;&gt;
+      &lt;span class=&quot;pane-title&quot; id=&quot;glv-title&quot; style=&quot;max-width:420px;&quot;&gt;Guideline document&lt;/span&gt;
+      &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneNav(&#x27;view&#x27;,-1)&quot;&gt;◀&lt;/button&gt;
+      &lt;span class=&quot;pdf-page-info&quot; id=&quot;glv-info&quot;&gt;—&lt;/span&gt;
+      &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneNav(&#x27;view&#x27;,1)&quot;&gt;▶&lt;/button&gt;
+      &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneZoomBtn(&#x27;view&#x27;,-0.2)&quot;&gt;−&lt;/button&gt;
+      &lt;span class=&quot;pdf-page-info&quot; id=&quot;glv-zoom&quot;&gt;100%&lt;/span&gt;
+      &lt;button class=&quot;pdf-btn&quot; onclick=&quot;paneZoomBtn(&#x27;view&#x27;,0.2)&quot;&gt;+&lt;/button&gt;
+      &lt;button class=&quot;pdf-btn&quot; style=&quot;margin-left:auto;&quot; onclick=&quot;glCloseViewer()&quot;&gt;✕ Close&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;div class=&quot;pdf-canvas-wrap&quot; id=&quot;glv-wrap&quot;&gt;
+      &lt;div class=&quot;pane-pages&quot; id=&quot;glv-pages&quot;&gt;&lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/div&gt;
+
 &lt;script&gt;
 pdfjsLib.GlobalWorkerOptions.workerSrc=&#x27;https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js&#x27;;
 
@@ -6525,10 +6620,16 @@ let state = {
   activeComment: null,
   guidelinePages: [],
   guidelineFileName: &#x27;&#x27;,
+  guidelineRawBytes: null,   // session-uploaded guideline PDF bytes (viewer + pane)
+  guidelineThumbUrl: null,   // dataURL thumb for a session upload
+  guidelineDoc: null,        // pdf.js doc for the guideline pane / viewer
+  guidelineLib: null,        // parent reply: library guideline doc (signed URL + thumb)
+  glReqId: 0,
+  checkedDoc: null,          // guidelineSourceInfo() snapshot taken at scan time
   wmpFileName: &#x27;&#x27;,
   council: &#x27;&#x27;,
   scanComplete: false,
-  highlights: {},  // page -&gt; [{x,y,w,h,result,commentId}]
+  hl: { wmp: {}, guide: {} },  // pane -&gt; page -&gt; [{id,result,snippet,rects:[{x,y,w,h}]}]
 };
 
 // ── COMMENT BANK ──────────────────────────────────────────────────────────
@@ -6708,13 +6809,342 @@ async function cgStructuredCheck() {
   const sel = document.getElementById(&#x27;council-select&#x27;);
   const name = sel.options[sel.selectedIndex]?.text || &#x27;&#x27;;
   const hit = await cgFetchStructured(name);
+  state.cgHit = hit || null;   // the source card reads this — served requirements count as council material even with no parent bridge
   if (hit &amp;&amp; state.council &amp;&amp; state.council !== &#x27;other&#x27;) {
     const meta = document.getElementById(&#x27;gmeta&#x27;), dot = document.getElementById(&#x27;gdot&#x27;), gname = document.getElementById(&#x27;gname&#x27;);
     if (dot) dot.style.background = &#x27;#4CAF50&#x27;;
     if (gname) gname.textContent = hit.council_name + &#x27; — structured requirements&#x27;;
     if (meta) { meta.textContent = `${(hit.requirements || []).length} clause-referenced requirements · v${hit.version || &#x27;—&#x27;} · shared library`; meta.style.color = &#x27;var(--pass)&#x27;; }
     document.getElementById(&#x27;guideline-status&#x27;).style.display = &#x27;block&#x27;;
+    glCardRender();
   }
+}
+
+// ── GUIDELINE SOURCE (single source of truth) ─────────────────────────────
+// One function decides what the scan runs against; the setup card, the scan
+// header and the results echo all render from it, so what is DISPLAYED and
+// what is USED can never differ. Mirrors the scan&#x27;s own hierarchy exactly:
+// council material (session upload / persisted text / served requirements),
+// else state fallback, else nothing.
+function guidelineSourceInfo() {
+  const g = GUIDELINE_DB[state.council] || {};
+  const lib = (state.guidelineLib &amp;&amp; state.guidelineLib.ok) ? state.guidelineLib : null;
+  const cg = state.cgHit || null;   // the iframe&#x27;s own anon fetch of structured requirements
+  const sessionUp = !!(state.guidelineFileName &amp;&amp; state.guidelineAllText &amp;&amp; state.guidelineAllText.length);
+  const persisted = !!g.persistedText;
+  const reqCount = (lib &amp;&amp; lib.reqCount) || (cg ? (cg.requirements || []).length : 0);
+  const served = reqCount &gt; 0;
+  if (sessionUp || persisted || served) {
+    const info = { kind: &#x27;council&#x27;, tag: null, note: null, pdf: null, url: null, thumb: null, fileName: null, dateStr: null };
+    if (sessionUp) {
+      info.label = g.name || (lib &amp;&amp; lib.councilName ? lib.councilName + &#x27; guidelines&#x27; : state.guidelineFileName);
+      info.fileName = state.guidelineFileName;
+      info.dateStr = &#x27;uploaded &#x27; + new Date().toLocaleDateString(&#x27;en-AU&#x27;);
+      info.pdf = &#x27;session&#x27;;
+      info.thumb = state.guidelineThumbUrl || null;
+      if (served) info.note = reqCount + &#x27; clause-referenced requirements from the shared library also apply&#x27;;
+    } else if (served) {
+      const nm = (lib &amp;&amp; lib.councilName) || cg.council_name;
+      const ver = (lib &amp;&amp; lib.version) || (cg &amp;&amp; cg.version) || null;
+      info.label = nm + (ver ? &#x27; guidelines v&#x27; + ver : &#x27; guidelines&#x27;);
+      info.fileName = (lib &amp;&amp; lib.fileName) || null;
+      info.dateStr = (lib &amp;&amp; lib.effectiveDate) ? (&#x27;effective &#x27; + lib.effectiveDate)
+        : (lib &amp;&amp; lib.uploadedAt) ? (&#x27;uploaded &#x27; + String(lib.uploadedAt).slice(0, 10)) : null;
+      if (lib &amp;&amp; lib.url) { info.pdf = &#x27;url&#x27;; info.url = lib.url; info.thumb = lib.thumb || null; }
+      else info.note = reqCount + &#x27; clause-referenced text requirements on file — the source PDF is not stored&#x27;;
+    } else {
+      info.label = g.name || &#x27;Council guidelines&#x27;;
+      info.dateStr = g.version ? (&#x27;v&#x27; + g.version) : null;
+      info.note = &#x27;Text extract on file — the source PDF is not stored&#x27;;
+    }
+    info.short = info.label + (info.dateStr ? &#x27;, &#x27; + info.dateStr : &#x27;&#x27;);
+    return info;
+  }
+  const sf = g.state ? STATE_GUIDELINES[g.state] : null;
+  if (sf) {
+    return { kind: &#x27;state&#x27;, label: sf.name, fileName: null, dateStr: sf.version || null,
+      tag: &#x27;State fallback — no council document&#x27;,
+      note: (lib &amp;&amp; lib.url) ? &#x27;A council PDF is on file but its requirements are not yet extracted — the scan does not use it&#x27;
+        : g.loaded ? &#x27;Listed as having guidelines, but no document text or extracted requirements are on file&#x27; : null,
+      pdf: null, url: null, thumb: null,
+      short: sf.name + (sf.version ? &#x27;, &#x27; + sf.version : &#x27;&#x27;) + &#x27; (state fallback)&#x27; };
+  }
+  return { kind: &#x27;none&#x27;, label: &#x27;No guidelines loaded&#x27;, fileName: null, dateStr: null, tag: null, note: null,
+    pdf: null, url: null, thumb: null,
+    short: &#x27;No guidelines — general waste planning principles applied&#x27; };
+}
+
+// The card renderer: fills thumbnail, file line, tag, note and actions from
+// guidelineSourceInfo(). gdot/gname/gmeta keep being written by the existing
+// status hierarchy code — this only adds the visual layer on top.
+function glCardRender() {
+  const card = document.getElementById(&#x27;gl-card&#x27;);
+  if (!card) return;
+  const s = guidelineSourceInfo();
+  card.classList.toggle(&#x27;gl-empty&#x27;, s.kind === &#x27;none&#x27;);
+  const th = document.getElementById(&#x27;gl-thumb&#x27;);
+  const img = document.getElementById(&#x27;gl-thumb-img&#x27;);
+  const glyph = document.getElementById(&#x27;gl-thumb-glyph&#x27;);
+  const hasPdf = !!s.pdf;
+  th.classList.toggle(&#x27;has-pdf&#x27;, hasPdf);
+  th.title = hasPdf ? &#x27;View document&#x27; : &#x27;&#x27;;
+  if (s.thumb) { img.src = s.thumb; img.style.display = &#x27;block&#x27;; glyph.style.display = &#x27;none&#x27;; }
+  else { img.style.display = &#x27;none&#x27;; img.removeAttribute(&#x27;src&#x27;); glyph.style.display = &#x27;block&#x27;; glyph.textContent = s.kind === &#x27;none&#x27; ? &#x27;＋&#x27; : &#x27;📋&#x27;; }
+  const fileEl = document.getElementById(&#x27;gl-file&#x27;);
+  const fileTxt = [s.fileName, s.dateStr].filter(Boolean).join(&#x27; · &#x27;);
+  fileEl.textContent = fileTxt; fileEl.style.display = fileTxt ? &#x27;block&#x27; : &#x27;none&#x27;;
+  const tags = document.getElementById(&#x27;gl-tags&#x27;);
+  tags.innerHTML = s.tag ? &#x27;&lt;span class=&quot;gl-tag&quot;&gt;&#x27; + s.tag + &#x27;&lt;/span&gt;&#x27; : &#x27;&#x27;;
+  tags.style.display = s.tag ? &#x27;block&#x27; : &#x27;none&#x27;;
+  const note = document.getElementById(&#x27;gl-note&#x27;);
+  note.textContent = s.note || &#x27;&#x27;; note.style.display = s.note ? &#x27;block&#x27; : &#x27;none&#x27;;
+  const acts = document.getElementById(&#x27;gl-actions&#x27;);
+  let a = &#x27;&#x27;;
+  if (hasPdf) a += &#x27;&lt;button class=&quot;btn&quot; onclick=&quot;glOpenViewer()&quot;&gt;View document&lt;/button&gt;&#x27;;
+  // upload action only for accounts the existing rules already let upload
+  const upVisible = document.getElementById(&#x27;guideline-upload-section&#x27;).style.display !== &#x27;none&#x27;;
+  if (s.kind === &#x27;none&#x27; &amp;&amp; upVisible) a += &#x27;&lt;button class=&quot;btn&quot; onclick=&quot;document.getElementById(\&#x27;guideline-pdf-input\&#x27;).click()&quot;&gt;Upload guidelines&lt;/button&gt;&#x27;;
+  acts.innerHTML = a; acts.style.display = a ? &#x27;flex&#x27; : &#x27;none&#x27;;
+}
+
+// Ask the parent platform for the library guideline document (signed URL +
+// cached thumbnail). The iframe only holds the anon key; the stored PDFs are
+// readable by signed-in users, so the parent does the fetch. No reply (or a
+// not-signed-in parent) just leaves the card on what the iframe knows.
+function glRequestLib(councilName) {
+  state.glReqId += 1;
+  state.guidelineLib = null;
+  state.cgHit = null;
+  state.guidelineDoc = null;
+  try { parent.postMessage({ type: &#x27;wp-guideline-req&#x27;, reqId: state.glReqId, councilName: councilName || &#x27;&#x27; }, &#x27;*&#x27;); } catch (e) {}
+}
+
+// ── DOCUMENT PANES (WMP + guideline, shared engine) ───────────────────────
+// Lazy page rendering: placeholders for every page, canvases painted when
+// scrolled near. This is what makes the page-jump contract hold on long
+// documents — every page is reachable, none is rendered before it is needed.
+function paneCreate(prefix) {
+  return { prefix, doc: null, zoom: 1.2, cur: 1, baseVp: null, rendered: new Set(), renderP: {}, tcCache: {}, io: null };
+}
+const PANE = { wmp: paneCreate(&#x27;pane-wmp&#x27;), guide: paneCreate(&#x27;pane-guide&#x27;), view: paneCreate(&#x27;glv&#x27;) };
+function paneHlKey(pane) { return pane === PANE.wmp ? &#x27;wmp&#x27; : &#x27;guide&#x27;; }
+
+async function paneLoad(pane, doc) {
+  pane.doc = doc; pane.cur = 1; pane.tcCache = {};
+  const p1 = await doc.getPage(1);
+  pane.baseVp = p1.getViewport({ scale: 1 });
+  const wrap = document.getElementById(pane.prefix + &#x27;-wrap&#x27;);
+  if (wrap &amp;&amp; wrap.clientWidth &gt; 60) {
+    pane.zoom = Math.min(Math.max((wrap.clientWidth - 40) / pane.baseVp.width, 0.5), 2);
+  }
+  paneLayout(pane);
+}
+
+function paneLayout(pane) {
+  const cont = document.getElementById(pane.prefix + &#x27;-pages&#x27;);
+  if (!cont || !pane.doc) return;
+  cont.innerHTML = &#x27;&#x27;;
+  pane.rendered = new Set(); pane.renderP = {};
+  if (pane.io) pane.io.disconnect();
+  const w = pane.baseVp.width * pane.zoom, h = pane.baseVp.height * pane.zoom;
+  for (let i = 1; i &lt;= pane.doc.numPages; i++) {
+    const d = document.createElement(&#x27;div&#x27;);
+    d.className = &#x27;pdf-page-container&#x27;;
+    d.id = pane.prefix + &#x27;-pg-&#x27; + i;
+    d.dataset.pg = i;
+    d.style.width = w + &#x27;px&#x27;; d.style.height = h + &#x27;px&#x27;;
+    d.style.background = &#x27;#fff&#x27;;
+    cont.appendChild(d);
+  }
+  const rootEl = document.getElementById(pane.prefix + &#x27;-wrap&#x27;);
+  pane.io = new IntersectionObserver(es =&gt; es.forEach(en =&gt; {
+    if (!en.isIntersecting) return;
+    const n = parseInt(en.target.dataset.pg, 10);
+    paneRenderPage(pane, n);
+    pane.cur = n; paneInfo(pane);
+  }), { root: rootEl, rootMargin: &#x27;300px 0px&#x27; });
+  cont.querySelectorAll(&#x27;.pdf-page-container&#x27;).forEach(el =&gt; pane.io.observe(el));
+  paneInfo(pane);
+  const z = document.getElementById(pane.prefix + &#x27;-zoom&#x27;);
+  if (z) z.textContent = Math.round(pane.zoom * 100) + &#x27;%&#x27;;
+}
+
+function paneRenderPage(pane, n) {
+  if (!pane.doc || n &lt; 1 || n &gt; pane.doc.numPages) return Promise.resolve();
+  if (pane.renderP[n]) return pane.renderP[n];
+  pane.renderP[n] = (async () =&gt; {
+    const pg = await pane.doc.getPage(n);
+    const vp = pg.getViewport({ scale: pane.zoom });
+    const wrap = document.getElementById(pane.prefix + &#x27;-pg-&#x27; + n);
+    if (!wrap) return;
+    const canvas = document.createElement(&#x27;canvas&#x27;);
+    canvas.width = vp.width; canvas.height = vp.height;
+    wrap.style.width = vp.width + &#x27;px&#x27;; wrap.style.height = vp.height + &#x27;px&#x27;;
+    await pg.render({ canvasContext: canvas.getContext(&#x27;2d&#x27;), viewport: vp }).promise;
+    wrap.innerHTML = &#x27;&#x27;;
+    wrap.appendChild(canvas);
+    const ov = document.createElement(&#x27;div&#x27;);
+    ov.className = &#x27;highlight-overlay&#x27;;
+    ov.id = pane.prefix + &#x27;-hl-&#x27; + n;
+    wrap.appendChild(ov);
+    paneApplyHl(pane, n);
+  })().catch(() =&gt; {});
+  return pane.renderP[n];
+}
+
+function paneInfo(pane) {
+  const el = document.getElementById(pane.prefix + &#x27;-info&#x27;);
+  if (el &amp;&amp; pane.doc) el.textContent = &#x27;Page &#x27; + pane.cur + &#x27; of &#x27; + pane.doc.numPages;
+}
+
+// Tier 1 — the contract: clicking always lands on the referenced page.
+// Tier 2 — if this finding has a strict text-layer match, scroll to it and
+// mark it active. Tier 3 — no match: stay at the page top, say nothing.
+async function paneGo(pane, n, id) {
+  if (!pane.doc || n &lt; 1 || n &gt; pane.doc.numPages) return;
+  pane.cur = n; paneInfo(pane);
+  const wrapEl = document.getElementById(pane.prefix + &#x27;-pg-&#x27; + n);
+  if (!wrapEl) return;
+  wrapEl.scrollIntoView({ behavior: &#x27;smooth&#x27;, block: &#x27;start&#x27; });
+  await paneRenderPage(pane, n);
+  if (id == null) return;
+  const mark = document.querySelector(&#x27;#&#x27; + pane.prefix + &#x27;-hl-&#x27; + n + &#x27; .hl-mark[data-id=&quot;&#x27; + id + &#x27;&quot;]&#x27;);
+  if (mark) {
+    mark.scrollIntoView({ behavior: &#x27;smooth&#x27;, block: &#x27;center&#x27; });
+    // clear active marks in THIS pane only — the other pane may be showing
+    // the same finding&#x27;s counterpart highlight
+    const cont = document.getElementById(pane.prefix + &#x27;-pages&#x27;);
+    if (cont) cont.querySelectorAll(&#x27;.hl-mark&#x27;).forEach(m =&gt; m.classList.remove(&#x27;active-hl&#x27;));
+    mark.classList.add(&#x27;active-hl&#x27;);
+  }
+}
+
+function paneNav(which, d) {
+  const pane = PANE[which];
+  if (!pane || !pane.doc) return;
+  paneGo(pane, Math.min(Math.max(pane.cur + d, 1), pane.doc.numPages));
+}
+function paneZoomBtn(which, d) {
+  const pane = PANE[which];
+  if (!pane || !pane.doc) return;
+  pane.zoom = Math.min(Math.max(pane.zoom + d, 0.5), 3);
+  paneLayout(pane);
+}
+function docTab(which) {
+  document.getElementById(&#x27;doc-tab-wmp&#x27;).classList.toggle(&#x27;tab-active&#x27;, which === &#x27;wmp&#x27;);
+  document.getElementById(&#x27;doc-tab-guide&#x27;).classList.toggle(&#x27;tab-active&#x27;, which === &#x27;guide&#x27;);
+  document.getElementById(&#x27;pane-wmp-viewer&#x27;).classList.toggle(&#x27;tab-active&#x27;, which === &#x27;wmp&#x27;);
+  document.getElementById(&#x27;pane-guide-viewer&#x27;).classList.toggle(&#x27;tab-active&#x27;, which === &#x27;guide&#x27;);
+}
+
+// Bring both panes up for the checker view: WMP always; guideline only when
+// the checked-against document actually has a PDF (never a stand-in).
+async function paneShowDocs() {
+  if (state.pdfDoc) paneLoad(PANE.wmp, state.pdfDoc);
+  const panes = document.getElementById(&#x27;doc-panes&#x27;);
+  const gdoc = await glEnsureGuidelineDoc();
+  if (gdoc) {
+    panes.classList.add(&#x27;dual&#x27;);
+    const t = document.getElementById(&#x27;pane-guide-title&#x27;);
+    if (t &amp;&amp; state.checkedDoc) t.textContent = state.checkedDoc.label;
+    await paneLoad(PANE.guide, gdoc);
+  } else {
+    panes.classList.remove(&#x27;dual&#x27;);
+  }
+}
+
+async function glEnsureGuidelineDoc() {
+  if (state.guidelineDoc) return state.guidelineDoc;
+  const src = state.checkedDoc || guidelineSourceInfo();
+  try {
+    if (src.pdf === &#x27;session&#x27; &amp;&amp; state.guidelineRawBytes) {
+      state.guidelineDoc = await pdfjsLib.getDocument({ data: state.guidelineRawBytes.slice(0) }).promise;
+    } else if (src.pdf === &#x27;url&#x27; &amp;&amp; src.url) {
+      state.guidelineDoc = await pdfjsLib.getDocument({ url: src.url }).promise;
+    }
+  } catch (e) { state.guidelineDoc = null; }
+  return state.guidelineDoc;
+}
+
+async function glOpenViewer() {
+  const src = state.checkedDoc || guidelineSourceInfo();
+  if (!src || !src.pdf) return;
+  const doc = await glEnsureGuidelineDoc();
+  if (!doc) return;
+  document.getElementById(&#x27;glv-title&#x27;).textContent = src.label + (src.dateStr ? &#x27; — &#x27; + src.dateStr : &#x27;&#x27;);
+  document.getElementById(&#x27;gl-viewer&#x27;).style.display = &#x27;flex&#x27;;
+  await paneLoad(PANE.view, doc);
+}
+function glCloseViewer() { document.getElementById(&#x27;gl-viewer&#x27;).style.display = &#x27;none&#x27;; }
+
+// ── SNIPPET MATCHING (strict, never fuzzy) ────────────────────────────────
+// Both sides are normalised the same way — lowercase, every non-alphanumeric
+// run becomes one space — which tolerates punctuation, quotes, hyphenation
+// and whitespace differences but still demands the exact word sequence. A
+// paraphrased quote, an OCR mismatch or a page with no text layer simply
+// returns null: page jump only, no highlight, no error.
+function hlNorm(s) { return String(s || &#x27;&#x27;).toLowerCase().replace(/[^a-z0-9]+/g, &#x27; &#x27;).trim(); }
+function hlLocate(items, vp, snippet) {
+  const needle = hlNorm(snippet);
+  if (needle.length &lt; 8) return null;
+  let hay = &#x27;&#x27;; const spans = [];
+  items.forEach((it, i) =&gt; {
+    const t = hlNorm(it.str);
+    if (!t) return;
+    if (hay) hay += &#x27; &#x27;;
+    spans.push({ s: hay.length, e: hay.length + t.length, i });
+    hay += t;
+  });
+  const at = hay.indexOf(needle);
+  if (at &lt; 0) return null;
+  const end = at + needle.length;
+  const rects = [];
+  spans.forEach(sp =&gt; {
+    if (sp.e &lt;= at || sp.s &gt;= end) return;
+    const it = items[sp.i], tx = it.transform;
+    const h = it.height || Math.abs(tx[3]) || 10;
+    rects.push({
+      x: tx[4] / vp.width,
+      y: 1 - ((tx[5] + h) / vp.height),
+      w: Math.max((it.width || 10) / vp.width, 0.01),
+      h: Math.max(h * 1.35 / vp.height, 0.012),
+    });
+  });
+  return rects.length ? rects : null;
+}
+async function paneFindSnippet(pane, pageNum, snippet) {
+  try {
+    if (!pane.doc || pageNum &lt; 1 || pageNum &gt; pane.doc.numPages) return null;
+    if (!pane.tcCache[pageNum]) {
+      const pg = await pane.doc.getPage(pageNum);
+      pane.tcCache[pageNum] = { items: (await pg.getTextContent()).items, vp: pg.getViewport({ scale: 1 }) };
+    }
+    return hlLocate(pane.tcCache[pageNum].items, pane.tcCache[pageNum].vp, snippet);
+  } catch (e) { return null; }
+}
+
+function paneApplyHl(pane, n) {
+  const ov = document.getElementById(pane.prefix + &#x27;-hl-&#x27; + n);
+  if (!ov) return;
+  ov.innerHTML = &#x27;&#x27;;
+  const marks = (state.hl &amp;&amp; state.hl[paneHlKey(pane)] &amp;&amp; state.hl[paneHlKey(pane)][n]) || [];
+  marks.forEach(g =&gt; {
+    g.rects.forEach(r =&gt; {
+      const m = document.createElement(&#x27;div&#x27;);
+      m.className = &#x27;hl-mark &#x27; + g.result;
+      m.dataset.id = g.id;
+      m.style.left = (r.x * 100) + &#x27;%&#x27;;
+      m.style.top = (r.y * 100) + &#x27;%&#x27;;
+      m.style.width = (r.w * 100) + &#x27;%&#x27;;
+      m.style.height = (r.h * 100) + &#x27;%&#x27;;
+      m.title = g.snippet;
+      m.onclick = () =&gt; {
+        focusComment(g.id);
+        switchTab(&#x27;comments&#x27;, document.querySelectorAll(&#x27;.panel-tab&#x27;)[1]);
+      };
+      ov.appendChild(m);
+    });
+  });
 }
 
 // ── GUIDELINE STATUS ──────────────────────────────────────────────────────
@@ -6775,6 +7205,10 @@ function updateGuidelineStatus() {
     &lt;/div&gt;`;
   document.getElementById(&#x27;scan-council-label&#x27;).textContent = g.name;
   document.getElementById(&#x27;bank-council-label&#x27;).textContent = g.name;
+
+  const selEl = document.getElementById(&#x27;council-select&#x27;);
+  glRequestLib(selEl.options[selEl.selectedIndex]?.text || &#x27;&#x27;);
+  glCardRender();
 }
 
 function updateCustomCouncil() {
@@ -6812,6 +7246,8 @@ function updateCustomCouncil() {
   document.getElementById(&#x27;scan-council-label&#x27;).textContent = name;
   document.getElementById(&#x27;bank-council-label&#x27;).textContent = name;
   document.getElementById(&#x27;guideline-upload-section&#x27;).style.display = &#x27;block&#x27;;
+  glRequestLib(name);
+  glCardRender();
 }
 
 async function handleGuidelineUpload(e) {
@@ -6855,18 +7291,37 @@ async function handleGuidelineUpload(e) {
   document.getElementById(&#x27;gmeta&#x27;).textContent = `Uploaded now · v${version} · Saved permanently for this council`;
   document.getElementById(&#x27;gmeta&#x27;).style.color = &#x27;var(--pass)&#x27;;
   document.getElementById(&#x27;guideline-status&#x27;).style.display = &#x27;block&#x27;;
+  glCardRender();
 }
 function clearGuideline() {
   state.guidelinePages = []; state.guidelineFileName = &#x27;&#x27;;
+  state.guidelineAllText = null;
+  state.guidelineRawBytes = null; state.guidelineDoc = null; state.guidelineThumbUrl = null;
   document.getElementById(&#x27;guideline-uploaded-pill&#x27;).style.display = &#x27;none&#x27;;
   document.getElementById(&#x27;guideline-pdf-input&#x27;).value = &#x27;&#x27;;
+  glCardRender();
 }
 async function loadGuidelinePDF(file) {
   const ab = await file.arrayBuffer();
+  // keep a copy of the bytes — getDocument transfers its buffer to the
+  // worker, and the dual pane / inline viewer re-open the doc from these
+  state.guidelineRawBytes = ab.slice(0);
   const doc = await pdfjsLib.getDocument({data:ab}).promise;
+  state.guidelineDoc = doc;
   const n = doc.numPages;
   state.guidelinePages = [];      // images for visual/table pages
   state.guidelineAllText = [];    // full text from every page
+
+  // card thumbnail — rendered once for the session
+  try {
+    const p1 = await doc.getPage(1);
+    const tv0 = p1.getViewport({scale:1});
+    const tv = p1.getViewport({scale: 300 / tv0.width});
+    const tcv = document.createElement(&#x27;canvas&#x27;);
+    tcv.width = tv.width; tcv.height = tv.height;
+    await p1.render({canvasContext: tcv.getContext(&#x27;2d&#x27;), viewport: tv}).promise;
+    state.guidelineThumbUrl = tcv.toDataURL(&#x27;image/png&#x27;);
+  } catch (e) { state.guidelineThumbUrl = null; }
 
   for (let i = 1; i &lt;= n; i++) {
     const page = await doc.getPage(i);
@@ -6975,19 +7430,24 @@ async function startScan() {
     checkedAt: new Date().toISOString(),
   } : null;
 
+  // One snapshot of what this scan runs against — the toolbar, the summary
+  // echo and the guideline pane all read THIS, never a recomputed value, so
+  // the result screen names exactly the document the setup card showed.
+  state.checkedDoc = guidelineSourceInfo();
+
   // Switch to checker view
   document.getElementById(&#x27;setup-panel&#x27;).style.display = &#x27;none&#x27;;
   const cw = document.getElementById(&#x27;checker-wrap&#x27;);
   cw.classList.add(&#x27;active&#x27;);
 
-  // Set title
+  // Set title + checked-against echo
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;Unnamed Project&#x27;;
   const ref = document.getElementById(&#x27;proj-ref&#x27;).value;
-  document.getElementById(&#x27;checker-title&#x27;).textContent = `${addr}${ref ? &#x27; — &#x27; + ref : &#x27;&#x27;}` +
-    (state.checkedAgainst &amp;&amp; state.checkedAgainst.version ? ` · checked against ${state.checkedAgainst.councilName} v${state.checkedAgainst.version}` : &#x27;&#x27;);
+  document.getElementById(&#x27;checker-title&#x27;).textContent = `${addr}${ref ? &#x27; — &#x27; + ref : &#x27;&#x27;}`;
+  document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;Checked against: &#x27; + state.checkedDoc.short;
 
-  // Render PDF
-  renderAllPages();
+  // Render both document panes
+  paneShowDocs();
 
   // Start scan
   const bar = document.getElementById(&#x27;scan-bar&#x27;);
@@ -7084,7 +7544,9 @@ For each requirement area, determine:
 - &quot;fail&quot;: WMP does not address this requirement or clearly fails to meet it
 - &quot;na&quot;: Not applicable to this development
 
-IMPORTANT: For each comment, identify a specific text snippet (exact words) from the WMP that is most relevant to this requirement, and which page it appears on. This will be used to highlight the relevant section in the document viewer.
+IMPORTANT — cross-references. For EVERY comment, record where it comes from in EACH document it references:
+- &quot;page&quot; + &quot;text_snippet&quot;: the WMP page number and a short VERBATIM quote (5-15 words) copied EXACTLY as the text appears in the WMP — same characters, same punctuation. Do NOT paraphrase, correct, abbreviate or clean the quote: it is machine-matched against the document&#x27;s text layer to place a highlight, and an altered quote will not match.
+- &quot;guideline_page&quot; + &quot;guideline_snippet&quot;: the same, for the council/state guideline document, when the finding is grounded in a specific guideline passage. Page numbers refer to the &quot;--- GUIDELINE PAGE n ---&quot; markers. Omit both guideline fields when the finding does not trace to a specific passage.
 
 Respond ONLY with valid JSON (no markdown, no preamble):
 {
@@ -7102,7 +7564,9 @@ Respond ONLY with valid JSON (no markdown, no preamble):
       &quot;result&quot;: &quot;pass|flag|fail|na&quot;,
       &quot;severity&quot;: &quot;high|medium|low&quot;,
       &quot;page&quot;: 2,
-      &quot;text_snippet&quot;: &quot;exact phrase from the WMP to locate and highlight — 5-15 words&quot;,
+      &quot;text_snippet&quot;: &quot;VERBATIM quote from the WMP — 5-15 words, exact characters as printed&quot;,
+      &quot;guideline_page&quot;: 14,
+      &quot;guideline_snippet&quot;: &quot;VERBATIM quote from the guideline document — 5-15 words, exact characters as printed (omit with guideline_page when not applicable)&quot;,
       &quot;assessment&quot;: &quot;what the WMP says / doesn&#x27;t say about this requirement&quot;,
       &quot;fix&quot;: &quot;specific actionable suggestion to resolve the issue (for flags/fails)&quot;,
       &quot;rfi_comment&quot;: &quot;formal RFI-ready comment text using statutory language appropriate for ${councilName}&quot;
@@ -7218,6 +7682,14 @@ function renderResults(data) {
     rn.textContent = &#x27;💡 &#x27; + data.council_risk_note;
   }
 
+  // Checked against — the same snapshot the setup card showed, by definition
+  const ca = document.getElementById(&#x27;checked-against-line&#x27;);
+  if (ca &amp;&amp; state.checkedDoc) {
+    ca.innerHTML = &#x27;Checked against: &lt;b style=&quot;color:var(--text);&quot;&gt;&#x27; + state.checkedDoc.short + &#x27;&lt;/b&gt;&#x27; +
+      (state.checkedDoc.pdf ? &#x27; · &lt;a style=&quot;color:var(--teal);cursor:pointer;&quot; onclick=&quot;glOpenViewer()&quot;&gt;View document&lt;/a&gt;&#x27; : &#x27;&#x27;);
+    ca.style.display = &#x27;block&#x27;;
+  }
+
   // Show/hide
   document.getElementById(&#x27;scan-loading-panel&#x27;).style.display = &#x27;none&#x27;;
   document.getElementById(&#x27;summary-content&#x27;).style.display = &#x27;block&#x27;;
@@ -7252,7 +7724,7 @@ function buildCommentsList(filter) {
         &lt;div class=&quot;severity-dot ${c.severity||&#x27;medium&#x27;}&quot;&gt;&lt;/div&gt;
         &lt;span class=&quot;result-pill ${c.result}&quot;&gt;${c.result.toUpperCase()}&lt;/span&gt;
         &lt;span class=&quot;comment-section&quot;&gt;${c.section||c.category}&lt;/span&gt;
-        &lt;span class=&quot;comment-page&quot;&gt;p.${c.page||&#x27;—&#x27;}&lt;/span&gt;
+        &lt;span class=&quot;comment-page&quot;&gt;p.${c.page||&#x27;—&#x27;}${c.guideline_page ? &#x27; · GL p.&#x27; + c.guideline_page : &#x27;&#x27;}&lt;/span&gt;
       &lt;/div&gt;
       &lt;div class=&quot;comment-text&quot;&gt;${c.assessment||&#x27;—&#x27;}&lt;/div&gt;
       ${fix}${rfi}
@@ -7267,17 +7739,20 @@ function filterComments(filter, el) {
   buildCommentsList(filter);
 }
 
+// Clicking a finding: guaranteed page jump in every referenced pane; snippet
+// highlight only when the text layer strictly matched; silent degrade
+// otherwise. On the tabbed (narrow) layout the relevant tab comes forward.
 function focusComment(id) {
   state.activeComment = id;
   document.querySelectorAll(&#x27;.comment-item&#x27;).forEach(el=&gt;el.classList.remove(&#x27;active&#x27;));
   const el = document.getElementById(&#x27;ci-&#x27;+id);
   if (el) el.classList.add(&#x27;active&#x27;);
   const c = state.comments.find(x=&gt;x.id===id);
-  if (c &amp;&amp; c.page) {
-    state.currentPage = c.page;
-    renderPage(c.page);
-    highlightActive(id);
-  }
+  if (!c) return;
+  if (c.page) docTab(&#x27;wmp&#x27;);
+  else if (c.guideline_page) docTab(&#x27;guide&#x27;);
+  if (c.page) paneGo(PANE.wmp, c.page, id);
+  if (c.guideline_page &amp;&amp; PANE.guide.doc) paneGo(PANE.guide, c.guideline_page, id);
 }
 
 function resolveComment(id, btn) {
@@ -7300,59 +7775,28 @@ function copyComment(id) {
 }
 
 // ── HIGHLIGHTS ────────────────────────────────────────────────────────────
-function buildHighlights() {
-  state.highlights = {};
-  state.comments.forEach(c =&gt; {
-    if (!c.page || !c.text_snippet || c.result===&#x27;na&#x27;) return;
-    const pg = c.page;
-    if (!state.highlights[pg]) state.highlights[pg] = [];
-    // Find text position using pdfTextContent
-    const pgData = state.pdfTextContent.find(p=&gt;p.page===pg);
-    if (!pgData) {
-      // Fallback: place at approximate y position based on comment index
-      const idx = state.comments.indexOf(c);
-      const vp = pgData?.viewport;
-      state.highlights[pg].push({
-        x: 0.05, y: 0.1 + (idx * 0.08) % 0.75, w: 0.9, h: 0.04,
-        result: c.result, id: c.id, snippet: c.text_snippet
-      });
-      return;
+// Strict only: a finding gets a mark when its VERBATIM snippet matches the
+// text layer of the referenced page (whitespace/punctuation tolerant, exact
+// word sequence required). Anything less — paraphrase, OCR drift, no text
+// layer — gets no mark and no error: the page jump is the contract, the
+// highlight is an enhancement. The old best-score word matching is gone
+// because it could paint the WRONG text, which is worse than none.
+async function buildHighlights() {
+  state.hl = { wmp: {}, guide: {} };
+  for (const c of state.comments) {
+    if (c.result === &#x27;na&#x27;) continue;
+    if (c.page &amp;&amp; c.text_snippet &amp;&amp; PANE.wmp.doc) {
+      const rects = await paneFindSnippet(PANE.wmp, c.page, c.text_snippet);
+      if (rects) (state.hl.wmp[c.page] = state.hl.wmp[c.page] || []).push({ id: c.id, result: c.result, snippet: c.text_snippet, rects });
     }
-    // Search for snippet words in text items
-    const snippetWords = c.text_snippet.toLowerCase().split(&#x27; &#x27;).filter(w=&gt;w.length&gt;3);
-    let bestMatch = null;
-    let bestScore = 0;
-    pgData.items.forEach(item =&gt; {
-      const words = item.str.toLowerCase();
-      const score = snippetWords.filter(w=&gt;words.includes(w)).length;
-      if (score &gt; bestScore) { bestScore=score; bestMatch=item; }
-    });
-    if (bestMatch &amp;&amp; bestScore &gt; 0) {
-      const vp = pgData.viewport;
-      // Transform from PDF space to viewport
-      const tx = bestMatch.transform;
-      const x = (tx[4] / vp.width);
-      const y = 1 - ((tx[5] + (bestMatch.height||12)) / vp.height);
-      const w = Math.min((bestMatch.width||100) / vp.width * 1.1, 0.9);
-      const h = Math.max((bestMatch.height||12) / vp.height * 1.5, 0.02);
-      state.highlights[pg].push({x, y, w, h, result:c.result, id:c.id, snippet:c.text_snippet});
-    } else {
-      // Fallback position
-      const idx = state.comments.indexOf(c);
-      state.highlights[pg].push({
-        x:0.05, y:0.08+(idx*0.07)%0.80, w:0.88, h:0.035,
-        result:c.result, id:c.id, snippet:c.text_snippet
-      });
+    if (c.guideline_page &amp;&amp; c.guideline_snippet &amp;&amp; PANE.guide.doc) {
+      const rects = await paneFindSnippet(PANE.guide, c.guideline_page, c.guideline_snippet);
+      if (rects) (state.hl.guide[c.guideline_page] = state.hl.guide[c.guideline_page] || []).push({ id: c.id, result: c.result, snippet: c.guideline_snippet, rects });
     }
-  });
-  renderPage(state.currentPage);
+  }
+  Object.keys(state.hl.wmp).forEach(p =&gt; paneApplyHl(PANE.wmp, parseInt(p, 10)));
+  Object.keys(state.hl.guide).forEach(p =&gt; paneApplyHl(PANE.guide, parseInt(p, 10)));
   updateHLLegend();
-}
-
-function highlightActive(id) {
-  document.querySelectorAll(&#x27;.hl-mark&#x27;).forEach(el=&gt;{
-    el.classList.toggle(&#x27;active-hl&#x27;, parseInt(el.dataset.id)===id);
-  });
 }
 
 function updateHLLegend() {
@@ -7362,75 +7806,9 @@ function updateHLLegend() {
     &#x27;&lt;span style=&quot;background:var(--hl-fail);padding:2px 6px;border-radius:3px;font-size:9px;&quot;&gt;Fail&lt;/span&gt;&#x27;;
 }
 
-// ── PDF RENDER ────────────────────────────────────────────────────────────
-async function renderAllPages() {
-  if (!state.pdfDoc) return;
-  const container = document.getElementById(&#x27;pdf-pages-container&#x27;);
-  container.innerHTML = &#x27;&#x27;;
-  const n = Math.min(state.pdfDoc.numPages, 20);
-  for (let i = 1; i &lt;= n; i++) {
-    const page = await state.pdfDoc.getPage(i);
-    const vp = page.getViewport({scale: state.zoom});
-    const wrapper = document.createElement(&#x27;div&#x27;);
-    wrapper.className = &#x27;pdf-page-container&#x27;;
-    wrapper.id = `pdf-page-${i}`;
-    wrapper.style.marginBottom = &#x27;8px&#x27;;
-    const canvas = document.createElement(&#x27;canvas&#x27;);
-    canvas.width = vp.width; canvas.height = vp.height;
-    await page.render({canvasContext:canvas.getContext(&#x27;2d&#x27;),viewport:vp}).promise;
-    const hlOverlay = document.createElement(&#x27;div&#x27;);
-    hlOverlay.className = &#x27;highlight-overlay&#x27;;
-    hlOverlay.id = `hl-overlay-${i}`;
-    wrapper.appendChild(canvas);
-    wrapper.appendChild(hlOverlay);
-    container.appendChild(wrapper);
-  }
-  document.getElementById(&#x27;page-info&#x27;).textContent = `${state.pdfDoc.numPages} pages`;
-  if (state.scanComplete) buildHighlights();
-}
-
-async function renderPage(pageNum) {
-  if (!state.pdfDoc) return;
-  // Scroll to page
-  const pageEl = document.getElementById(`pdf-page-${pageNum}`);
-  if (pageEl) pageEl.scrollIntoView({behavior:&#x27;smooth&#x27;,block:&#x27;start&#x27;});
-  // Re-apply highlights for this page
-  applyHighlightsToPage(pageNum);
-  document.getElementById(&#x27;page-info&#x27;).textContent = `Page ${pageNum} of ${state.pdfDoc.numPages}`;
-}
-
-function applyHighlightsToPage(pageNum) {
-  const overlay = document.getElementById(`hl-overlay-${pageNum}`);
-  if (!overlay) return;
-  const canvas = overlay.previousElementSibling;
-  if (!canvas) return;
-  overlay.innerHTML = &#x27;&#x27;;
-  const hlsForPage = state.highlights[pageNum] || [];
-  hlsForPage.forEach(hl =&gt; {
-    const mark = document.createElement(&#x27;div&#x27;);
-    mark.className = `hl-mark ${hl.result}`;
-    mark.dataset.id = hl.id;
-    mark.style.left   = (hl.x * 100) + &#x27;%&#x27;;
-    mark.style.top    = (hl.y * 100) + &#x27;%&#x27;;
-    mark.style.width  = (hl.w * 100) + &#x27;%&#x27;;
-    mark.style.height = (hl.h * 100) + &#x27;%&#x27;;
-    mark.title = hl.snippet;
-    mark.onclick = () =&gt; {
-      focusComment(hl.id);
-      switchTab(&#x27;comments&#x27;, document.querySelectorAll(&#x27;.panel-tab&#x27;)[1]);
-    };
-    overlay.appendChild(mark);
-  });
-}
-
-function prevPage() {
-  if (state.currentPage &gt; 1) { state.currentPage--; renderPage(state.currentPage); }
-}
-function nextPage() {
-  if (state.pdfDoc &amp;&amp; state.currentPage &lt; state.pdfDoc.numPages) { state.currentPage++; renderPage(state.currentPage); }
-}
-function zoomIn()  { state.zoom = Math.min(state.zoom + 0.25, 3.0); document.getElementById(&#x27;zoom-info&#x27;).textContent=Math.round(state.zoom*100)+&#x27;%&#x27;; renderAllPages(); }
-function zoomOut() { state.zoom = Math.max(state.zoom - 0.25, 0.75); document.getElementById(&#x27;zoom-info&#x27;).textContent=Math.round(state.zoom*100)+&#x27;%&#x27;; renderAllPages(); }
+// (Single-viewer renderAllPages/renderPage and their zoom/nav helpers are
+// gone — the shared pane engine above renders both documents lazily, with no
+// 20-page cap, so every referenced page is reachable.)
 
 // ── RFI OUTPUT ────────────────────────────────────────────────────────────
 function buildRFI(data) {
@@ -7585,6 +7963,7 @@ function backToSetup() {
   document.getElementById(&#x27;setup-panel&#x27;).style.display=&#x27;block&#x27;;
   document.getElementById(&#x27;checker-wrap&#x27;).classList.remove(&#x27;active&#x27;);
   state.scanComplete = false; state.comments = [];
+  state.hl = { wmp: {}, guide: {} };
 }
 function resetAll() {
   clearWMP(); clearGuideline();
@@ -7601,6 +7980,16 @@ setRole(&#x27;planner&#x27;, document.querySelector(&#x27;.role-tab&#x27;));
 
 // ── ROLE LOCK FROM PARENT PLATFORM ───────────────────────────────────────
 window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
+  if (e.data?.type === &#x27;wp-guideline-doc&#x27;) {
+    // Parent reply with the library guideline document (signed URL, cached
+    // thumbnail, metadata). Only the reply to the LATEST request counts — a
+    // slow answer for a council the user has already switched away from
+    // must not repaint the card.
+    if (e.data.reqId !== state.glReqId) return;
+    state.guidelineLib = e.data;
+    glCardRender();
+    return;
+  }
   if (e.data?.type === &#x27;wp-set-role&#x27;) {
     state.aiIncluded = !!e.data.aiIncluded;
     state.aiToken = e.data.aiToken || null;
@@ -8567,6 +8956,95 @@ async function docsThumbBackfill(p, docs) {
     if (g) g.style.display = 'none';
   }
 }
+// ── GUIDELINE DOC BRIDGE (compliance checker) ──────────────────────────────
+// The checker iframe holds only the anon key; the stored guideline PDFs in
+// project-plans/guidelines/ are readable by signed-in users (C2 storage
+// policy). So the iframe asks us: we resolve the SAME serving row its
+// structured-requirements fetch uses (live row with requirements, else the
+// newest version that has them, else live), sign a URL for the stored PDF and
+// hand back a thumbnail — rendered once, cached in IDB and as a PNG in the
+// bucket under guideline-thumbs/, never re-rendered per visit.
+let _glBridgeAll = null;
+function glBridgeNorm(s) { return String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
+async function glBridgeServingRow(councilName) {
+  const t = glBridgeNorm(councilName);
+  if (!t) return null;
+  if (!_glBridgeAll) {
+    const { data, error } = await sb.from('council_guidelines').select('*').order('version', { ascending: false });
+    if (error) return null;
+    const serving = {};
+    (data || []).forEach(r => {
+      const k = r.council_key || r.council_name;
+      const g = serving[k] = serving[k] || {};
+      if (!r.superseded_at && !g.live) g.live = r;
+      if ((r.requirements || []).length && !g.withReqs) g.withReqs = r;
+    });
+    _glBridgeAll = Object.values(serving).map(g =>
+      (g.live && (g.live.requirements || []).length) ? g.live : (g.withReqs || g.live)).filter(Boolean);
+  }
+  return _glBridgeAll.find(r => { const n = glBridgeNorm(r.council_name); return n === t || n.includes(t) || t.includes(n); }) || null;
+}
+function glBridgeDataUrl(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return 'data:image/png;base64,' + btoa(s);
+}
+async function glBridgeThumb(row, signedUrl) {
+  const rid = row.id || ((row.council_key || 'doc') + '_v' + (row.version || 1));
+  const key = 'gthumb:' + rid;
+  try { const c = await idbGetPdf(key); if (c) return glBridgeDataUrl(c.buf); } catch (e) {}
+  const path = 'guideline-thumbs/' + rid + '.png';
+  try {
+    const { data } = await sb.storage.from(PLANS_BUCKET).download(path);
+    if (data) { const buf = await data.arrayBuffer(); try { await idbPutPdf(key, buf, 'thumb.png'); } catch (e) {} return glBridgeDataUrl(buf); }
+  } catch (e) {}
+  try {
+    if (!window.pdfjsLib) return null;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const doc = await pdfjsLib.getDocument({ url: signedUrl }).promise;
+    const page = await doc.getPage(1);
+    const vp0 = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: 480 / vp0.width });
+    const canvas = document.createElement('canvas');
+    canvas.width = vp.width; canvas.height = vp.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    if (!blob) return null;
+    const buf = await blob.arrayBuffer();
+    try { await idbPutPdf(key, buf, 'thumb.png'); } catch (e) {}
+    try { await sb.storage.from(PLANS_BUCKET).upload(path, blob, { contentType: 'image/png' }); } catch (e) {}
+    return glBridgeDataUrl(buf);
+  } catch (e) { return null; }
+}
+window.addEventListener('message', async (e) => {
+  if (!e.data || e.data.type !== 'wp-guideline-req') return;
+  const reply = { type: 'wp-guideline-doc', reqId: e.data.reqId, ok: false };
+  try {
+    if (typeof sb !== 'undefined' && sb && currentUser) {
+      const row = await glBridgeServingRow(e.data.councilName);
+      if (row) {
+        reply.ok = true;
+        reply.councilName = row.council_name;
+        reply.version = row.version ?? null;
+        reply.versionLabel = row.version_label || null;
+        reply.effectiveDate = row.effective_date || null;
+        reply.uploadedAt = row.created_at || row.updated_at || null;
+        reply.reqCount = (row.requirements || []).length;
+        if (row.source_file) {
+          reply.fileName = String(row.source_file).split('/').pop().replace(/^\d+_/, '');
+          try {
+            const { data: sig } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(row.source_file, 60 * 60);
+            if (sig?.signedUrl) reply.url = sig.signedUrl;
+          } catch (err) {}
+          if (reply.url) reply.thumb = await glBridgeThumb(row, reply.url);
+        }
+      }
+    }
+  } catch (err) {}
+  try { e.source && e.source.postMessage(reply, '*'); } catch (err) {}
+});
+
 async function docOpenInDesignDxf(docId) {
   const rec = await docLoad(currentProjectId, docId); if (!rec) return alert('Document unavailable offline.');
   showScreen('workspace', document.getElementById('nav-workspace'));

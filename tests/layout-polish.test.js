@@ -486,6 +486,103 @@ test('compliance checker setup: upload + scan at the top, toolbar-style headings
   assert.equal(SOURCE.split('id=&quot;scan-btn&quot;').length, 2, 'exactly one scan button survived the move');
 });
 
+// ── checker: guideline card + dual view + cross-references ──────────────────
+function checkerScript() {
+  const a = SOURCE.indexOf('id="compliance-iframe" srcdoc="');
+  const b = SOURCE.indexOf('&quot; sandbox=&quot;allow-scripts', a);
+  assert.ok(a >= 0 && b > a, 'checker srcdoc bounds');
+  return SOURCE.slice(a, b)
+    .replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+function extractCheckerFn(src, name) {
+  const at = src.indexOf('function ' + name);
+  assert.ok(at >= 0, name + ' exists in the checker');
+  let depth = 0;
+  for (let j = src.indexOf('{', at); j < src.length; j++) {
+    if (src[j] === '{') depth++;
+    else if (src[j] === '}') { depth--; if (!depth) return src.slice(at, j + 1); }
+  }
+  throw new Error('unbalanced braces for ' + name);
+}
+
+test('guideline source card: one source of truth, honest fallback states', () => {
+  const cs = checkerScript();
+  assert.ok(cs.includes('function guidelineSourceInfo()'), 'a single function decides what the scan runs against');
+  // the scan snapshots it and every echo reads the snapshot — displayed and
+  // used can never differ
+  assert.ok(cs.includes('state.checkedDoc = guidelineSourceInfo();'), 'scan takes one snapshot');
+  assert.ok(cs.includes("'Checked against: ' + state.checkedDoc.short"), 'toolbar echoes the snapshot');
+  assert.ok(cs.includes('checked-against-line') && cs.includes('state.checkedDoc.short'),
+    'the results screen names the same document');
+  assert.ok(cs.includes('State fallback — no council document'), 'state fallback is tagged, not disguised');
+  assert.ok(cs.includes('No guidelines loaded'), 'empty state is stated plainly');
+  assert.ok(SOURCE.includes('.gl-card.gl-empty{border-style:dashed'), 'empty state renders as a dashed card');
+  // card anatomy + inline viewer (scroll/zoom only)
+  for (const id of ['id=&quot;gl-card&quot;', 'id=&quot;gl-thumb&quot;', 'id=&quot;gl-file&quot;', 'id=&quot;gl-viewer&quot;'])
+    assert.ok(SOURCE.includes(id), id + ' present');
+  assert.ok(cs.includes('function glOpenViewer()') && cs.includes('function glCloseViewer()'), 'inline viewer opens and closes');
+  // gdot/gname/gmeta survive — the existing fallback hierarchy text is untouched
+  for (const id of ['id=&quot;gdot&quot;', 'id=&quot;gname&quot;', 'id=&quot;gmeta&quot;'])
+    assert.ok(SOURCE.includes(id), id + ' kept for the status writers');
+  // thumbnail: rendered once, cached in IDB and the bucket — parent bridge
+  assert.ok(cs.includes("type: 'wp-guideline-req'"), 'iframe asks the parent for the library doc');
+  assert.ok(SOURCE.includes("e.data.type !== 'wp-guideline-req'"), 'parent bridge answers with a signed URL + thumb');
+  assert.ok(SOURCE.includes("'guideline-thumbs/' + rid + '.png'"), 'thumb cached as PNG in storage');
+  assert.ok(SOURCE.includes("'gthumb:' + rid"), 'thumb cached in IDB per device');
+  assert.ok(SOURCE.includes('async function glBridgeThumb'), 'bridge renders page 1 only when neither cache has it');
+  // stale replies for a council the user already left never repaint the card
+  assert.ok(cs.includes('e.data.reqId !== state.glReqId'), 'only the latest request wins');
+});
+
+test('dual document view: two panes, independent controls, tabs when narrow', () => {
+  for (const id of ['id=&quot;doc-panes&quot;', 'id=&quot;pane-wmp-viewer&quot;', 'id=&quot;pane-guide-viewer&quot;', 'id=&quot;doc-tabbar&quot;'])
+    assert.ok(SOURCE.includes(id), id + ' present');
+  const cs = checkerScript();
+  assert.ok(cs.includes("paneNav('wmp'") && cs.includes("paneNav('guide'"), 'independent page controls');
+  assert.ok(cs.includes("paneZoomBtn('wmp'") && cs.includes("paneZoomBtn('guide'"), 'independent zoom controls');
+  assert.ok(SOURCE.includes('@media (max-width:1100px)') &&
+            SOURCE.includes('.doc-panes.dual .pdf-viewer.tab-active{display:flex !important;}'),
+    'panes collapse to WMP / Guideline tabs on small screens');
+  assert.ok(cs.includes('IntersectionObserver'), 'pages render lazily');
+  assert.ok(!cs.includes('numPages, 20'), 'the 20-page render cap is gone — every referenced page is reachable');
+  // the guideline pane shows the checked-against document or nothing — never a stand-in
+  assert.ok(cs.includes("panes.classList.remove('dual')"), 'no guideline PDF, no second pane');
+});
+
+test('finding cross-references: verbatim schema, three-tier degrade, strict matching', () => {
+  const cs = checkerScript();
+  // schema: per-document page + VERBATIM snippet, and the prompt says so
+  assert.ok(cs.includes('"guideline_page"') && cs.includes('"guideline_snippet"'), 'guideline refs in the result schema');
+  assert.ok(cs.includes('VERBATIM'), 'the scan prompt demands exact quotes');
+  assert.ok(cs.includes('Do NOT paraphrase'), 'and forbids cleanup');
+  // tier 1: clicking a finding jumps both panes to their referenced pages
+  assert.ok(cs.includes('paneGo(PANE.wmp, c.page, id)') &&
+            cs.includes('paneGo(PANE.guide, c.guideline_page, id)'), 'page jump is the contract, in both panes');
+  assert.ok(cs.includes("docTab('wmp')") && cs.includes("docTab('guide')"), 'on tabs, the jump brings the relevant tab forward');
+  // tier 3: every failure path returns null silently
+  assert.ok(cs.includes('catch (e) { return null; }'), 'no text layer / no match degrades silently');
+  assert.ok(!cs.includes('bestScore'), 'the fuzzy best-score matcher is gone — it could paint the wrong text');
+
+  // tier 2, functionally: the extracted matcher tolerates punctuation and
+  // whitespace but never highlights anything short of the exact word sequence
+  const fns = extractCheckerFn(cs, 'hlNorm') + '\n' + extractCheckerFn(cs, 'hlLocate');
+  const hlLocate = new Function(fns + '\nreturn hlLocate;')();
+  const vp = { width: 100, height: 200 };
+  const items = [
+    { str: 'The bin room shall provide', transform: [1, 0, 0, 12, 10, 150], width: 40, height: 12 },
+    { str: 'a 1,500mm clear aisle', transform: [1, 0, 0, 12, 10, 130], width: 38, height: 12 },
+    { str: 'unrelated text entirely', transform: [1, 0, 0, 12, 10, 110], width: 30, height: 12 },
+  ];
+  const hit = hlLocate(items, vp, 'shall provide a 1,500mm clear');
+  assert.ok(hit && hit.length === 2, 'verbatim snippet spanning two text items matches both');
+  assert.ok(Math.abs(hit[0].x - 0.1) < 1e-9, 'rect geometry derives from the item transform');
+  assert.ok(hlLocate(items, vp, 'SHALL provide; a “1.500mm” clear'), 'case, punctuation and quote noise are tolerated');
+  assert.equal(hlLocate(items, vp, 'bin room must provide a clear aisle'), null, 'a paraphrase never matches');
+  assert.equal(hlLocate(items, vp, 'clear 1,500mm a provide'), null, 'same words, wrong order — never matches');
+  assert.equal(hlLocate(items, vp, 'aisle'), null, 'too-short snippets are refused rather than guessed');
+  assert.equal(hlLocate([], vp, 'shall provide a 1,500mm clear'), null, 'empty text layer degrades to null');
+});
+
 test('swept panel is sectioned with a live vehicle diagram', () => {
   const tab = SOURCE.slice(SOURCE.indexOf('id="ws-tab-swept"'), SOURCE.indexOf('<div class="screen fill" id="screen-calculator">'));
   for (const hd of ['>Vehicle<', '>Path<', '>Options<', '>Output<'])
