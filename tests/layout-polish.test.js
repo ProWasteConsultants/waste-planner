@@ -422,12 +422,23 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
 
 test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
   const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
-  const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;', '&lt;!-- Mode --&gt;',
+  const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;', 'id=&quot;mode-pre&quot;',
                  '&gt;Project&lt;', 'Council &amp; Guidelines', '&lt;!-- Optional submission --&gt;']
     .map(m => panel.indexOf(m));
   assert.ok(order.every(i => i >= 0), 'all setup cards present');
   for (let i = 1; i < order.length; i++)
     assert.ok(order[i] > order[i - 1], 'document upload and scan lead; details follow');
+  // de-clutter: no static mode header (it kept saying Pre-Lodgement whatever
+  // was selected), pills carry the descriptions as tooltips, details run
+  // side by side, privacy boilerplate is one quiet line
+  assert.ok(!panel.includes('id=&quot;mode-title&quot;') && !panel.includes('id=&quot;mode-sub&quot;'),
+    'the stale mode header text is gone');
+  assert.ok(panel.includes('onclick=&quot;setMode(&#x27;pre&#x27;)&quot; title='),
+    'mode pills keep their handlers, descriptions live in tooltips');
+  assert.ok(panel.includes('display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;'),
+    'Project and Council sit side by side');
+  assert.ok(!panel.includes('privacy-badge') && panel.includes('🔒 Project data is isolated'),
+    'privacy boilerplate reduced to one quiet line');
   assert.ok(SOURCE.includes('.setup-title{font-size:12px;font-weight:700;color:#00d4d4;text-transform:uppercase;'),
     'card headings match the workspace toolbar language');
   assert.ok(SOURCE.includes('.setup-card{background:#1c2222;border:1px solid #2f3a3a;border-radius:8px;'),
