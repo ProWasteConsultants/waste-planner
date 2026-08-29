@@ -422,19 +422,23 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
 
 test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
   const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
-  const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;', 'id=&quot;mode-pre&quot;',
+  const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;',
                  '&gt;Project&lt;', 'Council &amp; Guidelines', '&lt;!-- Optional submission --&gt;']
     .map(m => panel.indexOf(m));
   assert.ok(order.every(i => i >= 0), 'all setup cards present');
   for (let i = 1; i < order.length; i++)
     assert.ok(order[i] > order[i - 1], 'document upload and scan lead; details follow');
-  // de-clutter: no static mode header (it kept saying Pre-Lodgement whatever
-  // was selected), pills carry the descriptions as tooltips, details run
-  // side by side, privacy boilerplate is one quiet line
-  assert.ok(!panel.includes('id=&quot;mode-title&quot;') && !panel.includes('id=&quot;mode-sub&quot;'),
-    'the stale mode header text is gone');
-  assert.ok(panel.includes('onclick=&quot;setMode(&#x27;pre&#x27;)&quot; title='),
-    'mode pills keep their handlers, descriptions live in tooltips');
+  // de-clutter: the mode picker is OUT of the form entirely — it lives in the
+  // topbar and only shows for council officers, the one role with a choice
+  // (setRole locks everyone else to pre-lodgement)
+  assert.ok(!panel.includes('id=&quot;mode-pre&quot;') && !panel.includes('id=&quot;mode-title&quot;'),
+    'no mode UI in the setup form at all');
+  const bar = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;role-tabs&quot;&gt;'), SOURCE.indexOf('&lt;div class=&quot;topbar-key&quot;&gt;'));
+  assert.ok(bar.includes('id=&quot;mode-tabs&quot; style=&quot;display:none;&quot;') &&
+            bar.includes('id=&quot;mode-pre&quot;') && bar.includes('id=&quot;mode-assess&quot;'),
+    'mode pills sit in the topbar beside the role tabs, hidden by default');
+  assert.ok(SOURCE.includes("document.getElementById(&#x27;mode-tabs&#x27;).style.display = isCouncil ? &#x27;flex&#x27; : &#x27;none&#x27;;"),
+    'setRole reveals them for council officers only');
   assert.ok(panel.includes('display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;'),
     'Project and Council sit side by side');
   assert.ok(!panel.includes('privacy-badge') && panel.includes('🔒 Project data is isolated'),
