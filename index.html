@@ -6035,7 +6035,8 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 .btn-green{background:var(--green);color:var(--dark);border-color:var(--green);}
 .btn-lg{padding:11px 24px;font-size:13px;}
 .mode-cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:0;}
-.mode-card{border:1px solid #3a4747;border-radius:99px;padding:7px 16px;cursor:pointer;transition:all 0.15s;font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap;}
+.mode-tabs{display:flex;gap:6px;margin-left:10px;}
+.mode-card{border:1px solid rgba(255,255,255,0.2);border-radius:99px;padding:5px 13px;cursor:pointer;transition:all 0.15s;font-size:11px;font-weight:700;color:rgba(255,255,255,0.55);background:transparent;font-family:inherit;white-space:nowrap;}
 .mode-card:hover{border-color:var(--teal);}
 .mode-card.active{border-color:#00A5A5;background:#00A5A5;color:#fff;}
 .mode-card-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;}
@@ -6193,6 +6194,12 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
     &lt;button class=&quot;role-tab&quot; onclick=&quot;setRole(&#x27;council&#x27;,this)&quot;&gt;Council Officer&lt;/button&gt;
     &lt;button class=&quot;role-tab&quot; onclick=&quot;setRole(&#x27;architect&#x27;,this)&quot;&gt;Architect&lt;/button&gt;
   &lt;/div&gt;
+  &lt;!-- MODE only exists as a choice for council officers (everyone else is
+       locked to pre-lodgement by setRole), so it lives here, not in the form --&gt;
+  &lt;div class=&quot;mode-tabs&quot; id=&quot;mode-tabs&quot; style=&quot;display:none;&quot;&gt;
+    &lt;button class=&quot;mode-card active&quot; id=&quot;mode-pre&quot; onclick=&quot;setMode(&#x27;pre&#x27;)&quot; title=&quot;Advisory scan — identify gaps and get suggestions before lodgement.&quot;&gt;Pre-Lodgement&lt;/button&gt;
+    &lt;button class=&quot;mode-card&quot; id=&quot;mode-assess&quot; onclick=&quot;setMode(&#x27;assess&#x27;)&quot; title=&quot;Formal checklist scan with RFI comment generation.&quot;&gt;Assessment&lt;/button&gt;
+  &lt;/div&gt;
   &lt;div class=&quot;topbar-key&quot;&gt;
     &lt;input type=&quot;password&quot; id=&quot;api-key-input&quot; placeholder=&quot;Anthropic API key (sk-ant-...)&quot;&gt;
     &lt;button onclick=&quot;saveKey()&quot;&gt;Save&lt;/button&gt;
@@ -6230,18 +6237,6 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
     &lt;div style=&quot;display:flex;justify-content:flex-end;gap:10px;margin:-2px 0 14px;&quot;&gt;
       &lt;button class=&quot;btn&quot; onclick=&quot;resetAll()&quot;&gt;Reset&lt;/button&gt;
       &lt;button class=&quot;btn btn-primary btn-lg&quot; id=&quot;scan-btn&quot; onclick=&quot;startScan()&quot;&gt;Scan WMP for Compliance →&lt;/button&gt;
-    &lt;/div&gt;
-
-    &lt;!-- Mode: two pills, one line. The old header text was static — it kept
-         saying Pre-Lodgement even with Council Assessment selected. --&gt;
-    &lt;div class=&quot;setup-card&quot; style=&quot;padding:12px 18px;&quot;&gt;
-      &lt;div style=&quot;display:flex;align-items:center;gap:14px;flex-wrap:wrap;&quot;&gt;
-        &lt;div class=&quot;setup-title&quot; style=&quot;margin:0;&quot;&gt;Mode&lt;/div&gt;
-        &lt;div class=&quot;mode-cards&quot; style=&quot;display:flex;gap:8px;margin:0;&quot;&gt;
-          &lt;div class=&quot;mode-card active&quot; id=&quot;mode-pre&quot; onclick=&quot;setMode(&#x27;pre&#x27;)&quot; title=&quot;Advisory scan — identify gaps and get suggestions before lodgement. For planners, architects and consultants.&quot;&gt;Pre-Lodgement Review&lt;/div&gt;
-          &lt;div class=&quot;mode-card&quot; id=&quot;mode-assess&quot; onclick=&quot;setMode(&#x27;assess&#x27;)&quot; title=&quot;Formal checklist scan with RFI comment generation. For council officers reviewing lodged applications.&quot;&gt;Council Assessment&lt;/div&gt;
-        &lt;/div&gt;
-      &lt;/div&gt;
     &lt;/div&gt;
 
     &lt;div style=&quot;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;&quot;&gt;
@@ -6645,7 +6640,7 @@ function setRole(role, el) {
   // Show/hide council-specific UI
   const isCouncil = role === &#x27;council&#x27;;
   document.getElementById(&#x27;guideline-upload-section&#x27;).style.display = isCouncil ? &#x27;block&#x27; : &#x27;none&#x27;;
-  document.getElementById(&#x27;mode-assess&#x27;).style.display = isCouncil ? &#x27;block&#x27; : &#x27;none&#x27;;
+  document.getElementById(&#x27;mode-tabs&#x27;).style.display = isCouncil ? &#x27;flex&#x27; : &#x27;none&#x27;;
   document.getElementById(&#x27;tab-rfi&#x27;).style.display = isCouncil ? &#x27;flex&#x27; : &#x27;none&#x27;;
   document.getElementById(&#x27;tab-bank&#x27;).style.display = isCouncil ? &#x27;flex&#x27; : &#x27;none&#x27;;
   document.getElementById(&#x27;rfi-btn&#x27;).style.display = isCouncil ? &#x27;inline-block&#x27; : &#x27;none&#x27;;
