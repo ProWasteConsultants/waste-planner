@@ -472,9 +472,10 @@ test('compliance checker setup: upload + scan at the top, toolbar-style headings
     'no mode UI inside the setup form cards');
   const bar = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;role-tabs&quot;&gt;'), SOURCE.indexOf('&lt;div class=&quot;topbar-key&quot;&gt;'));
   assert.ok(!bar.includes('id=&quot;mode-tabs&quot;'), 'mode pills are not in the hidden topbar');
-  const setup = SOURCE.slice(SOURCE.indexOf('id=&quot;setup-panel&quot;'), SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'));
-  assert.ok(setup.includes('id=&quot;mode-tabs&quot;') && setup.includes('id=&quot;mode-pre&quot;') && setup.includes('id=&quot;mode-assess&quot;'),
-    'mode pills sit above the setup form, hidden by default');
+  // pills are relocated at boot into the always-visible checker toolbar
+  assert.ok(SOURCE.includes('id=&quot;mode-tabs-slot&quot;'), 'the toolbar has a slot for the mode pills');
+  assert.ok(SOURCE.includes("mode-tabs-slot&#x27;).appendChild(document.getElementById(&#x27;mode-tabs&#x27;))"),
+    'boot moves the pills into the toolbar');
   assert.ok(SOURCE.includes("document.getElementById(&#x27;mode-tabs&#x27;).style.display = isCouncil ? &#x27;flex&#x27; : &#x27;none&#x27;;"),
     'setRole reveals them for council officers only');
   // the platform's role message must flow through the real setRole — the old
@@ -484,8 +485,8 @@ test('compliance checker setup: upload + scan at the top, toolbar-style headings
   assert.ok(cs2.includes('setRole(role, document.querySelectorAll(\'.role-tab\')[tabIdx])'),
     'wp-set-role applies the role through setRole');
   assert.ok(!cs2.includes("getElementById('mode-council')"), 'dead legacy role plumbing removed');
-  assert.ok(panel.includes('display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;'),
-    'Project and Council sit side by side');
+  assert.ok(panel.includes('display:grid;grid-template-columns:1fr;gap:10px;align-items:start;'),
+    'setup cards stack in one column — they live in a 420px rail now');
   assert.ok(!panel.includes('privacy-badge') && panel.includes('🔒 Project data is isolated'),
     'privacy boilerplate reduced to one quiet line');
   assert.ok(SOURCE.includes('.setup-title{font-size:12px;font-weight:700;color:#00d4d4;text-transform:uppercase;'),
@@ -557,16 +558,33 @@ test('dual document view: two panes, independent controls, tabs when narrow', ()
   assert.ok(!cs.includes('numPages, 20'), 'the 20-page render cap is gone — every referenced page is reachable');
   // the guideline pane shows the checked-against document or nothing — never a stand-in
   assert.ok(cs.includes("panes.classList.toggle('dual', !!gdoc)"), 'no guideline PDF, no second pane');
-  // panes pick fit-to-width zoom from their own width, so single/dual must be
-  // decided BEFORE the WMP pane loads — loading first left it over-zoomed
-  assert.ok(cs.indexOf("panes.classList.toggle('dual'") < cs.indexOf('await paneLoad(PANE.wmp'),
-    'dual layout is applied before either pane measures itself');
-  // side-by-side is reachable straight from setup, without burning a scan,
-  // and never pretends to be a result
-  assert.ok(SOURCE.includes('id=&quot;browse-btn&quot;') && cs.includes('async function openDocViewer()'),
-    'View side by side opens the dual layout from setup');
-  assert.ok(cs.includes("badge.textContent = 'Not scanned'") && cs.includes('No scan has been run'),
-    'browse mode says plainly that nothing was scanned');
+
+  // ── the workspace, not a mode ──
+  // no second screen: the checker wrap is always visible and nothing toggles
+  // a setup panel in or out of view
+  assert.ok(!SOURCE.includes('.checker-wrap.active'), 'no active-gating on the workspace');
+  assert.ok(!cs.includes("setup-panel').style.display"), 'no code shows/hides a setup screen');
+  // setup lives in the rail: a Setup tab whose content is the relocated form
+  assert.ok(SOURCE.includes('id=&quot;tab-setup-btn&quot;') && SOURCE.includes('id=&quot;tab-content-setup&quot;'),
+    'Setup is the first rail tab');
+  assert.ok(SOURCE.includes("tab-content-setup&#x27;).appendChild(document.getElementById(&#x27;setup-panel&#x27;))"),
+    'boot moves the setup form into the rail, ids and handlers intact');
+  // panes populate the moment documents arrive, before any check
+  assert.ok(cs.includes('paneLoad(PANE.wmp, state.pdfDoc)') && cs.indexOf('paneLoad(PANE.wmp, state.pdfDoc)') < cs.indexOf('// ── SCAN ──'),
+    'the WMP fills its pane on upload');
+  assert.ok(cs.includes('function glCardRender') && cs.includes('paneShowGuide();'),
+    'the guideline pane follows the source card live');
+  assert.ok(SOURCE.includes('id=&quot;pane-wmp-empty&quot;'), 'the empty WMP pane is itself a drop target');
+  // running a check updates the rail in place — panes stay put
+  assert.ok(cs.includes("switchTab('summary', document.getElementById('tab-summary-btn'))"),
+    'a scan flips the rail to Summary, not the view');
+  assert.ok(cs.includes("if (pane.doc === doc && document.getElementById(pane.prefix + '-pg-1')) return;"),
+    'reloading the same document is a no-op — panes keep their scroll');
+  assert.ok(SOURCE.includes('id=&quot;toolbar-scan-btn&quot;'), 'Run check sits in the workspace toolbar');
+  // findings rail collapses; on narrow screens it is a bottom drawer
+  assert.ok(cs.includes('function railToggle()') && SOURCE.includes('.comments-panel.collapsed{width:34px;}'),
+    'the rail is collapsible');
+  assert.ok(SOURCE.includes('.comments-panel{width:auto;height:44vh;'), 'narrow screens get a bottom drawer');
   // a failed scan replaces the spinner panel with error markup; every scan
   // start must restore it or the next scan dies on a null #scan-bar
   assert.ok(cs.includes('slp.innerHTML = SCAN_PANEL_HTML'), 'scan panel restored on every scan start');

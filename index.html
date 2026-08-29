@@ -6005,9 +6005,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,sans-seri
 .topbar-key button{padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;}
 .key-status{font-size:10px;color:var(--green);}
 
-/* SETUP PANEL */
-.setup-panel{flex:1;overflow-y:auto;padding:18px 22px;}
-.setup-inner{max-width:1060px;margin:0 auto;}
+/* SETUP CARDS — live inside the rail&#x27;s Setup tab */
+.setup-panel{padding:12px;}
+.setup-inner{margin:0 auto;}
 .setup-card{background:#1c2222;border:1px solid #2f3a3a;border-radius:8px;padding:16px 18px;margin-bottom:10px;}
 .setup-title{font-size:12px;font-weight:700;color:#00d4d4;text-transform:uppercase;letter-spacing:.7px;margin-bottom:4px;}
 .setup-sub{font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.5;}
@@ -6047,9 +6047,8 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 .privacy-badge-text{font-size:11px;color:#81C784;font-weight:500;}
 .spinner-sm{width:16px;height:16px;border:2px solid rgba(22,126,126,0.2);border-top-color:var(--teal);border-radius:50%;animation:spin 0.7s linear infinite;display:inline-block;vertical-align:middle;}
 
-/* MAIN CHECKER LAYOUT */
-.checker-wrap{flex:1;display:none;flex-direction:column;overflow:hidden;}
-.checker-wrap.active{display:flex;}
+/* MAIN CHECKER LAYOUT — one workspace, always visible; no setup screen */
+.checker-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;}
 .checker-toolbar{height:44px;background:var(--white);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:10px;flex-shrink:0;}
 .checker-toolbar-title{font-size:12px;font-weight:700;color:var(--text);flex:1;}
 .scan-status{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);}
@@ -6058,7 +6057,7 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 .score-high{background:var(--pass-bg);color:var(--pass);}
 .score-med{background:var(--flag-bg);color:var(--flag);}
 .score-low{background:var(--fail-bg);color:var(--fail);}
-.checker-body{flex:1;display:grid;grid-template-columns:1fr 400px;overflow:hidden;}
+.checker-body{flex:1;display:grid;grid-template-columns:1fr auto;overflow:hidden;}
 
 /* PDF VIEWER */
 .pdf-viewer{background:#525659;display:flex;flex-direction:column;overflow:hidden;}
@@ -6077,8 +6076,12 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 .hl-mark:hover{opacity:0.7;}
 .hl-mark.active-hl{outline:2px solid var(--teal);outline-offset:1px;}
 
-/* COMMENTS PANEL */
-.comments-panel{background:var(--white);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+/* FINDINGS RAIL (setup + results) — collapsible; bottom drawer when narrow */
+.comments-panel{width:420px;background:var(--white);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+.comments-panel.collapsed{width:34px;}
+.comments-panel.collapsed .panel-tab,.comments-panel.collapsed .panel-content{display:none;}
+.rail-toggle{width:30px;flex-shrink:0;border:none;background:none;color:var(--muted);cursor:pointer;font-size:13px;font-family:inherit;}
+.rail-toggle:hover{color:var(--teal);}
 .panel-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0;}
 .panel-tab{flex:1;padding:10px 6px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit;border-bottom:2px solid transparent;transition:all 0.15s;}
 .panel-tab.active{color:var(--teal);border-bottom-color:var(--teal);}
@@ -6205,11 +6208,19 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 .doc-tab{flex:1;padding:8px 6px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit;border-bottom:2px solid transparent;}
 .doc-tab.tab-active{color:var(--teal);border-bottom-color:var(--teal);}
 @media (max-width:1100px){
-  .doc-panes.dual{flex-direction:column;}
   .doc-panes.dual .doc-tabbar{display:flex;}
   .doc-panes.dual .pdf-viewer{display:none !important;}
   .doc-panes.dual .pdf-viewer.tab-active{display:flex !important;}
+  /* the findings rail becomes a bottom drawer */
+  .checker-body{grid-template-columns:1fr;grid-template-rows:1fr auto;}
+  .comments-panel{width:auto;height:44vh;border-left:none;border-top:1px solid var(--border);}
+  .comments-panel.collapsed{width:auto;height:38px;}
 }
+
+/* Empty WMP pane doubles as a drop target — the workspace is live before
+   any document or check exists */
+.pane-empty{margin:40px 16px;padding:36px 20px;border:2px dashed #6b7676;border-radius:10px;text-align:center;color:#cfd8d8;font-size:13px;cursor:pointer;max-width:420px;}
+.pane-empty:hover{border-color:var(--teal);background:rgba(22,126,126,0.12);}
 
 /* GUIDELINE INLINE VIEWER (scroll/zoom only, no annotation) */
 .glv-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:60;display:flex;align-items:center;justify-content:center;padding:20px;}
@@ -6272,11 +6283,10 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
     &lt;!-- Scan button --&gt;
     &lt;div style=&quot;display:flex;justify-content:flex-end;gap:10px;margin:-2px 0 14px;&quot;&gt;
       &lt;button class=&quot;btn&quot; onclick=&quot;resetAll()&quot;&gt;Reset&lt;/button&gt;
-      &lt;button class=&quot;btn&quot; id=&quot;browse-btn&quot; onclick=&quot;openDocViewer()&quot; title=&quot;Open the WMP and the guideline document side by side without running a scan&quot;&gt;View side by side&lt;/button&gt;
-      &lt;button class=&quot;btn btn-primary btn-lg&quot; id=&quot;scan-btn&quot; onclick=&quot;startScan()&quot;&gt;Scan WMP for Compliance →&lt;/button&gt;
+      &lt;button class=&quot;btn btn-primary&quot; id=&quot;scan-btn&quot; onclick=&quot;startScan()&quot;&gt;Run check →&lt;/button&gt;
     &lt;/div&gt;
 
-    &lt;div style=&quot;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;&quot;&gt;
+    &lt;div style=&quot;display:grid;grid-template-columns:1fr;gap:10px;align-items:start;&quot;&gt;
     &lt;!-- Organisation &amp; privacy --&gt;
     &lt;div class=&quot;setup-card&quot; style=&quot;margin-bottom:0;&quot;&gt;
       &lt;div class=&quot;setup-title&quot;&gt;Project&lt;/div&gt;
@@ -6420,16 +6430,17 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 &lt;!-- CHECKER WRAP --&gt;
 &lt;div class=&quot;checker-wrap&quot; id=&quot;checker-wrap&quot;&gt;
 
-  &lt;!-- Toolbar --&gt;
+  &lt;!-- Toolbar — always visible: the workspace has no other screen --&gt;
   &lt;div class=&quot;checker-toolbar&quot;&gt;
-    &lt;button class=&quot;btn&quot; style=&quot;font-size:11px;padding:4px 10px;&quot; onclick=&quot;backToSetup()&quot;&gt;← New Scan&lt;/button&gt;
-    &lt;div class=&quot;checker-toolbar-title&quot; id=&quot;checker-title&quot;&gt;—&lt;/div&gt;
+    &lt;div class=&quot;checker-toolbar-title&quot; id=&quot;checker-title&quot;&gt;Compliance Checker&lt;/div&gt;
+    &lt;span id=&quot;mode-tabs-slot&quot;&gt;&lt;/span&gt;
     &lt;div class=&quot;scan-status&quot;&gt;
       &lt;span id=&quot;scan-council-label&quot; style=&quot;font-size:11px;color:var(--muted);&quot;&gt;&lt;/span&gt;
-      &lt;span class=&quot;score-badge score-ready&quot; id=&quot;readiness-badge&quot;&gt;Scanning…&lt;/span&gt;
+      &lt;span class=&quot;score-badge score-ready&quot; id=&quot;readiness-badge&quot;&gt;Not scanned&lt;/span&gt;
     &lt;/div&gt;
-    &lt;button class=&quot;btn&quot; style=&quot;font-size:11px;padding:4px 10px;&quot; onclick=&quot;exportReport()&quot;&gt;Export Report&lt;/button&gt;
-    &lt;button class=&quot;btn btn-green&quot; style=&quot;font-size:11px;padding:4px 10px;&quot; id=&quot;submit-btn&quot; onclick=&quot;submitToCouncil()&quot; style=&quot;display:none;&quot;&gt;Submit to Council&lt;/button&gt;
+    &lt;button class=&quot;btn&quot; style=&quot;font-size:11px;padding:4px 10px;display:none;&quot; id=&quot;export-btn&quot; onclick=&quot;exportReport()&quot;&gt;Export Report&lt;/button&gt;
+    &lt;button class=&quot;btn btn-green&quot; style=&quot;font-size:11px;padding:4px 10px;display:none;&quot; id=&quot;submit-btn&quot; onclick=&quot;submitToCouncil()&quot;&gt;Submit to Council&lt;/button&gt;
+    &lt;button class=&quot;btn btn-primary&quot; style=&quot;font-size:11px;padding:4px 12px;&quot; id=&quot;toolbar-scan-btn&quot; onclick=&quot;startScan()&quot;&gt;Run check&lt;/button&gt;
   &lt;/div&gt;
 
   &lt;!-- Body --&gt;
@@ -6455,6 +6466,13 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
           &lt;span style=&quot;margin-left:auto;font-size:10px;color:#aaa;&quot; id=&quot;hl-legend&quot;&gt;&lt;/span&gt;
         &lt;/div&gt;
         &lt;div class=&quot;pdf-canvas-wrap&quot; id=&quot;pane-wmp-wrap&quot;&gt;
+          &lt;div class=&quot;pane-empty&quot; id=&quot;pane-wmp-empty&quot;
+            onclick=&quot;document.getElementById(&#x27;wmp-file-input&#x27;).click()&quot;
+            ondragover=&quot;event.preventDefault();&quot; ondrop=&quot;handleWMPDrop(event)&quot;&gt;
+            &lt;div style=&quot;font-size:26px;margin-bottom:8px;&quot;&gt;📄&lt;/div&gt;
+            &lt;div style=&quot;font-weight:700;margin-bottom:4px;&quot;&gt;Drop the WMP PDF here&lt;/div&gt;
+            &lt;div style=&quot;font-size:11px;opacity:0.7;&quot;&gt;or click to browse — the plan appears here the moment it loads&lt;/div&gt;
+          &lt;/div&gt;
           &lt;div class=&quot;pane-pages&quot; id=&quot;pane-wmp-pages&quot;&gt;&lt;/div&gt;
         &lt;/div&gt;
       &lt;/div&gt;
@@ -6474,24 +6492,25 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
       &lt;/div&gt;
     &lt;/div&gt;
 
-    &lt;!-- Comments Panel --&gt;
-    &lt;div class=&quot;comments-panel&quot;&gt;
+    &lt;!-- Findings rail: Setup lives in its first tab, results fill the rest
+         in place — running a check never changes the view. Collapsible; on
+         narrow screens it becomes a bottom drawer. --&gt;
+    &lt;div class=&quot;comments-panel&quot; id=&quot;findings-rail&quot;&gt;
       &lt;div class=&quot;panel-tabs&quot;&gt;
-        &lt;button class=&quot;panel-tab active&quot; onclick=&quot;switchTab(&#x27;summary&#x27;,this)&quot;&gt;Summary&lt;/button&gt;
+        &lt;button class=&quot;panel-tab active&quot; id=&quot;tab-setup-btn&quot; onclick=&quot;switchTab(&#x27;setup&#x27;,this)&quot;&gt;Setup&lt;/button&gt;
+        &lt;button class=&quot;panel-tab&quot; id=&quot;tab-summary-btn&quot; onclick=&quot;switchTab(&#x27;summary&#x27;,this)&quot;&gt;Summary&lt;/button&gt;
         &lt;button class=&quot;panel-tab&quot; onclick=&quot;switchTab(&#x27;comments&#x27;,this)&quot;&gt;Comments&lt;/button&gt;
-        &lt;button class=&quot;panel-tab&quot; id=&quot;tab-rfi&quot; onclick=&quot;switchTab(&#x27;rfi&#x27;,this)&quot; style=&quot;display:none;&quot;&gt;RFI Output&lt;/button&gt;
-        &lt;button class=&quot;panel-tab&quot; id=&quot;tab-bank&quot; onclick=&quot;switchTab(&#x27;bank&#x27;,this)&quot; style=&quot;display:none;&quot;&gt;Comment Bank&lt;/button&gt;
+        &lt;button class=&quot;panel-tab&quot; id=&quot;tab-rfi&quot; onclick=&quot;switchTab(&#x27;rfi&#x27;,this)&quot; style=&quot;display:none;&quot;&gt;RFI&lt;/button&gt;
+        &lt;button class=&quot;panel-tab&quot; id=&quot;tab-bank&quot; onclick=&quot;switchTab(&#x27;bank&#x27;,this)&quot; style=&quot;display:none;&quot;&gt;Bank&lt;/button&gt;
         &lt;button class=&quot;panel-tab&quot; onclick=&quot;switchTab(&#x27;submit&#x27;,this)&quot;&gt;Submit&lt;/button&gt;
+        &lt;button class=&quot;rail-toggle&quot; id=&quot;rail-toggle&quot; onclick=&quot;railToggle()&quot; title=&quot;Collapse panel&quot;&gt;⇥&lt;/button&gt;
       &lt;/div&gt;
 
+      &lt;!-- SETUP TAB — the #setup-panel node is moved in here at boot --&gt;
+      &lt;div class=&quot;panel-content&quot; id=&quot;tab-content-setup&quot;&gt;&lt;/div&gt;
+
       &lt;!-- SUMMARY TAB --&gt;
-      &lt;div class=&quot;panel-content&quot; id=&quot;tab-content-summary&quot;&gt;
-        &lt;div id=&quot;browse-note&quot; style=&quot;display:none;padding:40px 24px;text-align:center;&quot;&gt;
-          &lt;div style=&quot;font-size:24px;margin-bottom:10px;&quot;&gt;⇆&lt;/div&gt;
-          &lt;div style=&quot;font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px;&quot;&gt;Side-by-side view&lt;/div&gt;
-          &lt;div style=&quot;font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:16px;&quot;&gt;No scan has been run — this is document viewing only. Run the scan to get findings linked to both documents.&lt;/div&gt;
-          &lt;button class=&quot;btn btn-primary&quot; onclick=&quot;browseRunScan()&quot;&gt;Scan WMP for Compliance →&lt;/button&gt;
-        &lt;/div&gt;
+      &lt;div class=&quot;panel-content hidden&quot; id=&quot;tab-content-summary&quot;&gt;
         &lt;div id=&quot;scan-loading-panel&quot; class=&quot;scan-loading&quot;&gt;
           &lt;div class=&quot;scan-spinner&quot;&gt;&lt;/div&gt;
           &lt;div class=&quot;scan-title&quot;&gt;Scanning WMP&lt;/div&gt;
@@ -6915,6 +6934,9 @@ function glCardRender() {
   const upVisible = document.getElementById(&#x27;guideline-upload-section&#x27;).style.display !== &#x27;none&#x27;;
   if (s.kind === &#x27;none&#x27; &amp;&amp; upVisible) a += &#x27;&lt;button class=&quot;btn&quot; onclick=&quot;document.getElementById(\&#x27;guideline-pdf-input\&#x27;).click()&quot;&gt;Upload guidelines&lt;/button&gt;&#x27;;
   acts.innerHTML = a; acts.style.display = a ? &#x27;flex&#x27; : &#x27;none&#x27;;
+  // the workspace follows the card: toolbar echo + live guideline pane
+  if (state.council) document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;Guidelines: &#x27; + s.short;
+  paneShowGuide();
 }
 
 // Ask the parent platform for the library guideline document (signed URL +
@@ -6940,6 +6962,8 @@ const PANE = { wmp: paneCreate(&#x27;pane-wmp&#x27;), guide: paneCreate(&#x27;pa
 function paneHlKey(pane) { return pane === PANE.wmp ? &#x27;wmp&#x27; : &#x27;guide&#x27;; }
 
 async function paneLoad(pane, doc) {
+  // same doc already laid out → keep it (and its scroll position) put
+  if (pane.doc === doc &amp;&amp; document.getElementById(pane.prefix + &#x27;-pg-1&#x27;)) return;
   pane.doc = doc; pane.cur = 1; pane.tcCache = {};
   const p1 = await doc.getPage(1);
   pane.baseVp = p1.getViewport({ scale: 1 });
@@ -7047,21 +7071,47 @@ function docTab(which) {
   document.getElementById(&#x27;pane-guide-viewer&#x27;).classList.toggle(&#x27;tab-active&#x27;, which === &#x27;guide&#x27;);
 }
 
-// Bring both panes up for the checker view: WMP always; guideline only when
-// the checked-against document actually has a PDF (never a stand-in).
-// Decide single/dual BEFORE loading the WMP pane — each pane picks its
-// fit-to-width zoom from its own measured width, so loading the WMP while
-// it still spans the full body would leave it over-zoomed once it halves.
-async function paneShowDocs() {
+// Re-fit a pane to its current width (dual toggling changes pane widths,
+// and a zoom picked at the old width leaves horizontal scroll).
+function paneRefit(pane) {
+  const wrap = document.getElementById(pane.prefix + &#x27;-wrap&#x27;);
+  if (!pane.doc || !pane.baseVp || !wrap || wrap.clientWidth &lt;= 60) return;
+  pane.zoom = Math.min(Math.max((wrap.clientWidth - 40) / pane.baseVp.width, 0.5), 2);
+  paneLayout(pane);
+}
+
+// The guideline pane follows the source card LIVE: council picked → the
+// checked-against document appears before any check runs; no PDF → the
+// pane leaves (never a stand-in). Latest-wins token because council
+// changes can outrun a slow signed-URL fetch.
+let glPaneToken = 0;
+async function paneShowGuide() {
+  const my = ++glPaneToken;
   const panes = document.getElementById(&#x27;doc-panes&#x27;);
   const gdoc = await glEnsureGuidelineDoc();
+  if (my !== glPaneToken) return;
+  const wasDual = panes.classList.contains(&#x27;dual&#x27;);
   panes.classList.toggle(&#x27;dual&#x27;, !!gdoc);
   if (gdoc) {
     const t = document.getElementById(&#x27;pane-guide-title&#x27;);
-    if (t &amp;&amp; state.checkedDoc) t.textContent = state.checkedDoc.label;
+    const src = guidelineSourceInfo();
+    if (t) t.textContent = src.label || &#x27;Guideline&#x27;;
+    await paneLoad(PANE.guide, gdoc);
+  } else if (PANE.guide.doc) {
+    PANE.guide.doc = null;
+    const cont = document.getElementById(&#x27;pane-guide-pages&#x27;);
+    if (cont) cont.innerHTML = &#x27;&#x27;;
+    if (PANE.guide.io) PANE.guide.io.disconnect();
   }
+  if (wasDual !== !!gdoc) paneRefit(PANE.wmp);
+}
+
+// Scan-time safety net: both panes normally already show their documents
+// (they load live as documents arrive); paneLoad&#x27;s same-doc skip makes this
+// a no-op then — the panes stay put when a check runs.
+async function paneShowDocs() {
   if (state.pdfDoc) await paneLoad(PANE.wmp, state.pdfDoc);
-  if (gdoc) await paneLoad(PANE.guide, gdoc);
+  await paneShowGuide();
 }
 
 async function glEnsureGuidelineDoc() {
@@ -7088,29 +7138,15 @@ async function glOpenViewer() {
 }
 function glCloseViewer() { document.getElementById(&#x27;gl-viewer&#x27;).style.display = &#x27;none&#x27;; }
 
-// ── SIDE-BY-SIDE WITHOUT A SCAN ───────────────────────────────────────────
-// The dual review layout, opened straight from setup with no findings — for
-// reading the WMP against the guideline before (or instead of) scanning.
-// Everything says &quot;no scan has been run&quot;; nothing pretends to be a result.
-async function openDocViewer() {
-  if (!state.pdfDoc) { alert(&#x27;Upload a WMP PDF first.&#x27;); return; }
-  state.checkedDoc = guidelineSourceInfo();
-  document.getElementById(&#x27;setup-panel&#x27;).style.display = &#x27;none&#x27;;
-  document.getElementById(&#x27;checker-wrap&#x27;).classList.add(&#x27;active&#x27;);
-  const addr = document.getElementById(&#x27;dev-address&#x27;).value || state.wmpFileName || &#x27;Documents&#x27;;
-  document.getElementById(&#x27;checker-title&#x27;).textContent = addr;
-  document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;Guidelines: &#x27; + state.checkedDoc.short;
-  const badge = document.getElementById(&#x27;readiness-badge&#x27;);
-  badge.className = &#x27;score-badge score-ready&#x27;;
-  badge.textContent = &#x27;Not scanned&#x27;;
-  document.getElementById(&#x27;scan-loading-panel&#x27;).style.display = &#x27;none&#x27;;
-  document.getElementById(&#x27;summary-content&#x27;).style.display = &#x27;none&#x27;;
-  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;block&#x27;;
-  paneShowDocs();
-}
-function browseRunScan() {
-  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;none&#x27;;
-  startScan();
+// ── FINDINGS RAIL ─────────────────────────────────────────────────────────
+function railToggle() {
+  const rail = document.getElementById(&#x27;findings-rail&#x27;);
+  const collapsed = rail.classList.toggle(&#x27;collapsed&#x27;);
+  const btn = document.getElementById(&#x27;rail-toggle&#x27;);
+  btn.textContent = collapsed ? &#x27;⇤&#x27; : &#x27;⇥&#x27;;
+  btn.title = collapsed ? &#x27;Expand panel&#x27; : &#x27;Collapse panel&#x27;;
+  // pane widths changed — re-fit both documents
+  paneRefit(PANE.wmp); paneRefit(PANE.guide);
 }
 
 // ── SNIPPET MATCHING (strict, never fuzzy) ────────────────────────────────
@@ -7393,6 +7429,12 @@ function clearWMP() {
   document.getElementById(&#x27;wmp-file-pill&#x27;).style.display = &#x27;none&#x27;;
   document.getElementById(&#x27;wmp-drop-zone&#x27;).classList.remove(&#x27;has-file&#x27;);
   document.getElementById(&#x27;wmp-file-input&#x27;).value = &#x27;&#x27;;
+  PANE.wmp.doc = null;
+  const cont = document.getElementById(&#x27;pane-wmp-pages&#x27;);
+  if (cont) cont.innerHTML = &#x27;&#x27;;
+  if (PANE.wmp.io) PANE.wmp.io.disconnect();
+  document.getElementById(&#x27;pane-wmp-empty&#x27;).style.display = &#x27;block&#x27;;
+  document.getElementById(&#x27;pane-wmp-info&#x27;).textContent = &#x27;—&#x27;;
 }
 
 async function loadWMPFile(file) {
@@ -7406,6 +7448,12 @@ async function loadWMPFile(file) {
   state.pdfDoc = await pdfjsLib.getDocument({data:ab}).promise;
   const n = state.pdfDoc.numPages;
   document.getElementById(&#x27;wmp-file-pages&#x27;).textContent = `Analysing ${n} pages…`;
+
+  // the workspace is live: the plan fills its pane the moment it opens,
+  // long before the page-by-page scan preparation below finishes
+  document.getElementById(&#x27;pane-wmp-empty&#x27;).style.display = &#x27;none&#x27;;
+  paneLoad(PANE.wmp, state.pdfDoc);
+  docTab(&#x27;wmp&#x27;);
 
   state.pdfPages = [];
   state.pdfTextContent = [];
@@ -7471,13 +7519,10 @@ async function startScan() {
   // the result screen names exactly the document the setup card showed.
   state.checkedDoc = guidelineSourceInfo();
 
-  // Switch to checker view — resetting the summary panel to its scanning
-  // state, because a previous scan or a side-by-side browse may have left
-  // the loading spinner hidden or old results showing.
-  document.getElementById(&#x27;setup-panel&#x27;).style.display = &#x27;none&#x27;;
-  const cw = document.getElementById(&#x27;checker-wrap&#x27;);
-  cw.classList.add(&#x27;active&#x27;);
-  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;none&#x27;;
+  // No view change — the panes stay put; the rail flips to Summary and the
+  // results land there in place. The summary panel is reset to its scanning
+  // state because a previous run (or its error) may have left it otherwise.
+  switchTab(&#x27;summary&#x27;, document.getElementById(&#x27;tab-summary-btn&#x27;));
   const slp = document.getElementById(&#x27;scan-loading-panel&#x27;);
   // a failed scan replaces this panel&#x27;s contents with the error message —
   // without restoring it, the next scan&#x27;s #scan-bar lookup dies
@@ -7742,6 +7787,8 @@ function renderResults(data) {
   document.getElementById(&#x27;scan-loading-panel&#x27;).style.display = &#x27;none&#x27;;
   document.getElementById(&#x27;summary-content&#x27;).style.display = &#x27;block&#x27;;
   document.getElementById(&#x27;summary-content&#x27;).classList.add(&#x27;fade&#x27;);
+  document.getElementById(&#x27;export-btn&#x27;).style.display = &#x27;inline-block&#x27;;
+  document.getElementById(&#x27;submit-btn&#x27;).style.display = state.role === &#x27;council&#x27; ? &#x27;none&#x27; : &#x27;inline-block&#x27;;
 
   // RFI button for council
   if (state.role === &#x27;council&#x27;) {
@@ -8007,12 +8054,10 @@ function switchTab(name, el) {
   if (content) content.classList.remove(&#x27;hidden&#x27;);
 }
 
+// There is no setup screen any more — &quot;back to setup&quot; is the rail&#x27;s Setup
+// tab (still used by the scan-error panel&#x27;s Back button).
 function backToSetup() {
-  document.getElementById(&#x27;setup-panel&#x27;).style.display=&#x27;block&#x27;;
-  document.getElementById(&#x27;checker-wrap&#x27;).classList.remove(&#x27;active&#x27;);
-  document.getElementById(&#x27;browse-note&#x27;).style.display = &#x27;none&#x27;;
-  state.scanComplete = false; state.comments = [];
-  state.hl = { wmp: {}, guide: {} };
+  switchTab(&#x27;setup&#x27;, document.getElementById(&#x27;tab-setup-btn&#x27;));
 }
 function resetAll() {
   clearWMP(); clearGuideline();
@@ -8022,11 +8067,34 @@ function resetAll() {
   document.getElementById(&#x27;applicant&#x27;).value=&#x27;&#x27;;
   document.getElementById(&#x27;council-select&#x27;).value=&#x27;&#x27;;
   document.getElementById(&#x27;guideline-status&#x27;).style.display=&#x27;none&#x27;;
+  // clear the workspace too: results, highlights, both panes, echoes
+  state.scanComplete = false; state.comments = [];
+  state.hl = { wmp: {}, guide: {} };
+  state.guidelineLib = null; state.cgHit = null; state.guidelineDoc = null;
+  state.checkedDoc = null; state.council = &#x27;&#x27;;
+  paneShowGuide();
+  document.getElementById(&#x27;checker-title&#x27;).textContent = &#x27;Compliance Checker&#x27;;
+  document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;&#x27;;
+  const badge = document.getElementById(&#x27;readiness-badge&#x27;);
+  badge.className = &#x27;score-badge score-ready&#x27;; badge.textContent = &#x27;Not scanned&#x27;;
+  document.getElementById(&#x27;export-btn&#x27;).style.display = &#x27;none&#x27;;
+  document.getElementById(&#x27;submit-btn&#x27;).style.display = &#x27;none&#x27;;
+  document.getElementById(&#x27;summary-content&#x27;).style.display = &#x27;none&#x27;;
+  const slp = document.getElementById(&#x27;scan-loading-panel&#x27;);
+  slp.innerHTML = SCAN_PANEL_HTML; slp.style.display = &#x27;flex&#x27;;
 }
 
 // Pristine copy of the scan spinner panel — restored on every scan start,
 // because the error path overwrites the panel (spinner, bar and all).
 const SCAN_PANEL_HTML = document.getElementById(&#x27;scan-loading-panel&#x27;).innerHTML;
+
+// ── ONE WORKSPACE ─────────────────────────────────────────────────────────
+// The checker has no setup screen. The setup cards (still #setup-panel, with
+// every id and handler intact) are MOVED into the rail&#x27;s Setup tab, and the
+// council-officer mode pills into the always-visible toolbar. Panes fill as
+// documents arrive; running a check only updates the rail.
+document.getElementById(&#x27;tab-content-setup&#x27;).appendChild(document.getElementById(&#x27;setup-panel&#x27;));
+document.getElementById(&#x27;mode-tabs-slot&#x27;).appendChild(document.getElementById(&#x27;mode-tabs&#x27;));
 
 // Init
 setRole(&#x27;planner&#x27;, document.querySelector(&#x27;.role-tab&#x27;));
@@ -8087,6 +8155,7 @@ window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
     fill(&#x27;dev-address&#x27;, e.data.address);
     fill(&#x27;proj-ref&#x27;, e.data.ref);
     fill(&#x27;applicant&#x27;, e.data.applicant);
+    if (e.data.address) document.getElementById(&#x27;checker-title&#x27;).textContent = e.data.address;
     const org = document.getElementById(&#x27;org-name&#x27;);
     if (org &amp;&amp; e.data.orgName) org.value = e.data.orgName;
     if (e.data.council &amp;&amp; !document.getElementById(&#x27;council-select&#x27;)?.disabled) {
