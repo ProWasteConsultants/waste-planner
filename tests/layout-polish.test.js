@@ -420,6 +420,31 @@ test('bin calculator: white headings, collapsed advisory notes, narrower panel',
   assert.ok(SOURCE.includes('Total room footprint'), 'and says so in plain words');
 });
 
+test('project documents are a visual card grid with cached thumbnails', () => {
+  assert.ok(SOURCE.includes('id="docs-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));'),
+    'the text list is a responsive card grid');
+  assert.ok(SOURCE.includes('function docCardHtml(p, d)'), 'cards: thumb, one name line, ONE primary action');
+  assert.ok(SOURCE.includes('function docMidTrunc(name, max)'), 'names truncate in the middle');
+  const card = SOURCE.slice(SOURCE.indexOf('function docCardHtml'), SOURCE.indexOf('function docsRender()'));
+  assert.ok(!/file size|toLocaleDateString|d\.ts/.test(card), 'no sizes or dates on the card');
+  assert.ok(card.includes("{ label: 'Open in Design', fn: `docOpenInDesign('${d.id}')` }") &&
+            card.includes("{ label: 'Open in Compliance Checker', fn: `docOpenInCompliance('${d.id}')` }"),
+    'primary action is context-aware: plans to Design, WMPs to the checker');
+  assert.ok(card.includes("p.council && !svc && (p.complianceRuns || 0) > 0"),
+    'Submit is primary only in the never-submitted + council-set + checked window');
+  assert.ok(card.includes("docSetKind('${d.id}'"), 'Treat as: Plan / WMP / Other lives in the ⋯ menu');
+  assert.ok(SOURCE.includes('function docThumbEnsure(projectId, d)') ||
+            SOURCE.includes('async function docThumbEnsure(projectId, d)'), 'thumbnails render once and cache');
+  const th = SOURCE.slice(SOURCE.indexOf('async function docThumbEnsure'), SOURCE.indexOf('async function docsThumbBackfill'));
+  assert.ok(th.includes("idbGetPdf(docThumbKey(projectId, d.id))") && SOURCE.includes('.thumb.png`'),
+    'IDB first, bucket .thumb.png second, render only when neither exists');
+  assert.ok(SOURCE.includes("cards.push(`<div class=\"doc-card doc-add\""), 'upload is a dashed tile in the grid');
+  assert.ok(SOURCE.includes('function wsDxfLoadText(text)'),
+    'the DXF loader is shared: file input and the grid card both use it');
+  assert.ok(SOURCE.includes("<button class=\"doc-primary\" onclick=\"viewReviewResponse(currentProjectId)\">View response</button>"),
+    'review responses render as tagged cards keeping their behaviour');
+});
+
 test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
   const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
   const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;',

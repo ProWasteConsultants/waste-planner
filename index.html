@@ -450,6 +450,24 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ── TOOLS OVERVIEW ── */
 .tools-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
+/* documents grid cards */
+.doc-card{position:relative;display:flex;flex-direction:column;gap:6px;min-width:0;}
+.doc-face{position:relative;aspect-ratio:4/3;background:#182121;border:1px solid var(--border);border-radius:9px;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.doc-face:hover{border-color:var(--teal);}
+.doc-face-glyph{font-size:30px;opacity:.55;}
+.doc-tag{position:absolute;left:6px;bottom:6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;background:rgba(0,0,0,0.55);color:#D7E2E2;border-radius:4px;padding:2px 6px;}
+.doc-menu-btn{position:absolute;top:5px;right:5px;width:24px;height:24px;border-radius:6px;background:rgba(0,0,0,0.5);border:none;color:#fff;font-size:14px;line-height:1;cursor:pointer;}
+.doc-menu{display:none;position:absolute;top:30px;right:5px;z-index:5;background:#1F2929;border:1px solid #3a4747;border-radius:8px;padding:4px;min-width:150px;box-shadow:0 6px 20px rgba(0,0,0,0.5);}
+.doc-menu.open{display:block;}
+.doc-menu-item{font-size:11.5px;color:var(--text);padding:6px 9px;border-radius:5px;cursor:pointer;white-space:nowrap;}
+.doc-menu-item:hover{background:rgba(255,255,255,0.07);}
+.doc-menu-item.on{color:#4FC3C3;}
+.doc-menu-sep{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);padding:6px 9px 2px;border-top:1px solid #2C3838;margin-top:3px;}
+.doc-name{font-size:11.5px;color:var(--text);text-align:center;white-space:nowrap;overflow:hidden;}
+.doc-primary{background:none;border:1px solid var(--border);border-radius:6px;color:#4FC3C3;font-size:11px;font-weight:600;padding:5px 8px;cursor:pointer;font-family:inherit;}
+.doc-primary:hover{border-color:var(--teal);background:rgba(22,126,126,0.12);}
+.doc-add .doc-face{background:none;}
+.doc-add:hover .doc-face{border-color:var(--teal);}
 .tool-card{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:20px;cursor:pointer;transition:all 0.15s;}
 .tool-card:hover{border-color:var(--teal);transform:translateY(-1px);box-shadow:0 2px 12px rgba(22,126,126,0.1);}
 .tc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
@@ -891,8 +909,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="btn" style="font-size:11px;padding:4px 12px;" onclick="document.getElementById('doc-file-input').click()">+ Add document</button>
             <input type="file" id="doc-file-input" accept=".pdf,.dxf,.docx" multiple style="display:none;" onchange="docsUpload(event)">
           </div>
-          <div id="docs-list" style="display:flex;flex-direction:column;gap:6px;"></div>
-          <div id="docs-empty" style="font-size:11.5px;color:var(--muted);padding:8px 2px;">No documents yet — plans, WMPs, RFI letters and exports will live here.</div>
+          <!-- VISUAL DOCUMENTS GRID: thumbnail cards, one primary action each,
+               everything else behind the card's ⋯ menu. The add tile lives in
+               the grid, so the empty state is just the tile plus one line. -->
+          <div id="docs-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:12px;"></div>
+          <div id="docs-empty" style="display:none;"></div>
         </div>
       </div>
     </div>
@@ -8394,26 +8415,186 @@ async function docsUpload(ev) {
   for (const f of files) await docStore(currentProjectId, await f.arrayBuffer(), f.name);
   docsRender();
 }
+// ── VISUAL DOCUMENTS GRID ───────────────────────────────────────────────────
+// Thumbnail cards: dominant preview, ONE name line (middle-truncated), ONE
+// primary action; download/share/delete/submit/type-override live in the ⋯
+// menu. No sizes or dates on the card — the grid is for recognising, not
+// auditing. PDF thumbs render once and cache (IDB + bucket .thumb.png).
+function docEffKind(d) { return d.kindOverride || d.kind || docKind(d.name); }
+function docMidTrunc(name, max) {
+  if (!name || name.length <= max) return name || '';
+  const keep = max - 1, head = Math.ceil(keep * 0.6), tail = keep - head;
+  return name.slice(0, head) + '…' + name.slice(name.length - tail);
+}
+function docEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+function docCardHtml(p, d) {
+  const kind = docEffKind(d);
+  const isPdf = /\.pdf$/i.test(d.name), isDxf = /\.dxf$/i.test(d.name), isDocx = /\.docx?$/i.test(d.name);
+  const isPlan = kind === 'Plans' || kind === 'Export' || isDxf;
+  const isWmp = kind === 'WMP';
+  // ONE primary action, by type. WMP: Submit becomes primary only in the
+  // narrow window the spec allows — council set, never submitted, a
+  // compliance check completed — otherwise the checker is the default.
+  let primary;
+  if (isWmp && isPdf) {
+    const svc = (typeof PROJ_SERVICE !== 'undefined') ? PROJ_SERVICE.map[p.id] : null;
+    const submitPrimary = p.council && !svc && (p.complianceRuns || 0) > 0;
+    primary = submitPrimary
+      ? { label: 'Submit WMP', fn: `openCouncilSubmit()` }
+      : { label: 'Open in Compliance Checker', fn: `docOpenInCompliance('${d.id}')` };
+  } else if (isPlan && isPdf) primary = { label: 'Open in Design', fn: `docOpenInDesign('${d.id}')` };
+  else if (isDxf) primary = { label: 'Open in Design', fn: `docOpenInDesignDxf('${d.id}')` };
+  else if (isPdf) primary = { label: 'Open in Design', fn: `docOpenInDesign('${d.id}')` };
+  else primary = { label: 'Download', fn: `docDownload('${d.id}')` };
+  // thumb face: cached PNG for PDFs/DXF (backfilled async); branded cover for
+  // docx WMPs; neutral glyph otherwise
+  let face;
+  if (isPdf || isDxf) {
+    face = `<img id="docthumb_${d.id}" alt="" style="display:none;width:100%;height:100%;object-fit:cover;object-position:top;">` +
+      `<span class="doc-face-glyph" id="docglyph_${d.id}">${isDxf ? '📐' : '📄'}</span>`;
+  } else if (isDocx && isWmp) {
+    face = `<span style="display:flex;flex-direction:column;align-items:center;gap:7px;">` +
+      `<img src="favicon.svg" style="width:34px;height:34px;border-radius:8px;">` +
+      `<span style="font-size:11px;font-weight:700;color:#E8EFEF;max-width:150px;text-align:center;">${docEsc(docMidTrunc(d.name.replace(/\.[^.]+$/, ''), 34))}</span></span>`;
+  } else {
+    face = `<span class="doc-face-glyph">${isDocx ? '📝' : '📎'}</span>`;
+  }
+  const menu =
+    `<button class="doc-menu-btn" onclick="event.stopPropagation();docMenuToggle('${d.id}')">⋯</button>` +
+    `<div class="doc-menu" id="docmenu_${d.id}">` +
+    `<div class="doc-menu-item" onclick="docDownload('${d.id}')">⬇ Download</div>` +
+    `<div class="doc-menu-item" onclick="docShare('${d.id}')">🔗 Share link</div>` +
+    (isWmp ? `<div class="doc-menu-item" onclick="openCouncilSubmit()">📮 Submit WMP</div>` : '') +
+    `<div class="doc-menu-sep">Treat as</div>` +
+    ['Plans', 'WMP', 'Other'].map(k =>
+      `<div class="doc-menu-item${kind === k ? ' on' : ''}" onclick="docSetKind('${d.id}','${k}')">${kind === k ? '✓ ' : ''}${k === 'Plans' ? 'Plan' : k}</div>`).join('') +
+    `<div class="doc-menu-item" style="color:#EF8080;" onclick="if(confirm('Delete ${docEsc(d.name).replace(/'/g, '')}?'))docDelete(currentProjectId,'${d.id}')">✕ Delete</div>` +
+    `</div>`;
+  return `<div class="doc-card">
+    <div class="doc-face" onclick="${primary.fn}" title="${docEsc(d.name)}">${face}<span class="doc-tag">${kind === 'Plans' ? 'Plan' : kind}</span></div>${menu}
+    <div class="doc-name" title="${docEsc(d.name)}">${docEsc(docMidTrunc(d.name, 30))}</div>
+    <button class="doc-primary" onclick="${primary.fn}">${primary.label}</button>
+  </div>`;
+}
 function docsRender() {
   const list = document.getElementById('docs-list'), emptyEl = document.getElementById('docs-empty');
   if (!list) return;
   const p = getProjects().find(x => x.id === currentProjectId);
+  if (emptyEl) emptyEl.style.display = 'none';
   const docs = (p?.docs || []).slice().sort((a, b) => b.ts - a.ts);
-  emptyEl.style.display = docs.length ? 'none' : 'block';
-  const icon = { WMP: '📄', Advice: '📝', RFI: '📮', Plans: '📐', Export: '⬇', Other: '📎' };
-  list.innerHTML = docs.map(d => {
-    const pdf = /\.pdf$/i.test(d.name);
-    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:#182121;border:1px solid var(--border);border-radius:8px;">
-      <span>${icon[d.kind] || '📎'}</span>
-      <span style="font-size:12px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${d.name}</span>
-      <span class="pc-tag">${d.kind}</span>
-      ${pdf ? `<button class="tool-action" onclick="docOpenInDesign('${d.id}')" title="Set as the plan the Design canvas uses">Design</button>` : ''}
-      ${pdf ? `<button class="tool-action" onclick="docOpenInCompliance('${d.id}')" title="Run this document through the compliance checker">Check</button>` : ''}
-      <button class="tool-action" onclick="docShare('${d.id}')" title="Copy a 7-day view link anyone can open — no login needed">🔗</button>
-      <button class="tool-action" onclick="docDownload('${d.id}')">⬇</button>
-      <button class="tool-action" style="color:#EF8080;" onclick="if(confirm('Delete ${d.name.replace(/'/g, '')}?'))docDelete(currentProjectId,'${d.id}')">✕</button>
-    </div>`;
-  }).join('');
+  const cards = docs.map(d => docCardHtml(p, d));
+  // review response rides in the same grid, tagged, keeping its behaviour
+  const svc = (typeof PROJ_SERVICE !== 'undefined') ? PROJ_SERVICE.map[currentProjectId] : null;
+  if (svc && svc.resp) {
+    cards.push(`<div class="doc-card">
+      <div class="doc-face" onclick="viewReviewResponse(currentProjectId)"><span class="doc-face-glyph">📄</span><span class="doc-tag" style="background:#2E7D32;color:#fff;">Response</span></div>
+      <div class="doc-name">${docEsc(docMidTrunc(svc.resp.name || 'Review response', 30))}</div>
+      <button class="doc-primary" onclick="viewReviewResponse(currentProjectId)">View response</button>
+    </div>`);
+  }
+  cards.push(`<div class="doc-card doc-add" onclick="document.getElementById('doc-file-input').click()">
+    <div class="doc-face" style="border:2px dashed #3a4747;background:none;"><span style="font-size:26px;color:rgba(255,255,255,0.4);">＋</span></div>
+    <div class="doc-name" style="color:var(--muted);">${docs.length ? 'Add document' : 'Add your first document — plans, WMPs, exports'}</div>
+  </div>`);
+  list.innerHTML = cards.join('');
+  docsThumbBackfill(p, docs);   // async: fills PDF/DXF previews, cached forever
+}
+function docMenuToggle(id) {
+  document.querySelectorAll('.doc-menu.open').forEach(m => { if (m.id !== 'docmenu_' + id) m.classList.remove('open'); });
+  document.getElementById('docmenu_' + id)?.classList.toggle('open');
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.doc-menu-btn')) document.querySelectorAll('.doc-menu.open').forEach(m => m.classList.remove('open'));
+});
+function docSetKind(docId, kind) {
+  // manual override — never leave a wrong guess uncorrectable
+  const projects = getProjects();
+  const p = projects.find(x => x.id === currentProjectId);
+  const d = p?.docs?.find(x => x.id === docId);
+  if (!d) return;
+  d.kindOverride = kind;
+  saveProjects(projects);
+  if (typeof saveProjectToDB === 'function') saveProjectToDB(p);
+  docsRender();
+}
+// ── cached thumbnails: render once, keep forever ───────────────────────────
+// IDB first (works offline/anon), bucket .thumb.png beside the doc second, a
+// fresh render (page 1 at ~480px / DXF extents) only when neither exists.
+function docThumbKey(projectId, docId) { return 'thumb:' + projectId + ':' + docId; }
+function docThumbPath(projectId, d) { return `${currentUser?.id}/${projectId}/docs/${d.id}_${d.name}.thumb.png`; }
+async function docThumbEnsure(projectId, d) {
+  try {
+    const cached = await idbGetPdf(docThumbKey(projectId, d.id));
+    if (cached) return cached.buf;
+  } catch (e) {}
+  if (currentUser && sb?.storage) {
+    try {
+      const { data } = await sb.storage.from(PLANS_BUCKET).download(docThumbPath(projectId, d));
+      if (data) { const buf = await data.arrayBuffer(); await idbPutPdf(docThumbKey(projectId, d.id), buf, 'thumb.png'); return buf; }
+    } catch (e) {}
+  }
+  const rec = await docLoad(projectId, d.id);
+  if (!rec) return null;
+  let canvas = null;
+  try {
+    if (/\.pdf$/i.test(d.name)) {
+      if (!window.pdfjsLib) return null;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const doc = await pdfjsLib.getDocument({ data: rec.buf.slice(0) }).promise;
+      const page = await doc.getPage(1);
+      const vp0 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: 480 / vp0.width });
+      canvas = document.createElement('canvas');
+      canvas.width = vp.width; canvas.height = vp.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    } else if (/\.dxf$/i.test(d.name) && typeof wsParseDxf === 'function') {
+      const parsed = wsParseDxf(new TextDecoder().decode(rec.buf));
+      if (!parsed.segs.length) return null;
+      let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+      parsed.segs.forEach(g => { x1 = Math.min(x1, g[0], g[2]); x2 = Math.max(x2, g[0], g[2]); y1 = Math.min(y1, g[1], g[3]); y2 = Math.max(y2, g[1], g[3]); });
+      canvas = document.createElement('canvas');
+      canvas.width = 480; canvas.height = 360;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#182121'; ctx.fillRect(0, 0, 480, 360);
+      const k = Math.min(456 / (x2 - x1 || 1), 336 / (y2 - y1 || 1));
+      ctx.strokeStyle = '#7FD8D8'; ctx.lineWidth = 0.6; ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      parsed.segs.forEach(g => {
+        ctx.moveTo(12 + (g[0] - x1) * k, 348 - (g[1] - y1) * k);
+        ctx.lineTo(12 + (g[2] - x1) * k, 348 - (g[3] - y1) * k);
+      });
+      ctx.stroke();
+    }
+  } catch (e) { return null; }
+  if (!canvas) return null;
+  const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+  if (!blob) return null;
+  const buf = await blob.arrayBuffer();
+  try { await idbPutPdf(docThumbKey(projectId, d.id), buf, 'thumb.png'); } catch (e) {}
+  if (currentUser && sb?.storage) {
+    try { await sb.storage.from(PLANS_BUCKET).upload(docThumbPath(projectId, d), blob, { upsert: true, contentType: 'image/png' }); } catch (e) {}
+  }
+  return buf;
+}
+async function docsThumbBackfill(p, docs) {
+  for (const d of docs) {
+    if (!/\.(pdf|dxf)$/i.test(d.name)) continue;
+    const img = document.getElementById('docthumb_' + d.id);
+    if (!img || img.dataset.done) continue;
+    const buf = await docThumbEnsure(currentProjectId, d);
+    const img2 = document.getElementById('docthumb_' + d.id);   // grid may have re-rendered
+    if (!img2 || !buf) continue;
+    img2.src = URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
+    img2.style.display = 'block';
+    img2.dataset.done = '1';
+    const g = document.getElementById('docglyph_' + d.id);
+    if (g) g.style.display = 'none';
+  }
+}
+async function docOpenInDesignDxf(docId) {
+  const rec = await docLoad(currentProjectId, docId); if (!rec) return alert('Document unavailable offline.');
+  showScreen('workspace', document.getElementById('nav-workspace'));
+  if (typeof wsDxfLoadText === 'function') wsDxfLoadText(new TextDecoder().decode(rec.buf));
 }
 async function docSignedUrl(projectId, docId) {
   // 7-day signed URL for a project document; pushes local-only docs to the
@@ -19310,9 +19491,13 @@ function wsDxfFile(e) {
   const f = e.target.files[0]; e.target.value = '';
   if (!f) return;
   const r = new FileReader();
-  r.onload = () => {
+  r.onload = () => wsDxfLoadText(String(r.result));
+  r.readAsText(f);
+}
+// Shared by the file input and the Documents grid ("Open in Design" on a DXF).
+function wsDxfLoadText(text) {
     try {
-      const parsed = wsParseDxf(String(r.result));
+      const parsed = wsParseDxf(text);
       if (!parsed.segs.length) { alert('No drawable geometry found in that DXF (looked for lines, polylines, arcs, circles, blocks).'); return; }
       // Normalise: bbox min → (0,0), flip Y (DXF is Y-up, screen is Y-down)
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -19330,8 +19515,6 @@ function wsDxfFile(e) {
       wsRenderDxfLayer();
       alert(`DXF loaded: ${parsed.segs.length} segments, ${WS_DXF.w.toFixed(1)} × ${WS_DXF.h.toFixed(1)} m at drawing scale. Use ✥ to click it into position.`);
     } catch (err) { alert('DXF parse failed: ' + (err.message || err)); }
-  };
-  r.readAsText(f);
 }
 
 function wsParseDxf(text) {
