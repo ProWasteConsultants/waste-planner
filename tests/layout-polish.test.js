@@ -556,7 +556,20 @@ test('dual document view: two panes, independent controls, tabs when narrow', ()
   assert.ok(cs.includes('IntersectionObserver'), 'pages render lazily');
   assert.ok(!cs.includes('numPages, 20'), 'the 20-page render cap is gone — every referenced page is reachable');
   // the guideline pane shows the checked-against document or nothing — never a stand-in
-  assert.ok(cs.includes("panes.classList.remove('dual')"), 'no guideline PDF, no second pane');
+  assert.ok(cs.includes("panes.classList.toggle('dual', !!gdoc)"), 'no guideline PDF, no second pane');
+  // panes pick fit-to-width zoom from their own width, so single/dual must be
+  // decided BEFORE the WMP pane loads — loading first left it over-zoomed
+  assert.ok(cs.indexOf("panes.classList.toggle('dual'") < cs.indexOf('await paneLoad(PANE.wmp'),
+    'dual layout is applied before either pane measures itself');
+  // side-by-side is reachable straight from setup, without burning a scan,
+  // and never pretends to be a result
+  assert.ok(SOURCE.includes('id=&quot;browse-btn&quot;') && cs.includes('async function openDocViewer()'),
+    'View side by side opens the dual layout from setup');
+  assert.ok(cs.includes("badge.textContent = 'Not scanned'") && cs.includes('No scan has been run'),
+    'browse mode says plainly that nothing was scanned');
+  // a failed scan replaces the spinner panel with error markup; every scan
+  // start must restore it or the next scan dies on a null #scan-bar
+  assert.ok(cs.includes('slp.innerHTML = SCAN_PANEL_HTML'), 'scan panel restored on every scan start');
 });
 
 test('finding cross-references: verbatim schema, three-tier degrade, strict matching', () => {
