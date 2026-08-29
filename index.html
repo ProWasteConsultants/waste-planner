@@ -6227,12 +6227,6 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
     &lt;button class=&quot;role-tab&quot; onclick=&quot;setRole(&#x27;council&#x27;,this)&quot;&gt;Council Officer&lt;/button&gt;
     &lt;button class=&quot;role-tab&quot; onclick=&quot;setRole(&#x27;architect&#x27;,this)&quot;&gt;Architect&lt;/button&gt;
   &lt;/div&gt;
-  &lt;!-- MODE only exists as a choice for council officers (everyone else is
-       locked to pre-lodgement by setRole), so it lives here, not in the form --&gt;
-  &lt;div class=&quot;mode-tabs&quot; id=&quot;mode-tabs&quot; style=&quot;display:none;&quot;&gt;
-    &lt;button class=&quot;mode-card active&quot; id=&quot;mode-pre&quot; onclick=&quot;setMode(&#x27;pre&#x27;)&quot; title=&quot;Advisory scan — identify gaps and get suggestions before lodgement.&quot;&gt;Pre-Lodgement&lt;/button&gt;
-    &lt;button class=&quot;mode-card&quot; id=&quot;mode-assess&quot; onclick=&quot;setMode(&#x27;assess&#x27;)&quot; title=&quot;Formal checklist scan with RFI comment generation.&quot;&gt;Assessment&lt;/button&gt;
-  &lt;/div&gt;
   &lt;div class=&quot;topbar-key&quot;&gt;
     &lt;input type=&quot;password&quot; id=&quot;api-key-input&quot; placeholder=&quot;Anthropic API key (sk-ant-...)&quot;&gt;
     &lt;button onclick=&quot;saveKey()&quot;&gt;Save&lt;/button&gt;
@@ -6242,6 +6236,15 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
 
 &lt;!-- SETUP PANEL --&gt;
 &lt;div class=&quot;setup-panel&quot; id=&quot;setup-panel&quot;&gt;
+  &lt;!-- MODE only exists as a choice for council officers (everyone else is
+       locked to pre-lodgement by setRole). It sits above the form, not in
+       it — and NOT in the topbar, which the embedded platform hides. --&gt;
+  &lt;div style=&quot;max-width:1060px;margin:0 auto;display:flex;justify-content:flex-end;&quot;&gt;
+    &lt;div class=&quot;mode-tabs&quot; id=&quot;mode-tabs&quot; style=&quot;display:none;margin:0 0 10px;&quot;&gt;
+      &lt;button class=&quot;mode-card active&quot; id=&quot;mode-pre&quot; onclick=&quot;setMode(&#x27;pre&#x27;)&quot; title=&quot;Advisory scan — identify gaps and get suggestions before lodgement.&quot;&gt;Pre-Lodgement&lt;/button&gt;
+      &lt;button class=&quot;mode-card&quot; id=&quot;mode-assess&quot; onclick=&quot;setMode(&#x27;assess&#x27;)&quot; title=&quot;Formal checklist scan with RFI comment generation.&quot;&gt;Assessment&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
   &lt;div class=&quot;setup-inner fade&quot;&gt;
 
     &lt;!-- WMP Upload --&gt;
@@ -6733,7 +6736,7 @@ function persistGuidelineUpload(councilKey, name, version, state, text) {
 function setRole(role, el) {
   state.role = role;
   document.querySelectorAll(&#x27;.role-tab&#x27;).forEach(t =&gt; t.classList.remove(&#x27;active&#x27;));
-  el.classList.add(&#x27;active&#x27;);
+  if (el) el.classList.add(&#x27;active&#x27;);
   // Show/hide council-specific UI
   const isCouncil = role === &#x27;council&#x27;;
   document.getElementById(&#x27;guideline-upload-section&#x27;).style.display = isCouncil ? &#x27;block&#x27; : &#x27;none&#x27;;
@@ -7994,54 +7997,16 @@ window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
     state.aiIncluded = !!e.data.aiIncluded;
     state.aiToken = e.data.aiToken || null;
     state.aiUrl = e.data.aiUrl || null;
-    const role = e.data.role;
-    if (role === &#x27;council&#x27;) {
-      // Council officer — force council assessment mode, hide everything else
-      // Hide the mode selection buttons for non-council modes
-      const plannerBtn = document.getElementById(&#x27;mode-planner&#x27;);
-      const architectBtn = document.getElementById(&#x27;mode-architect&#x27;);
-      if (plannerBtn) plannerBtn.style.display = &#x27;none&#x27;;
-      if (architectBtn) architectBtn.style.display = &#x27;none&#x27;;
-
-      // Click council officer button to activate that mode
-      setTimeout(() =&gt; {
-        const councilBtn = document.getElementById(&#x27;mode-council&#x27;);
-        if (councilBtn) councilBtn.click();
-      }, 200);
-
-      // Hide the pre-lodgement review card on the home screen
-      const cards = document.querySelectorAll(&#x27;.mode-card, .scan-type-card, [data-mode=&quot;planner&quot;], [data-mode=&quot;architect&quot;]&#x27;);
-      cards.forEach(c =&gt; { if (!c.id?.includes(&#x27;council&#x27;) &amp;&amp; !c.textContent?.includes(&#x27;Council&#x27;)) c.style.display = &#x27;none&#x27;; });
-
-      // Remove the pre-lodgement section if it exists
-      setTimeout(() =&gt; {
-        document.querySelectorAll(&#x27;.mode-option, .scan-mode-card&#x27;).forEach(el =&gt; {
-          if (el.textContent.includes(&#x27;Pre-Lodgement&#x27;) || el.textContent.includes(&#x27;Architect&#x27;) || el.textContent.includes(&#x27;Town Planner&#x27;)) {
-            el.style.display = &#x27;none&#x27;;
-          }
-        });
-        // Hide the section heading if only council remains
-        const prelodgeSection = document.querySelector(&#x27;.prelodge-section, [data-section=&quot;prelodge&quot;]&#x27;);
-        if (prelodgeSection) prelodgeSection.style.display = &#x27;none&#x27;;
-      }, 300);
-
-    } else {
-      // Non-council — hide council assessment button completely
-      setTimeout(() =&gt; {
-        const councilBtn = document.getElementById(&#x27;mode-council&#x27;);
-        if (councilBtn) {
-          councilBtn.style.display = &#x27;none&#x27;;
-          // Also hide the council assessment card
-          councilBtn.closest(&#x27;.mode-card, .scan-type-card&#x27;)?.style &amp;&amp; (councilBtn.closest(&#x27;.mode-card, .scan-type-card&#x27;).style.display = &#x27;none&#x27;);
-        }
-        // Hide council assessment card by text content
-        document.querySelectorAll(&#x27;.mode-option, .scan-mode-card, .mode-card&#x27;).forEach(el =&gt; {
-          if (el.textContent.includes(&#x27;Council Assessment&#x27;) || el.textContent.includes(&#x27;council officers&#x27;)) {
-            el.style.display = &#x27;none&#x27;;
-          }
-        });
-      }, 300);
-    }
+    // The platform decides the role — apply it through the SAME setRole the
+    // (hidden) role tabs use, so every council affordance follows: assessment
+    // mode, RFI + comment bank tabs, the guideline upload section, and the
+    // mode pills. The old code here clicked element ids from a previous
+    // version of this page (&#x27;mode-council&#x27; etc.) that no longer exist, which
+    // silently left council accounts running the checker as planners.
+    const role = e.data.role === &#x27;council&#x27; ? &#x27;council&#x27;
+      : e.data.role === &#x27;architect&#x27; ? &#x27;architect&#x27; : &#x27;planner&#x27;;
+    const tabIdx = { planner: 0, council: 1, architect: 2 }[role];
+    setRole(role, document.querySelectorAll(&#x27;.role-tab&#x27;)[tabIdx]);
     // Council accounts don&#x27;t pick a council each scan — the platform tells us
     // which one they are, we select it and lock the field. Standard users keep
     // choosing per-project, since their council changes job to job.

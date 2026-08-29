@@ -463,17 +463,27 @@ test('compliance checker setup: upload + scan at the top, toolbar-style headings
   assert.ok(order.every(i => i >= 0), 'all setup cards present');
   for (let i = 1; i < order.length; i++)
     assert.ok(order[i] > order[i - 1], 'document upload and scan lead; details follow');
-  // de-clutter: the mode picker is OUT of the form entirely — it lives in the
-  // topbar and only shows for council officers, the one role with a choice
-  // (setRole locks everyone else to pre-lodgement)
+  // de-clutter: the mode picker is OUT of the form cards — it sits above the
+  // setup form and only shows for council officers, the one role with a
+  // choice (setRole locks everyone else to pre-lodgement). It must NOT live
+  // in the topbar: the embedded platform hides the topbar entirely, which is
+  // how the pills once shipped invisible.
   assert.ok(!panel.includes('id=&quot;mode-pre&quot;') && !panel.includes('id=&quot;mode-title&quot;'),
-    'no mode UI in the setup form at all');
+    'no mode UI inside the setup form cards');
   const bar = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;role-tabs&quot;&gt;'), SOURCE.indexOf('&lt;div class=&quot;topbar-key&quot;&gt;'));
-  assert.ok(bar.includes('id=&quot;mode-tabs&quot; style=&quot;display:none;&quot;') &&
-            bar.includes('id=&quot;mode-pre&quot;') && bar.includes('id=&quot;mode-assess&quot;'),
-    'mode pills sit in the topbar beside the role tabs, hidden by default');
+  assert.ok(!bar.includes('id=&quot;mode-tabs&quot;'), 'mode pills are not in the hidden topbar');
+  const setup = SOURCE.slice(SOURCE.indexOf('id=&quot;setup-panel&quot;'), SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'));
+  assert.ok(setup.includes('id=&quot;mode-tabs&quot;') && setup.includes('id=&quot;mode-pre&quot;') && setup.includes('id=&quot;mode-assess&quot;'),
+    'mode pills sit above the setup form, hidden by default');
   assert.ok(SOURCE.includes("document.getElementById(&#x27;mode-tabs&#x27;).style.display = isCouncil ? &#x27;flex&#x27; : &#x27;none&#x27;;"),
     'setRole reveals them for council officers only');
+  // the platform's role message must flow through the real setRole — the old
+  // handler clicked element ids from a previous page version and silently
+  // left council accounts in planner mode
+  const cs2 = checkerScript ? checkerScript() : '';
+  assert.ok(cs2.includes('setRole(role, document.querySelectorAll(\'.role-tab\')[tabIdx])'),
+    'wp-set-role applies the role through setRole');
+  assert.ok(!cs2.includes("getElementById('mode-council')"), 'dead legacy role plumbing removed');
   assert.ok(panel.includes('display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;'),
     'Project and Council sit side by side');
   assert.ok(!panel.includes('privacy-badge') && panel.includes('🔒 Project data is isolated'),
