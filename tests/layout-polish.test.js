@@ -624,6 +624,30 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   assert.ok(SOURCE.includes('Council registry <span'), 'the councils list says what it is for');
 });
 
+test('uploading a guideline in the checker stores the PDF, not just its text', () => {
+  const cs = checkerScript();
+  // persistGuidelineUpload only ever wrote extracted TEXT to localStorage —
+  // one browser, no document. Hence "the source PDF is not stored": no
+  // thumbnail, no View, no side-by-side pane, nothing on another device.
+  assert.ok(cs.includes("type: 'wp-guideline-save'") && cs.includes('bytes: state.guidelineRawBytes'),
+    'the checker hands the PDF bytes to the parent');
+  assert.ok(cs.includes("if (e.data?.type === 'wp-guideline-saved')"), 'and takes the answer');
+  assert.ok(cs.includes('state.guidelineLib = Object.assign({ ok: true, reqCount: 0 }, e.data);'),
+    'a stored document becomes the card source — thumbnail, View, pane');
+  assert.ok(cs.includes('used for this scan only'),
+    'a refused upload says so rather than implying the document was kept');
+  // parent side: real object in the bucket + a versioned library row
+  assert.ok(SOURCE.includes("if (!e.data || e.data.type !== 'wp-guideline-save') return;"), 'the parent listens');
+  assert.ok(SOURCE.includes("const path = `guidelines/${key}/${Date.now()}_${safe}`;") &&
+            SOURCE.includes(".upload(path, new Blob([e.data.bytes], { type: 'application/pdf' })"),
+    'the PDF lands in the same prefix the admin uploader uses');
+  assert.ok(SOURCE.includes("notes: 'uploaded from the compliance checker',") &&
+            SOURCE.includes('requirements: [],            // clauses come from extraction + review (C3)'),
+    'it creates a versioned row with no clauses — approval still gates what serves');
+  assert.ok(SOURCE.includes("_glBridgeAll = null;           // the serving row changed"),
+    'the cached serving row is dropped so the new version shows immediately');
+});
+
 test('the checker never fakes a loaded guideline, and always offers the upload', () => {
   const cs = checkerScript();
   // five councils shipped as loaded:true with invented document names, so the
