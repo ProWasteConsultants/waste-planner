@@ -624,6 +624,35 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   assert.ok(SOURCE.includes('Council registry <span'), 'the councils list says what it is for');
 });
 
+test('admin guidelines section is scoped to one council', () => {
+  // rows are approved against a specific document; showing another council's
+  // library and queue while you type a different name invites approving
+  // against the wrong one
+  assert.ok(SOURCE.includes("const CG_SCOPE = { name: '' };") && SOURCE.includes('function cgScopeChanged(v)'),
+    'the council field sets the section scope');
+  assert.ok(SOURCE.includes('oninput="cgScopeChanged(this.value)"') && SOURCE.includes('id="cg-name" list="cgb-councils"'),
+    'the council field is a picker wired to the scope');
+  assert.ok(SOURCE.includes('function cgScopeMatches(name)') && SOURCE.includes('function cgRenderLibrary()'),
+    'the library renders through the scope');
+  assert.ok(SOURCE.includes('.filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name))'),
+    'library entries are filtered by the selected council');
+  assert.ok(SOURCE.includes('gidsEvery.filter(g => cgScopeMatches((CRQ_Q.docs[g] || {}).council_name))'),
+    'queue documents are filtered by the selected council');
+  assert.ok(SOURCE.includes('CRQ_Q.rows.forEach(r => { if (byDoc[r.council_guideline_id]) byDoc[r.council_guideline_id].push(r); });'),
+    'rows never re-create a document the scope filtered out');
+  // with nothing selected, no council-specific content — but counts, so
+  // nothing is hidden silently
+  assert.ok(SOURCE.includes("Choose a council in the field above to see its document and review its rows."),
+    'unselected library shows a count and a prompt, not another council');
+  assert.ok(SOURCE.includes("'. Choose a council above to review its rows.</div>'"),
+    'unselected queue shows a count and a prompt, not another council');
+  // the selected council's document card is the same renderer the rates panel uses
+  assert.ok(SOURCE.includes('async function glCouncilCard(label, mountId, emptyHint)'), 'one card renderer');
+  assert.ok(SOURCE.includes("glCouncilCard(CG_SCOPE.name, 'cg-council-card'") &&
+            SOURCE.includes("glCouncilCard(label, 'rdb-guideline-card'"),
+    'both panels mount it, so they cannot describe the same document differently');
+});
+
 test('finding cross-references: verbatim schema, three-tier degrade, strict matching', () => {
   const cs = checkerScript();
   // schema: per-document page + VERBATIM snippet, and the prompt says so
