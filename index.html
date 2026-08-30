@@ -6878,47 +6878,54 @@ function guidelineSourceInfo() {
   const persisted = !!g.persistedText;
   const reqCount = (lib &amp;&amp; lib.reqCount) || (cg ? (cg.requirements || []).length : 0);
   const served = reqCount &gt; 0;
+  // THE DOCUMENT TO SHOW, decided independently of which TEXT the check uses.
+  // These are two different questions and conflating them is what broke this:
+  // a text extract sitting in one browser&#x27;s localStorage used to shadow a PDF
+  // that was properly stored in the library, so the card kept saying &quot;saved on
+  // this device only&quot; and the side-by-side pane never appeared no matter how
+  // many times the document was uploaded in admin.
+  // Session upload wins (it is the file in hand), else the library document.
+  const doc = (sessionUp &amp;&amp; (state.guidelineRawBytes || state.guidelineThumbUrl))
+    ? { pdf: &#x27;session&#x27;, url: null, thumb: state.guidelineThumbUrl || null,
+        pdfLabel: g.name || state.guidelineFileName, fileName: state.guidelineFileName }
+    : (lib &amp;&amp; lib.url)
+      ? { pdf: &#x27;url&#x27;, url: lib.url, thumb: lib.thumb || null,
+          pdfLabel: lib.councilName + (lib.version ? &#x27; guidelines v&#x27; + lib.version : &#x27; guidelines&#x27;),
+          fileName: lib.fileName || null }
+      : { pdf: null, url: null, thumb: null, pdfLabel: null, fileName: null };
+
   if (sessionUp || persisted || served) {
-    const info = { kind: &#x27;council&#x27;, tag: null, note: null, pdf: null, url: null, thumb: null, fileName: null, dateStr: null };
+    const info = Object.assign({ kind: &#x27;council&#x27;, tag: null, note: null, dateStr: null }, doc);
     if (sessionUp) {
       info.label = g.name || (lib &amp;&amp; lib.councilName ? lib.councilName + &#x27; guidelines&#x27; : state.guidelineFileName);
       info.fileName = state.guidelineFileName;
       info.dateStr = &#x27;uploaded &#x27; + new Date().toLocaleDateString(&#x27;en-AU&#x27;);
-      info.pdf = &#x27;session&#x27;;
-      info.thumb = state.guidelineThumbUrl || null;
       if (served) info.note = reqCount + &#x27; clause-referenced requirements from the shared library also apply&#x27;;
     } else if (served) {
       const nm = (lib &amp;&amp; lib.councilName) || cg.council_name;
       const ver = (lib &amp;&amp; lib.version) || (cg &amp;&amp; cg.version) || null;
       info.label = nm + (ver ? &#x27; guidelines v&#x27; + ver : &#x27; guidelines&#x27;);
-      info.fileName = (lib &amp;&amp; lib.fileName) || null;
       info.dateStr = (lib &amp;&amp; lib.effectiveDate) ? (&#x27;effective &#x27; + lib.effectiveDate)
         : (lib &amp;&amp; lib.uploadedAt) ? (&#x27;uploaded &#x27; + String(lib.uploadedAt).slice(0, 10)) : null;
-      if (lib &amp;&amp; lib.url) { info.pdf = &#x27;url&#x27;; info.url = lib.url; info.thumb = lib.thumb || null; }
-      else info.note = reqCount + &#x27; clause-referenced text requirements on file — the source PDF is not stored&#x27;;
+      if (!info.pdf) info.note = reqCount + &#x27; clause-referenced text requirements on file — the source PDF is not stored&#x27;;
     } else {
+      // persisted: the check runs on text saved in THIS browser
       info.label = g.name || &#x27;Council guidelines&#x27;;
       info.dateStr = g.version ? (&#x27;v&#x27; + g.version) : null;
-      info.note = &#x27;Text extract saved on this device only — re-upload the PDF here to store the document itself (thumbnail, View, side-by-side).&#x27;;
+      if (!info.pdf) info.note = &#x27;Text extract saved on this device only — re-upload the PDF here to store the document itself (thumbnail, View, side-by-side).&#x27;;
     }
     info.short = info.label + (info.dateStr ? &#x27;, &#x27; + info.dateStr : &#x27;&#x27;);
     return info;
   }
-  // A council PDF that is in the library but whose requirements are not yet
-  // extracted-and-approved: the SCAN still falls back (its rules are not
-  // served yet), but the DOCUMENT exists and must be shown — thumbnail, View,
-  // and the side-by-side pane. Hiding it made an upload look like it did
-  // nothing. `label`/`short` keep describing what the check actually uses;
-  // `pdfLabel` names the document on screen, so neither one lies.
+
+  // No council text at all: the check falls back. A library PDF still shows —
+  // `label`/`short` name what the check uses, `pdfLabel` names what is on
+  // screen, so neither one lies.
   const sf = g.state ? STATE_GUIDELINES[g.state] : null;
-  const pending = (lib &amp;&amp; lib.url) ? lib : null;
-  const pendingBits = pending ? {
-    pdf: &#x27;url&#x27;, url: pending.url, thumb: pending.thumb || null,
-    pdfLabel: pending.councilName + (pending.version ? &#x27; guidelines v&#x27; + pending.version : &#x27; guidelines&#x27;),
-    fileName: pending.fileName || null,
+  const pendingBits = doc.pdf ? Object.assign({}, doc, {
     tag: &#x27;Requirements not extracted yet&#x27;,
     note: &#x27;This council PDF is on file and shown here, but its clauses are not serving yet — extract and approve it in Admin for the check to cite it. Until then the check uses the fallback below.&#x27;,
-  } : { pdf: null, url: null, thumb: null, pdfLabel: null, fileName: null, tag: null, note: null };
+  }) : Object.assign({}, doc, { tag: null, note: null });
   if (sf) {
     return Object.assign({ kind: &#x27;state&#x27;, label: sf.name, dateStr: sf.version || null,
       short: sf.name + (sf.version ? &#x27;, &#x27; + sf.version : &#x27;&#x27;) + &#x27; (state fallback)&#x27; },
