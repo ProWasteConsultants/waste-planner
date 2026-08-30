@@ -6722,12 +6722,19 @@ const STATE_GUIDELINES = {
   NT:  { name: &#x27;NT EPA Waste Management Guidelines&#x27;, version: &#x27;2020&#x27;, state: &#x27;NT&#x27; },
 };
 
+// Council NAME + STATE only. `loaded` is never seeded true: five councils
+// used to ship as loaded:true with invented document names and versions, so
+// the checker claimed &quot;City of Melbourne WMP Guidelines v2021 — loaded ✓&quot;
+// for a document nobody had uploaded, AND hid the upload row (it only
+// appeared on the not-loaded branches). A council has guidelines when real
+// material exists — a session upload, persisted text, or a library document —
+// and guidelineSourceInfo() is what decides that.
 const GUIDELINE_DB = {
-  city_of_sydney:    { loaded: true,  name: &#x27;City of Sydney WMP Guidelines 2018&#x27;, version: &#x27;2018&#x27;, state: &#x27;NSW&#x27; },
-  bayside_nsw:       { loaded: true,  name: &#x27;Bayside Council Waste Guidelines&#x27;,    version: &#x27;2021&#x27;, state: &#x27;NSW&#x27; },
-  city_of_yarra:     { loaded: true,  name: &#x27;City of Yarra Waste Guidelines&#x27;,      version: &#x27;2022&#x27;, state: &#x27;VIC&#x27; },
-  city_of_melbourne: { loaded: true,  name: &#x27;City of Melbourne WMP Guidelines&#x27;,    version: &#x27;2021&#x27;, state: &#x27;VIC&#x27; },
-  gold_coast:        { loaded: true,  name: &#x27;GCCC Multi-Tenanted Development Guidelines&#x27;, version: &#x27;2020&#x27;, state: &#x27;QLD&#x27; },
+  city_of_sydney:    { loaded: false, name: &#x27;City of Sydney&#x27;,                      version: null,   state: &#x27;NSW&#x27; },
+  bayside_nsw:       { loaded: false, name: &#x27;Bayside Council&#x27;,                     version: null,   state: &#x27;NSW&#x27; },
+  city_of_yarra:     { loaded: false, name: &#x27;City of Yarra&#x27;,                       version: null,   state: &#x27;VIC&#x27; },
+  city_of_melbourne: { loaded: false, name: &#x27;City of Melbourne&#x27;,                   version: null,   state: &#x27;VIC&#x27; },
+  gold_coast:        { loaded: false, name: &#x27;Gold Coast City Council&#x27;,             version: null,   state: &#x27;QLD&#x27; },
   brisbane:          { loaded: false, name: &#x27;Brisbane City Council&#x27;,               version: null,   state: &#x27;QLD&#x27; },
   stonnington:       { loaded: false, name: &#x27;City of Stonnington&#x27;,                 version: null,   state: &#x27;VIC&#x27; },
   randwick:          { loaded: false, name: &#x27;Randwick City Council&#x27;,               version: null,   state: &#x27;NSW&#x27; },
@@ -6897,18 +6904,64 @@ function guidelineSourceInfo() {
     info.short = info.label + (info.dateStr ? &#x27;, &#x27; + info.dateStr : &#x27;&#x27;);
     return info;
   }
+  // A council PDF that is in the library but whose requirements are not yet
+  // extracted-and-approved: the SCAN still falls back (its rules are not
+  // served yet), but the DOCUMENT exists and must be shown — thumbnail, View,
+  // and the side-by-side pane. Hiding it made an upload look like it did
+  // nothing. `label`/`short` keep describing what the check actually uses;
+  // `pdfLabel` names the document on screen, so neither one lies.
   const sf = g.state ? STATE_GUIDELINES[g.state] : null;
+  const pending = (lib &amp;&amp; lib.url) ? lib : null;
+  const pendingBits = pending ? {
+    pdf: &#x27;url&#x27;, url: pending.url, thumb: pending.thumb || null,
+    pdfLabel: pending.councilName + (pending.version ? &#x27; guidelines v&#x27; + pending.version : &#x27; guidelines&#x27;),
+    fileName: pending.fileName || null,
+    tag: &#x27;Requirements not extracted yet&#x27;,
+    note: &#x27;This council PDF is on file and shown here, but its clauses are not serving yet — extract and approve it in Admin for the check to cite it. Until then the check uses the fallback below.&#x27;,
+  } : { pdf: null, url: null, thumb: null, pdfLabel: null, fileName: null, tag: null, note: null };
   if (sf) {
-    return { kind: &#x27;state&#x27;, label: sf.name, fileName: null, dateStr: sf.version || null,
-      tag: &#x27;State fallback — no council document&#x27;,
-      note: (lib &amp;&amp; lib.url) ? &#x27;A council PDF is on file but its requirements are not yet extracted — the scan does not use it&#x27;
-        : g.loaded ? &#x27;Listed as having guidelines, but no document text or extracted requirements are on file&#x27; : null,
-      pdf: null, url: null, thumb: null,
-      short: sf.name + (sf.version ? &#x27;, &#x27; + sf.version : &#x27;&#x27;) + &#x27; (state fallback)&#x27; };
+    return Object.assign({ kind: &#x27;state&#x27;, label: sf.name, dateStr: sf.version || null,
+      short: sf.name + (sf.version ? &#x27;, &#x27; + sf.version : &#x27;&#x27;) + &#x27; (state fallback)&#x27; },
+      pendingBits,
+      pendingBits.tag ? {} : { tag: &#x27;State fallback — no council document&#x27; });
   }
-  return { kind: &#x27;none&#x27;, label: &#x27;No guidelines loaded&#x27;, fileName: null, dateStr: null, tag: null, note: null,
-    pdf: null, url: null, thumb: null,
-    short: &#x27;No guidelines — general waste planning principles applied&#x27; };
+  return Object.assign({ kind: &#x27;none&#x27;, label: &#x27;No guidelines loaded&#x27;, dateStr: null,
+    short: &#x27;No guidelines — general waste planning principles applied&#x27; }, pendingBits);
+}
+
+// Status row + upload-row visibility, from the SAME guidelineSourceInfo the
+// card uses, so the row can never say &quot;loaded ✓&quot; over a card that says
+// &quot;state fallback&quot;. The upload row shows whenever this council has no council
+// document on file — which is exactly when someone needs to add one.
+function cgApplyStatus(g) {
+  const s = guidelineSourceInfo();
+  const dot = document.getElementById(&#x27;gdot&#x27;);
+  const nameEl = document.getElementById(&#x27;gname&#x27;);
+  const metaEl = document.getElementById(&#x27;gmeta&#x27;);
+  const gg = g || GUIDELINE_DB[state.council] || {};
+  if (!dot || !nameEl || !metaEl) return;
+  if (s.kind === &#x27;council&#x27;) {
+    dot.style.background = &#x27;#4CAF50&#x27;;
+    nameEl.textContent = gg.name || s.label;
+    metaEl.textContent = s.label + (s.dateStr ? &#x27; · &#x27; + s.dateStr : &#x27;&#x27;) + &#x27; — in use ✓&#x27;;
+    metaEl.style.color = &#x27;var(--pass)&#x27;;
+  } else if (s.kind === &#x27;state&#x27;) {
+    dot.style.background = &#x27;#FF9800&#x27;;
+    nameEl.textContent = gg.name || &#x27;&#x27;;
+    metaEl.textContent = s.pdf
+      ? &#x27;Council PDF on file — clauses not serving yet, so the check falls back to &#x27; + (gg.state || &#x27;state&#x27;) + &#x27; guidelines&#x27;
+      : &#x27;No council guidelines uploaded — the check falls back to &#x27; + (gg.state || &#x27;state&#x27;) + &#x27; guidelines&#x27;;
+    metaEl.style.color = &#x27;var(--flag)&#x27;;
+  } else {
+    dot.style.background = &#x27;#F44336&#x27;;
+    nameEl.textContent = gg.name || &#x27;&#x27;;
+    metaEl.textContent = &#x27;No guidelines available — upload guidelines for this council below&#x27;;
+    metaEl.style.color = &#x27;var(--fail)&#x27;;
+  }
+  // Anyone who can see this council and has no council document for it can
+  // upload one; council officers always keep the row.
+  const up = document.getElementById(&#x27;guideline-upload-section&#x27;);
+  if (up) up.style.display = (s.kind !== &#x27;council&#x27; || state.role === &#x27;council&#x27;) ? &#x27;block&#x27; : &#x27;none&#x27;;
 }
 
 // The card renderer: fills thumbnail, file line, tag, note and actions from
@@ -6942,7 +6995,8 @@ function glCardRender() {
   const upVisible = document.getElementById(&#x27;guideline-upload-section&#x27;).style.display !== &#x27;none&#x27;;
   if (s.kind === &#x27;none&#x27; &amp;&amp; upVisible) a += &#x27;&lt;button class=&quot;btn&quot; onclick=&quot;document.getElementById(\&#x27;guideline-pdf-input\&#x27;).click()&quot;&gt;Upload guidelines&lt;/button&gt;&#x27;;
   acts.innerHTML = a; acts.style.display = a ? &#x27;flex&#x27; : &#x27;none&#x27;;
-  // the workspace follows the card: toolbar echo + live guideline pane
+  // the workspace follows the card: status row, toolbar echo, live pane
+  cgApplyStatus();
   if (state.council) document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;Guidelines: &#x27; + s.short;
   paneShowGuide();
 }
@@ -7103,7 +7157,7 @@ async function paneShowGuide() {
   if (gdoc) {
     const t = document.getElementById(&#x27;pane-guide-title&#x27;);
     const src = guidelineSourceInfo();
-    if (t) t.textContent = src.label || &#x27;Guideline&#x27;;
+    if (t) t.textContent = src.pdfLabel || src.label || &#x27;Guideline&#x27;;
     await paneLoad(PANE.guide, gdoc);
   } else if (PANE.guide.doc) {
     PANE.guide.doc = null;
@@ -7140,7 +7194,7 @@ async function glOpenViewer() {
   if (!src || !src.pdf) return;
   const doc = await glEnsureGuidelineDoc();
   if (!doc) return;
-  document.getElementById(&#x27;glv-title&#x27;).textContent = src.label + (src.dateStr ? &#x27; — &#x27; + src.dateStr : &#x27;&#x27;);
+  document.getElementById(&#x27;glv-title&#x27;).textContent = (src.pdfLabel || src.label) + (src.pdfLabel ? &#x27;&#x27; : (src.dateStr ? &#x27; — &#x27; + src.dateStr : &#x27;&#x27;));
   document.getElementById(&#x27;gl-viewer&#x27;).style.display = &#x27;flex&#x27;;
   await paneLoad(PANE.view, doc);
 }
@@ -7284,30 +7338,7 @@ function updateGuidelineStatus() {
   const g = GUIDELINE_DB[sel];
   if (!g) return;
 
-  const dot = document.getElementById(&#x27;gdot&#x27;);
-  const nameEl = document.getElementById(&#x27;gname&#x27;);
-  const metaEl = document.getElementById(&#x27;gmeta&#x27;);
-  const stateFallback = g.state ? STATE_GUIDELINES[g.state] : null;
-
-  if (g.loaded) {
-    dot.style.background = &#x27;#4CAF50&#x27;;
-    nameEl.textContent = g.name;
-    metaEl.textContent = (g.persistedText ? &#x27;Uploaded by council officer · &#x27; : &#x27;&#x27;) + `v${g.version} — loaded ✓`;
-    metaEl.style.color = &#x27;var(--pass)&#x27;;
-  } else if (stateFallback) {
-    dot.style.background = &#x27;#FF9800&#x27;;
-    nameEl.textContent = g.name;
-    metaEl.textContent = `Council guidelines not uploaded — will fall back to ${g.state} state guidelines`;
-    metaEl.style.color = &#x27;var(--flag)&#x27;;
-    // Show upload prompt
-    document.getElementById(&#x27;guideline-upload-section&#x27;).style.display = &#x27;block&#x27;;
-  } else {
-    dot.style.background = &#x27;#F44336&#x27;;
-    nameEl.textContent = g.name;
-    metaEl.textContent = &#x27;No guidelines available — upload council guidelines below&#x27;;
-    metaEl.style.color = &#x27;var(--fail)&#x27;;
-    document.getElementById(&#x27;guideline-upload-section&#x27;).style.display = &#x27;block&#x27;;
-  }
+  cgApplyStatus(g);
 
   const sc = document.getElementById(&#x27;submit-council-display&#x27;);
   if (sc) sc.innerHTML = `
