@@ -915,7 +915,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <div id="cg-status" style="font-size:11px;color:var(--muted);"></div>
           </div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
-            Upload a council's waste guideline or DCP chapter (PDF). Enforceable requirements are extracted with clause and page references, reviewed here, then saved to a shared library — the compliance checker cites them by clause for every user scanning that council, on any device.
+            Upload a council's waste guideline or DCP chapter (PDF). <b>Save document</b> stores it against the council straight away — the compliance checker then shows it beside the WMP for every user, on any device. <b>Extract requirements</b> is the separate, optional step that pulls enforceable clauses out for review; only approved clauses are ever cited.
           </div>
 
           <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND.
@@ -947,7 +947,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <input type="date" id="cg-effective" title="Effective date, if the document states one" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;">
             <input type="url" id="cg-source-url" placeholder="Source URL (optional)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:200px;">
             <input type="file" id="cg-file" accept=".pdf,application/pdf" style="font-size:11px;color:var(--text);max-width:240px;">
-            <button class="btn" onclick="cgExtract()">🤖 Extract requirements</button>
+            <button class="btn btn-primary" style="background:var(--teal);color:#fff;font-weight:700;" title="Store this PDF against the council now. The checker shows it side by side immediately; extracting clauses is a separate, optional step." onclick="cgStoreDocument()">⇪ Save document</button>
+            <button class="btn" title="AI-extract enforceable requirements into the review queue. Optional — the document is stored either way." onclick="cgExtract()">🤖 Extract requirements</button>
           </div>
           <div id="cg-review"></div>
           <div id="cg-council-card" style="margin:14px 0 0;"></div>
@@ -10999,6 +11000,51 @@ async function cgInsertVersion(row) {
   return ins;
 }
 
+// Storing the document is NOT conditional on AI extraction. "Save to library"
+// only ever existed inside the post-extraction review UI, so when extraction
+// failed, found no requirements, or had no API key, there was no save at all
+// and the PDF was never stored — the admin panel looked like it did nothing.
+async function cgStoreDocument() {
+  const f = document.getElementById('cg-file').files[0];
+  const name = document.getElementById('cg-name').value.trim();
+  if (!name) { cgMsg('Enter or pick a council first.', true); return; }
+  if (!f) { cgMsg('Choose a guideline PDF first.', true); return; }
+  if (!currentUser) { cgMsg('Sign in to store documents in the shared library.', true); return; }
+  cgMsg(`Storing ${f.name}…`);
+  try {
+    const key = cgSlug(name);
+    const safe = f.name.replace(/[^A-Za-z0-9._-]+/g, '_');
+    const path = `guidelines/${key}/${Date.now()}_${safe}`;
+    const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
+      .upload(path, f, { contentType: 'application/pdf' });
+    if (upErr) throw upErr;
+    const ins = await cgInsertVersion({
+      council_key: key, council_name: name,
+      state: document.getElementById('cg-state').value || null,
+      version_label: document.getElementById('cg-version').value.trim() || null,
+      effective_date: document.getElementById('cg-effective')?.value || null,
+      source_url: document.getElementById('cg-source-url')?.value.trim() || null,
+      uploaded_by: currentUser.id,
+      source_file: path,
+      requirements: [],          // clauses come from extraction + approval (C3)
+      notes: 'document stored from the admin panel',
+      updated_at: new Date().toISOString(),
+    });
+    _glBridgeAll = null;         // the serving row changed
+    cgMsg(`✓ ${name} stored as v${ins.version} — the compliance checker shows it side by side now. Run Extract requirements to have its clauses cited.`);
+    document.getElementById('cg-file').value = '';
+    cgScopeChanged(name);
+    await cgLoad();
+    rdbGuidelineCard();
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : String(err);
+    cgMsg('Could not store the document: ' + msg +
+      (/policy|permission|denied|row-level|violat/i.test(msg)
+        ? ' — this account may not be permitted to write guideline documents (see sql/2026-08-30-guideline-upload-by-council-officers.sql).'
+        : ''), true);
+  }
+}
+
 async function cgSave() {
   if (!CG.current) return;
   cgCollectReview();
@@ -11035,6 +11081,7 @@ async function cgSave() {
   }
   try {
     const ins = await cgInsertVersion(row);
+    _glBridgeAll = null;         // the serving row changed
     cgMsg(`✓ ${row.council_name} saved as v${ins.version} (${row.requirements.length} requirements) — the previous version is superseded, not deleted.`);
   } catch (error) {
     cgMsg('Save failed: ' + error.message + ' — has sql/2026-08-25-package-c1-guideline-versioning.sql been run?', true);
