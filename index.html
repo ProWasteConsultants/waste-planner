@@ -939,7 +939,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <span style="font-size:10.5px;color:var(--muted);">Each upload becomes a NEW version of that council's guideline — the previous version is superseded, and its structured requirements stop being served until a new extraction is approved.</span>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-            <input type="text" id="cg-name" placeholder="Council name, e.g. Randwick City Council" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
+            <input type="text" id="cg-name" list="cgb-councils" placeholder="Council — pick or type" oninput="cgScopeChanged(this.value)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
             <select id="cg-state" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;color:var(--text);font-family:inherit;">
               <option value="">State…</option><option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
             </select>
@@ -950,12 +950,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="btn" onclick="cgExtract()">🤖 Extract requirements</button>
           </div>
           <div id="cg-review"></div>
-          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 6px;">Library</div>
+          <div id="cg-council-card" style="margin:14px 0 0;"></div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 6px;">Library <span id="cg-scope-label" style="font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);"></span></div>
           <div id="cg-library" style="display:flex;flex-direction:column;gap:6px;"></div>
 
           <!-- C3: structured requirements review queue -->
           <div style="display:flex;align-items:center;gap:10px;margin:22px 0 6px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Requirements review queue</div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Requirements review queue <span id="crq-scope-label" style="font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);"></span></div>
             <div id="crq-status" style="font-size:11px;color:var(--muted);"></div>
             <span style="flex:1"></span>
             <button class="btn" title="Diff approved generation_rate / stream_split rows against the live R2 rates JSON — nothing publishes; apply via the spreadsheet flow" onclick="crxExport()">⇩ Export approved rates</button>
@@ -9494,11 +9495,11 @@ async function rdbLoad() {
 // Same serving row and same cached thumbnail the compliance checker shows —
 // one source of truth, so the two panels can never disagree about what
 // exists.
-async function rdbGuidelineCard() {
-  const wrap = document.getElementById('rdb-guideline-card');
+// One card, two mount points (the rates panel and the guidelines section), so
+// both always describe the same document in the same words.
+async function glCouncilCard(label, mountId, emptyHint) {
+  const wrap = document.getElementById(mountId);
   if (!wrap) return;
-  const sel = document.getElementById('rdb-council');
-  const label = sel.value ? (sel.options[sel.selectedIndex]?.text || '') : '';
   if (!label) { wrap.innerHTML = ''; return; }
   wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Checking guidelines for ' + cgbEsc(label) + '…</div>';
   let row = null;
@@ -9507,7 +9508,7 @@ async function rdbGuidelineCard() {
     wrap.innerHTML = '<div style="display:flex;align-items:center;gap:10px;border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
       '<span style="font-size:18px;opacity:.6;">📋</span>' +
       '<div><div style="font-size:12px;font-weight:600;color:var(--text);">No guidelines stored for ' + cgbEsc(label) + '</div>' +
-      '<div style="font-size:11px;color:var(--muted);">The compliance checker will fall back to state guidelines. Upload a PDF in <b>Council Guidelines</b> above.</div></div></div>';
+      '<div style="font-size:11px;color:var(--muted);">' + (emptyHint || '') + '</div></div></div>';
     return;
   }
   const reqs = (row.requirements || []).length;
@@ -9533,6 +9534,12 @@ async function rdbGuidelineCard() {
       (file || when ? '<div style="font-size:11px;color:var(--muted);">' + cgbEsc([file, when].filter(Boolean).join(' · ')) + '</div>' : '') +
       (url ? '<a href="' + url + '" target="_blank" rel="noopener" class="btn" style="display:inline-block;margin-top:6px;padding:3px 10px;font-size:10.5px;text-decoration:none;">View PDF</a>' : '') +
     '</div></div>';
+}
+async function rdbGuidelineCard() {
+  const sel = document.getElementById('rdb-council');
+  const label = sel && sel.value ? (sel.options[sel.selectedIndex]?.text || '') : '';
+  return glCouncilCard(label, 'rdb-guideline-card',
+    'The compliance checker will fall back to state guidelines. Upload a PDF in <b>Council Guidelines</b> above.');
 }
 
 async function rdbLoadRates() {
@@ -9942,14 +9949,47 @@ Rules:
 function cgMsg(t, warn) { const el = document.getElementById('cg-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
 function cgSlug(name) { return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60); }
 
+// ── COUNCIL SCOPE ─────────────────────────────────────────────────────────
+// This section is about ONE council at a time. Showing another council's
+// library and its 49-row review queue while you are typing a different name
+// invites approving rows against the wrong document. Nothing council-specific
+// renders until a council is chosen; counts still show, so nothing is hidden.
+const CG_SCOPE = { name: '' };
+function cgScopeChanged(v) {
+  CG_SCOPE.name = (v || '').trim();
+  const st = CGB_COUNCIL_STATE[CG_SCOPE.name];
+  const stSel = document.getElementById('cg-state');
+  if (st && stSel && !stSel.value) stSel.value = st;
+  glCouncilCard(CG_SCOPE.name, 'cg-council-card',
+    'Nothing on file yet — pick the PDF above and extract it to create v1.');
+  cgRenderLibrary();
+  crqRender();
+}
+function cgScopeMatches(name) {
+  if (!CG_SCOPE.name) return false;
+  const a = glBridgeNorm(name), b = glBridgeNorm(CG_SCOPE.name);
+  return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
+}
+
 async function cgLoad() {
   const wrap = document.getElementById('cg-library');
   wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Loading…</div>';
+  cgbCouncilList();   // the council field is a picker — fill its datalist
   const { data, error } = await sb.from('council_guidelines')
     .select('council_key, council_name, state, version, version_label, effective_date, superseded_at, updated_at, requirements')
     .order('council_name').order('version', { ascending: false });
-  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Load failed: ${error.message} — has sql/2026-08-25-package-c1-guideline-versioning.sql been run?</div>`; return; }
-  if (!data?.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No councils in the library yet — extract one above.</div>'; return; }
+  if (error) { wrap.innerHTML = `<div style="font-size:11px;color:#EF8080;">Load failed: ${error.message} — has sql/2026-08-25-package-c1-guideline-versioning.sql been run?</div>`; CG_LIB.rows = null; return; }
+  CG_LIB.rows = data || [];
+  cgRenderLibrary();
+}
+
+const CG_LIB = { rows: null };
+function cgRenderLibrary() {
+  const wrap = document.getElementById('cg-library');
+  const scopeLbl = document.getElementById('cg-scope-label');
+  if (!wrap || !CG_LIB.rows) return;
+  const data = CG_LIB.rows;
+  if (!data.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No councils in the library yet — extract one above.</div>'; if (scopeLbl) scopeLbl.textContent = ''; return; }
   // One card per council: its latest LIVE version, with the history counted.
   const byKey = {};
   data.forEach(r => {
@@ -9958,7 +9998,20 @@ async function cgLoad() {
     if (!r.superseded_at && (!g.live || r.version > g.live.version)) g.live = r;
     g.any = g.any || r;
   });
-  wrap.innerHTML = Object.keys(byKey).sort().map(k => {
+  const keys = Object.keys(byKey).sort()
+    .filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name));
+  if (scopeLbl) scopeLbl.textContent = CG_SCOPE.name ? '— ' + CG_SCOPE.name : '';
+  if (!CG_SCOPE.name) {
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
+      Object.keys(byKey).length + ' council' + (Object.keys(byKey).length === 1 ? '' : 's') +
+      ' on file. Choose a council in the field above to see its document and review its rows.</div>';
+    return;
+  }
+  if (!keys.length) {
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Nothing on file for ' + ssxEsc(CG_SCOPE.name) + ' yet — extract a PDF above to create v1.</div>';
+    return;
+  }
+  wrap.innerHTML = keys.map(k => {
     const g = byKey[k], r = g.live || g.any;
     const retired = !g.live;
     return `
@@ -10701,11 +10754,30 @@ async function crqLoad() {
 }
 function crqRender() {
   const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
-  const gidsAll = Object.keys(CRQ_Q.counts || {});
-  if (!gidsAll.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Queue is empty — use 🧾 Extract to queue on a library document above.</div>'; return; }
+  const scopeLbl = document.getElementById('crq-scope-label');
+  const gidsEvery = Object.keys(CRQ_Q.counts || {});
+  if (scopeLbl) scopeLbl.textContent = CG_SCOPE.name ? '— ' + CG_SCOPE.name : '';
+  if (!gidsEvery.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Queue is empty — use 🧾 Extract to queue on a library document above.</div>'; return; }
+  // Scoped to the chosen council: rows are approved against a specific
+  // document, so the queue must never show another council's while you work.
+  if (!CG_SCOPE.name) {
+    const proposedAll = (CRQ_Q.rows || []).length;
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
+      proposedAll + ' proposed row' + (proposedAll === 1 ? '' : 's') + ' awaiting review across ' +
+      gidsEvery.length + ' document' + (gidsEvery.length === 1 ? '' : 's') +
+      '. Choose a council above to review its rows.</div>';
+    return;
+  }
+  const gidsAll = gidsEvery.filter(g => cgScopeMatches((CRQ_Q.docs[g] || {}).council_name));
+  if (!gidsAll.length) {
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Nothing queued for ' + cgbEsc(CG_SCOPE.name) + '.</div>';
+    return;
+  }
   const byDoc = {};
   gidsAll.forEach(g => { byDoc[g] = []; });
-  CRQ_Q.rows.forEach(r => (byDoc[r.council_guideline_id] = byDoc[r.council_guideline_id] || []).push(r));
+  // only rows belonging to the scoped documents — pushing blind would
+  // re-create keys for councils the scope just filtered out
+  CRQ_Q.rows.forEach(r => { if (byDoc[r.council_guideline_id]) byDoc[r.council_guideline_id].push(r); });
   const streamOpts = s => `<option value="">— none —</option>` + CRQ_STREAMS.map(x => `<option ${x === s ? 'selected' : ''}>${x}</option>`).join('');
   const typeOpts = t => CRQ_TYPES.map(x => `<option ${x === t ? 'selected' : ''}>${x}</option>`).join('');
   wrap.innerHTML = Object.keys(byDoc).map(gid => {
