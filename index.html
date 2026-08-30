@@ -6899,7 +6899,7 @@ function guidelineSourceInfo() {
     } else {
       info.label = g.name || &#x27;Council guidelines&#x27;;
       info.dateStr = g.version ? (&#x27;v&#x27; + g.version) : null;
-      info.note = &#x27;Text extract on file — the source PDF is not stored&#x27;;
+      info.note = &#x27;Text extract saved on this device only — re-upload the PDF here to store the document itself (thumbnail, View, side-by-side).&#x27;;
     }
     info.short = info.label + (info.dateStr ? &#x27;, &#x27; + info.dateStr : &#x27;&#x27;);
     return info;
@@ -7429,12 +7429,26 @@ async function handleGuidelineUpload(e) {
     fullText
   );
 
-  document.getElementById(&#x27;guideline-file-name&#x27;).textContent = `${file.name} (${n} pages) — saved ✓`;
-  document.getElementById(&#x27;gdot&#x27;).style.background = &#x27;#4CAF50&#x27;;
-  document.getElementById(&#x27;gmeta&#x27;).textContent = `Uploaded now · v${version} · Saved permanently for this council`;
-  document.getElementById(&#x27;gmeta&#x27;).style.color = &#x27;var(--pass)&#x27;;
+  document.getElementById(&#x27;guideline-file-name&#x27;).textContent = `${file.name} (${n} pages) — storing…`;
   document.getElementById(&#x27;guideline-status&#x27;).style.display = &#x27;block&#x27;;
   glCardRender();
+
+  // Store the PDF ITSELF in the shared library. persistGuidelineUpload above
+  // only keeps extracted TEXT in this browser&#x27;s localStorage — that is why the
+  // card used to say &quot;the source PDF is not stored&quot;: no thumbnail, no View,
+  // no side-by-side pane, and nothing on any other device. The iframe holds
+  // only the anon key, so the parent (which has the signed-in session) does
+  // the upload and the versioned insert.
+  state.glSaveId = (state.glSaveId || 0) + 1;
+  try {
+    parent.postMessage({
+      type: &#x27;wp-guideline-save&#x27;, reqId: state.glSaveId,
+      councilName, state: stateVal || null, fileName: file.name,
+      bytes: state.guidelineRawBytes ? state.guidelineRawBytes.slice(0) : null,
+    }, &#x27;*&#x27;);
+  } catch (e) {
+    document.getElementById(&#x27;guideline-file-name&#x27;).textContent = `${file.name} (${n} pages) — this session only`;
+  }
 }
 function clearGuideline() {
   state.guidelinePages = []; state.guidelineFileName = &#x27;&#x27;;
@@ -8172,6 +8186,20 @@ setRole(&#x27;planner&#x27;, document.querySelector(&#x27;.role-tab&#x27;));
 
 // ── ROLE LOCK FROM PARENT PLATFORM ───────────────────────────────────────
 window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
+  if (e.data?.type === &#x27;wp-guideline-saved&#x27;) {
+    if (e.data.reqId !== state.glSaveId) return;
+    const pill = document.getElementById(&#x27;guideline-file-name&#x27;);
+    if (e.data.ok) {
+      // the library now has this document — the card switches to it, so the
+      // thumbnail, View document and the guideline pane all work, on any device
+      state.guidelineLib = Object.assign({ ok: true, reqCount: 0 }, e.data);
+      if (pill) pill.textContent = `${e.data.fileName || &#x27;&#x27;} — stored in the library as v${e.data.version} ✓`;
+    } else if (pill) {
+      pill.textContent = `${state.guidelineFileName} — used for this scan only (${e.data.error || &#x27;could not store&#x27;})`;
+    }
+    glCardRender();
+    return;
+  }
   if (e.data?.type === &#x27;wp-councils&#x27;) { applyCouncilRegistry(e.data.list); return; }
   if (e.data?.type === &#x27;wp-guideline-doc&#x27;) {
     // Parent reply with the library guideline document (signed URL, cached
@@ -9198,6 +9226,50 @@ async function glBridgeThumb(row, signedUrl) {
     return glBridgeDataUrl(buf);
   } catch (e) { return null; }
 }
+// The checker can only keep an uploaded guideline in memory (anon key, and
+// the guidelines prefix is write-gated). It hands the bytes here; we store
+// the PDF and create the versioned library row, so the document survives the
+// session, reaches other devices, and gets a thumbnail and a viewer.
+window.addEventListener('message', async (e) => {
+  if (!e.data || e.data.type !== 'wp-guideline-save') return;
+  const reply = { type: 'wp-guideline-saved', reqId: e.data.reqId, ok: false };
+  try {
+    if (typeof sb === 'undefined' || !sb) throw new Error('no database client');
+    if (!currentUser) throw new Error('sign in to add to the shared library');
+    const name = String(e.data.councilName || '').trim();
+    if (!name) throw new Error('choose a council first');
+    if (!e.data.bytes) throw new Error('no file data');
+    const key = cgSlug(name);
+    const safe = String(e.data.fileName || 'guidelines.pdf').replace(/[^A-Za-z0-9._-]+/g, '_');
+    const path = `guidelines/${key}/${Date.now()}_${safe}`;
+    const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
+      .upload(path, new Blob([e.data.bytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
+    if (upErr) throw upErr;
+    const ins = await cgInsertVersion({
+      council_key: key, council_name: name, state: e.data.state || null,
+      version_label: null, effective_date: null, source_url: null,
+      uploaded_by: currentUser.id, source_file: path,
+      requirements: [],            // clauses come from extraction + review (C3)
+      notes: 'uploaded from the compliance checker',
+      updated_at: new Date().toISOString(),
+    });
+    _glBridgeAll = null;           // the serving row changed
+    reply.ok = true;
+    reply.councilName = name;
+    reply.version = ins.version;
+    reply.fileName = safe;
+    reply.uploadedAt = new Date().toISOString();
+    try {
+      const { data: sig } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(path, 60 * 60);
+      reply.url = sig?.signedUrl || null;
+      if (reply.url) reply.thumb = await glBridgeThumb({ id: ins.id, council_key: key, version: ins.version }, reply.url);
+    } catch (err) { /* stored either way — the card just has no preview yet */ }
+  } catch (err) {
+    reply.error = (err && err.message) ? err.message : String(err);
+  }
+  try { e.source && e.source.postMessage(reply, '*'); } catch (err) {}
+});
+
 window.addEventListener('message', async (e) => {
   if (!e.data || e.data.type !== 'wp-guideline-req') return;
   const reply = { type: 'wp-guideline-doc', reqId: e.data.reqId, ok: false };
