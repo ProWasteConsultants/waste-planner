@@ -624,6 +624,32 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   assert.ok(SOURCE.includes('Council registry <span'), 'the councils list says what it is for');
 });
 
+test('a device-local text extract never shadows a stored library PDF', () => {
+  const cs = checkerScript();
+  // "which document do we SHOW" and "which text does the CHECK use" are two
+  // questions. Conflating them meant a text extract in one browser's
+  // localStorage outranked a PDF properly stored in the library: the card
+  // kept saying "saved on this device only" and the side-by-side pane never
+  // appeared, however many times the document was uploaded in admin.
+  assert.ok(cs.includes('// THE DOCUMENT TO SHOW, decided independently of which TEXT the check uses.'),
+    'the document is resolved separately from the text source');
+  const fn = extractCheckerFn(cs, 'guidelineSourceInfo');
+  const docAt = fn.indexOf('const doc =');
+  assert.ok(docAt > 0 && docAt < fn.indexOf('if (sessionUp || persisted || served)'),
+    'and resolved before any branch, so every branch can carry it');
+  assert.ok(fn.includes("Object.assign({ kind: 'council', tag: null, note: null, dateStr: null }, doc)"),
+    'council-text branches carry the document');
+  assert.ok(fn.includes("if (!info.pdf) info.note = 'Text extract saved on this device only"),
+    'the device-only note appears ONLY when no document is stored');
+  assert.ok(fn.includes("if (!info.pdf) info.note = reqCount + ' clause-referenced text requirements on file"),
+    'same for the text-requirements-only note');
+  assert.ok(fn.includes("const pendingBits = doc.pdf ? Object.assign({}, doc, {"),
+    'the fallback branches carry it too');
+  // session upload outranks the library copy: it is the file actually in hand
+  assert.ok(fn.indexOf("pdf: 'session'") < fn.indexOf("pdf: 'url'"),
+    'a session upload wins over the library entry for display');
+});
+
 test('uploading a guideline in the checker stores the PDF, not just its text', () => {
   const cs = checkerScript();
   // persistGuidelineUpload only ever wrote extracted TEXT to localStorage —
@@ -667,7 +693,7 @@ test('the checker never fakes a loaded guideline, and always offers the upload',
 
   // a library PDF with no approved requirements is still a real document:
   // show it, but keep the echo honest about what the CHECK uses
-  assert.ok(cs.includes('const pending = (lib && lib.url) ? lib : null;'),
+  assert.ok(cs.includes("      ? { pdf: 'url', url: lib.url, thumb: lib.thumb || null,"),
     'a stored council PDF is attached even before its requirements are served');
   assert.ok(cs.includes("tag: 'Requirements not extracted yet'") && cs.includes('extract and approve it in Admin'),
     'and it says why the check still falls back');
