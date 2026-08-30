@@ -40,6 +40,45 @@ test('every inline <script> block parses', () => {
   assert.equal(failures.length, 0, `\n${failures.join('\n')}`);
 });
 
+// A single-file app has no module boundaries: an unguarded dereference of a
+// missing element at TOP LEVEL throws during evaluation and silently kills
+// every remaining declaration in that <script> block. That is exactly how a
+// class rename (.user-pill -> the rail account chip) took out role-based nav,
+// the lite caps, the showScreen cap gate and Enter-to-submit — with no error
+// anywhere but the console. Two rules, both enforced here.
+test('no parent JS selects a class that no longer exists in the markup', () => {
+  // a class counts as existing if it is in markup, defined in CSS, or applied
+  // from JS (className =, classList.add) — elements are built both ways here
+  const classes = new Set();
+  for (const m of SOURCE.matchAll(/\bclass="([^"]+)"/g)) m[1].split(/\s+/).forEach(c => classes.add(c));
+  for (const m of SOURCE.matchAll(/^\s*\.([A-Za-z0-9_-]+)[\s,{:.]/gm)) classes.add(m[1]);
+  for (const m of SOURCE.matchAll(/className\s*=\s*['"`]([^'"`]+)/g)) m[1].split(/\s+/).forEach(c => classes.add(c));
+  for (const m of SOURCE.matchAll(/classList\.(?:add|toggle|remove)\(\s*['"]([A-Za-z0-9_-]+)/g)) classes.add(m[1]);
+  const js = INLINE.map(b => b.body).join('\n');
+  const dead = new Set();
+  for (const m of js.matchAll(/document\.querySelector(?:All)?\(\s*'(\.[A-Za-z0-9_-]+)'\s*\)/g)) {
+    if (!classes.has(m[1].slice(1))) dead.add(m[1]);
+  }
+  assert.deepEqual([...dead], [],
+    'these selectors match nothing — they are dead code at best, a load-time crash at worst');
+});
+
+test('top-level DOM wiring is guarded', () => {
+  // column-0 statements run at load; `el.addEventListener` on a missing
+  // element takes the whole block down with it. `?.` or a null check is the
+  // price of wiring anything at top level.
+  const bad = [];
+  INLINE.forEach(b => {
+    b.body.split(/\r?\n/).forEach((line, i) => {
+      if (!/^document\.(querySelector(?:All)?|getElementById)\(/.test(line)) return;
+      if (/\)\s*\?\./.test(line)) return;                       // optional-chained
+      if (/^document\.(addEventListener|querySelectorAll)\(/.test(line)) return;  // document itself / list
+      bad.push(line.trim().slice(0, 90));
+    });
+  });
+  assert.deepEqual(bad, [], 'guard these with ?. — an unguarded top-level lookup kills the rest of the block');
+});
+
 test('external <script src> tags are absolute https URLs', () => {
   for (const b of EXTERNAL) {
     assert.match(b.src, /^https:\/\//, `insecure or relative script src: ${b.src} (index.html:${b.startLine})`);
