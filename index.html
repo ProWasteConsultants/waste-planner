@@ -8691,7 +8691,7 @@ function openNewProject() {
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('active');
 }
-document.getElementById('modal-overlay').addEventListener('click', e => {
+document.getElementById('modal-overlay')?.addEventListener('click', e => {
   if (e.target === e.currentTarget) closeModal();
 });
 
@@ -13137,10 +13137,12 @@ window.updateProjectStatus = async function() {
   renderProjects();
 };
 
-// User pill: click opens profile screen; long-press or separate sign-out button handles logout
-document.querySelector('.user-pill').addEventListener('click', () => {
-  showScreen('profile', null);
-});
+// The account chip opens the profile screen — wired by the onclick in its own
+// markup (#user-pill-btn). A duplicate top-level querySelector('.user-pill')
+// listener used to live here; the rail redesign renamed that class, so it threw
+// at load and killed the REST OF THIS SCRIPT BLOCK — role-based nav, lite caps,
+// the showScreen cap gate and the Enter-to-submit shortcut all silently died.
+// Nothing top-level in this file may dereference an element without a guard.
 
 
 // ── ROLE BASED ACCESS ─────────────────────────────────────────────────────
@@ -13187,46 +13189,20 @@ function applyRoleAccess() {
     const navTools = document.getElementById('nav-tools');
     if (navProjects) navProjects.style.display = 'none';
     if (navTools) navTools.style.display = 'none';
-    // Auto-navigate to compliance checker
+    // Auto-navigate to the compliance checker — showScreen('compliance') is
+    // what hands the iframe its role, council and AI token (wp-set-role). A
+    // second 'pw-set-role' post used to sit here; the checker has no listener
+    // for that name, so it was doing nothing.
     showScreen('compliance', document.getElementById('nav-compliance'));
-    // Pass council mode to compliance iframe
-    const iframe = document.getElementById('compliance-iframe');
-    if (iframe) {
-      iframe.addEventListener('load', () => {
-        try {
-          iframe.contentWindow.postMessage({
-            type: 'pw-set-role',
-            role: 'council',
-            cap: isPaidCouncil ? 999 : config.cap,
-            used: getCouncilReviewsThisMonth(),
-          }, '*');
-        } catch(e) {}
-      });
-    }
   }
 
-  // Add cap indicator for council officers
-  if (isCouncil && !isPaidCouncil) {
-    const used = getCouncilReviewsThisMonth();
-    const cap = config.cap;
-    const remaining = cap - used;
-    const barClass = remaining <= 0 ? 'full' : remaining <= 2 ? 'warn' : 'ok';
-    const capBar = document.createElement('div');
-    capBar.className = 'cap-bar ' + barClass;
-    capBar.id = 'council-cap-bar';
-    capBar.innerHTML = `
-      <span class="cap-icon">${remaining <= 0 ? '🔒' : '📋'}</span>
-      <span class="cap-text">${remaining <= 0
-        ? 'Monthly review limit reached'
-        : `<span class="cap-count">${remaining}</span> of ${cap} free reviews remaining this month`
-      }</span>
-      ${remaining <= 0 ? `<button onclick="showCouncilUpgrade()" style="background:var(--teal);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Upgrade $99/mo</button>` : ''}
-    `;
-    const topbar = document.querySelector('.topbar');
-    if (topbar && !document.getElementById('council-cap-bar')) {
-      topbar.appendChild(capBar);
-    }
-  }
+  // NOTE — free-review cap bar for council officers is NOT rendered. It was
+  // appended to '.topbar', which the rail redesign removed, and it read
+  // config.cap, which no ROLE_CONFIG entry defines — so it could only ever
+  // have printed "NaN of undefined free reviews". Reinstating it needs a real
+  // monthly cap on the role config and a home in the current chrome; showing
+  // an invented number to a paying council officer is worse than showing none.
+  // getCouncilReviewsThisMonth()/incrementCouncilReviews() still track usage.
 
   // Update user tier display in sidebar
   const tierLabels = { lite: 'Lite', standard: 'Standard', council_paid: 'Council — Unlimited' };
@@ -13292,13 +13268,15 @@ function continueAsGuest() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app-content').style.display = 'flex';
 
-  // Update sidebar to show guest state
-  document.querySelector('.user-avatar').textContent = '?';
-  document.querySelector('.user-name').textContent = 'Guest User';
-  document.querySelector('.user-tier').textContent = 'Lite — Free (capped)';
+  // Update the account chip to show guest state (ids, not the pre-rail classes)
+  const gset = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  gset('user-avatar-initials', '?');
+  gset('user-display-name', 'Guest User');
+  gset('user-display-tier', 'Lite — Free (capped)');
 
-  // Replace logout action with sign in prompt
-  document.querySelector('.user-pill').onclick = () => {
+  // Replace the profile action with a sign-in prompt
+  const gpill = document.getElementById('user-pill-btn');
+  if (gpill) gpill.onclick = () => {
     document.getElementById('app-content').style.display = 'none';
     document.getElementById('auth-screen').style.display = 'flex';
   };
@@ -13693,8 +13671,12 @@ function addUpgradeToSidebar() {
   btn.onclick = showPricing;
   btn.style.cssText = 'padding:6px 12px;border-radius:7px;font-size:11px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--green);color:var(--dark);white-space:nowrap;';
   btn.textContent = '⚡ Upgrade';
+  // The account chip moved to the side rail, so it is no longer a child of
+  // .topbar-actions — insertBefore against it threw and took applyRoleAccess
+  // (nav restriction, council auto-navigate) down with it. Only use it as the
+  // reference node while it really is a sibling.
   const pill = document.getElementById('user-pill-btn');
-  actions.insertBefore(btn, pill || null);
+  actions.insertBefore(btn, (pill && pill.parentNode === actions) ? pill : null);
 }
 
 // Call after role access applied
