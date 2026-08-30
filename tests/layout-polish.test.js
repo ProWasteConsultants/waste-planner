@@ -624,6 +624,35 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   assert.ok(SOURCE.includes('Council registry <span'), 'the councils list says what it is for');
 });
 
+test('the checker never fakes a loaded guideline, and always offers the upload', () => {
+  const cs = checkerScript();
+  // five councils shipped as loaded:true with invented document names, so the
+  // checker claimed a document nobody uploaded AND hid the upload row (it
+  // only appeared on the not-loaded branches) — you could not add the real one
+  const seeds = cs.slice(cs.indexOf('const GUIDELINE_DB = {'), cs.indexOf('function loadPersistedGuidelines'));
+  assert.ok(!/loaded: true/.test(seeds), 'no council is seeded as having guidelines');
+  // (loadPersistedGuidelines may set loaded:true — that row has real uploaded
+  //  text behind it, which is exactly the point)
+  assert.ok(!seeds.includes('City of Melbourne WMP Guidelines') && !seeds.includes('City of Sydney WMP Guidelines 2018'),
+    'no invented document names remain');
+  assert.ok(cs.includes('function cgApplyStatus(g)'), 'one function owns the status row');
+  assert.ok(cs.includes("up.style.display = (s.kind !== 'council' || state.role === 'council') ? 'block' : 'none';"),
+    'the upload row shows whenever this council has no document on file');
+  assert.ok(cs.includes('cgApplyStatus();') && cs.includes('const s = guidelineSourceInfo();'),
+    'the row renders from the same source as the card, so they cannot contradict');
+
+  // a library PDF with no approved requirements is still a real document:
+  // show it, but keep the echo honest about what the CHECK uses
+  assert.ok(cs.includes('const pending = (lib && lib.url) ? lib : null;'),
+    'a stored council PDF is attached even before its requirements are served');
+  assert.ok(cs.includes("tag: 'Requirements not extracted yet'") && cs.includes('extract and approve it in Admin'),
+    'and it says why the check still falls back');
+  assert.ok(cs.includes('t.textContent = src.pdfLabel || src.label'),
+    'the pane names the document it is showing, not the fallback');
+  assert.ok(cs.includes("short: sf.name + (sf.version ? ', ' + sf.version : '') + ' (state fallback)'"),
+    'the checked-against echo still names what the check actually uses');
+});
+
 test('a saved guideline carries a real PDF, or says it does not', () => {
   // the single-doc form used to record only the FILE NAME, so a guideline
   // saved that way could never produce a thumbnail, a View PDF link or the
