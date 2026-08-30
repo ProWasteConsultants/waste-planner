@@ -703,6 +703,30 @@ test('the checker never fakes a loaded guideline, and always offers the upload',
     'the checked-against echo still names what the check actually uses');
 });
 
+test('storing a guideline document does not depend on AI extraction', () => {
+  // "Save to library" only ever existed inside cgRenderReview — the UI that
+  // renders AFTER cgExtract succeeds. So a failed extraction, a PDF with no
+  // enforceable requirements, or no API key meant there was no save button at
+  // all and the document was never stored: the admin panel looked like it did
+  // nothing, and the checker rightly said "No guidelines stored".
+  assert.ok(SOURCE.includes('async function cgStoreDocument()'), 'a save action exists on its own');
+  assert.ok(SOURCE.includes('onclick="cgStoreDocument()"') && SOURCE.includes('⇪ Save document'),
+    'and it is a button next to Extract requirements');
+  const fn = SOURCE.slice(SOURCE.indexOf('async function cgStoreDocument()'), SOURCE.indexOf('async function cgSave()'));
+  assert.ok(!/aiFetch|api-key|cgExtract|CG\.current/.test(fn), 'it never touches extraction or its state');
+  assert.ok(fn.includes("const path = `guidelines/${key}/${Date.now()}_${safe}`;") &&
+            fn.includes('await cgInsertVersion({'), 'it stores the PDF and creates the version');
+  assert.ok(fn.includes('requirements: [],          // clauses come from extraction + approval (C3)'),
+    'with no clauses — approval still gates what a scan may cite');
+  assert.ok(fn.includes("_glBridgeAll = null;         // the serving row changed") &&
+            fn.includes('rdbGuidelineCard();'), 'and every surface refreshes to the new version');
+  assert.ok(fn.includes('sql/2026-08-30-guideline-upload-by-council-officers.sql'),
+    'a permission refusal names the migration rather than failing blankly');
+  // the same cache drop after an extraction-based save
+  assert.ok(SOURCE.slice(SOURCE.indexOf('async function cgSave()')).includes('_glBridgeAll = null;'),
+    'cgSave drops the cached serving row too');
+});
+
 test('a saved guideline carries a real PDF, or says it does not', () => {
   // the single-doc form used to record only the FILE NAME, so a guideline
   // saved that way could never produce a thumbnail, a View PDF link or the
