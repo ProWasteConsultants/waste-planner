@@ -624,6 +624,26 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   assert.ok(SOURCE.includes('Council registry <span'), 'the councils list says what it is for');
 });
 
+test('a saved guideline carries a real PDF, or says it does not', () => {
+  // the single-doc form used to record only the FILE NAME, so a guideline
+  // saved that way could never produce a thumbnail, a View PDF link or the
+  // checker's guideline pane — it looked saved and was half-saved
+  assert.ok(SOURCE.includes('_file: f,') && SOURCE.includes("source_file: null,"),
+    'extraction keeps the File itself, not just its name');
+  assert.ok(SOURCE.includes("const path = `guidelines/${row.council_key}/${Date.now()}_${safe}`;"),
+    'saving uploads the PDF to the same prefix the bulk uploader uses');
+  assert.ok(SOURCE.includes('this document will have no thumbnail, no View PDF and no side-by-side pane'),
+    'a failed upload says exactly what was lost rather than saving silently');
+  // legacy rows carrying a bare filename must never be offered as a link
+  assert.ok(SOURCE.includes('function cgStoredPdfPath(row)') &&
+            SOURCE.includes("return (typeof p === 'string' && p.indexOf('guidelines/') === 0) ? p : null;"),
+    'one test decides whether a row has an openable PDF');
+  assert.ok(SOURCE.includes('PDF not stored for this version'),
+    'and the card says so instead of offering a link to nothing');
+  assert.ok(SOURCE.includes('const storedPath = cgStoredPdfPath(row);'),
+    'the checker bridge applies the same test before signing a URL');
+});
+
 test('admin guidelines section is scoped to one council', () => {
   // rows are approved against a specific document; showing another council's
   // library and queue while you type a different name invites approving

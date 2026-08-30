@@ -9106,6 +9106,15 @@ async function docsThumbBackfill(p, docs) {
 // hand back a thumbnail — rendered once, cached in IDB and as a PNG in the
 // bucket under guideline-thumbs/, never re-rendered per visit.
 let _glBridgeAll = null;
+// A guideline row only has an openable PDF when source_file is a real object
+// in the bucket. Rows saved before the single-doc form uploaded its file (and
+// any legacy row) carry a bare filename — signing that yields a link to
+// nothing, so it must never be offered as View PDF or fed to the checker's
+// guideline pane. crqExtract already applies this same test.
+function cgStoredPdfPath(row) {
+  const p = row && row.source_file;
+  return (typeof p === 'string' && p.indexOf('guidelines/') === 0) ? p : null;
+}
 function glBridgeNorm(s) { return String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
 async function glBridgeServingRow(councilName) {
   const t = glBridgeNorm(councilName);
@@ -9172,10 +9181,11 @@ window.addEventListener('message', async (e) => {
         reply.effectiveDate = row.effective_date || null;
         reply.uploadedAt = row.created_at || row.updated_at || null;
         reply.reqCount = (row.requirements || []).length;
-        if (row.source_file) {
-          reply.fileName = String(row.source_file).split('/').pop().replace(/^\d+_/, '');
+        const storedPath = cgStoredPdfPath(row);
+        if (row.source_file) reply.fileName = String(row.source_file).split('/').pop().replace(/^\d+_/, '');
+        if (storedPath) {
           try {
-            const { data: sig } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(row.source_file, 60 * 60);
+            const { data: sig } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(storedPath, 60 * 60);
             if (sig?.signedUrl) reply.url = sig.signedUrl;
           } catch (err) {}
           if (reply.url) reply.thumb = await glBridgeThumb(row, reply.url);
@@ -9512,13 +9522,14 @@ async function glCouncilCard(label, mountId, emptyHint) {
     return;
   }
   const reqs = (row.requirements || []).length;
+  const stored = cgStoredPdfPath(row);
   const file = row.source_file ? String(row.source_file).split('/').pop().replace(/^\d+_/, '') : null;
   const when = row.effective_date ? 'effective ' + row.effective_date
     : (row.created_at || row.updated_at) ? 'uploaded ' + String(row.created_at || row.updated_at).slice(0, 10) : '';
   let url = null, thumb = null;
-  if (row.source_file) {
+  if (stored) {
     try {
-      const { data: sig } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(row.source_file, 60 * 60);
+      const { data: sig } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(stored, 60 * 60);
       url = sig?.signedUrl || null;
       if (url) thumb = await glBridgeThumb(row, url);
     } catch (e) {}
@@ -9532,6 +9543,7 @@ async function glCouncilCard(label, mountId, emptyHint) {
       '<div style="font-size:11px;color:' + (reqs ? '#3DD68C' : 'var(--flag)') + ';">' +
         (reqs ? reqs + ' approved requirements serving the checker' : 'PDF on file — no approved requirements yet, so the checker still falls back to state guidelines') + '</div>' +
       (file || when ? '<div style="font-size:11px;color:var(--muted);">' + cgbEsc([file, when].filter(Boolean).join(' · ')) + '</div>' : '') +
+      (stored ? '' : '<div style="font-size:11px;color:var(--flag);">PDF not stored for this version — re-upload it above to get the thumbnail, View PDF and the checker\'s side-by-side pane.</div>') +
       (url ? '<a href="' + url + '" target="_blank" rel="noopener" class="btn" style="display:inline-block;margin-top:6px;padding:3px 10px;font-size:10.5px;text-decoration:none;">View PDF</a>' : '') +
     '</div></div>';
 }
@@ -10058,7 +10070,11 @@ async function cgExtract() {
       council_name: document.getElementById('cg-name').value.trim() || parsed.council_name || f.name.replace(/\.pdf$/i, ''),
       state: document.getElementById('cg-state').value || parsed.state || null,
       version: document.getElementById('cg-version').value.trim() || parsed.version || String(new Date().getFullYear()),
-      source_file: f.name,
+      // the FILE, not just its name: cgSave uploads it so the document has a
+      // real object in storage. A row carrying a bare filename can never
+      // produce a thumbnail, a View PDF link, or the checker's guideline pane.
+      _file: f,
+      source_file: null,
       requirements: Array.isArray(parsed.requirements) ? parsed.requirements : [],
     };
     if (!CG.current.requirements.length) { cgMsg('No enforceable requirements found in that PDF.', true); return; }
@@ -10892,6 +10908,21 @@ async function cgSave() {
     updated_at: new Date().toISOString(),
   };
   cgMsg('Saving…');
+  // Store the PDF alongside the row, same prefix and naming the bulk uploader
+  // uses, so both paths produce a document the checker can actually open.
+  if (CG.current._file && currentUser) {
+    try {
+      const safe = CG.current._file.name.replace(/[^A-Za-z0-9._-]+/g, '_');
+      const path = `guidelines/${row.council_key}/${Date.now()}_${safe}`;
+      const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
+        .upload(path, CG.current._file, { contentType: 'application/pdf' });
+      if (upErr) throw upErr;
+      row.source_file = path;
+    } catch (e) {
+      // Saving the requirements still has value; say plainly what was lost.
+      cgMsg('Note: the PDF could not be stored (' + (e.message || e) + ') — requirements will save, but this document will have no thumbnail, no View PDF and no side-by-side pane in the checker.', true);
+    }
+  }
   try {
     const ins = await cgInsertVersion(row);
     cgMsg(`✓ ${row.council_name} saved as v${ins.version} (${row.requirements.length} requirements) — the previous version is superseded, not deleted.`);
