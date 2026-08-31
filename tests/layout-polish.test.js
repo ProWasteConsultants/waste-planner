@@ -1611,3 +1611,22 @@ test('apxPdfBytesOk: magic bytes, not file extensions', () => {
   assert.equal(apx2.apxPdfBytesOk(bytes('%PD')), false, 'too short to be anything');
   assert.equal(apx2.apxPdfBytesOk(null), false);
 });
+
+test('the full lockup fills every slot from ONE injector; Design keeps only the rail mark', () => {
+  // one source of markup — hand-copied lockups drift, so slots must be empty in the HTML
+  assert.ok(SOURCE.includes("const WP_LOCKUP_HTML ="));
+  assert.ok(SOURCE.includes(`'<img src="favicon.svg" alt="">'`), 'the mark is the favicon asset itself, never a second copy');
+  assert.ok(SOURCE.includes("document.querySelectorAll('.wp-lockup-slot').forEach(el => {"));
+  const slots = SOURCE.split('class="wp-lockup-slot"').length - 1;
+  assert.equal(slots, 7, 'projects, project-detail, admin, wmp queue, org queue, profile, tools');
+  assert.ok(SOURCE.split('<div class="wp-lockup-slot"').every(s => true) &&
+    !/wp-lockup-slot"[^>]*>[^<]*<img/.test(SOURCE), 'slots carry no inline markup of their own');
+  // the Design tab is the brief's exception — rail mark only
+  const ws = SOURCE.slice(SOURCE.indexOf('id="screen-workspace"'), SOURCE.indexOf('id="screen-calculator"'));
+  assert.ok(!ws.includes('wp-lockup'), 'no lockup inside the workspace screen');
+  assert.ok(SOURCE.includes('<div class="topbar-brand" id="topbar-brand"'), 'the rail mark stays');
+  // no repeated dashed arc under the wordmark, and Planner is legible on the dark chrome
+  assert.ok(SOURCE.includes('.wp-lockup-word span{color:#F0F8FA;}'));
+  assert.ok(SOURCE.includes('.topbar-actions .wp-lockup{order:-1;margin-right:auto;}'),
+    'guest-mode chips must never push the lockup off the left edge');
+});
