@@ -612,8 +612,21 @@ test('council registry is one list: uploader, checker and rates DB all read it',
     'the guidelines-only datalist source is gone');
   // admin ordering + the stored-guideline card on a council's rates
   const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
-  assert.ok(rates.indexOf('Council Guidelines — AI Extraction') < rates.indexOf('Central Rates Database'),
-    'guideline upload/extraction leads the admin tab, above the rates');
+  // two jobs live in this tab and must not read as one: setup/library first
+  // (registry -> documents -> clause review), then the database that publishes
+  const order = ['adm-group adm-setup', 'Council registry', 'Council Guidelines — AI Extraction',
+                 'adm-group adm-db', 'State &amp; council info', 'Residential rates']
+    .map(m => rates.indexOf(m));
+  assert.ok(order.every(i => i >= 0), 'every section is present');
+  for (let i = 1; i < order.length; i++)
+    assert.ok(order[i] > order[i - 1], 'registry, then documents, then the database — info above rates');
+  assert.ok(SOURCE.includes('.adm-group.adm-setup{border-left:3px solid var(--teal);}') &&
+            SOURCE.includes('.adm-group.adm-db{border-left:3px solid #C58B2A;}'),
+    'the two groups are visually distinct, not just adjacent');
+  // one state picker, and it belongs to the registry it scopes
+  assert.equal(rates.split('id="rdb-state"').length, 2, 'exactly one state selector');
+  assert.ok(rates.indexOf('id="rdb-state"') < rates.indexOf('adm-group adm-db'),
+    'it sits with the registry at the top, above the database group');
   assert.ok(SOURCE.includes('async function rdbGuidelineCard()') && SOURCE.includes('id="rdb-guideline-card"'),
     'selecting a council shows what guideline it has on file');
   assert.ok(SOURCE.includes('rdbGuidelineCard();'), 'and it refreshes with the rates');

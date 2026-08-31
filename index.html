@@ -468,6 +468,19 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .doc-primary:hover{border-color:var(--teal);background:rgba(22,126,126,0.12);}
 .doc-add .doc-face{background:none;}
 .doc-add:hover .doc-face{border-color:var(--teal);}
+/* ADMIN GROUPS — the Rates & Councils tab holds two unrelated jobs, and
+   mixing them is how a guideline upload gets mistaken for a rates edit.
+   Setup/library (who exists, which documents) is teal-edged; the database
+   (the numbers that publish to live) is amber-edged and sits below it. */
+.adm-group{border:1px solid var(--border);border-radius:12px;background:#141b1b;margin-bottom:22px;overflow:hidden;}
+.adm-group-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px;padding:12px 16px;font-size:12.5px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border);background:#182121;}
+.adm-group-sub{font-size:11px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;}
+.adm-group-body{padding:16px;}
+.adm-group.adm-setup{border-left:3px solid var(--teal);}
+.adm-group.adm-setup .adm-group-head{background:linear-gradient(90deg,rgba(22,126,126,0.20),rgba(22,126,126,0.04));color:#7FD8D8;}
+.adm-group.adm-db{border-left:3px solid #C58B2A;}
+.adm-group.adm-db .adm-group-head{background:linear-gradient(90deg,rgba(197,139,42,0.20),rgba(197,139,42,0.04));color:#E0B463;}
+.adm-rule{border-top:1px dashed var(--border);margin:20px 0 18px;}
 .tool-card{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:20px;cursor:pointer;transition:all 0.15s;}
 .tool-card:hover{border-color:var(--teal);transform:translateY(-1px);box-shadow:0 2px 12px rgba(22,126,126,0.1);}
 .tc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
@@ -910,6 +923,29 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <!-- RATES & COUNCILS TAB -->
         <div class="admin-screen-panel" id="stab-rates" style="padding:20px;display:none;">
 
+          <div class="adm-group adm-setup">
+            <div class="adm-group-head">🗂 Council registry, documents &amp; review<span class="adm-group-sub">who exists, which guideline PDFs are on file, and the clauses awaiting approval</span></div>
+            <div class="adm-group-body">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div class="dc-title" style="margin-top:20px;">Council registry <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">councils in this state, across the whole platform</span></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">State</span>
+              <select id="rdb-state" onchange="rdbLoad()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
+                <option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
+              </select>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;max-width:760px;">
+            The one list every council picker reads — project setup, the compliance checker, the guideline uploader above and the rate overrides here. Add a council once and it appears in all of them; removing one hides it everywhere (its rates and guidelines are kept).
+          </div>
+          <div id="rdb-councils-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input id="rdb-new-council-label" type="text" placeholder="Council label, e.g. City of Camden" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
+            <button class="btn" onclick="rdbAddCouncil()">+ Add council</button>
+          </div>
+
+            <div class="adm-rule"></div>
+
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Council Guidelines — AI Extraction</div>
             <div id="cg-status" style="font-size:11px;color:var(--muted);"></div>
@@ -967,13 +1003,15 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
           <div id="crq-wrap" style="display:flex;flex-direction:column;gap:10px;"></div>
           <div id="crx-out"></div>
-          <div style="border-top:1px solid var(--border);margin:26px 0 20px;"></div>
+            </div>
+          </div>
+
+          <div class="adm-group adm-db">
+            <div class="adm-group-head">🗄 Council &amp; state database<span class="adm-group-sub">the numbers the calculator, the WMP and the checker read — published to live</span></div>
+            <div class="adm-group-body">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Central Rates Database</div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Rates for the selected state / council</div>
             <div style="display:flex;gap:8px;align-items:center;">
-              <select id="rdb-state" onchange="rdbLoad()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
-                <option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
-              </select>
               <select id="rdb-council" onchange="rdbLoadRates()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:180px;">
                 <option value="">State defaults</option>
               </select>
@@ -987,22 +1025,16 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
                exist is how the same PDF gets uploaded twice. -->
           <div id="rdb-guideline-card" style="margin-bottom:14px;"></div>
 
+          <div class="dc-title" style="margin-top:22px;">State &amp; council info <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">officer contacts, guidelines, bin colours, frequencies — used by WMP generation</span></div>
+          <div id="rdb-meta-grid" style="display:grid;grid-template-columns:170px 1fr;gap:6px 10px;max-width:860px;align-items:start;"></div>
+          <button class="btn" style="margin-top:8px;" onclick="rdbSaveMeta()">💾 Save info</button>
+
           <div class="dc-title" style="margin-top:4px;">Residential rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">L/week per dwelling</span></div>
           <table style="border-collapse:collapse;font-size:12px;margin-bottom:6px;">
             <thead><tr id="rdb-res-head"><th style="text-align:left;padding:5px 10px;color:var(--muted);font-size:10px;">UNIT TYPE</th></tr></thead>
             <tbody id="rdb-res-body"></tbody>
           </table>
           <button class="btn" onclick="rdbSaveRes()">💾 Save residential rates</button>
-
-          <div class="dc-title" style="margin-top:20px;">Council registry <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">councils in this state, across the whole platform</span></div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;max-width:760px;">
-            The one list every council picker reads — project setup, the compliance checker, the guideline uploader above and the rate overrides here. Add a council once and it appears in all of them; removing one hides it everywhere (its rates and guidelines are kept).
-          </div>
-          <div id="rdb-councils-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <input id="rdb-new-council-label" type="text" placeholder="Council label, e.g. City of Camden" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
-            <button class="btn" onclick="rdbAddCouncil()">+ Add council</button>
-          </div>
 
           <div class="dc-title" style="margin-top:22px;">Commercial rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">for the selected state / council scope</span></div>
           <table style="border-collapse:collapse;font-size:11px;width:100%;">
@@ -1025,10 +1057,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="btn" onclick="rdbSaveCom()">💾 Save commercial rates</button>
           </div>
 
-          <div class="dc-title" style="margin-top:22px;">State &amp; council info <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">officer contacts, guidelines, bin colours, frequencies — used by WMP generation</span></div>
-          <div id="rdb-meta-grid" style="display:grid;grid-template-columns:170px 1fr;gap:6px 10px;max-width:860px;align-items:start;"></div>
-          <button class="btn" style="margin-top:8px;" onclick="rdbSaveMeta()">💾 Save info</button>
-
           <div class="dc-title" style="margin-top:22px;">Database viewer <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">read-only browse of any table</span></div>
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
             <select id="rdb-view-table" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
@@ -1043,6 +1071,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             Commercial rates and WMP content are edited the same way — this panel covers the two datasets that change most.
             Publishing regenerates <code style="background:#182121;padding:1px 5px;border-radius:4px;">waste_rates.json</code> on R2 so the calculator and your Excel generator pick up changes immediately.
           </div>
+            </div>
+          </div>
+
 
         </div>
 
