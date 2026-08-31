@@ -14,8 +14,13 @@ check this list before widening who can use the app.
 | 2 | **Private repository.** | **Launch.** | **Decided 2026-08-24: staying public for now.** The org is on the **free** GitHub plan, where Pages cannot serve from a private repo — flipping visibility would take the live site down at the `CNAME`. A scan found nothing that requires secrecy: the Supabase JWT is the **anon** key (`"role":"anon"`) with RLS as the real boundary, and there is no `service_role` key, private key or API secret. So this is hygiene with a real cost attached. It closes by moving hosting or paying for a plan — not by flipping the switch. Do not re-investigate; the blocker is the plan, not the repo. |
 | 3 | **No PITR — daily backups only.** | **Real customer data.** | **Confirmed 2026-08-24: point-in-time recovery is NOT enabled.** The project has daily backups, which sets a recovery point objective of **up to 24 hours** — a customer who spends a day on a layout can lose that day, and nothing in the app warns them. A restore has also still never been **rehearsed**, so the retention window and the restore path are both untested. And daily backups cover **Postgres only**: uploaded plan PDFs live in Supabase **Storage** (`PLANS_BUCKET`), which they do not include. A restore that brings back every `projects` row and no plan PDFs is a half-restore — every project would open pointing at a drawing that is gone. Decide the acceptable RPO before real customer data, then enable PITR or accept 24h in writing, back up Storage separately, and rehearse once end to end. |
 | 4 | **`pdf_rev` column** for cross-device plan freshness. | Multi-device use of one project. | Nothing currently tells a second device that the stored plan PDF changed, so it can serve a stale page under a current layout. |
-| 5 | **Swept-path title block panel** (vehicle diagram + spec table). | Issuing swept-path sheets as standalone drawings. | Swept linework already exports on a layout sheet; it just has no dedicated panel stating the design vehicle and its dimensions. |
 | 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
+
+**Closed:** Swept-path title block panel (gate 5). `wsSheetVehPanel` renders the
+bottom-centre card when the swept layer is on and paths exist: the D2 side
+elevation (schematic, operating envelope on) beside DB-sourced vehicle data,
+with the vehicle's `source` stated on the drawing — a contractor's truck must
+never read as a design standard. Layer off → the export is unchanged.
 
 **Closed:** Stripe test mode (gate 8). `stripeInstance` is built from a hard-coded
 `pk_test_…` publishable key, and that is **deliberate until launch** — not an
@@ -122,6 +127,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/layout-polish.test.js` | Shift-snap maths, room dimensions, door geometry, selection |
 | `tests/reconcile-equipment.test.js` | Compaction maths, invariants, snapshot, WMP obligations |
 | `tests/provision-zones.test.js` | Provision streams, zone types, and their four UI surfaces |
+| `tests/vehicle-profile.test.js` | D2 side-elevation module: axle positions, defaults, SVG output; D3 panel gating |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`

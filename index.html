@@ -103,6 +103,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-groups{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
 .wsl-group{border:1px solid #2f3a3a;border-radius:7px;background:#1c2222;padding:4px 7px 5px;min-width:0;}
 .wsl-group-hd{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:#00d4d4;margin-bottom:6px;display:flex;align-items:center;gap:8px;}
+/* D2 vehicle side-elevation palette — the profile SVG themes entirely from
+   these, so screen (dark) and print (title block, light) share one geometry. */
+#ws-veh-diagram{--vehicle-body:#9FD5CF;--vehicle-chassis:#5B6B6B;--vehicle-tyre:#282F2F;--vehicle-rim:#B8CACA;--vehicle-stroke:#DCE9E9;}
 .wsl-group-body{display:flex;gap:5px;flex-wrap:wrap;align-items:flex-start;}
 .wsl-btn{background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.85);padding:5px 10px;font-size:10.5px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;}
 .wsl-btn:hover{border-color:#008080;color:#7FD8D8;}
@@ -9984,6 +9987,10 @@ const CTL = { items: [], deletes: [], cols: [
   ['state','State',44,'text'], ['council_value','Council value',100,'text'],
   ['wheelbase_m','WB m',48,'num'], ['track_m','Track m',50,'num'], ['front_oh_m','Front OH m',56,'num'], ['rear_oh_m','Rear OH m',54,'num'],
   ['kerb_radius_m','Kerb-kerb R',58,'num'], ['wall_radius_m','Wall-wall R',58,'num'], ['ground_clearance_m','Grnd clr m',54,'num'],
+  ['operating_height_m','Operating ht m',56,'num'], ['cab_height_m','Cab ht m',52,'num'], ['body_height_m','Body ht m',52,'num'],
+  ['front_axles','Frt axles',44,'num'], ['front_axle_spread_m','Frt spread m',54,'num'],
+  ['rear_axles','Rear axles',44,'num'], ['rear_axle_spread_m','Rear spread m',54,'num'],
+  ['source','Source',80,'text'],
   ['swept_verified','Verified',46,'bool'],
   ['tag','Tag',80,'text'], ['notes','Notes',150,'text'] ] };
 
@@ -20261,6 +20268,237 @@ function wsClearSweptPath() {
 }
 
 // ── Vehicle presets (ported from swept engine; DB-fed later) ──
+/* ── VEHICLE PROFILE MODULE (D2) ─────────────────────────────────────────────
+   Side elevations generated AT RUNTIME from dimensions — there are no drawing
+   assets to store, and none may be traced from guideline or manufacturer
+   documents (dimensional data is factual; the drawings are copyrighted).
+   One geometry, two render levels:
+     detail:'detailed'  — fills, hubs, mirrors, lift arms   → selector thumbnail
+     detail:'schematic' — outline only                      → title block print
+   Colours are CSS variables (--vehicle-body/-chassis/-tyre/-rim/-stroke) so
+   both levels theme from the stylesheet. Units are MILLIMETRES throughout;
+   x runs nose→rear, y up from the ground (flipped at emit time).
+
+   `wheelbase` is measured from the LEADING steer axle to the REAR GROUP
+   CENTRE — real collection vehicles are not all 6x4 (the J.J. Richards 34m³
+   front lift is a Scania P320 8x4 twin-steer), so axle count and spread are
+   spec fields, never assumptions. */
+
+// Body-type defaults: the documented fallback for null DB dimensions, so an
+// incomplete record renders a plausible profile instead of erroring. Anything
+// drawn from these is flagged 'estimated' by vehicleProfileResolve.
+const VEHICLE_PROFILE_DEFAULTS = {
+  front_lift: { overallLength: 9600, overallWidth: 2500, wheelbase: 5400, frontOverhang: 1450,
+    frontAxles: 1, frontAxleSpread: 1950, rearAxles: 2, rearAxleSpread: 1350,
+    overallHeight: 4300, operatingHeight: 6500, cabHeight: 2950, bodyHeight: 3900, wheelDia: 1050 },
+  rear_lift:  { overallLength: 8600, overallWidth: 2500, wheelbase: 4500, frontOverhang: 1350,
+    frontAxles: 1, frontAxleSpread: 1950, rearAxles: 2, rearAxleSpread: 1350,
+    overallHeight: 3500, operatingHeight: 3700, cabHeight: 2800, bodyHeight: 3300, wheelDia: 1000 },
+  hook_lift:  { overallLength: 9800, overallWidth: 2500, wheelbase: 5600, frontOverhang: 1500,
+    frontAxles: 1, frontAxleSpread: 1950, rearAxles: 2, rearAxleSpread: 1350,
+    overallHeight: 3800, operatingHeight: 7100, cabHeight: 2900, bodyHeight: 2600, wheelDia: 1050 },
+  side_lift:  { overallLength: 9000, overallWidth: 2500, wheelbase: 5000, frontOverhang: 1400,
+    frontAxles: 1, frontAxleSpread: 1950, rearAxles: 2, rearAxleSpread: 1350,
+    overallHeight: 3600, operatingHeight: 4600, cabHeight: 2850, bodyHeight: 3400, wheelDia: 1000 },
+  // generic rigid service vehicle (Austroads design vehicles): box body, NO
+  // lift gear — drawing arms a design vehicle does not have would be wrong.
+  rigid:      { overallLength: 8800, overallWidth: 2500, wheelbase: 5000, frontOverhang: 1500,
+    frontAxles: 1, frontAxleSpread: 1950, rearAxles: 1, rearAxleSpread: 1350,
+    overallHeight: 3800, operatingHeight: null, cabHeight: 2850, bodyHeight: 3400, wheelDia: 1000 },
+};
+
+// Named design-vehicle records. front_lift_8x4 is populated from the J.J.
+// Richards 34m³ OHL V Pack S3 / Scania P320 8x4 manufacturer drawing; fields
+// in `estimated` are NOT dimensioned on that drawing and remain proportional
+// assumptions. The other three bodies are wholly estimated until their spec
+// tables land — do not present them as dimensionally authoritative.
+const VEHICLES = {
+  front_lift_8x4: {
+    body: 'front_lift', source: 'manufacturer',
+    name: 'Front Lift 34 m³ — Scania P320 8x4 twin-steer',
+    overallLength: 9676, overallWidth: 2500, wheelbase: 5425,
+    frontAxles: 2, rearAxles: 2, rearAxleSpread: 1775,
+    overallHeight: 4300,
+    operatingHeight: 6500,          // governing case: 4.5 m³ industrial bin
+    operatingHeightMax: 7000,       // 8 m³ cardboard bin
+    frontOverhang: 1450, frontAxleSpread: 1950, cabHeight: 2950, bodyHeight: 3900,
+    estimated: ['frontOverhang', 'frontAxleSpread', 'cabHeight', 'bodyHeight'],
+  },
+  rear_lift_std: { body: 'rear_lift', source: 'guideline', name: 'Rear Lift — Standard',
+    estimated: ['ALL'] },
+  hook_lift_std: { body: 'hook_lift', source: 'guideline', name: 'Hook Lift / RORO',
+    operatingHeight: 7100, estimated: ['ALL'] },
+  side_lift_std: { body: 'side_lift', source: 'guideline', name: 'Side Lift — Standard',
+    estimated: ['ALL'] },
+};
+
+// Merge a (possibly sparse) spec over its body-type defaults. Returns the
+// resolved spec plus the list of fields that came from defaults, so callers
+// can say "estimated profile" instead of implying authority.
+function vehicleProfileResolve(spec) {
+  const body = (spec && VEHICLE_PROFILE_DEFAULTS[spec.body]) ? spec.body : 'rigid';
+  const d = VEHICLE_PROFILE_DEFAULTS[body];
+  const out = { body }, estimated = [];
+  for (const k of Object.keys(d)) {
+    const v = spec ? spec[k] : null;
+    if (v === null || v === undefined || (typeof v === 'number' && !(v > 0) && k !== 'operatingHeight')) {
+      out[k] = d[k];
+      if (k !== 'wheelDia') estimated.push(k);
+    } else out[k] = v;
+  }
+  if (spec && Array.isArray(spec.estimated))
+    spec.estimated.forEach(k => { if (!estimated.includes(k)) estimated.push(k); });
+  out.operatingHeightMax = spec && spec.operatingHeightMax > 0 ? spec.operatingHeightMax : null;
+  out.name = (spec && spec.name) || null;
+  out.source = (spec && spec.source) || null;
+  return { spec: out, estimated };
+}
+
+// Axle x-positions (mm from the nose). Supports 4x2, 6x4 and 8x4 twin-steer:
+// the leading steer axle sits at frontOverhang, extra steer axles follow at
+// frontAxleSpread; the rear GROUP is centred at frontOverhang + wheelbase with
+// its axles spaced rearAxleSpread apart.
+function axlePositions(spec) {
+  const s = spec || {};
+  const fo = s.frontOverhang > 0 ? s.frontOverhang : 1450;
+  const wb = s.wheelbase > 0 ? s.wheelbase : 5000;
+  const nf = Math.max(1, Math.round(s.frontAxles || 1));
+  const nr = Math.max(1, Math.round(s.rearAxles || 1));
+  const fs = s.frontAxleSpread > 0 ? s.frontAxleSpread : 1950;
+  const rs = s.rearAxleSpread > 0 ? s.rearAxleSpread : 1350;
+  const front = [];
+  for (let i = 0; i < nf; i++) front.push(fo + i * fs);
+  const rc = fo + wb, rear = [];
+  for (let i = 0; i < nr; i++) rear.push(rc + (i - (nr - 1) / 2) * rs);
+  return { front, rear };
+}
+
+// The renderer. Returns an <svg> string; nose at the LEFT. opts:
+//   detail: 'detailed' | 'schematic'   showEnvelope: draw the dashed overhead
+//   clearance line at operatingHeight  width/height/attrs: element sizing.
+function vehicleProfileSVG(inputSpec, opts) {
+  const o = opts || {};
+  const { spec: s } = vehicleProfileResolve(inputSpec);
+  const det = o.detail !== 'schematic';
+  const L = s.overallLength, R = s.wheelDia / 2;
+  const env = o.showEnvelope !== false && s.operatingHeight > 0 ? s.operatingHeight : null;
+  const topY = Math.max(s.overallHeight, env || 0) + 620;
+  const x0 = -350, x1 = L + 350;
+  const H = topY, Y = y => H - y;             // flip: y-up in maths, y-down in SVG
+  const ax = axlePositions(s);
+  // Colours come from CSS variables so the stylesheet themes both detail
+  // levels; opts.palette substitutes concrete values for contexts where vars
+  // cannot resolve (svg2pdf on the title block). Same geometry either way.
+  const col = (k, dflt) => (o.palette && o.palette[k]) || `var(--vehicle-${k},${dflt})`;
+  const stroke = col('stroke', '#1F2A2A');
+  const bodyF = det ? col('body', '#9FD5CF') : 'none';
+  const chasF = det ? col('chassis', '#5B6B6B') : 'none';
+  const tyreF = det ? col('tyre', '#282F2F') : 'none';
+  const rimF = col('rim', '#B8CACA');
+  const sw = Math.max(2, L / 300) * (det ? 1 : 1.4);
+  const p = [];
+
+  // chassis rail: leading axle to tail, sitting just above the wheel centres
+  const railY0 = R + 60, railY1 = R + 260;
+  const cabBack = ax.front[ax.front.length - 1] + s.wheelDia * 0.75;
+  p.push(`<rect x="${ax.front[0] - R}" y="${Y(railY1)}" width="${L - (ax.front[0] - R) - 120}" height="${railY1 - railY0}" fill="${chasF}" stroke="${stroke}" stroke-width="${sw}"/>`);
+
+  // cab: bumper, raked windscreen, roof — pure construction from cab dims
+  const cabTop = s.cabHeight, noseY = railY0 + 380;
+  p.push(`<path d="M 60 ${Y(180)} L 60 ${Y(noseY)} Q 60 ${Y(noseY + 320)} 420 ${Y(noseY + 380)} L ${cabBack * 0.42} ${Y(cabTop - 60)} Q ${cabBack * 0.5} ${Y(cabTop)} ${cabBack * 0.62} ${Y(cabTop)} L ${cabBack} ${Y(cabTop)} L ${cabBack} ${Y(railY0)} L 60 ${Y(railY0)} Z" fill="${bodyF}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"/>`);
+  if (det) {
+    p.push(`<path d="M ${cabBack * 0.30} ${Y(noseY + 330)} L ${cabBack * 0.47} ${Y(cabTop - 140)} L ${cabBack * 0.9} ${Y(cabTop - 140)} L ${cabBack * 0.9} ${Y(noseY + 260)} Z" fill="${rimF}" opacity="0.55" stroke="${stroke}" stroke-width="${sw * 0.6}"/>`);
+    p.push(`<line x1="${cabBack * 0.34}" y1="${Y(cabTop - 200)}" x2="${cabBack * 0.2}" y2="${Y(cabTop + 150)}" stroke="${stroke}" stroke-width="${sw * 0.7}"/>`);
+    p.push(`<rect x="${cabBack * 0.14}" y="${Y(cabTop + 260)}" width="130" height="240" rx="40" fill="${chasF}" stroke="${stroke}" stroke-width="${sw * 0.6}"/>`);
+  }
+
+  // body, by type — every shape is a box/arc built from stored dimensions
+  const bx0 = cabBack + 180, bTop = s.bodyHeight;
+  if (s.body === 'front_lift') {
+    p.push(`<rect x="${bx0}" y="${Y(bTop)}" width="${L - bx0 - 150}" height="${bTop - railY1}" rx="120" fill="${bodyF}" stroke="${stroke}" stroke-width="${sw}"/>`);
+    const px = bx0 + 550, py = bTop - 250;      // arm pivot on the body front
+    const fx = 320, fy = cabTop + 550;          // forks parked over the bumper
+    p.push(`<path d="M ${px} ${Y(py)} L ${cabBack * 0.55} ${Y(cabTop + 620)} L ${fx + 320} ${Y(fy)}" fill="none" stroke="${stroke}" stroke-width="${sw * (det ? 2.2 : 1)}" stroke-linecap="round"/>`);
+    p.push(`<path d="M ${fx + 320} ${Y(fy)} L ${fx} ${Y(fy - 160)} L ${fx} ${Y(fy - 460)}" fill="none" stroke="${stroke}" stroke-width="${sw * (det ? 1.8 : 1)}" stroke-linecap="round"/>`);
+    if (det) p.push(`<circle cx="${px}" cy="${Y(py)}" r="110" fill="${rimF}" stroke="${stroke}" stroke-width="${sw * 0.7}"/>`);
+  } else if (s.body === 'rear_lift') {
+    const hx = L - 1500;                        // tailgate / hopper knuckle
+    p.push(`<path d="M ${bx0} ${Y(bTop)} L ${hx} ${Y(bTop)} Q ${hx + 850} ${Y(bTop - 250)} ${L - 150} ${Y(bTop - 1150)} L ${L - 150} ${Y(railY0)} L ${bx0} ${Y(railY0)} Z" fill="${bodyF}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round"/>`);
+    if (det) p.push(`<path d="M ${hx + 150} ${Y(bTop - 120)} Q ${hx + 800} ${Y(bTop - 400)} ${L - 300} ${Y(bTop - 1200)}" fill="none" stroke="${stroke}" stroke-width="${sw * 0.7}"/>`);
+  } else if (s.body === 'hook_lift') {
+    const cx0 = bx0 + 120, cx1 = L - 260, cTop = railY1 + (bTop - railY1);
+    p.push(`<rect x="${cx0}" y="${Y(cTop)}" width="${cx1 - cx0}" height="${cTop - railY1 - 40}" fill="${bodyF}" stroke="${stroke}" stroke-width="${sw}"/>`);
+    p.push(`<path d="M ${cx0 + 130} ${Y(railY1 + 60)} L ${cx0 + 130} ${Y(cTop + 480)} Q ${cx0 + 130} ${Y(cTop + 700)} ${cx0 + 420} ${Y(cTop + 680)}" fill="none" stroke="${stroke}" stroke-width="${sw * (det ? 2.2 : 1)}" stroke-linecap="round"/>`);
+    if (det) for (let k = 1; k <= 2; k++)
+      p.push(`<line x1="${cx0}" y1="${Y(railY1 + (cTop - railY1) * k / 3)}" x2="${cx1}" y2="${Y(railY1 + (cTop - railY1) * k / 3)}" stroke="${stroke}" stroke-width="${sw * 0.55}" opacity="0.6"/>`);
+  } else if (s.body === 'side_lift') {
+    p.push(`<rect x="${bx0}" y="${Y(bTop)}" width="${L - bx0 - 150}" height="${bTop - railY1}" rx="120" fill="${bodyF}" stroke="${stroke}" stroke-width="${sw}"/>`);
+    // the side arm reads as a vertical lift column just behind the cab
+    p.push(`<rect x="${bx0 + 120}" y="${Y(bTop + 420)}" width="300" height="${420 + (bTop - railY1) * 0.45}" fill="${chasF}" stroke="${stroke}" stroke-width="${sw * 0.8}"/>`);
+    if (det) p.push(`<path d="M ${bx0 + 270} ${Y(bTop + 420)} L ${bx0 + 950} ${Y(bTop + 180)}" fill="none" stroke="${stroke}" stroke-width="${sw * 1.6}" stroke-linecap="round"/>`);
+  } else { // rigid: plain box, no lift gear
+    p.push(`<rect x="${bx0}" y="${Y(bTop)}" width="${L - bx0 - 150}" height="${bTop - railY1}" rx="100" fill="${bodyF}" stroke="${stroke}" stroke-width="${sw}"/>`);
+  }
+  if (det && s.body !== 'hook_lift') {
+    const ribs = Math.floor((L - bx0 - 400) / 900);
+    for (let k = 1; k <= ribs; k++)
+      p.push(`<line x1="${bx0 + k * 900}" y1="${Y(bTop - 140)}" x2="${bx0 + k * 900}" y2="${Y(railY1 + 140)}" stroke="${stroke}" stroke-width="${sw * 0.45}" opacity="0.45"/>`);
+  }
+
+  // wheels at the REAL axle positions — never baked into the template
+  for (const wx of ax.front.concat(ax.rear)) {
+    p.push(`<circle cx="${wx}" cy="${Y(R)}" r="${R}" fill="${tyreF}" stroke="${stroke}" stroke-width="${sw}"/>`);
+    if (det) {
+      p.push(`<circle cx="${wx}" cy="${Y(R)}" r="${R * 0.52}" fill="${rimF}" stroke="${stroke}" stroke-width="${sw * 0.6}"/>`);
+      p.push(`<circle cx="${wx}" cy="${Y(R)}" r="${R * 0.14}" fill="${stroke}"/>`);
+      for (let k = 0; k < 4; k++) {
+        const a = Math.PI / 4 + k * Math.PI / 2;
+        p.push(`<line x1="${wx + Math.cos(a) * R * 0.2}" y1="${Y(R) + Math.sin(a) * R * 0.2}" x2="${wx + Math.cos(a) * R * 0.44}" y2="${Y(R) + Math.sin(a) * R * 0.44}" stroke="${stroke}" stroke-width="${sw * 0.7}"/>`);
+      }
+    } else {
+      p.push(`<circle cx="${wx}" cy="${Y(R)}" r="${R * 0.52}" fill="none" stroke="${stroke}" stroke-width="${sw * 0.7}"/>`);
+    }
+  }
+
+  // ground line
+  p.push(`<line x1="${x0}" y1="${Y(0)}" x2="${x1}" y2="${Y(0)}" stroke="${stroke}" stroke-width="${sw}"/>`);
+
+  // overhead operating envelope — a recurring WMP compliance failure, so it is
+  // drawn, not tabled. Dashed, with the governing height stated.
+  if (env) {
+    p.push(`<line x1="${x0}" y1="${Y(env)}" x2="${x1}" y2="${Y(env)}" stroke="${stroke}" stroke-width="${sw * 0.9}" stroke-dasharray="${sw * 6} ${sw * 4}"/>`);
+    p.push(`<text x="${x0 + 80}" y="${Y(env) - 130}" font-size="360" font-family="Arial, Helvetica, sans-serif" fill="${stroke}">${(env / 1000).toFixed(2).replace(/0$/, '')} m operating clearance</text>`);
+    p.push(`<path d="M ${L * 0.82} ${Y(env)} l -120 260 h 240 z" fill="${stroke}"/>`);
+  }
+
+  const attrs = o.attrs || `style="width:${o.width || '100%'};height:${o.height || 'auto'};display:block;"`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x0} 0 ${x1 - x0} ${H}" preserveAspectRatio="xMidYMax meet" ${attrs}>${p.join('')}</svg>`;
+}
+
+// Map a swept-library vehicle record (metres, per the contractors table) onto
+// a profile spec (millimetres). Body type comes from the record's own words;
+// unknown kinds render as the generic rigid truck rather than growing lift
+// gear they do not have.
+function vehicleProfileSpecFromVeh(v) {
+  if (!v) return null;
+  const words = ((v.cat || '') + ' ' + (v.name || '')).toLowerCase();
+  const body = /front/.test(words) ? 'front_lift'
+    : /side/.test(words) ? 'side_lift'
+    : /hook|skip|roro|bulk/.test(words) ? 'hook_lift'
+    : /rear|compact|mini/.test(words) ? 'rear_lift'
+    : 'rigid';
+  const mm = x => (x > 0 ? Math.round(x * 1000) : null);
+  return {
+    body, name: v.name, source: v.source || null,
+    overallLength: mm((v.fo || 0) + (v.wb || 0) + (v.ro || 0)) || null,
+    overallWidth: mm(v.bw || v.tw), wheelbase: mm(v.wb), frontOverhang: mm(v.fo),
+    frontAxles: v.frontAxles || null, frontAxleSpread: mm(v.frontAxleSpreadM),
+    rearAxles: v.rearAxles || null, rearAxleSpread: mm(v.rearAxleSpreadM),
+    overallHeight: mm(v.heightM), operatingHeight: mm(v.operatingHeightM),
+    cabHeight: mm(v.cabHeightM), bodyHeight: mm(v.bodyHeightM),
+  };
+}
+
 const WS_VEH = [
  {id:'hino300', name:'Waste Wise Mini (Hino 300)', cat:'Mini Rear Loader', wb:3.40, tw:1.70, bw:1.99, fo:0.98, ro:1.96, minR:6.2},
  {id:'isuzu_npr', name:'Isuzu NPR Rear Loader', cat:'Mini Rear Loader', wb:3.82, tw:1.80, bw:2.10, fo:1.05, ro:2.10, minR:6.8},
@@ -20315,12 +20553,25 @@ async function wsLoadVehiclesDB() {
       scope: (r.swept_scope || 'both').toLowerCase(),
       // Source inferred: council value ⇒ council-specific; else company ⇒ contractor; else industry standard
       sourceType: r.council_value ? 'council' : (r.company ? 'contractor' : 'industry'),
+      // D2: the explicit `source` column wins over the inference. A contractor's
+      // service envelope quoted as a design standard is a report error, so this
+      // distinction reaches the selector AND the title block.
+      source: r.source || (r.council_value || !r.company ? 'guideline' : 'contractor'),
       state: r.state || null, council: r.council_value || null, contractor: r.company || null,
       wb: +r.wheelbase_m, tw: +r.track_m || +r.width_m || 2.5, bw: +r.width_m || 2.5,
       fo: +r.front_oh_m || 1.5, ro: +r.rear_oh_m || 2.0,
       minR: r.kerb_radius_m != null ? +r.kerb_radius_m : null,
       rww: r.wall_radius_m != null ? +r.wall_radius_m : null,
       heightM: r.travel_height_m != null ? +r.travel_height_m : null,
+      // D2 side-elevation columns (metres in the table, like everything else
+      // there). Null falls back to the body-type defaults in the profile module.
+      operatingHeightM: r.operating_height_m != null ? +r.operating_height_m : null,
+      cabHeightM: r.cab_height_m != null ? +r.cab_height_m : null,
+      bodyHeightM: r.body_height_m != null ? +r.body_height_m : null,
+      frontAxles: r.front_axles != null ? +r.front_axles : null,
+      frontAxleSpreadM: r.front_axle_spread_m != null ? +r.front_axle_spread_m : null,
+      rearAxles: r.rear_axles != null ? +r.rear_axles : null,
+      rearAxleSpreadM: r.rear_axle_spread_m != null ? +r.rear_axle_spread_m : null,
       verified: !!r.swept_verified, notes: r.notes || ''
     })).filter(v => v.wb > 0 && (v.minR > 0 || v.rww > 0));
   } catch (e) {
@@ -20361,6 +20612,13 @@ function wsSweptRecordVehicle() {
 // Plan-view diagram + spec readout of the SELECTED swept vehicle: body from
 // the record's true dimensions, axles at fo / fo+wb, wheels on the track
 // width — the same numbers the kinematics run on, so the picture can't lie.
+// Built-in presets and DB rows without an explicit source are design/guideline
+// vehicles — the planning default. Only an explicit contractor record is one
+// operator's truck.
+function wsVehSource(v) { return (v && v.source) || 'guideline'; }
+
+// D2: SIDE ELEVATION of the selected vehicle — the same drawing the title
+// block prints (one geometry, two detail levels), so selector and sheet agree.
 function wsSweptVehDiagram() {
   const el = document.getElementById('ws-veh-diagram'); if (!el) return;
   const sel = document.getElementById('ws-swept-vehicle');
@@ -20368,29 +20626,26 @@ function wsSweptVehDiagram() {
   if (!v) { el.innerHTML = ''; return; }
   const L = (v.fo || 0) + (v.wb || 0) + (v.ro || 0);
   const W = v.bw || v.tw || 2.5;
-  const BW = 300, BH = 92, pad = 16;
-  const k = Math.min((BW - pad * 2) / (L || 1), (BH - pad * 2) / (W || 1));
-  const w = L * k, h = W * k, x0 = (BW - w) / 2, y0 = (BH - h) / 2;
-  // front points RIGHT: axles measured back from the nose
-  const axF = x0 + w - (v.fo || 0) * k;
-  const axR = x0 + w - ((v.fo || 0) + (v.wb || 0)) * k;
-  const tw = (v.tw || W) * k, yT = BH / 2 - tw / 2, yB = BH / 2 + tw / 2;
-  const cab = Math.min(w * 0.24, Math.max(18, (v.fo || 0) * k * 1.6));
-  const wheel = (x, y) => `<rect x="${x - 7}" y="${y - 3}" width="14" height="6" rx="2" fill="#B8CACA"/>`;
+  const spec = vehicleProfileSpecFromVeh(v);
+  const { estimated } = vehicleProfileResolve(spec);
+  const heightsEstimated = estimated.some(k =>
+    ['overallHeight', 'operatingHeight', 'cabHeight', 'bodyHeight'].includes(k));
+  const src = wsVehSource(v);
+  const svg = vehicleProfileSVG(spec, { detail: 'detailed', showEnvelope: true,
+    attrs: 'style="width:100%;height:auto;max-height:118px;display:block;"' });
   el.innerHTML =
-    `<svg viewBox="0 0 ${BW} ${BH}" style="width:100%;height:auto;display:block;background:#161d1d;border:1px solid #2a3535;border-radius:7px;">` +
-    `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" rx="5" fill="rgba(0,212,212,0.05)" stroke="#7FD8D8" stroke-width="1.6"/>` +
-    `<line x1="${x0 + w - cab}" y1="${y0 + 2}" x2="${x0 + w - cab}" y2="${y0 + h - 2}" stroke="#7FD8D8" stroke-width="1" opacity="0.55"/>` +
-    `<line x1="${axF}" y1="${yT}" x2="${axF}" y2="${yB}" stroke="#5a6a6a" stroke-width="1"/>` +
-    `<line x1="${axR}" y1="${yT}" x2="${axR}" y2="${yB}" stroke="#5a6a6a" stroke-width="1"/>` +
-    wheel(axF, yT) + wheel(axF, yB) + wheel(axR, yT) + wheel(axR, yB) +
-    `<path d="M ${x0 + w + 3} ${BH / 2 - 5} l 8 5 l -8 5 z" fill="#7FD8D8" opacity="0.8"/>` +
-    `</svg>` +
+    `<div style="background:#161d1d;border:1px solid #2a3535;border-radius:7px;padding:6px 8px 2px;">${svg}` +
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:2px 2px 4px;">` +
+    `<span style="font-size:9.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:${src === 'contractor' ? '#EFB080' : '#7FD8D8'};">${src === 'contractor' ? '⚠ contractor vehicle' : src === 'manufacturer' ? 'manufacturer spec' : 'design vehicle'}</span>` +
+    (heightsEstimated ? `<span style="font-size:9.5px;color:rgba(255,255,255,0.45);" title="Vertical dimensions are body-type defaults — populate the vehicle record to make this profile authoritative.">± heights estimated</span>` : '') +
+    `</div></div>` +
     `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 12px;margin-top:6px;font-size:11.5px;color:rgba(255,255,255,0.75);">` +
     `<span>Length <b style="color:#fff;">${L.toFixed(2)} m</b></span>` +
     `<span>Width <b style="color:#fff;">${W.toFixed(2)} m</b></span>` +
     `<span>Wheelbase <b style="color:#fff;">${(v.wb || 0).toFixed(2)} m</b></span>` +
     `<span title="${v.rww ? 'wall-to-wall (governs)' : 'kerb-to-kerb'}">Turn ⌀ <b style="color:#fff;">${v.rww ? (v.rww * 2).toFixed(1) + ' m w2w' : ((v.minR || 0) * 2).toFixed(1) + ' m k2k'}</b></span>` +
+    (v.heightM ? `<span>Travel ht <b style="color:#fff;">${(+v.heightM).toFixed(2)} m</b></span>` : '') +
+    (v.operatingHeightM ? `<span>Operating ht <b style="color:#fff;">${(+v.operatingHeightM).toFixed(2)} m</b></span>` : '') +
     `</div>`;
 }
 function wsSweptPopulateVehicles(force) {
@@ -20406,7 +20661,7 @@ function wsSweptPopulateVehicles(force) {
   const db = WS_VEH_DB || [];
   const scopeOk = (v, want) => !v.scope || v.scope === 'both' || v.scope === want;
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const opt = v => `<option value="${esc(v.id)}">${esc(v.name)}${v.verified ? ' \u2713' : ''} \u2014 R ${v.rww ? v.rww + 'm w2w' : v.minR + 'm'}</option>`;
+  const opt = v => `<option value="${esc(v.id)}">${esc(v.name)}${v.verified ? ' \u2713' : ''}${wsVehSource(v) === 'contractor' ? ' [contractor]' : ''} \u2014 R ${v.rww ? v.rww + 'm w2w' : v.minR + 'm'}</option>`;
   const groups = [];
 
   if (db.length) {
@@ -21407,10 +21662,15 @@ function wsSheetCardRects(viewMm, opts) {
     out.legend = { x: viewMm.x + viewMm.w - p - C.legendW, y: viewMm.y + p,
                    w: C.legendW, h: C.cardPad * 2 + C.legendHdr + rows * C.rowH };
   }
-  // Reserved, never drawn: the swept-path vehicle panel (design vehicle diagram
-  // + spec table) goes bottom-centre when it is built. Returned so collision
-  // checks account for it. See the deferrals list in CLAUDE.md.
-  out.sweptReserved = { x: viewMm.x + viewMm.w / 2 - 60, y: viewMm.y + viewMm.h - p - 46, w: 120, h: 46 };
+  // The swept-path vehicle panel (D3): live card when the sheet carries swept
+  // paths, otherwise the same bottom-centre band stays expressed as a
+  // reservation so collision checks account for it either way.
+  if (o.swept) {
+    const w = 152, h = 46;
+    out.swept = { x: viewMm.x + viewMm.w / 2 - w / 2, y: viewMm.y + viewMm.h - p - h, w, h };
+  } else {
+    out.sweptReserved = { x: viewMm.x + viewMm.w / 2 - 60, y: viewMm.y + viewMm.h - p - 46, w: 120, h: 46 };
+  }
   return out;
 }
 // Every visible card pair must be disjoint. Returns the offending pairs.
@@ -21821,25 +22081,28 @@ async function wsSheetExport() {
     // reproduces the architect's page, which has its own — adding one would print
     // a second frame inside theirs.
     if (s.mode === 'crop') { doc.setDrawColor(30); doc.setLineWidth(0.3); doc.rect(viewMm.x, viewMm.y, viewMm.w, viewMm.h); }
-    // floating cards over a full-bleed plan
+    // floating cards over a full-bleed plan. D3: the vehicle title-block panel
+    // appears ONLY when the swept layer is on and paths exist — layer off, the
+    // export is byte-for-byte what it always was.
+    const sweptOn = WS.layers.swept !== false &&
+      !!((typeof wsSweptSlot === 'function') && wsSweptSlot()?.paths?.length);
+    const sweptVehIds = !sweptOn ? [] :
+      [...new Set(wsSweptSlot().paths.map(pth => pth.vehicleId).filter(Boolean))];
     const legendItems = s.legend === false ? [] : wsLegendItems(WS.layers,
       wsSheetContent(wsLayoutSlot(), (typeof wsSweptSlot === 'function') ? wsSweptSlot() : null));
-    const cards = wsSheetCardRects(viewMm, { legendRows: legendItems.length, legend: s.legend !== false });
+    const cards = wsSheetCardRects(viewMm, { legendRows: legendItems.length,
+      legend: s.legend !== false, swept: sweptOn && sweptVehIds.length > 0 });
     const clash = wsSheetCardCollisions(cards);
     if (clash.length) console.warn('sheet cards overlap', clash);
     wsSheetIdCard(doc, cards.id, s);
     if (cards.legend) wsSheetLegend(doc, cards.legend, legendItems);
+    if (cards.swept) await wsSheetVehPanel(doc, cards.swept, wsVehById(sweptVehIds[0]), sweptVehIds.length - 1);
     wsSheetBottomText(doc, s, page);
     const fname = [s.projectName || 'wasteplanner', s.drawingNo || s.title, 'rev' + (s.rev || 'A')]
       .join('-').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').toLowerCase() + '.pdf';
     doc.save(fname);
     const blob = doc.output('blob');
     if (currentProjectId && typeof docStore === 'function') {
-      // D4 swept producer: mark whether swept paths actually printed on this
-      // sheet, so the appendix registry labels it "swept path drawing" from a
-      // recorded fact, not a filename guess.
-      const sweptOn = WS.layers.swept !== false &&
-        !!((typeof wsSweptSlot === 'function') && wsSweptSlot()?.paths?.length);
       blob.arrayBuffer()
         .then(buf => docStore(currentProjectId, buf, fname, 'Export'))
         .then(id => { if (id && typeof docSetFlags === 'function') docSetFlags(currentProjectId, id, { swept: sweptOn }); })
@@ -21915,6 +22178,74 @@ function wsSheetLegend(doc, rect, items) {
     doc.setTextColor(25); doc.setFontSize(5.9);
     doc.text(String(it.label), sx + sw + 2.2, ry + 0.85);
   });
+}
+// D3: the applicable standard, read from the vehicle's OWN record (category /
+// notes) — never hardcoded onto the sheet.
+function wsVehStandard(v) {
+  const m = ((v?.cat || '') + ' ' + (v?.notes || '')).match(/AS ?2890(\.\d+)?|AP-G34(-\d+)?/i);
+  return m ? m[0].toUpperCase().replace(/^AS ?/, 'AS ') : null;
+}
+// D3: swept-path title block panel — the D2 side elevation (schematic, envelope
+// on) beside the vehicle data a reviewer needs, all pulled from the record.
+async function wsSheetVehPanel(doc, rect, v, extraCount) {
+  if (!rect || !v) return;
+  const pad = WS_SHEET_CARDS.cardPad;
+  doc.setFillColor(255, 255, 255); doc.setDrawColor(60); doc.setLineWidth(0.3);
+  doc.rect(rect.x, rect.y, rect.w, rect.h, 'FD');
+  const src = wsVehSource(v);
+  const lx = rect.x + pad;
+  doc.setFontSize(6.4); doc.setTextColor(20); doc.setFont('helvetica', 'bold');
+  doc.text(src === 'contractor' ? 'CONTRACTOR VEHICLE' : 'DESIGN VEHICLE', lx, rect.y + pad + 2.6);
+  doc.setFontSize(5.4); doc.setFont('helvetica', 'normal');
+  doc.setTextColor(src === 'contractor' ? 160 : 95, src === 'contractor' ? 90 : 95, src === 'contractor' ? 30 : 95);
+  // a reviewer must know whether this is a design vehicle or one operator's truck
+  doc.text(src === 'contractor' ? 'one operator’s fleet — not a design standard'
+    : src === 'manufacturer' ? 'manufacturer specification' : 'guideline / design vehicle',
+    rect.x + rect.w - pad, rect.y + pad + 2.6, { align: 'right' });
+  // schematic side elevation, envelope ON — the same geometry as the selector
+  const diaW = 66, diaH = rect.h - pad * 2 - 6, diaY = rect.y + pad + 5;
+  let drew = false;
+  if (typeof doc.svg === 'function') {
+    try {
+      const spec = vehicleProfileSpecFromVeh(v);
+      const holder = document.createElement('div');
+      holder.innerHTML = vehicleProfileSVG(spec, { detail: 'schematic', showEnvelope: true,
+        palette: { stroke: '#1a1a1a', rim: '#8a8a8a', body: 'none', chassis: 'none', tyre: 'none' },
+        attrs: '' });
+      await doc.svg(holder.firstChild, { x: lx, y: diaY, width: diaW, height: diaH });
+      drew = true;
+    } catch (e) { console.warn('vehicle panel svg failed', e); }
+  }
+  if (!drew) {
+    doc.setFontSize(5); doc.setTextColor(140);
+    doc.text('diagram unavailable', lx + diaW / 2, diaY + diaH / 2, { align: 'center' });
+  }
+  // spec table, right of the diagram — every value from the DB record
+  const tx = lx + diaW + 4, tw = rect.x + rect.w - pad - tx;
+  const rows = [];
+  rows.push(['VEHICLE', v.name || '—']);
+  const L = (v.fo || 0) + (v.wb || 0) + (v.ro || 0);
+  rows.push(['LENGTH / WIDTH', L.toFixed(2) + ' m / ' + (v.bw || v.tw || 2.5).toFixed(2) + ' m']);
+  rows.push(['WHEELBASE', (v.wb || 0).toFixed(2) + ' m']);
+  if (v.heightM) rows.push(['TRAVEL HEIGHT', (+v.heightM).toFixed(2) + ' m']);
+  if (v.operatingHeightM) rows.push(['OPERATING HEIGHT', (+v.operatingHeightM).toFixed(2) + ' m']);
+  const circ = [];
+  if (v.minR > 0) circ.push((v.minR * 2).toFixed(1) + ' m kerb');
+  if (v.rww > 0) circ.push((v.rww * 2).toFixed(1) + ' m wall');
+  if (circ.length) rows.push(['TURNING CIRCLE', circ.join(' / ')]);
+  const std = wsVehStandard(v);
+  if (std) rows.push(['STANDARD', std]);
+  if (extraCount > 0) rows.push(['', '+' + extraCount + ' further vehicle' + (extraCount === 1 ? '' : 's') + ' — see paths']);
+  let y = rect.y + pad + 6.4;
+  const rh = Math.min(4.6, (rect.h - pad * 2 - 5) / rows.length);
+  rows.forEach(r => {
+    doc.setFontSize(4.6); doc.setTextColor(125); doc.setFont('helvetica', 'normal');
+    doc.text(r[0], tx, y + 2);
+    doc.setFontSize(5.8); doc.setTextColor(15); doc.setFont('helvetica', 'bold');
+    doc.text(doc.splitTextToSize(String(r[1]), tw - 26)[0], tx + 26, y + 2);
+    y += rh;
+  });
+  doc.setFont('helvetica', 'normal');
 }
 // North arrow, drawn inside the issue card.
 function wsSheetNorth(doc, cx, cy, r, deg) {
