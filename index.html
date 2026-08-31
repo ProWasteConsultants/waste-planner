@@ -10,6 +10,7 @@
 <link rel="icon" href="favicon-16.png" type="image/png" sizes="16x16">
 <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
 <meta name="theme-color" content="#0D151B">
 <meta property="og:title" content="WastePlanner — waste planning in minutes">
 <meta property="og:description" content="Bin calculators, bin room layouts, swept path assessment and compliance checks for architects, developers and councils.">
@@ -9039,6 +9040,16 @@ async function docStore(projectId, buf, name, kind) {
   if (p) { (p.docs = p.docs || []).push({ id, name, kind: kind || docKind(name), ts: Date.now() }); saveProjects(projects); if (typeof saveProjectToDB === 'function') saveProjectToDB(p); }
   return id;
 }
+// D4: producers stamp extra facts onto a filed document's meta (e.g. the sheet
+// export marks whether swept paths printed on it) so the appendix registry can
+// label it honestly instead of guessing from the filename.
+function docSetFlags(projectId, docId, flags) {
+  const projects = getProjects();
+  const meta = projects.find(x => x.id === projectId)?.docs?.find(d => d.id === docId);
+  if (!meta) return;
+  Object.assign(meta, flags);
+  saveProjects(projects);
+}
 async function docLoad(projectId, docId) {
   try { const rec = await idbGetPdf('doc:' + projectId + ':' + docId); if (rec) return rec; } catch(e) {}
   const p = getProjects().find(x => x.id === projectId);
@@ -10465,6 +10476,23 @@ async function cgbUploadAll() {
 async function eqpExtractOne(r) {
   r.busy = true; r.status = 'extracting…'; cgbRender();
   try {
+    // D4: store the SOURCE DOCUMENT, not just its values — the WMP appendix
+    // producer appends this exact PDF. A refused upload (policy not run yet)
+    // must not block the extraction: the proposal still queues, pathless, and
+    // the reviewer is told the document is not on file.
+    let sourcePath = null, uploadNote = '';
+    try {
+      const safe = r.file.name.replace(/[^A-Za-z0-9._-]+/g, '_');
+      const path = `equipment-specs/${Date.now()}_${safe}`;
+      const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
+        .upload(path, r.file, { contentType: 'application/pdf' });
+      if (upErr) throw upErr;
+      sourcePath = path;
+    } catch (upEx) {
+      uploadNote = ' — spec PDF not stored (' + (upEx.message || upEx) +
+        '; has sql/2026-08-31-package-d4-equipment-spec-docs.sql been run?)';
+      console.warn('equipment spec upload failed', upEx);
+    }
     const b64 = await new Promise((res, rej) => {
       const rd = new FileReader();
       rd.onload = () => res(rd.result.split(',')[1]);
@@ -10495,6 +10523,7 @@ async function eqpExtractOne(r) {
       const catRaw = String(it.item_kind || '').toLowerCase().trim();
       return {
         source_file: r.file.name,
+        source_path: sourcePath,
         source_ref: it.source_note || null,
         label: String(it.label || '').trim() || 'Unnamed item',
         category: cats.includes(catRaw) ? catRaw : null,
@@ -10509,9 +10538,15 @@ async function eqpExtractOne(r) {
         status: 'proposed',
       };
     });
-    const { error } = await sb.from('equipment_proposals').insert(rows);
+    let { error } = await sb.from('equipment_proposals').insert(rows);
+    if (error && /source_path/.test(error.message || '')) {
+      // Column predates the D4 migration — queue the values anyway, pathless.
+      rows.forEach(x => delete x.source_path);
+      uploadNote = uploadNote || ' — spec PDF path not recorded (run sql/2026-08-31-package-d4-equipment-spec-docs.sql)';
+      ({ error } = await sb.from('equipment_proposals').insert(rows));
+    }
     if (error) throw new Error(error.message + ' — has sql/2026-08-25-package-c6-equipment-proposals.sql been run?');
-    r.done = true; r.status = `✓ ${rows.length} proposal${rows.length === 1 ? '' : 's'} queued`;
+    r.done = true; r.status = `✓ ${rows.length} proposal${rows.length === 1 ? '' : 's'} queued` + uploadNote;
   } catch (err) {
     r.status = 'failed: ' + (err.message || err);
   } finally { r.busy = false; cgbRender(); }
@@ -10629,8 +10664,16 @@ async function eqpApprove(id) {
     footprint_m2: e.footprint_m2, compaction_ratio: e.compaction_ratio,
     company: e.company, website: e.website, phone: e.phone,
     include_in_supplier_table: false, active: true,
+    // D4: the stored spec PDF follows the item into the library, so the WMP
+    // appendix producer can attach it for any placed instance.
+    spec_doc_path: p.source_path || null,
   };
-  const { error } = await sb.from('equipment').insert(row);
+  let { error } = await sb.from('equipment').insert(row);
+  if (error && /spec_doc_path/.test(error.message || '')) {
+    delete row.spec_doc_path;
+    ({ error } = await sb.from('equipment').insert(row));
+    if (!error) eqpMsg('Inserted without the spec document link — run sql/2026-08-31-package-d4-equipment-spec-docs.sql to enable WMP spec appendices.', true);
+  }
   if (error) { eqpMsg('Insert failed: ' + error.message, true); return; }
   await sb.from('equipment_proposals').update({ status: 'approved', proposed_code: code,
     reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() }).eq('id', id).eq('status', 'proposed');
@@ -15429,6 +15472,9 @@ async function wsLoadEquipmentDB() {
         profile: r.profile || null,
         footprintM2: +r.footprint_m2 || null,
         placeable: (+r.width_mm > 0) && (+r.depth_mm > 0),
+        // D4: stored spec-sheet PDF, appended to the WMP when the item is
+        // placed. Null (legacy rows, or migration not run) = skipped silently.
+        specDocPath: r.spec_doc_path || null,
       }));
     wsPushEquipToCalc();
   } catch (e) {
@@ -21788,8 +21834,17 @@ async function wsSheetExport() {
       .join('-').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').toLowerCase() + '.pdf';
     doc.save(fname);
     const blob = doc.output('blob');
-    if (currentProjectId && typeof docStore === 'function')
-      blob.arrayBuffer().then(buf => docStore(currentProjectId, buf, fname, 'Export')).catch(() => {});
+    if (currentProjectId && typeof docStore === 'function') {
+      // D4 swept producer: mark whether swept paths actually printed on this
+      // sheet, so the appendix registry labels it "swept path drawing" from a
+      // recorded fact, not a filename guess.
+      const sweptOn = WS.layers.swept !== false &&
+        !!((typeof wsSweptSlot === 'function') && wsSweptSlot()?.paths?.length);
+      blob.arrayBuffer()
+        .then(buf => docStore(currentProjectId, buf, fname, 'Export'))
+        .then(id => { if (id && typeof docSetFlags === 'function') docSetFlags(currentProjectId, id, { swept: sweptOn }); })
+        .catch(() => {});
+    }
     wsSheetDlgClose();
     wsLayoutStatus('Sheet exported — ' + (s.mode === 'crop'
       ? 'viewport crop at ' + wsSheetScaleLine(s)
@@ -23806,6 +23861,7 @@ function wmpgEnsureModal() {
     <div class="wmpg-foot">
       <button class="btn btn-primary" onclick="wmpgExportDocx()" style="background:var(--green,#4BED12);color:var(--dark,#0F1414);border-color:var(--green,#4BED12);font-weight:800;">⬇ Word (.docx) — save to project</button>
       <button class="btn" onclick="wmpgPrint()">🖨 Print / PDF</button>
+      <button class="btn" onclick="openPdfPackager()" title="Assemble the issued WMP PDF with its appendices — swept path drawing, equipment spec sheets, bin-room signage">📦 Assemble with appendices</button>
       <button class="btn" onclick="wmpgSavePreset()" title="Remember suppliers, contractors, author and collection defaults for future WMPs">☆ Save as my defaults</button>
       <button class="btn" onclick="advExport()" title="Short-form design and collection advice, from this project's data">📝 Advice memo</button>
       <button class="btn" onclick="wmpgPickTemplate()" title="Load the PWC WMP master (.dotx/.docx) once — cached on this device; exports then fill the real template">📎 PWC template…</button>
@@ -25522,6 +25578,106 @@ function pkgLoadPdfLib() {
   return PKG.libLoading;
 }
 
+/* ── D4 APPENDIX REGISTRY ────────────────────────────────────────────────────
+   ONE ordered, per-project list of appendix items; three producers register
+   against it rather than each growing its own attach path:
+     · project documents (kind 'doc')     — filed PDFs, incl. the swept-path /
+       layout sheet exports (the export stamps meta.swept so the label is a
+       recorded fact, not a filename guess);
+     · equipment specs (kind 'equip')     — the stored spec-sheet PDF of every
+       PLACED item that has one; items with no stored document are skipped
+       silently, never errored;
+     · bin-room signage (kind 'signage')  — D5: generic per-stream signs from
+       the public 'signage' bucket, filenames DERIVED from the canonical
+       stream enum. Page selection, not generation.
+   The user's include/exclude and ordering choices persist on the project
+   (p.appendixPrefs) and are reconciled with the producers' current output
+   every time the packager opens. Assembly letters the included appendices
+   A, B, C…, prepends a generated contents list, keeps every source page at
+   its original size, and files the result into the documents grid. */
+
+// v1/ prefix: an updated sign pack is written to v2/ and switched HERE, never
+// by overwriting files that issued WMPs point at.
+const SIGNAGE_BUCKET = 'signage';
+const SIGNAGE_VER = 'v1';
+
+function apxLetter(i) {
+  // 0 → A … 25 → Z, 26 → AA. Nobody should hit AA, but a wrap to garbage would.
+  let s = '', n = i;
+  do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return s;
+}
+
+// The sign filename is DERIVED from the canonical stream id — the one enum the
+// whole app shares (wsStreamId / council_requirements.stream). A hand-named
+// file ('commingled.pdf') would silently never be found, which is exactly the
+// failure this derivation exists to prevent. Returns null for anything that is
+// not a placeable waste stream, so a bad id can never fetch.
+function apxSignFile(streamId) {
+  const ids = (window.WS_STREAMS || []).map(s => s.id).filter(id => id !== 'equip');
+  if (!ids.includes(streamId)) return null;
+  return SIGNAGE_VER + '/' + streamId + '.pdf';
+}
+
+// The streams this project actually provides for: placed bins plus calculator
+// targets, resolved to canonical ids, in WS_STREAMS order. Signs for absent
+// streams are suppressed — no blank or placeholder pages.
+function apxProjectStreams() {
+  const found = new Set();
+  try {
+    if (typeof WS_LAYOUT !== 'undefined' && WS_LAYOUT && WS_LAYOUT.byPage)
+      Object.values(WS_LAYOUT.byPage).forEach(s => (s.bins || []).forEach(b => {
+        const id = (typeof wsStreamId === 'function') ? wsStreamId(b.stream) : null;
+        if (id) found.add(id);
+      }));
+    if (typeof WS_CALC_ROOMS !== 'undefined' && Array.isArray(WS_CALC_ROOMS))
+      WS_CALC_ROOMS.forEach(r => (r.targets || []).forEach(t => {
+        const id = (typeof wsStreamId === 'function') ? wsStreamId(t.stream) : null;
+        if (id) found.add(id);
+      }));
+  } catch (e) {}
+  found.delete('equip');
+  const order = (window.WS_STREAMS || []).map(s => s.id);
+  return [...found].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+}
+
+// Every placed equipment item whose library record carries a stored spec PDF.
+// No stored document = not offered (skipped silently) — the acceptance rule.
+function apxEquipDocs() {
+  const out = [], seen = new Set();
+  try {
+    const db = (typeof WS_EQUIP_DB !== 'undefined' && Array.isArray(WS_EQUIP_DB)) ? WS_EQUIP_DB : [];
+    if (typeof WS_LAYOUT === 'undefined' || !WS_LAYOUT || !WS_LAYOUT.byPage || !db.length) return out;
+    Object.values(WS_LAYOUT.byPage).forEach(s => (s.equip || []).forEach(it => {
+      const id = it.equipmentId;
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      const rec = db.find(x => x.id === id);
+      if (rec && rec.specDocPath) out.push({ id, label: rec.label, path: rec.specDocPath });
+    }));
+  } catch (e) {}
+  return out;
+}
+
+// Pure: apply the user's saved include/order choices to the producers' current
+// candidates. Unknown candidates (new exports, newly placed equipment) keep
+// producer order and land after everything the user has already arranged.
+function apxMergePrefs(candidates, prefs) {
+  const p = prefs || {};
+  return candidates.map((c, i) => ({
+    ...c,
+    include: p[c.key] ? p[c.key].include !== false : (c.include !== false),
+    _ord: (p[c.key] && typeof p[c.key].ord === 'number') ? p[c.key].ord : 1000 + i,
+  })).sort((a, b) => a._ord - b._ord).map(({ _ord, ...c }) => c);
+}
+
+// Pure: appendix letters for the current list — only INCLUDED appendix rows
+// consume a letter, so deselecting an item reletters everything after it.
+function apxLettering(items) {
+  let n = 0;
+  return items.map(it => (it.role === 'appendix' && it.include) ? apxLetter(n++) : null);
+}
+
 // Appendix order follows the WMP's own structure, so the default assembly is
 // usually already right: layouts (A), equipment specs (B), construction (C).
 function pkgGuessRole(name) {
@@ -25537,12 +25693,33 @@ function pkgGuessRole(name) {
 function openPdfPackager() {
   const p = getProjects().find(x => x.id === currentProjectId);
   if (!p) { alert('Open a project first.'); return; }
-  const pdfs = (p.docs || []).filter(d => /\.pdf$/i.test(d.name));
-  if (!pdfs.length) { alert('No PDFs on this project yet.\n\nExport the WMP from Word as a PDF and add it here, along with any appendix PDFs (layouts, swept paths, equipment specs).'); return; }
-  PKG.items = pdfs.map(d => {
+  // Producer 1 — project documents (WMP PDF, layout / swept sheet exports).
+  const docItems = (p.docs || []).filter(d => /\.pdf$/i.test(d.name)).map(d => {
     const g = pkgGuessRole(d.name);
-    return { id:d.id, name:d.name, include:true, role:g.role, label:g.label, order:g.order, pages:null };
-  }).sort((a,b) => a.order - b.order);
+    return {
+      key: 'doc:' + d.id, kind: 'doc', id: d.id, name: d.name, include: true,
+      role: g.role, order: g.order, pages: null,
+      label: d.swept === true ? 'Swept path drawing' : g.label,
+    };
+  }).sort((a, b) => a.order - b.order);
+  // Producer 2 — stored spec documents for placed equipment (D4).
+  const equipItems = apxEquipDocs().map(e => ({
+    key: 'equip:' + e.id, kind: 'equip', include: true, role: 'appendix',
+    name: e.label, label: 'Equipment specification', path: e.path, pages: null,
+  }));
+  // Producer 3 — bin-room signage (D5), only when the project has streams.
+  const streams = apxProjectStreams();
+  const signItems = !streams.length ? [] : [{
+    key: 'signage', kind: 'signage', include: true, role: 'appendix',
+    name: 'Bin room signage — ' + streams.map(id =>
+      (window.WS_STREAMS || []).find(s => s.id === id)?.label || id).join(', '),
+    label: 'Bin room signage', streams, pages: null,
+  }];
+  if (!docItems.length && !equipItems.length && !signItems.length) {
+    alert('Nothing to package yet.\n\nExport the WMP from Word as a PDF and add it under Documents, along with any appendix PDFs (layouts, swept paths).');
+    return;
+  }
+  PKG.items = apxMergePrefs(docItems.concat(equipItems, signItems), p.appendixPrefs);
   pkgEnsureModal();
   document.getElementById('pkg-overlay').style.display = 'flex';
   pkgRender();
@@ -25550,12 +25727,27 @@ function openPdfPackager() {
 }
 function closePdfPackager() { const el = document.getElementById('pkg-overlay'); if (el) el.style.display = 'none'; }
 
+// The registry remembers the user's choices per project — reconciled against
+// the producers' current output on every open, so a new export or a newly
+// placed item appears without disturbing what was already arranged.
+function apxSavePrefs() {
+  const projects = getProjects();
+  const p = projects.find(x => x.id === currentProjectId);
+  if (!p) return;
+  const prefs = {};
+  PKG.items.forEach((it, i) => { prefs[it.key] = { include: it.include !== false, ord: i }; });
+  p.appendixPrefs = prefs;
+  saveProjects(projects);
+  if (typeof saveProjectToDB === 'function') saveProjectToDB(p);
+}
+
 // Page counts make a wrong pick obvious before you build (a 1-page "WMP" is a
 // cover sheet; a 40-page "appendix" is probably the whole document again).
 async function pkgCountPages() {
   try {
     await pkgLoadPdfLib();
     for (const it of PKG.items) {
+      if (it.kind !== 'doc') continue;   // equip/signage pages are fetched at build
       try {
         const rec = await docLoad(currentProjectId, it.id);
         if (!rec) continue;
@@ -25598,9 +25790,9 @@ function pkgEnsureModal() {
       <button class="btn" onclick="closePdfPackager()" style="font-size:13px;">✕</button>
     </div>
     <div class="pkg-body">
-      <div class="pkg-note" style="margin-bottom:10px;">Tick what belongs in the issued document and put it in order. The main WMP goes first — export it from Word as a PDF so it keeps the template styling, then add it to this project's Documents.</div>
+      <div class="pkg-note" style="margin-bottom:10px;">Tick what belongs in the issued document and put it in order — included appendices letter themselves A, B, C… and a contents page is generated automatically. The main WMP goes first: export it from Word as a PDF so it keeps the template styling, then add it to this project's Documents. Spec sheets for placed equipment and the bin-room signage set appear here on their own when available.</div>
       <div id="pkg-list"></div>
-      <div class="pkg-note" style="margin-top:10px;">Missing something? Close this, add it under Documents, then reopen.</div>
+      <div class="pkg-note" style="margin-top:10px;">Missing something? Close this, add it under Documents, then reopen. Your selection and order are remembered per project.</div>
     </div>
     <div class="pkg-foot">
       <button class="btn btn-primary" id="pkg-build" onclick="pkgBuild()" style="background:#4BED12;color:#0F1414;border-color:#4BED12;font-weight:800;">📦 Build combined PDF</button>
@@ -25614,15 +25806,19 @@ function pkgEnsureModal() {
 function pkgRender() {
   const list = document.getElementById('pkg-list');
   if (!list) return;
+  const letters = apxLettering(PKG.items);
+  const kindTag = { equip: '📄 spec', signage: '🪧 signage' };
   list.innerHTML = PKG.items.map((it, i) => `
-    <div class="pkg-row ${it.role === 'main' ? 'main' : ''}">
-      <input type="checkbox" ${it.include ? 'checked' : ''} onchange="PKG.items[${i}].include=this.checked;pkgRender()">
+    <div class="pkg-row ${it.role === 'main' ? 'main' : ''}" ${it.include ? '' : 'style="opacity:.55;"'}>
+      <input type="checkbox" ${it.include ? 'checked' : ''} onchange="PKG.items[${i}].include=this.checked;apxSavePrefs();pkgRender()">
+      ${letters[i] ? `<span class="pkg-tag">Appendix ${letters[i]}</span>` : ''}
       <span class="pkg-name" title="${(it.name||'').replace(/"/g,'&quot;')}">${it.name}</span>
+      ${kindTag[it.kind] ? `<span class="pkg-pages">${kindTag[it.kind]}</span>` : ''}
       <span class="pkg-pages">${it.pages == null ? '' : (it.pages === 'x' ? 'unreadable' : it.pages + 'p')}</span>
-      <select onchange="PKG.items[${i}].role=this.value;pkgRender()">
+      ${it.kind === 'doc' ? `<select onchange="PKG.items[${i}].role=this.value;apxSavePrefs();pkgRender()">
         <option value="main" ${it.role==='main'?'selected':''}>Main WMP</option>
         <option value="appendix" ${it.role==='appendix'?'selected':''}>Appendix</option>
-      </select>
+      </select>` : ''}
       <button class="pkg-mv" title="Move up" onclick="pkgMove(${i},-1)">▲</button>
       <button class="pkg-mv" title="Move down" onclick="pkgMove(${i},1)">▼</button>
     </div>`).join('');
@@ -25635,7 +25831,7 @@ function pkgRender() {
   if (!inc.length) warn = 'Nothing selected.';
   else if (!mains.length) warn = 'No main WMP selected — the package will be appendices only.';
   else if (mains.length > 1) warn = mains.length + ' documents are marked “Main WMP” — they will merge in the order shown.';
-  if (sum) sum.innerHTML = `${inc.length} file${inc.length===1?'':'s'}${pages?` · ~${pages} pages`:''}` +
+  if (sum) sum.innerHTML = `${inc.length} item${inc.length===1?'':'s'}${pages?` · ~${pages} pages`:''}` +
     (warn ? ` <span style="color:#EFB080;">· ${warn}</span>` : '');
   if (btn) btn.disabled = !inc.length;
 }
@@ -25643,12 +25839,29 @@ function pkgMove(i, d) {
   const j = i + d;
   if (j < 0 || j >= PKG.items.length) return;
   const t = PKG.items[i]; PKG.items[i] = PKG.items[j]; PKG.items[j] = t;
+  apxSavePrefs();
   pkgRender();
 }
 
 function pkgStatus(msg, bad) {
   const el = document.getElementById('pkg-status');
   if (el) { el.textContent = msg || ''; el.style.color = bad ? '#EFB080' : '#9BB0B0'; }
+}
+
+// A generated A4 page (contents list, appendix cover). Source appendix pages
+// are COPIED at their original size, never re-rendered — only these divider
+// pages are drawn from scratch.
+async function apxTextPage(out, font, fontB, lines) {
+  const pg = out.addPage([595.28, 841.89]);
+  let y = 841.89 - 160;
+  for (const ln of lines) {
+    const f = ln.b ? fontB : font;
+    pg.drawText(ln.t, { x: 72, y, size: ln.size, font: f, color: PDFLib.rgb(...(ln.rgb || [0.23, 0.23, 0.23])) });
+    y -= ln.gap != null ? ln.gap : ln.size * 1.9;
+  }
+  pg.drawText('Pro Waste Consultants · WastePlanner', {
+    x: 72, y: 54, size: 8, font, color: PDFLib.rgb(0.42, 0.54, 0.54) });
+  return pg;
 }
 
 async function pkgBuild() {
@@ -25660,21 +25873,90 @@ async function pkgBuild() {
     pkgStatus('Loading PDF library…');
     await pkgLoadPdfLib();
     const out = await PDFLib.PDFDocument.create();
+    const font = await out.embedFont(PDFLib.StandardFonts.Helvetica);
+    const fontB = await out.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const TEAL = [0.09, 0.49, 0.49];
     const skipped = [];
-    for (const it of inc) {
+    const loadPdf = async buf => PDFLib.PDFDocument.load(buf, { ignoreEncryption: true });
+
+    // ── main document(s) first, exactly as filed ──
+    for (const it of inc.filter(x => x.role === 'main')) {
       pkgStatus('Adding ' + it.name + '…');
       let rec = null;
       try { rec = await docLoad(currentProjectId, it.id); } catch(e) {}
       if (!rec) { skipped.push(it.name + ' (not retrievable)'); continue; }
       try {
-        const src = await PDFLib.PDFDocument.load(rec.buf, { ignoreEncryption:true });
-        const pages = await out.copyPages(src, src.getPageIndices());
-        pages.forEach(p => out.addPage(p));
-      } catch(e) {
-        skipped.push(it.name + ' (' + (e.message || 'could not be read') + ')');
+        const src = await loadPdf(rec.buf);
+        (await out.copyPages(src, src.getPageIndices())).forEach(p => out.addPage(p));
+      } catch(e) { skipped.push(it.name + ' (' + (e.message || 'could not be read') + ')'); }
+    }
+
+    // ── gather appendix contents BEFORE lettering, so an appendix that turns
+    //    out empty (unreadable file, no signs on the bucket) drops out and the
+    //    survivors letter A, B, C… with no gaps ──
+    const appendices = [];
+    for (const it of inc.filter(x => x.role === 'appendix')) {
+      pkgStatus('Fetching ' + it.name + '…');
+      const srcs = [];
+      if (it.kind === 'doc') {
+        let rec = null;
+        try { rec = await docLoad(currentProjectId, it.id); } catch(e) {}
+        if (!rec) { skipped.push(it.name + ' (not retrievable)'); continue; }
+        try { srcs.push(await loadPdf(rec.buf)); }
+        catch(e) { skipped.push(it.name + ' (' + (e.message || 'could not be read') + ')'); continue; }
+      } else if (it.kind === 'equip') {
+        try {
+          if (typeof sb === 'undefined' || !sb) throw new Error('no database client');
+          const { data, error } = await sb.storage.from(PLANS_BUCKET).download(it.path);
+          if (error || !data) throw error || new Error('not found');
+          srcs.push(await loadPdf(await data.arrayBuffer()));
+        } catch(e) { skipped.push(it.name + ' (spec document: ' + (e.message || 'could not be fetched') + ')'); continue; }
+      } else if (it.kind === 'signage') {
+        // D5: page selection, not generation. Filenames derive from the
+        // canonical stream enum; a stream with no sign in the pack is skipped
+        // silently and logged, per the brief — never a blank page.
+        if (typeof sb !== 'undefined' && sb) {
+          for (const id of it.streams.concat(['room'])) {
+            const file = id === 'room' ? SIGNAGE_VER + '/room.pdf' : apxSignFile(id);
+            if (!file) { console.log('signage: no canonical sign key for stream', id); continue; }
+            try {
+              const { data, error } = await sb.storage.from(SIGNAGE_BUCKET).download(file);
+              if (error || !data) throw error || new Error('not found');
+              srcs.push(await loadPdf(await data.arrayBuffer()));
+            } catch(e) { console.log('signage: no sign for "' + id + '" (' + SIGNAGE_BUCKET + '/' + file + ') — skipped'); }
+          }
+        }
+        if (!srcs.length) {
+          skipped.push(it.name + ' (no signs found in the ' + SIGNAGE_BUCKET + '/' + SIGNAGE_VER +
+            ' bucket — has sql/2026-08-31-package-d5-signage-bucket.sql been run and the pack uploaded?)');
+          continue;
+        }
+      }
+      if (srcs.length) appendices.push({ it, srcs });
+    }
+
+    // ── contents list + lettered covers, then the pages at original size ──
+    if (appendices.length) {
+      pkgStatus('Writing appendix contents…');
+      const rows = appendices.map((a, i) => ({
+        t: 'Appendix ' + apxLetter(i) + '  —  ' + (a.it.kind === 'doc' ? a.it.label + ': ' + a.it.name : a.it.name),
+        size: 12, gap: 26 }));
+      await apxTextPage(out, font, fontB, [
+        { t: 'Appendices', size: 26, b: true, rgb: TEAL, gap: 48 },
+        ...rows,
+      ]);
+      for (let i = 0; i < appendices.length; i++) {
+        const a = appendices[i];
+        pkgStatus('Adding Appendix ' + apxLetter(i) + ' — ' + a.it.name + '…');
+        await apxTextPage(out, font, fontB, [
+          { t: 'Appendix ' + apxLetter(i), size: 30, b: true, rgb: TEAL, gap: 40 },
+          { t: a.it.kind === 'doc' ? a.it.label : a.it.name, size: 15 },
+        ]);
+        for (const src of a.srcs)
+          (await out.copyPages(src, src.getPageIndices())).forEach(p => out.addPage(p));
       }
     }
-    if (!out.getPageCount()) throw new Error('No pages could be added — none of the selected files could be read.');
+    if (!out.getPageCount()) throw new Error('No pages could be added — none of the selected items could be read.');
 
     const p = getProjects().find(x => x.id === currentProjectId);
     out.setTitle(((p?.address || p?.name) || 'Waste Management Plan') + ' — Waste Management Plan');

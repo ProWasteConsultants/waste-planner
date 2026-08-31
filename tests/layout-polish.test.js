@@ -1439,3 +1439,148 @@ test('the shared helper reports the floor rather than failing silently', () => {
   assert.ok(SOURCE.includes("if (vi === -2) { wsLayoutStatus('A room needs at least three corners.'); return false; }"),
     'the floor must be explained to the user');
 });
+
+// ── D4/D5: WMP appendix registry, producers, signage lookup ─────────────────
+// The registry is ONE list three producers feed; letters, ordering and the
+// include/exclude merge are pure and extracted here. Signage filenames DERIVE
+// from the canonical stream enum — a hand-named file must never be looked up.
+
+const APX_BLOCKS = [
+  ['SIGNAGE_BUCKET', /^const SIGNAGE_BUCKET = /],
+  ['SIGNAGE_VER',    /^const SIGNAGE_VER = /],
+  ['apxLetter',      /^function apxLetter\(/],
+  ['apxSignFile',    /^function apxSignFile\(/],
+  ['apxMergePrefs',  /^function apxMergePrefs\(/],
+  ['apxLettering',   /^function apxLettering\(/],
+];
+const CANON_STREAMS = [
+  { id: 'garbage' }, { id: 'recycling' }, { id: 'fogo' },
+  { id: 'glass' }, { id: 'paper' }, { id: 'soft' }, { id: 'equip' },
+];
+const apx = (() => {
+  global.window = { WS_STREAMS: CANON_STREAMS };
+  try { return require('./extract.js').loadEngine({ blocks: APX_BLOCKS }); }
+  finally { delete global.window; }
+})();
+
+test('apxLetter: A…Z then AA, so a long registry cannot wrap to garbage', () => {
+  assert.equal(apx.apxLetter(0), 'A');
+  assert.equal(apx.apxLetter(2), 'C');
+  assert.equal(apx.apxLetter(25), 'Z');
+  assert.equal(apx.apxLetter(26), 'AA');
+  assert.equal(apx.apxLetter(27), 'AB');
+});
+
+test('apxSignFile: filenames DERIVE from the canonical stream enum, versioned', () => {
+  global.window = { WS_STREAMS: CANON_STREAMS };
+  try {
+    for (const id of ['garbage', 'recycling', 'fogo', 'glass', 'paper', 'soft'])
+      assert.equal(apx.apxSignFile(id), 'v1/' + id + '.pdf');
+    // equipment is not a waste stream and must never fetch a sign
+    assert.equal(apx.apxSignFile('equip'), null);
+    // hand-named vocabularies are exactly the silent-miss the brief warns about
+    assert.equal(apx.apxSignFile('commingled'), null);
+    assert.equal(apx.apxSignFile('general-waste'), null);
+    assert.equal(apx.apxSignFile(''), null);
+  } finally { delete global.window; }
+});
+
+test('the sign pack is versioned under a switchable prefix, never overwritten in place', () => {
+  assert.equal(apx.SIGNAGE_VER, 'v1');
+  assert.equal(apx.SIGNAGE_BUCKET, 'signage');
+  // issued WMPs point at v1/ files; an updated pack goes to v2/ via this constant
+  assert.ok(SOURCE.includes("const SIGNAGE_VER = 'v1';"));
+});
+
+test('apxMergePrefs: saved order and include stick; new candidates append in producer order', () => {
+  const cands = [
+    { key: 'doc:1', role: 'main', include: true },
+    { key: 'doc:2', role: 'appendix', include: true },
+    { key: 'equip:eq_x', role: 'appendix', include: true },
+    { key: 'signage', role: 'appendix', include: true },
+  ];
+  // user previously put signage first among appendices and excluded the equip doc
+  const prefs = {
+    'doc:1': { include: true, ord: 0 },
+    'signage': { include: true, ord: 1 },
+    'doc:2': { include: true, ord: 2 },
+    'equip:eq_x': { include: false, ord: 3 },
+  };
+  const merged = apx.apxMergePrefs(cands, prefs);
+  assert.deepEqual(merged.map(x => x.key), ['doc:1', 'signage', 'doc:2', 'equip:eq_x']);
+  assert.equal(merged.find(x => x.key === 'equip:eq_x').include, false);
+  // a brand-new export the user has never seen lands after the arranged items
+  const merged2 = apx.apxMergePrefs(cands.concat([{ key: 'doc:9', role: 'appendix', include: true }]), prefs);
+  assert.equal(merged2[merged2.length - 1].key, 'doc:9');
+  assert.equal(merged2[merged2.length - 1].include, true, 'new items default to included');
+  // no prefs at all: producer order survives untouched
+  assert.deepEqual(apx.apxMergePrefs(cands, null).map(x => x.key), cands.map(x => x.key));
+});
+
+test('apxLettering: only included appendices consume letters, so deselecting reletters', () => {
+  const items = [
+    { role: 'main', include: true },
+    { role: 'appendix', include: true },
+    { role: 'appendix', include: false },
+    { role: 'appendix', include: true },
+  ];
+  assert.deepEqual(apx.apxLettering(items), [null, 'A', null, 'B'],
+    'the excluded item gets no letter and the one after it shifts up');
+  items[2].include = true;
+  assert.deepEqual(apx.apxLettering(items), [null, 'A', 'B', 'C']);
+});
+
+test('D4 wiring: the spec-sheet upload stores the SOURCE DOCUMENT, not just its values', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function eqpExtractOne'), SOURCE.indexOf('let _eqpCats'));
+  assert.ok(fn.includes('equipment-specs/'), 'PDF uploads under the equipment-specs/ prefix');
+  assert.ok(fn.includes('source_path: sourcePath,'), 'the storage path rides on every proposal row');
+  assert.ok(fn.includes('spec PDF not stored'), 'a refused upload is reported, never silent');
+  assert.ok(fn.includes('2026-08-31-package-d4-equipment-spec-docs.sql'), 'the fix is named');
+  const approve = SOURCE.slice(SOURCE.indexOf('async function eqpApprove'), SOURCE.indexOf('async function eqpReject'));
+  assert.ok(approve.includes('spec_doc_path: p.source_path || null,'),
+    'approval carries the document onto the library row');
+  assert.ok(SOURCE.includes('specDocPath: r.spec_doc_path || null,'),
+    'the workspace equipment mapping exposes it to the producer');
+});
+
+test('D4 wiring: the sheet export records whether swept paths printed — no filename guessing', () => {
+  assert.ok(SOURCE.includes('docSetFlags(currentProjectId, id, { swept: sweptOn })'));
+  assert.ok(SOURCE.includes('const sweptOn = WS.layers.swept !== false &&'),
+    'the flag comes from the live layer state at export time');
+  assert.ok(SOURCE.includes("label: d.swept === true ? 'Swept path drawing' : g.label,"),
+    'the registry labels from the recorded fact');
+});
+
+test('D4 wiring: producers feed ONE registry and choices persist per project', () => {
+  const open = SOURCE.slice(SOURCE.indexOf('function openPdfPackager'), SOURCE.indexOf('function apxSavePrefs'));
+  assert.ok(open.includes('apxEquipDocs()'), 'equipment producer');
+  assert.ok(open.includes('apxProjectStreams()'), 'signage producer reads the project streams');
+  assert.ok(open.includes('!streams.length ? [] : [{'), 'no streams, no signage item — no blank pages');
+  assert.ok(open.includes('apxMergePrefs(docItems.concat(equipItems, signItems), p.appendixPrefs)'),
+    'one merged registry, reconciled with saved prefs');
+  assert.ok(SOURCE.includes('p.appendixPrefs = prefs;'), 'choices persist on the project');
+});
+
+test('D5 wiring: signage is page selection from the public bucket, misses skipped and logged', () => {
+  const buildStart = SOURCE.indexOf('async function pkgBuild');
+  const build = SOURCE.slice(buildStart, SOURCE.indexOf('</'+'script>', buildStart));
+  assert.ok(build.includes('sb.storage.from(SIGNAGE_BUCKET).download(file)'));
+  assert.ok(build.includes('apxSignFile(id)'), 'filename comes from the derivation, nowhere else');
+  assert.ok(build.includes("console.log('signage: no sign for"), 'a missing sign is logged, not errored');
+  assert.ok(build.includes('2026-08-31-package-d5-signage-bucket.sql'),
+    'an entirely empty pack names the bucket policy trap');
+  assert.ok(build.includes("'Appendices'"), 'a contents list page is generated');
+  assert.ok(build.includes("'Appendix ' + apxLetter(i)"), 'covers letter from the shared function');
+});
+
+test('D1: the manifest exists, is linked, and declares any + maskable purposes', () => {
+  const fs2 = require('node:fs');
+  const path2 = require('node:path');
+  assert.ok(SOURCE.includes('<link rel="manifest" href="site.webmanifest">'));
+  const man = JSON.parse(fs2.readFileSync(path2.join(__dirname, '..', 'site.webmanifest'), 'utf8'));
+  assert.equal(man.theme_color, '#0D151B');
+  const by = Object.fromEntries(man.icons.map(i => [i.src, i]));
+  assert.equal(by['icon-512.png'].purpose, 'any');
+  assert.equal(by['icon-maskable.svg'].purpose, 'maskable',
+    'without a maskable entry Android double-crops the rounded square');
+});
