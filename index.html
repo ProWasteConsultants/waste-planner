@@ -480,6 +480,15 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .adm-group.adm-setup .adm-group-head{background:linear-gradient(90deg,rgba(22,126,126,0.20),rgba(22,126,126,0.04));color:#7FD8D8;}
 .adm-group.adm-db{border-left:3px solid #C58B2A;}
 .adm-group.adm-db .adm-group-head{background:linear-gradient(90deg,rgba(197,139,42,0.20),rgba(197,139,42,0.04));color:#E0B463;}
+/* State & council info: two label/value pairs per row. The free-text fields
+   (guidelines, bin sizes, chutes, frequencies, notes) span the full width —
+   a two-line textarea in a half-width column is worse than no column at all. */
+.rdb-meta{display:grid;grid-template-columns:170px 1fr 170px 1fr;gap:7px 20px;max-width:1320px;align-items:start;}
+.rdb-meta-wide{grid-column:1/-1;display:grid;grid-template-columns:170px 1fr;gap:7px 10px;align-items:start;}
+@media (max-width:1180px){
+  .rdb-meta{grid-template-columns:170px 1fr;}
+  .rdb-meta-wide{grid-column:1/-1;}
+}
 .adm-rule{border-top:1px dashed var(--border);margin:20px 0 18px;}
 .tool-card{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:20px;cursor:pointer;transition:all 0.15s;}
 .tool-card:hover{border-color:var(--teal);transform:translateY(-1px);box-shadow:0 2px 12px rgba(22,126,126,0.1);}
@@ -1026,7 +1035,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div id="rdb-guideline-card" style="margin-bottom:14px;"></div>
 
           <div class="dc-title" style="margin-top:22px;">State &amp; council info <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">officer contacts, guidelines, bin colours, frequencies — used by WMP generation</span></div>
-          <div id="rdb-meta-grid" style="display:grid;grid-template-columns:170px 1fr;gap:6px 10px;max-width:860px;align-items:start;"></div>
+          <div id="rdb-meta-grid" class="rdb-meta"></div>
           <button class="btn" style="margin-top:8px;" onclick="rdbSaveMeta()">💾 Save info</button>
 
           <div class="dc-title" style="margin-top:4px;">Residential rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">L/week per dwelling</span></div>
@@ -9863,7 +9872,9 @@ function rdbRenderMeta(loadFailed) {
     const field = RDB_META_LONG.has(k)
       ? `<textarea data-k="${k}" rows="2" style="${inp}resize:vertical;" oninput="RDB.dirtyMeta=true">${RDB.meta[k] || ''}</textarea>`
       : `<input data-k="${k}" type="text" value="${v}" style="${inp}" oninput="RDB.dirtyMeta=true">`;
-    return `<label style="font-size:11px;color:var(--muted);padding-top:7px;">${label}</label>${field}`;
+    const cell = `<label style="font-size:11px;color:var(--muted);padding-top:7px;">${label}</label>${field}`;
+    // long free-text spans both column pairs; short fields sit two per row
+    return RDB_META_LONG.has(k) ? `<div class="rdb-meta-wide">${cell}</div>` : cell;
   }).join('');
 }
 

@@ -620,6 +620,15 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   assert.ok(order.every(i => i >= 0), 'every section is present');
   for (let i = 1; i < order.length; i++)
     assert.ok(order[i] > order[i - 1], 'registry, then documents, then the database — info above rates');
+  // State & council info is two label/value pairs wide; the free-text fields
+  // span both, because a two-line textarea in a half column is unusable
+  assert.ok(SOURCE.includes('.rdb-meta{display:grid;grid-template-columns:170px 1fr 170px 1fr;'),
+    'the info grid is two columns');
+  assert.ok(SOURCE.includes('.rdb-meta-wide{grid-column:1/-1;') &&
+            SOURCE.includes('return RDB_META_LONG.has(k) ? `<div class="rdb-meta-wide">${cell}</div>` : cell;'),
+    'long free-text fields span the full width');
+  assert.ok(SOURCE.includes('@media (max-width:1180px){\n  .rdb-meta{grid-template-columns:170px 1fr;}'),
+    'and it falls back to one pair when there is no room');
   assert.ok(SOURCE.includes('.adm-group.adm-setup{border-left:3px solid var(--teal);}') &&
             SOURCE.includes('.adm-group.adm-db{border-left:3px solid #C58B2A;}'),
     'the two groups are visually distinct, not just adjacent');
