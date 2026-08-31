@@ -1631,3 +1631,34 @@ test('the full lockup fills every slot from ONE injector; Design keeps only the 
   assert.ok(SOURCE.includes('.topbar-actions .wp-lockup{order:-1;margin-right:auto;}'),
     'guest-mode chips must never push the lockup off the left edge');
 });
+
+// ── Background artwork: one built asset, one fixed layer, per-surface dose ──
+test('regenerating build_art.js reproduces the shipped background byte-for-byte', () => {
+  // the truck in the backdrop is drawn by the same inlined vehicle module as
+  // the swept tool — this diff makes any drift between them loud
+  const { svg } = require('../build_art.js');
+  const fs2 = require('node:fs'), path2 = require('node:path');
+  const shipped = fs2.readFileSync(path2.join(__dirname, '..', 'assets', 'wp-background.svg'), 'utf8');
+  assert.equal(svg, shipped, 'run `node build_art.js` and commit the regenerated asset');
+  assert.ok(svg.includes('aria-hidden="true"'), 'decorative to assistive tech');
+  assert.ok(!/<animate|@keyframes/.test(svg), 'no animation behind data views');
+  const src = fs2.readFileSync(path2.join(__dirname, '..', 'build_art.js'), 'utf8');
+  assert.ok(src.includes('vehicleProfileSVG(VEHICLES.rear_lift'), 'the vehicle comes from the module, never traced');
+});
+
+test('the backdrop is ONE fixed, click-transparent layer with per-surface opacity', () => {
+  assert.ok(SOURCE.includes('.app-backdrop{display:none;position:fixed;inset:0;z-index:0;pointer-events:none;'));
+  assert.ok(SOURCE.includes("background:url('assets/wp-background.svg') no-repeat bottom right;background-size:cover;"));
+  assert.ok(SOURCE.includes('body[data-screen="projects"] .app-backdrop{display:block;opacity:.09;}'));
+  assert.ok(SOURCE.includes('body[data-screen="profile"] .app-backdrop{display:block;opacity:.10;}'));
+  assert.ok(SOURCE.includes('body[data-screen="wmpqueue"] .app-backdrop,\nbody[data-screen="orgqueue"] .app-backdrop{display:block;opacity:.05;}'),
+    'queues get half strength — texture behind a dense table costs scannability');
+  assert.ok(!SOURCE.includes('body[data-screen="workspace"] .app-backdrop'), 'the design tab gets no texture');
+  assert.ok(SOURCE.includes('document.body.dataset.screen = name;'), 'showScreen keys the surface');
+  assert.ok(SOURCE.includes('<body data-screen="projects">'), 'the boot screen is keyed before any navigation');
+  // the old hand-drawn projects texture is fully replaced
+  assert.ok(!SOURCE.includes('#screen-projects{background:#151B1B url("data:image/svg'));
+  // ground lives BELOW the fixed layer; content and screens stay transparent above it
+  assert.ok(SOURCE.includes('.app{background:#151B1B;}'));
+  assert.ok(SOURCE.includes('.screen{background:transparent;position:relative;z-index:1;}'));
+});
