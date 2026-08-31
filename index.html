@@ -26320,6 +26320,63 @@ function pkgLoadPdfLib() {
 // v1/ prefix: an updated sign pack is written to v2/ and switched HERE, never
 // by overwriting files that issued WMPs point at.
 const SIGNAGE_BUCKET = 'signage';
+// The bucket is PUBLIC, so signs are fetched through the public endpoint —
+// it works before the D5 read-policy SQL is run and for signed-out sessions;
+// the authenticated storage client is only the fallback.
+const SIGNAGE_PUBLIC_BASE = 'https://sgyenudbkdxdwciqylfs.supabase.co/storage/v1/object/public/' + SIGNAGE_BUCKET + '/';
+
+// A file that downloads but is not a PDF (an SVG exported with a .pdf name,
+// an HTML error page cached by a proxy) would otherwise vanish silently at
+// assembly time with only a pdf-lib parse error. Check the magic bytes first.
+function apxPdfBytesOk(buf) {
+  if (!buf || buf.byteLength < 8) return false;
+  const head = new Uint8Array(buf.slice(0, 8));
+  return String.fromCharCode(...head).includes('%PDF-');
+}
+
+// Fetch one sign. Returns { buf, reason: 'ok' } | { buf: null, reason:
+// 'missing' | 'not-pdf' } — the caller decides how loudly to say it.
+async function apxFetchSign(file) {
+  let buf = null;
+  try {
+    const r = await fetch(SIGNAGE_PUBLIC_BASE + file, { cache: 'no-store' });
+    if (r.ok) buf = await r.arrayBuffer();
+  } catch (e) {}
+  if (!buf && typeof sb !== 'undefined' && sb) {
+    try {
+      const { data, error } = await sb.storage.from(SIGNAGE_BUCKET).download(file);
+      if (!error && data) buf = await data.arrayBuffer();
+    } catch (e) {}
+  }
+  if (!buf) return { buf: null, reason: 'missing' };
+  if (!apxPdfBytesOk(buf)) return { buf: null, reason: 'not-pdf' };
+  return { buf, reason: 'ok' };
+}
+
+// Pre-flight for the whole pack: every canonical stream sign plus the general
+// room sign, checked against the bucket BEFORE a build can come out short.
+// Also lists bucket files outside the contract (a hand-named upload is the
+// silent-miss failure this exists to catch) — listing needs the D5 read
+// policy, so extras degrade to null rather than failing the check.
+async function apxSignPackCheck() {
+  const ids = (window.WS_STREAMS || []).map(s => s.id).filter(id => id !== 'equip');
+  const signs = [];
+  for (const id of ids.concat(['room'])) {
+    const file = id === 'room' ? SIGNAGE_VER + '/room.pdf' : apxSignFile(id);
+    signs.push({ id, file, status: (await apxFetchSign(file)).reason });
+  }
+  let extras = null;
+  try {
+    if (typeof sb !== 'undefined' && sb) {
+      const { data, error } = await sb.storage.from(SIGNAGE_BUCKET).list(SIGNAGE_VER, { limit: 100 });
+      if (!error && Array.isArray(data)) {
+        const expected = new Set(signs.map(s => s.file.split('/').pop()));
+        extras = data.map(f => f.name).filter(n => n && !expected.has(n) && !/^\./.test(n));
+      }
+    }
+  } catch (e) {}
+  return { signs, extras };
+}
 const SIGNAGE_VER = 'v1';
 
 function apxLetter(i) {
@@ -26443,10 +26500,53 @@ function openPdfPackager() {
   PKG.items = apxMergePrefs(docItems.concat(equipItems, signItems), p.appendixPrefs);
   pkgEnsureModal();
   document.getElementById('pkg-overlay').style.display = 'flex';
+  PKG.signCheck = null;
+  if (PKG.items.some(x => x.kind === 'signage')) apxSignPackCheckRun();
   pkgRender();
   pkgCountPages();
 }
 function closePdfPackager() { const el = document.getElementById('pkg-overlay'); if (el) el.style.display = 'none'; }
+
+// Run the pack pre-flight and paint the result under the signage row. Latest
+// call wins — reopening the modal restarts it.
+async function apxSignPackCheckRun() {
+  PKG.signCheck = { busy: true };
+  pkgRender();
+  const token = PKG.signCheckToken = (PKG.signCheckToken || 0) + 1;
+  const res = await apxSignPackCheck();
+  if (token !== PKG.signCheckToken) return;
+  PKG.signCheck = res;
+  pkgRender();
+}
+
+// One line of truth about the pack, rendered inside the modal. Green states
+// what will attach; amber names exactly which file is missing or malformed —
+// never "the appendix came out short with no error".
+function apxSignStatusHtml(it) {
+  const c = PKG.signCheck;
+  if (!c) return '';
+  if (c.busy) return '<div class="pkg-note" style="margin:-2px 0 8px 27px;">checking the sign pack…</div>';
+  const label = id => id === 'room' ? 'room sign'
+    : ((window.WS_STREAMS || []).find(s => s.id === id)?.label || id);
+  const needed = new Set(it.streams.concat(['room']));
+  const ok = c.signs.filter(s => s.status === 'ok');
+  const missingNeeded = c.signs.filter(s => s.status === 'missing' && needed.has(s.id) && s.id !== 'room');
+  const roomMissing = c.signs.some(s => s.id === 'room' && s.status !== 'ok');
+  const notPdf = c.signs.filter(s => s.status === 'not-pdf');
+  const bits = [];
+  bits.push(`<span style="color:${missingNeeded.length || notPdf.length ? '#EFB080' : '#7FD8D8'};">` +
+    `sign pack: ${ok.filter(s => s.id !== 'room').length}/${c.signs.length - 1} stream signs` +
+    `${c.signs.some(s => s.id === 'room' && s.status === 'ok') ? ' + room sign' : ''}</span>`);
+  if (missingNeeded.length)
+    bits.push(`<span style="color:#EFB080;">missing for this project: ${missingNeeded.map(s => `${label(s.id)} (${s.file})`).join(', ')}</span>`);
+  else if (roomMissing)
+    bits.push('<span style="color:#9BB0B0;">no general room sign (v1/room.pdf) — optional</span>');
+  if (notPdf.length)
+    bits.push(`<span style="color:#EFB080;">not a PDF — re-export: ${notPdf.map(s => s.file).join(', ')}</span>`);
+  if (c.extras && c.extras.length)
+    bits.push(`<span style="color:#9BB0B0;">in the bucket but outside the naming contract (never fetched): ${c.extras.join(', ')}</span>`);
+  return `<div class="pkg-note" style="margin:-2px 0 8px 27px;display:flex;flex-direction:column;gap:2px;">${bits.join('')}</div>`;
+}
 
 // The registry remembers the user's choices per project — reconciled against
 // the producers' current output on every open, so a new export or a newly
@@ -26542,7 +26642,7 @@ function pkgRender() {
       </select>` : ''}
       <button class="pkg-mv" title="Move up" onclick="pkgMove(${i},-1)">▲</button>
       <button class="pkg-mv" title="Move down" onclick="pkgMove(${i},1)">▼</button>
-    </div>`).join('');
+    </div>${it.kind === 'signage' ? apxSignStatusHtml(it) : ''}`).join('');
   const inc = PKG.items.filter(x => x.include);
   const mains = inc.filter(x => x.role === 'main');
   const pages = inc.reduce((a,x) => a + (typeof x.pages === 'number' ? x.pages : 0), 0);
@@ -26635,16 +26735,19 @@ async function pkgBuild() {
       } else if (it.kind === 'signage') {
         // D5: page selection, not generation. Filenames derive from the
         // canonical stream enum; a stream with no sign in the pack is skipped
-        // silently and logged, per the brief — never a blank page.
-        if (typeof sb !== 'undefined' && sb) {
-          for (const id of it.streams.concat(['room'])) {
-            const file = id === 'room' ? SIGNAGE_VER + '/room.pdf' : apxSignFile(id);
-            if (!file) { console.log('signage: no canonical sign key for stream', id); continue; }
-            try {
-              const { data, error } = await sb.storage.from(SIGNAGE_BUCKET).download(file);
-              if (error || !data) throw error || new Error('not found');
-              srcs.push(await loadPdf(await data.arrayBuffer()));
-            } catch(e) { console.log('signage: no sign for "' + id + '" (' + SIGNAGE_BUCKET + '/' + file + ') — skipped'); }
+        // silently and logged, per the brief — never a blank page. The pack
+        // pre-flight in the modal has usually already said what is missing.
+        for (const id of it.streams.concat(['room'])) {
+          const file = id === 'room' ? SIGNAGE_VER + '/room.pdf' : apxSignFile(id);
+          if (!file) { console.log('signage: no canonical sign key for stream', id); continue; }
+          const got = await apxFetchSign(file);
+          if (got.reason === 'ok') {
+            try { srcs.push(await loadPdf(got.buf)); }
+            catch (e) { console.log('signage: "' + file + '" would not parse as a PDF — skipped'); }
+          } else if (got.reason === 'not-pdf') {
+            console.log('signage: "' + SIGNAGE_BUCKET + '/' + file + '" is not a PDF (wrong format uploaded?) — skipped');
+          } else {
+            console.log('signage: no sign for "' + id + '" (' + SIGNAGE_BUCKET + '/' + file + ') — skipped');
           }
         }
         if (!srcs.length) {
