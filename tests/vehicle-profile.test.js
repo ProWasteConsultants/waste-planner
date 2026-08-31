@@ -1,121 +1,127 @@
 'use strict';
 // ── D2/D3: vehicle side-elevation module + swept title-block panel ─────────
-// The profiles are GENERATED from dimensions (never traced artwork): one
-// geometry, two detail levels, wheels at real axle positions, and a documented
-// body-type fallback for null dimensions. The D3 panel appears only when the
-// swept layer printed, and states the vehicle's source — a contractor's truck
-// must never read as a design standard.
+// The supplied vehicle-profiles.js is inlined verbatim inside the VP_MODULE
+// IIFE; these tests exercise the REAL inlined code via extraction — never a
+// copy. Profiles are generated from dimensions (no traced artwork), wheels at
+// real axle positions, four body types and a hard throw on a fifth. The D3
+// panel appears only when the swept layer printed, and states the vehicle's
+// source — a contractor's truck must never read as a design standard.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadEngine, loadSheet, SOURCE } = require('./extract.js');
 
 const VEH_BLOCKS = [
-  ['VEHICLE_PROFILE_DEFAULTS', /^const VEHICLE_PROFILE_DEFAULTS = \{/],
-  ['VEHICLES',                 /^const VEHICLES = \{/],
-  ['vehicleProfileResolve',    /^function vehicleProfileResolve\(/],
-  ['axlePositions',            /^function axlePositions\(/],
-  ['vehicleProfileSVG',        /^function vehicleProfileSVG\(/],
+  ['VP_MODULE',                 /^const VP_MODULE = \(\(\) => \{/],
+  ['vehicleProfileSVG',         /^const vehicleProfileSVG = VP_MODULE/],
+  ['axlePositions',             /^const axlePositions = VP_MODULE/],
+  ['VEHICLES',                  /^const VEHICLES = VP_MODULE/],
+  ['VEHICLE_PROFILE_DEFAULTS',  /^const VEHICLE_PROFILE_DEFAULTS = VP_MODULE/],
+  ['vehicleProfileEstimatedFields', /^function vehicleProfileEstimatedFields\(/],
   ['vehicleProfileSpecFromVeh', /^function vehicleProfileSpecFromVeh\(/],
-  ['wsVehSource',              /^function wsVehSource\(/],
-  ['wsVehStandard',            /^function wsVehStandard\(/],
+  ['wsVehSource',               /^function wsVehSource\(/],
+  ['wsVehStandard',             /^function wsVehStandard\(/],
 ];
 const vp = loadEngine({ blocks: VEH_BLOCKS });
 
 // ── axle configurations ─────────────────────────────────────────────────
 test('axlePositions: 8x4 twin-steer — four axles where the Scania actually has them', () => {
   // wheelbase runs LEADING steer axle → rear group CENTRE, per the module contract
-  const ax = vp.axlePositions(vp.VEHICLES.front_lift_8x4);
-  assert.equal(ax.front.length, 2, 'twin steer = two front axles');
-  assert.equal(ax.rear.length, 2);
-  assert.equal(ax.front[0], 1450, 'leading steer axle at the front overhang');
-  assert.equal(ax.front[1], 1450 + 1950);
+  const s = vp.VEHICLES.front_lift_8x4;
+  const ax = vp.axlePositions(s);
+  assert.equal(ax.length, 4, 'twin steer + tandem drive = four axles');
+  assert.equal(ax[0], 1450, 'leading steer axle at the front overhang');
+  assert.equal(ax[1], 1450 + 1800, 'second steer axle one spread behind');
   const rc = 1450 + 5425;
-  assert.deepEqual(ax.rear, [rc - 1775 / 2, rc + 1775 / 2], 'rear pair straddles the group centre');
+  assert.deepEqual(ax.slice(2), [rc - 1775 / 2, rc + 1775 / 2], 'rear pair straddles the group centre');
 });
 
 test('axlePositions: 4x2 — one axle each end, rear at frontOverhang + wheelbase', () => {
   const ax = vp.axlePositions({ frontOverhang: 1400, wheelbase: 5000, frontAxles: 1, rearAxles: 1 });
-  assert.deepEqual(ax.front, [1400]);
-  assert.deepEqual(ax.rear, [6400]);
+  assert.deepEqual(ax, [1400, 6400]);
 });
 
-test('axlePositions: a spec with nothing at all still yields sane positions', () => {
-  const ax = vp.axlePositions({});
-  assert.equal(ax.front.length, 1);
-  assert.equal(ax.rear.length, 1);
-  assert.ok(ax.rear[0] > ax.front[0]);
+test('axlePositions: the 6x4 default — tandem drive centred on the wheelbase point', () => {
+  const ax = vp.axlePositions({ frontOverhang: 1400, wheelbase: 4800, rearAxleSpread: 1350 });
+  assert.deepEqual(ax, [1400, 6200 - 675, 6200 + 675]);
 });
 
-// ── null fallback is documented behaviour, not an error ─────────────────
-test('vehicleProfileResolve: nulls fall back to body-type defaults and are FLAGGED estimated', () => {
-  const { spec, estimated } = vp.vehicleProfileResolve({ body: 'rear_lift', wheelbase: 4500 });
-  assert.equal(spec.wheelbase, 4500, 'a real value survives');
-  assert.equal(spec.overallHeight, vp.VEHICLE_PROFILE_DEFAULTS.rear_lift.overallHeight);
-  assert.ok(estimated.includes('overallHeight'), 'the default is flagged, never silently authoritative');
-  assert.ok(!estimated.includes('wheelbase'));
+// ── defaults and the estimated flag ─────────────────────────────────────
+test('a sparse spec draws from the documented defaults, and the gaps are reportable', () => {
+  const est = vp.vehicleProfileEstimatedFields({ bodyType: 'rear_lift', wheelbase: 4500 });
+  assert.ok(est.includes('overallHeight'), 'a missing height is flagged');
+  assert.ok(est.includes('cabHeight'));
+  assert.ok(!est.includes('wheelbase'), 'a real value is not flagged');
+  assert.equal(vp.VEHICLE_PROFILE_DEFAULTS.wheelRadius, 530, 'defaults are the module’s own');
 });
 
-test('vehicleProfileResolve: an unknown body renders as the generic rigid truck', () => {
-  const { spec } = vp.vehicleProfileResolve({ body: 'hovercraft' });
-  assert.equal(spec.body, 'rigid', 'no lift gear is invented for a body we do not know');
+test('an unknown body type throws — the module supports exactly four bodies', () => {
+  assert.throws(() => vp.vehicleProfileSVG({ bodyType: 'hovercraft' }, {}), /Unknown body type/);
 });
 
-test('the Scania record carries the manufacturer figures and admits its estimates', () => {
-  const v = vp.VEHICLES.front_lift_8x4;
-  assert.equal(v.overallLength, 9676);
-  assert.equal(v.wheelbase, 5425);
-  assert.equal(v.rearAxleSpread, 1775);
-  assert.equal(v.overallHeight, 4300);
-  assert.equal(v.operatingHeight, 6500, 'the GOVERNING case (4.5 m³ bin) is the stored envelope');
-  assert.equal(v.operatingHeightMax, 7000, 'the 8 m³ cardboard case is recorded alongside');
-  assert.ok(v.estimated.includes('frontOverhang'), 'undimensioned drawing fields stay marked estimated');
+test('the VEHICLES map: guideline front lift is the planning default; the Scania admits its estimates', () => {
+  const g = vp.VEHICLES.front_lift;
+  assert.equal(g.source, 'guideline');
+  assert.equal(g.overallLength, 10520);
+  assert.equal(g.operatingHeight, 6100, 'guideline front-lift envelope');
+  assert.equal(g.turningCircleKerb, 22100);
+  const m = vp.VEHICLES.front_lift_8x4;
+  assert.equal(m.source, 'manufacturer');
+  assert.equal(m.overallLength, 9676);
+  assert.equal(m.wheelbase, 5425);
+  assert.equal(m.rearAxleSpread, 1775);
+  assert.equal(m.operatingHeight, 6500, 'governing case: 4.5 m³ industrial bin');
 });
 
 // ── one geometry, two render levels ─────────────────────────────────────
-test('vehicleProfileSVG: detailed fills, schematic outlines — same wheel positions', () => {
-  const spec = vp.VEHICLES.front_lift_8x4;
-  const det = vp.vehicleProfileSVG(spec, { detail: 'detailed' });
-  const sch = vp.vehicleProfileSVG(spec, { detail: 'schematic' });
-  assert.ok(det.includes('--vehicle-tyre'), 'detailed paints tyres from the CSS variable');
-  assert.ok(sch.includes('fill="none"'), 'schematic is outline only');
+test('vehicleProfileSVG: detailed fills via CSS variables, schematic is outline only', () => {
+  const det = vp.vehicleProfileSVG(vp.VEHICLES.front_lift_8x4, { detail: 'detailed' });
+  const sch = vp.vehicleProfileSVG(vp.VEHICLES.front_lift_8x4, { detail: 'schematic' });
+  assert.ok(det.includes('var(--vehicle-body'), 'detailed paints from the variables');
+  assert.ok(det.includes('var(--vehicle-tyre'));
+  assert.ok(sch.includes('.shell, .tyre, .rim, .chassis { fill: none; }'), 'schematic fills nothing');
+  assert.ok(!sch.includes('var(--vehicle-body'), 'no fill variables in schematic output');
   // wheels sit at the REAL axle x positions in both renders
-  for (const wx of vp.axlePositions(spec).front.concat(vp.axlePositions(spec).rear)) {
-    assert.ok(det.includes(`<circle cx="${wx}"`), 'detailed wheel at ' + wx);
-    assert.ok(sch.includes(`<circle cx="${wx}"`), 'schematic wheel at ' + wx);
+  for (const wx of vp.axlePositions({ ...vp.VEHICLE_PROFILE_DEFAULTS, ...vp.VEHICLES.front_lift_8x4 })) {
+    const at = `cx="${wx}"`;
+    assert.ok(det.includes(at), 'detailed wheel at ' + wx);
+    assert.ok(sch.includes(at), 'schematic wheel at ' + wx);
   }
 });
 
-test('vehicleProfileSVG: the operating envelope is drawn dashed, with the height stated', () => {
-  const on = vp.vehicleProfileSVG(vp.VEHICLES.front_lift_8x4, {});
-  assert.ok(on.includes('stroke-dasharray'), 'envelope on by default when a height exists');
-  assert.ok(on.includes('6.5 m operating clearance'));
-  const off = vp.vehicleProfileSVG(vp.VEHICLES.front_lift_8x4, { showEnvelope: false });
-  assert.ok(!off.includes('operating clearance'));
-  // the generic rigid truck has no operating height and therefore no envelope
-  const rigid = vp.vehicleProfileSVG({ body: 'rigid' }, {});
-  assert.ok(!rigid.includes('operating clearance'));
-});
-
-test('vehicleProfileSVG: opts.palette substitutes concrete colours for print (svg2pdf cannot resolve vars)', () => {
-  const svg = vp.vehicleProfileSVG(vp.VEHICLES.front_lift_8x4,
-    { detail: 'schematic', palette: { stroke: '#1a1a1a', rim: '#8a8a8a', body: 'none', chassis: 'none', tyre: 'none' } });
-  assert.ok(!svg.includes('var(--vehicle'), 'no CSS variable survives into the print render');
-  assert.ok(svg.includes('#1a1a1a'));
+test('vehicleProfileSVG: the operating envelope is opt-in, dashed, at operatingHeight', () => {
+  const on = vp.vehicleProfileSVG(vp.VEHICLES.front_lift_8x4, { showEnvelope: true });
+  assert.ok(on.includes('class="env"'), 'envelope drawn when asked');
+  assert.ok(on.includes(',6500'), 'at the stored operating height');
+  const off = vp.vehicleProfileSVG(vp.VEHICLES.front_lift_8x4, {});
+  assert.ok(!off.includes('class="env"'), 'off by default — the title block asks for it');
+  // no operating height on the record → no envelope even when asked
+  const none = vp.vehicleProfileSVG(vp.VEHICLES.rear_lift, { showEnvelope: true });
+  assert.ok(!none.includes('class="env"'));
 });
 
 // ── DB record → spec mapping ────────────────────────────────────────────
 test('vehicleProfileSpecFromVeh: body from the record’s own words, metres to millimetres', () => {
   const spec = vp.vehicleProfileSpecFromVeh({ cat: 'Front Loader', name: 'FL', wb: 4.8, fo: 3.2, ro: 1.5, bw: 2.55, heightM: 4.3 });
-  assert.equal(spec.body, 'front_lift');
+  assert.equal(spec.bodyType, 'front_lift');
   assert.equal(spec.wheelbase, 4800);
   assert.equal(spec.overallLength, 9500);
   assert.equal(spec.overallHeight, 4300);
-  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Hook Lift / Skip Bin', name: '' }).body, 'hook_lift');
-  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Mini Rear Loader', name: '' }).body, 'rear_lift');
-  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Side Loader', name: '' }).body, 'side_lift');
-  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Austroads AP-G34-23 Design Vehicles', name: 'Service Vehicle' }).body,
-    'rigid', 'a generic design vehicle grows no lift gear');
+  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Hook Lift / Skip Bin', name: '' }).bodyType, 'hook_lift');
+  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Mini Rear Loader', name: '' }).bodyType, 'rear_lift');
+  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Side Loader', name: '' }).bodyType, 'side_lift');
+  assert.equal(vp.vehicleProfileSpecFromVeh({ cat: 'Austroads AP-G34-23 Design Vehicles', name: 'Service Vehicle' }).bodyType,
+    'rear_lift', 'unrecognised kinds draw as the generic collection vehicle — the module throws on a fifth body');
+});
+
+test('vehicleProfileSpecFromVeh: absent values are ABSENT, so clone() keeps the defaults', () => {
+  // {...DEFAULTS, ...spec} copies own undefined properties, which would shadow
+  // a default with undefined — the mapper must delete rather than pass through.
+  const spec = vp.vehicleProfileSpecFromVeh({ cat: 'Rear Loader', name: '', wb: 4.5 });
+  assert.ok(!('overallHeight' in spec), 'no height on the record, no key in the spec');
+  assert.ok(!('frontAxles' in spec));
+  const merged = { ...vp.VEHICLE_PROFILE_DEFAULTS, ...spec };
+  assert.equal(merged.overallHeight, vp.VEHICLE_PROFILE_DEFAULTS.overallHeight);
 });
 
 // ── source: design vehicle vs one operator's truck ──────────────────────
@@ -159,11 +165,15 @@ test('layer off → export unchanged: the panel is gated on live swept state at 
     'the card rect only exists when swept paths actually printed');
   assert.ok(SOURCE.includes('if (cards.swept) await wsSheetVehPanel(doc, cards.swept, wsVehById(sweptVehIds[0])'),
     'the panel draws the vehicle the paths were driven with');
-  const panel = SOURCE.slice(SOURCE.indexOf('async function wsSheetVehPanel'), SOURCE.indexOf('// North arrow'));
+  const panel = SOURCE.slice(SOURCE.indexOf('function wsVehPanelFlattenSvg'), SOURCE.indexOf('// North arrow'));
   assert.ok(panel.includes("detail: 'schematic', showEnvelope: true"),
     'title block uses the schematic level with the envelope on');
   assert.ok(panel.includes('one operator’s fleet — not a design standard'),
     'a contractor vehicle is labelled as such ON THE DRAWING');
   assert.ok(panel.includes('(v.minR * 2).toFixed(1)') && panel.includes('(v.rww * 2).toFixed(1)'),
     'turning circles are the identity 2×R of the stored radii — no duplicate columns');
+  // svg2pdf cannot resolve the module's <style> + variables: the print path
+  // must bake computed styles into attributes and drop the stylesheet.
+  assert.ok(panel.includes('wsVehPanelFlattenSvg(') && panel.includes("querySelectorAll('style').forEach(st => st.remove())"),
+    'flattening is in the print path, not skipped');
 });
