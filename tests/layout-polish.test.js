@@ -1564,7 +1564,10 @@ test('D4 wiring: producers feed ONE registry and choices persist per project', (
 test('D5 wiring: signage is page selection from the public bucket, misses skipped and logged', () => {
   const buildStart = SOURCE.indexOf('async function pkgBuild');
   const build = SOURCE.slice(buildStart, SOURCE.indexOf('</'+'script>', buildStart));
-  assert.ok(build.includes('sb.storage.from(SIGNAGE_BUCKET).download(file)'));
+  assert.ok(build.includes('await apxFetchSign(file)'),
+    'signs come through the shared fetcher (public URL first, storage client fallback)');
+  assert.ok(build.includes('is not a PDF (wrong format uploaded?)'),
+    'a wrong-format upload is named, not swallowed as a parse error');
   assert.ok(build.includes('apxSignFile(id)'), 'filename comes from the derivation, nowhere else');
   assert.ok(build.includes("console.log('signage: no sign for"), 'a missing sign is logged, not errored');
   assert.ok(build.includes('2026-08-31-package-d5-signage-bucket.sql'),
@@ -1583,4 +1586,28 @@ test('D1: the manifest exists, is linked, and declares any + maskable purposes',
   assert.equal(by['icon-512.png'].purpose, 'any');
   assert.equal(by['icon-maskable.svg'].purpose, 'maskable',
     'without a maskable entry Android double-crops the rounded square');
+});
+
+test('D5 pre-flight: the sign pack is verified against the bucket before a build can come out short', () => {
+  // public endpoint first — works before the read-policy SQL and signed out
+  assert.ok(SOURCE.includes("const SIGNAGE_PUBLIC_BASE = 'https://sgyenudbkdxdwciqylfs.supabase.co/storage/v1/object/public/' + SIGNAGE_BUCKET + '/';"));
+  const fetchFn = SOURCE.slice(SOURCE.indexOf('async function apxFetchSign'), SOURCE.indexOf('async function apxSignPackCheck'));
+  assert.ok(fetchFn.includes('fetch(SIGNAGE_PUBLIC_BASE + file'), 'public URL is the primary path');
+  assert.ok(fetchFn.includes('sb.storage.from(SIGNAGE_BUCKET).download(file)'), 'storage client is the fallback');
+  assert.ok(fetchFn.includes('apxPdfBytesOk(buf)'), 'magic bytes checked — an SVG in .pdf clothing is caught');
+  // the modal runs the check on open and paints per-file truth
+  assert.ok(SOURCE.includes("if (PKG.items.some(x => x.kind === 'signage')) apxSignPackCheckRun();"));
+  assert.ok(SOURCE.includes('missing for this project:'), 'a missing needed sign is named in the modal');
+  assert.ok(SOURCE.includes('outside the naming contract (never fetched):'),
+    'hand-named bucket files are surfaced loudly — the exact silent-miss the brief warns about');
+});
+
+test('apxPdfBytesOk: magic bytes, not file extensions', () => {
+  const apx2 = require('./extract.js').loadEngine({ blocks: [['apxPdfBytesOk', /^function apxPdfBytesOk\(/]] });
+  const bytes = str => new TextEncoder().encode(str).buffer;
+  assert.equal(apx2.apxPdfBytesOk(bytes('%PDF-1.7 blah blah')), true);
+  assert.equal(apx2.apxPdfBytesOk(bytes('<?xml version="1.0"?><svg')), false, 'an SVG uploaded as .pdf is rejected');
+  assert.equal(apx2.apxPdfBytesOk(bytes('<html>404</html>')), false, 'an error page is rejected');
+  assert.equal(apx2.apxPdfBytesOk(bytes('%PD')), false, 'too short to be anything');
+  assert.equal(apx2.apxPdfBytesOk(null), false);
 });
