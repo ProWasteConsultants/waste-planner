@@ -712,14 +712,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .pu-field label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;}
 .pu-field input{border:1.5px solid var(--border);border-radius:7px;padding:8px 10px;font-size:13px;font-family:inherit;color:var(--text);outline:none;background:#fff;width:100%;box-sizing:border-box;}
 .pu-field input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,126,126,0.1);}
-/* ── FULL BRAND LOCKUP ───────────────────────────────────────────────────────
-   Mark + wordmark at the top of every screen with horizontal room. The Design
-   tab is the exception (no room — rail mark only), and the dashed arc is NOT
-   repeated under the wordmark: it already lives inside the mark. The mark is
-   the favicon asset itself, so a rebrand swaps one file. Slots are filled by
-   one injector (WP_LOCKUP_HTML) — never hand-copied markup. */
-.wp-lockup{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none;line-height:1;}
-.wp-lockup img{width:32px;height:32px;display:block;border-radius:9px;}
+/* ── BRAND LOCKUP ────────────────────────────────────────────────────────────
+   Wordmark only at the top of every screen with horizontal room — the WP mark
+   already lives on the nav rail beside it, so repeating it here doubled up.
+   The Design tab is the exception (no room — rail mark only). Slots are
+   filled by one injector (WP_LOCKUP_HTML) — never hand-copied markup. */
+.wp-lockup{display:inline-flex;align-items:center;cursor:pointer;user-select:none;line-height:1;}
 .wp-lockup-word{font-size:21px;font-weight:800;letter-spacing:-0.4px;white-space:nowrap;}
 .wp-lockup-word b{color:#2DD4BF;}
 /* the platform chrome is dark, so "Planner" takes the brand off-white; if a
@@ -26692,13 +26690,12 @@ function pkgStatus(msg, bad) {
   if (el) { el.textContent = msg || ''; el.style.color = bad ? '#EFB080' : '#9BB0B0'; }
 }
 
-/* ── FULL BRAND LOCKUP ──────────────────────────────────────────────────────
+/* ── BRAND LOCKUP ───────────────────────────────────────────────────────────
    One injector fills every .wp-lockup-slot, so the lockup cannot drift copy
-   by copy. The mark is the favicon asset itself (same file the rail uses);
-   the wordmark is live text in the app's own UI stack — no second arc, per
-   the brand brief. Clicking it goes home, same as the rail mark. */
+   by copy. Wordmark only — the WP mark stays on the nav rail and is not
+   repeated here; the wordmark is live text in the app's own UI stack.
+   Clicking it goes home, same as the rail mark. */
 const WP_LOCKUP_HTML =
-  '<img src="favicon.svg" alt="">' +
   '<span class="wp-lockup-word"><b>Waste</b><span>Planner</span></span>';
 document.querySelectorAll('.wp-lockup-slot').forEach(el => {
   el.classList.add('wp-lockup');
