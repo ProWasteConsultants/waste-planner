@@ -1615,7 +1615,8 @@ test('apxPdfBytesOk: magic bytes, not file extensions', () => {
 test('the full lockup fills every slot from ONE injector; Design keeps only the rail mark', () => {
   // one source of markup — hand-copied lockups drift, so slots must be empty in the HTML
   assert.ok(SOURCE.includes("const WP_LOCKUP_HTML ="));
-  assert.ok(SOURCE.includes(`'<img src="favicon.svg" alt="">'`), 'the mark is the favicon asset itself, never a second copy');
+  assert.ok(!SOURCE.includes(`'<img src="favicon.svg" alt="">'`),
+    'wordmark only — the WP mark lives on the rail and is not repeated in the lockup');
   assert.ok(SOURCE.includes("document.querySelectorAll('.wp-lockup-slot').forEach(el => {"));
   const slots = SOURCE.split('class="wp-lockup-slot"').length - 1;
   assert.equal(slots, 7, 'projects, project-detail, admin, wmp queue, org queue, profile, tools');
