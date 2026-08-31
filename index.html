@@ -489,6 +489,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   .rdb-meta{grid-template-columns:170px 1fr;}
   .rdb-meta-wide{grid-column:1/-1;}
 }
+.adm-group.adm-shape{border-left:3px solid #7C6BD6;}
+.adm-group.adm-shape .adm-group-head{background:linear-gradient(90deg,rgba(124,107,214,0.20),rgba(124,107,214,0.04));color:#B3A8F0;}
+.adm-group.adm-ctr{border-left:3px solid #4E86C4;}
+.adm-group.adm-ctr .adm-group-head{background:linear-gradient(90deg,rgba(78,134,196,0.20),rgba(78,134,196,0.04));color:#9CC4EE;}
 .adm-rule{border-top:1px dashed var(--border);margin:20px 0 18px;}
 .tool-card{background:var(--white);border:1px solid var(--border);border-radius:12px;padding:20px;cursor:pointer;transition:all 0.15s;}
 .tool-card:hover{border-color:var(--teal);transform:translateY(-1px);box-shadow:0 2px 12px rgba(22,126,126,0.1);}
@@ -964,18 +968,15 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
 
           <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND.
-               C6: a second mode routes spec sheets into equipment_proposals. -->
-          <div style="display:flex;gap:14px;align-items:center;margin-bottom:6px;font-size:11px;color:var(--muted);">
-            <label style="cursor:pointer;"><input type="radio" name="cgb-mode" value="guidelines" checked onchange="cgbSetMode('guidelines')"> Council guidelines</label>
-            <label style="cursor:pointer;"><input type="radio" name="cgb-mode" value="equipment" onchange="cgbSetMode('equipment')"> Equipment spec sheets → proposals queue</label>
-          </div>
+               Guidelines only: equipment spec sheets are uploaded in the
+               Equipment Library tab, next to the library they land in. -->
           <div id="cgb-drop" ondragover="event.preventDefault();this.style.borderColor='var(--teal)';"
                ondragleave="this.style.borderColor='var(--border)';"
-               ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbAddFiles(event.dataTransfer.files);"
-               onclick="document.getElementById('cgb-files').click()"
+               ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbSetMode('guidelines');cgbAddFiles(event.dataTransfer.files);"
+               onclick="cgbSetMode('guidelines');document.getElementById('cgb-files').click()"
                style="border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:8px;">
             <span id="cgb-drop-hint">⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.</span>
-            <input type="file" id="cgb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbAddFiles(this.files);this.value='';">
+            <input type="file" id="cgb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbSetMode('guidelines');cgbAddFiles(this.files);this.value='';">
           </div>
           <datalist id="cgb-councils"></datalist>
           <div id="cgb-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
@@ -1111,22 +1112,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
         <!-- EQUIPMENT LIBRARY TAB -->
         <div class="admin-screen-panel" id="stab-equipment" style="padding:20px;display:none;">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Equipment Library</div>
-            <div id="eql-status" style="font-size:11px;color:var(--muted);"></div>
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Bins, compactors and chutes. The WMP spreadsheet reads these directly — after saving, hit <b>Refresh All</b> in Excel. No publish needed. A brand-new item also needs the spreadsheet block extended one row (copy the last formula row down).</div>
-          <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
-            <table style="border-collapse:collapse;font-size:10.5px;min-width:1350px;">
-              <thead><tr id="eql-head"></tr></thead>
-              <tbody id="eql-body"></tbody>
-            </table>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn" onclick="eqlAdd()">+ Add equipment</button>
-            <button class="btn" onclick="eqlSave()">💾 Save equipment</button>
-          </div>
 
+          <div class="adm-group adm-setup">
+            <div class="adm-group-head">📥 Spec sheets &amp; proposals<span class="adm-group-sub">upload manufacturer PDFs, AI-extract them, review before anything enters the library</span></div>
+            <div class="adm-group-body">
           <!-- ── AI SPEC-SHEET IMPORT ─────────────────────────────────── -->
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:24px 0 4px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">AI Spec-Sheet Import</div>
@@ -1141,6 +1130,21 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
           <div id="ssx-results"></div>
 
+          <!-- Bulk spec sheets: same batch machinery the guidelines uploader uses,
+               but rendered here, beside the queue the proposals land in. -->
+          <div id="eqb-drop" ondragover="event.preventDefault();this.style.borderColor='var(--teal)';"
+               ondragleave="this.style.borderColor='var(--border)';"
+               ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbSetMode('equipment');cgbAddFiles(event.dataTransfer.files);"
+               onclick="cgbSetMode('equipment');document.getElementById('eqb-files').click()"
+               style="border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);cursor:pointer;margin:10px 0 8px;">
+            ⇪ Drop manufacturer spec-sheet PDFs here (or click) — each is AI-extracted into the proposals queue below. Nothing reaches the library until you approve it.
+            <input type="file" id="eqb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbSetMode('equipment');cgbAddFiles(this.files);this.value='';">
+          </div>
+          <div id="eqb-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
+          <div id="eqb-actions" style="display:none;gap:8px;align-items:center;margin-bottom:14px;">
+            <button class="btn" style="background:var(--teal);color:#fff;font-weight:700;" onclick="cgbUploadAll()">⇪ Extract assigned files</button>
+            <span style="font-size:10.5px;color:var(--muted);">Each sheet becomes a proposal for review — the library is untouched until you accept one.</span>
+          </div>
           <!-- C6: bulk spec-sheet proposals review queue -->
           <div style="display:flex;align-items:center;gap:10px;margin:18px 0 6px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Equipment proposals queue</div>
@@ -1153,6 +1157,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
           <div id="eqp-wrap" style="display:flex;flex-direction:column;gap:8px;"></div>
 
+            </div>
+          </div>
+
+          <div class="adm-group adm-shape">
+            <div class="adm-group-head">✏️ Plan-view shape editor<span class="adm-group-sub">the footprint each item draws on a layout</span></div>
+            <div class="adm-group-body">
           <!-- ── SHAPE EDITOR ─────────────────────────────────────────── -->
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:24px 0 4px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Plan-View Shape Editor</div>
@@ -1211,6 +1221,34 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             </div>
           </div>
 
+            </div>
+          </div>
+
+          <div class="adm-group adm-db">
+            <div class="adm-group-head">🧰 Equipment library<span class="adm-group-sub">the live records the calculator, the layout tool and the WMP spreadsheet read</span></div>
+            <div class="adm-group-body">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Equipment Library</div>
+            <div id="eql-status" style="font-size:11px;color:var(--muted);"></div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Bins, compactors and chutes. The WMP spreadsheet reads these directly — after saving, hit <b>Refresh All</b> in Excel. No publish needed. A brand-new item also needs the spreadsheet block extended one row (copy the last formula row down).</div>
+          <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
+            <table style="border-collapse:collapse;font-size:10.5px;min-width:1350px;">
+              <thead><tr id="eql-head"></tr></thead>
+              <tbody id="eql-body"></tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn" onclick="eqlAdd()">+ Add equipment</button>
+            <button class="btn" onclick="eqlSave()">💾 Save equipment</button>
+          </div>
+
+            </div>
+          </div>
+
+          <div class="adm-group adm-ctr">
+            <div class="adm-group-head">🚚 Contractors &amp; vehicles<span class="adm-group-sub">collection contractors and the swept-path vehicles they run</span></div>
+            <div class="adm-group-body">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:24px 0 4px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Contractors &amp; Collection Vehicles</div>
           </div>
@@ -1224,6 +1262,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div style="display:flex;gap:8px;">
             <button class="btn" onclick="ctlAdd()">+ Add contractor</button>
             <button class="btn" onclick="ctlSave()">💾 Save contractors</button>
+          </div>
+
+            </div>
           </div>
 
         </div>
@@ -10288,12 +10329,12 @@ const CGB = { rows: [], mode: 'guidelines' };
 function cgbEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
 // C6: the same drop zone serves equipment spec sheets — those route into the
 // equipment_proposals staging table instead of the guidelines library.
+// Each drop zone owns its mode now — the council one is guidelines-only and
+// the equipment tab's is spec-sheets-only — so this just records which kind of
+// batch is being added. It no longer rewrites a shared hint, because the two
+// zones have their own wording in their own sections.
 function cgbSetMode(m) {
   CGB.mode = m === 'equipment' ? 'equipment' : 'guidelines';
-  const hint = document.getElementById('cgb-drop-hint');
-  if (hint) hint.textContent = CGB.mode === 'equipment'
-    ? '⇪ Drop manufacturer spec-sheet PDFs here (or click) — each is AI-extracted into the equipment proposals queue for review. Nothing lands in the library until approved.'
-    : '⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.';
 }
 // The picker offers EVERY council the platform knows: the councils registry
 // (what the rates DB and the project pickers use), plus any council that
@@ -10346,9 +10387,17 @@ function cgbAddFiles(files) {
   cgbRender();
 }
 function cgbRender() {
-  const wrap = document.getElementById('cgb-rows'), act = document.getElementById('cgb-actions');
+  // Guideline batches render under the council uploader, spec-sheet batches
+  // under the equipment one — each row carries its own mode, so a mixed batch
+  // still lands in the right place instead of one list swallowing both.
+  cgbRenderInto('cgb-rows', 'cgb-actions', r => r.mode !== 'equipment');
+  cgbRenderInto('eqb-rows', 'eqb-actions', r => r.mode === 'equipment');
+}
+function cgbRenderInto(rowsId, actionsId, pick) {
+  const wrap = document.getElementById(rowsId), act = document.getElementById(actionsId);
   if (!wrap) return;
-  wrap.innerHTML = CGB.rows.map((r, i) => `
+  const mine = CGB.rows.map((r, i) => [r, i]).filter(([r]) => pick(r));
+  wrap.innerHTML = mine.map(([r, i]) => `
     <div style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,1.2fr) 70px 130px minmax(120px,1fr) 26px;gap:6px;align-items:center;border:1px solid var(--border);border-radius:7px;background:#182121;padding:6px 8px;">
       <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${cgbEsc(r.file.name)}">📄 ${cgbEsc(r.file.name)}</span>
       ${r.mode === 'equipment' ? `
@@ -10364,7 +10413,7 @@ function cgbRender() {
       <span style="font-size:10.5px;color:${r.dead ? '#EF8080' : r.done ? '#3DD68C' : 'var(--muted)'};">${cgbEsc(r.status)}</span>
       <button class="btn" title="Remove from the batch" ${r.busy ? 'disabled' : ''} onclick="CGB.rows.splice(${i},1);cgbRender();" style="padding:2px 7px;font-size:10px;">✕</button>
     </div>`).join('');
-  if (act) act.style.display = CGB.rows.some(r => !r.done && !r.dead) ? 'flex' : 'none';
+  if (act) act.style.display = mine.some(([r]) => !r.done && !r.dead) ? 'flex' : 'none';
 }
 async function cgbUploadOne(r) {
   const name = (r.council || '').trim();
@@ -10513,7 +10562,7 @@ function eqpField(id, key, val, w, title) {
 }
 function eqpRender() {
   const wrap = document.getElementById('eqp-wrap'); if (!wrap) return;
-  if (!EQP.rows.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No proposals — use the bulk uploader (Rates &amp; Guidelines tab) in spec-sheet mode.</div>'; return; }
+  if (!EQP.rows.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No proposals — drop spec sheets above, or extract one with AI.</div>'; return; }
   const cats = _eqpCats || [];
   const taken = new Set(EQL.items.map(x => x.code).filter(Boolean));
   wrap.innerHTML = EQP.rows.map(p => {

@@ -590,6 +590,33 @@ test('dual document view: two panes, independent controls, tabs when narrow', ()
   assert.ok(cs.includes('slp.innerHTML = SCAN_PANEL_HTML'), 'scan panel restored on every scan start');
 });
 
+test('equipment work lives in the equipment tab, in four distinct sections', () => {
+  const eq = SOURCE.slice(SOURCE.indexOf('id="stab-equipment"'), SOURCE.indexOf('<!-- REVIEW QUEUE SCREEN -->') > 0
+    ? SOURCE.indexOf('<!-- REVIEW QUEUE SCREEN -->') : SOURCE.length);
+  // spec-sheet intake first, then shapes, then the library, then contractors
+  const order = ['adm-group adm-setup', 'AI Spec-Sheet Import', 'id="eqb-drop"', 'Equipment proposals queue',
+                 'adm-group adm-shape', 'Plan-View Shape Editor',
+                 'adm-group adm-db', 'id="eql-body"',
+                 'adm-group adm-ctr', 'ctlAdd()'].map(m => eq.indexOf(m));
+  assert.ok(order.every(i => i >= 0), 'every equipment section is present');
+  for (let i = 1; i < order.length; i++)
+    assert.ok(order[i] > order[i - 1], 'intake, shapes, library, contractors — in that order');
+  assert.ok(SOURCE.includes('.adm-group.adm-shape{border-left:3px solid #7C6BD6;}') &&
+            SOURCE.includes('.adm-group.adm-ctr{border-left:3px solid #4E86C4;}'),
+    'each section is visually distinct, like the council groups');
+  // spec sheets are uploaded ONLY here — the council uploader is guidelines-only
+  assert.ok(!SOURCE.includes('name="cgb-mode"'), 'no spec-sheet mode on the guidelines uploader');
+  assert.ok(SOURCE.includes("onclick=\"cgbSetMode('guidelines');document.getElementById('cgb-files').click()\""),
+    'the council zone locks itself to guidelines');
+  assert.ok(SOURCE.includes("onclick=\"cgbSetMode('equipment');document.getElementById('eqb-files').click()\""),
+    'the equipment zone locks itself to spec sheets');
+  // batches render under their own uploader, never under the other one
+  assert.ok(SOURCE.includes("cgbRenderInto('cgb-rows', 'cgb-actions', r => r.mode !== 'equipment');") &&
+            SOURCE.includes("cgbRenderInto('eqb-rows', 'eqb-actions', r => r.mode === 'equipment');"),
+    'rows render into the host matching their own mode');
+  assert.ok(!SOURCE.includes('use the bulk uploader (Rates'), 'no stale pointer to the old location');
+});
+
 test('council registry is one list: uploader, checker and rates DB all read it', () => {
   const cs = checkerScript();
   // the checker dropdown is filled from the platform registry — a hard-coded
