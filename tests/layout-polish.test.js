@@ -1657,12 +1657,25 @@ test('the hand-drawn texture backs all four roomy surfaces; the built asset stay
 test('route markups run heavier than measuring aids, and the renderer scales off the width', () => {
   // a transfer/disposal route is the FIGURE on an issued drawing — a reviewer
   // traces it — while measure/area are working aids that should stay light
-  assert.ok(SOURCE.includes("disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 4.5 }"));
-  assert.ok(SOURCE.includes("transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true,  w: 4.5 }"));
+  assert.ok(SOURCE.includes("disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 6 }"));
+  assert.ok(SOURCE.includes("transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true,  w: 6 }"));
   assert.ok(SOURCE.includes("measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false, w: 2 }"));
   const fn = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wsLayoutRenderTargets'));
   assert.ok(fn.includes("'stroke-width': lw,"), 'the polyline takes the per-kind width');
   assert.ok(fn.includes('s = 11 + lw;'), 'arrowheads grow with the stroke so they never look undersized');
   assert.ok(fn.includes('r: Math.max(3, lw * 0.9)'), 'vertex dots keep pace with the line');
   assert.ok(fn.includes('`${Math.round(lw * 2.7)} ${Math.round(lw * 1.5)}`'), 'dash rhythm scales with the width');
+});
+
+test('the 60% screen touches the base-plan raster ONLY — markups ride over it at full strength', () => {
+  // vector path: the overlay goes through doc.svg, never the screened canvas
+  // (sheet-export.test.js pins that). This guards the FALLBACK: a rasterised
+  // overlay must also draw at full alpha, or markups would wash out exactly
+  // when svg2pdf fails and nobody is looking.
+  const fb = SOURCE.slice(SOURCE.indexOf('function wsSheetRasterOverlay'), SOURCE.indexOf('function wsSheetHex'));
+  assert.ok(!fb.includes('globalAlpha'), 'no alpha anywhere in the overlay fallback');
+  assert.ok(!fb.includes('wsPlanScreenAlpha'), 'screening never reaches the overlay');
+  // and screening itself lives in exactly one place
+  const hits = SOURCE.split('globalAlpha = wsPlanScreenAlpha').length - 1;
+  assert.equal(hits, 1, 'one screened draw, inside wsSheetRenderUnderlay');
 });
