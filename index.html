@@ -19447,11 +19447,14 @@ function wsCalloutF(){
   return Math.max(onScreen, wsLblF());
 }
 const WS_MARK_STYLE = {
-  measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false },
-  area:     { col: '#7FD8D8', label: 'Area',           closed: true,  arrow: false },
-  disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true },
-  transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true },
-  text:     { col: '#ECEFF1', label: 'Note',           closed: false, arrow: false },
+  // `w` is the stroke width in canvas px. Routes are the figure on an issued
+  // drawing — a reviewer traces them — so they run heavier than the measuring
+  // aids; the renderer scales dots, dashes and arrowheads off `w` to match.
+  measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false, w: 2 },
+  area:     { col: '#7FD8D8', label: 'Area',           closed: true,  arrow: false, w: 2 },
+  disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 4.5 },
+  transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true,  w: 4.5 },
+  text:     { col: '#ECEFF1', label: 'Note',           closed: false, arrow: false, w: 2 },
 };
 // ── MARKUP MODE SUSPEND / RESTORE ────────────────────────────────────────────
 // Markups are reachable from any tab, so starting one must not destroy whatever
@@ -19604,12 +19607,14 @@ function wsRenderMarkups(mk, mpp) {
       return;
     }
     const seq = st.closed ? pts.concat([pts[0]]) : pts;
+    const lw = st.w || 2;
     mk('polyline', { points: seq.map(p => p.x + ',' + p.y).join(' '), fill: st.closed ? 'rgba(127,216,216,0.08)' : 'none',
-      stroke: st.col, 'stroke-width': 2, 'stroke-dasharray': live ? '6 4' : (st.arrow ? '9 5' : '') });
-    pts.forEach(p => mk('circle', { cx: p.x, cy: p.y, r: 3, fill: st.col }));
+      stroke: st.col, 'stroke-width': lw,
+      'stroke-dasharray': live ? '6 4' : (st.arrow ? `${Math.round(lw * 2.7)} ${Math.round(lw * 1.5)}` : '') });
+    pts.forEach(p => mk('circle', { cx: p.x, cy: p.y, r: Math.max(3, lw * 0.9), fill: st.col }));
     if (st.arrow && pts.length >= 2) {
       const a = pts[pts.length - 2], b = pts[pts.length - 1];
-      const ang = Math.atan2(b.y - a.y, b.x - a.x), s = 11;
+      const ang = Math.atan2(b.y - a.y, b.x - a.x), s = 11 + lw;
       mk('polygon', { points: [[b.x, b.y],
         [b.x - s * Math.cos(ang - 0.4), b.y - s * Math.sin(ang - 0.4)],
         [b.x - s * Math.cos(ang + 0.4), b.y - s * Math.sin(ang + 0.4)]].map(p => p[0] + ',' + p[1]).join(' '),
