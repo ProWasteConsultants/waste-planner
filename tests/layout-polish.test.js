@@ -1653,3 +1653,16 @@ test('the hand-drawn texture backs all four roomy surfaces; the built asset stay
   assert.ok(!SOURCE.includes('app-backdrop'), 'the fixed-layer mechanism is fully unwired');
   assert.ok(!SOURCE.includes('data-screen'), 'no orphaned surface-keying remains');
 });
+
+test('route markups run heavier than measuring aids, and the renderer scales off the width', () => {
+  // a transfer/disposal route is the FIGURE on an issued drawing — a reviewer
+  // traces it — while measure/area are working aids that should stay light
+  assert.ok(SOURCE.includes("disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 4.5 }"));
+  assert.ok(SOURCE.includes("transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true,  w: 4.5 }"));
+  assert.ok(SOURCE.includes("measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false, w: 2 }"));
+  const fn = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wsLayoutRenderTargets'));
+  assert.ok(fn.includes("'stroke-width': lw,"), 'the polyline takes the per-kind width');
+  assert.ok(fn.includes('s = 11 + lw;'), 'arrowheads grow with the stroke so they never look undersized');
+  assert.ok(fn.includes('r: Math.max(3, lw * 0.9)'), 'vertex dots keep pace with the line');
+  assert.ok(fn.includes('`${Math.round(lw * 2.7)} ${Math.round(lw * 1.5)}`'), 'dash rhythm scales with the width');
+});
