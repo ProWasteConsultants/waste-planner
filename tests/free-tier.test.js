@@ -182,6 +182,9 @@ test('the CRM relay lives in an edge function, and no CRM secret ships in the bu
   const fn = fs.readFileSync(fnPath, 'utf8');
   assert.ok(fn.includes('CRM_WEBHOOK_URL') && fn.includes('CRM_WEBHOOK_SECRET'), 'secrets come from env');
   assert.ok(fn.includes('x-wp-webhook-secret'), 'shared-secret header on the relay');
+  assert.ok(fn.includes('secret,'), 'secret duplicated into the body for CRMs that cannot read headers');
+  assert.ok(fn.includes("'email,full_name,company_name,tier'") || fn.includes('"email,full_name,company_name,tier"'),
+    'events are enriched from profiles so the CRM gets a contact, not a UUID');
   assert.ok(fn.includes('SUPABASE_SERVICE_ROLE_KEY'), 'anon-key posts are refused');
   assert.ok(!SOURCE.includes('CRM_WEBHOOK'), 'the browser bundle never sees the CRM endpoint or secret');
 });
