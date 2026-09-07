@@ -21,6 +21,19 @@
 // service-role bearer, so a backfill script can replay missed rows. It never
 // accepts unauthenticated posts: a forged event reaching the CRM would
 // poison lead scoring silently.
+//
+// CRM-SIDE VERIFICATION: the shared secret travels BOTH as the
+// x-wp-webhook-secret header AND as a top-level `secret` field in the JSON
+// body. Inbound-webhook triggers in CORE/GoHighLevel-style CRMs often cannot
+// read custom headers, but every one of them can filter on a body field —
+// add a workflow condition `secret equals <your value>` as the first step
+// and drop anything else.
+//
+// ENRICHMENT: events store only user_id client-side. A CRM workflow that
+// creates or updates a contact needs email and name, so before relaying we
+// look the sender up in `profiles` (service role — RLS does not apply) and
+// attach email / name / company / tier. A missing profile row degrades to
+// nulls rather than dropping the event.
 
 const RELAYED = new Set([
   "signup",
@@ -69,6 +82,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response("ignored", { status: 200 });
   }
 
+  // Look the user up so the CRM gets a contact, not just a UUID. Best-effort:
+  // an enrichment failure must not lose the event.
+  let profile: {
+    email?: string;
+    full_name?: string;
+    company_name?: string;
+    tier?: string;
+  } = {};
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  if (supabaseUrl && rec.user_id) {
+    try {
+      const q = new URL(`${supabaseUrl}/rest/v1/profiles`);
+      q.searchParams.set("uuid", `eq.${rec.user_id}`);
+      q.searchParams.set("select", "email,full_name,company_name,tier");
+      q.searchParams.set("limit", "1");
+      const pr = await fetch(q, {
+        headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}` },
+      });
+      if (pr.ok) profile = (await pr.json())?.[0] ?? {};
+    } catch {
+      // fall through with an unenriched event
+    }
+  }
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -78,8 +115,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
       "x-wp-webhook-secret": secret,
     },
     body: JSON.stringify({
+      // Duplicated from the header for CRMs whose inbound-webhook triggers
+      // can only filter on body fields (see CRM-SIDE VERIFICATION above).
+      secret,
       event: rec.event,
       user_id: rec.user_id ?? null,
+      email: profile.email ?? null,
+      name: profile.full_name ?? null,
+      company: profile.company_name ?? null,
+      tier: profile.tier ?? null,
       meta: rec.meta ?? {},
       created_at: rec.created_at ?? new Date().toISOString(),
     }),
