@@ -5,19 +5,42 @@
 // promise); only the caps come back. Without this function a cancelled
 // subscriber keeps their paid tier forever.
 //
-// DEPLOYMENT — three steps, in order:
-//   1. Deploy this function with "Verify JWT" OFF. Stripe cannot send a
-//      Supabase JWT; signature verification below is the auth instead.
-//   2. Stripe Dashboard → Developers → Webhooks → Add endpoint:
-//        URL:    https://<project-ref>.supabase.co/functions/v1/stripe-webhook
-//        Events: customer.subscription.deleted, customer.subscription.updated
-//      Then copy the endpoint's SIGNING SECRET (whsec_…).
-//   3. Supabase → Edge Functions → Secrets → set STRIPE_WEBHOOK_SECRET to
-//      that whsec_ value. (STRIPE_SECRET_KEY is already set.)
+// HOW STRIPE REACHES THIS FUNCTION (as wired 2026-09-07, verified end to
+// end in the sandbox): Stripe does NOT post to the Supabase URL directly.
+// The project's edge-function gateway requires an `apikey` HEADER on every
+// request (query params are ignored; the "Verify JWT" toggle does not lift
+// this), and Stripe webhooks cannot send custom headers. So a tiny
+// Cloudflare Worker relays in between:
 //
-// ⚠ Test-mode and live-mode webhooks are SEPARATE in Stripe: at go-live,
-// add the endpoint again in live mode and update STRIPE_WEBHOOK_SECRET to
-// the live signing secret — same moment as the sk_live_ swap.
+//   Stripe event destination "wasteplanner-tier-sync"
+//     → https://ancient-silence-b9ee.lachysharris.workers.dev   (Worker)
+//     → https://<project-ref>.supabase.co/functions/v1/stripe-webhook
+//
+// The Worker (Cloudflare account that also serves the waste-rates file;
+// worker name shows as wp-stripe-webhook / ancient-silence-b9ee) forwards
+// the raw body + stripe-signature header and adds
+// `apikey: <sb_publishable_… key>` from its SUPABASE_ANON_KEY secret. The
+// legacy eyJ anon key is REJECTED by this gateway — it must be the
+// new-format publishable key. The Worker adds no security and needs none:
+// the Stripe signature check below is the auth, exactly as if Stripe
+// posted here directly.
+//
+// DEPLOYMENT — in order:
+//   1. Deploy this function with "Verify JWT" OFF (signature verification
+//      below is the real auth), and paste THIS code over the hello-world
+//      template Supabase seeds new functions with.
+//   2. The Cloudflare Worker (already deployed): forwards POSTs verbatim,
+//      secret SUPABASE_ANON_KEY = the sb_publishable_ key.
+//   3. Stripe → Workbench → Webhooks → event destination with events
+//      customer.subscription.deleted + customer.subscription.updated,
+//      endpoint URL = the WORKER URL. Copy its SIGNING SECRET (whsec_…).
+//   4. Supabase → Edge Functions → Secrets → STRIPE_WEBHOOK_SECRET = that
+//      whsec_ value. (STRIPE_SECRET_KEY is already set.)
+//
+// ⚠ Test-mode (sandbox) and live-mode webhooks are SEPARATE in Stripe: at
+// go-live, create the event destination again in live mode — SAME worker
+// URL, it is environment-agnostic — and update STRIPE_WEBHOOK_SECRET to
+// the live destination's signing secret, same moment as the sk_live_ swap.
 //
 // Every request is verified against the signing secret, so a forged POST
 // cannot flip anyone's tier. Rows are matched by stripe_subscription_id, so
