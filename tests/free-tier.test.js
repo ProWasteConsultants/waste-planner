@@ -189,6 +189,21 @@ test('the CRM relay lives in an edge function, and no CRM secret ships in the bu
   assert.ok(!SOURCE.includes('CRM_WEBHOOK'), 'the browser bundle never sees the CRM endpoint or secret');
 });
 
+test('the billing functions are de-trialed and cancellation reverts to free', () => {
+  const cs = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'create-subscription', 'index.ts'), 'utf8');
+  assert.ok(!cs.includes('trial_period_days:'), 'no trial on the subscription create (the comment may name it; the call must not)');
+  assert.ok(cs.includes("payment_behavior: \"error_if_incomplete\""),
+    'a failed first charge throws instead of creating an unpaid subscription');
+  assert.ok(cs.includes('trial_ends_at: null'), 'legacy trial stamps are cleared');
+  assert.ok(!/return jsonRes\(\{ tier, trial_ends_at/.test(cs), 'the response no longer advertises a trial');
+  const wh = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf8');
+  assert.ok(wh.includes('constructEventAsync'), 'webhook signature is verified');
+  assert.ok(wh.includes('"customer.subscription.deleted"'), 'cancellation is handled');
+  assert.ok(wh.includes("tier: \"none\""), 'cancellation reverts to the free plan, never deletes anything');
+  assert.ok(wh.includes('.eq("stripe_subscription_id", sub.id)'),
+    'events match by subscription id so a stale event cannot clobber a newer subscription');
+});
+
 // ── §7: standalone legal pages ──
 test('privacy and terms ship as static pages, marked as drafts for review', () => {
   for (const f of ['privacy.html', 'terms.html']) {
