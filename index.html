@@ -1306,12 +1306,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <div style="font-size:18px;font-weight:700;color:var(--text);">WMP Queue<span style="font-weight:400;color:var(--muted);font-size:14px;"> — client requests for certified plans</span></div>
         <div style="display:flex;gap:8px;align-items:center;">
           <select id="wq-status-filter" onchange="loadWmpQueue()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
-            <option value="open">Open (pending / in progress / RFI)</option>
+            <option value="open">Open (pending / proposal / in progress / RFI)</option>
             <option value="all">All statuses</option>
             <option value="pending">Pending</option>
+            <option value="proposal_sent">Proposal sent</option>
             <option value="inprogress">In progress</option>
             <option value="rfi">RFI</option>
             <option value="reviewed">Completed</option>
+            <option value="declined">Declined</option>
           </select>
           <button class="btn" onclick="loadWmpQueue()">↻ Refresh</button>
         </div>
@@ -1877,6 +1879,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <!-- The panel itself NEVER scrolls: every section header (and ZONES)
                stays visible at 1080p; long sections scroll internally. -->
           <div id="ws-tab-layout" style="display:none;flex:1;min-height:0;overflow:hidden;padding:6px 10px;flex-direction:column;gap:5px;">
+            <!-- §4a: nudge appears once bins are calculated; dismiss is per-project -->
+            <div id="ws-engage-nudge" style="display:none;align-items:center;gap:8px;background:#0E7C7B1c;border:1px solid #0E7C7B55;border-radius:8px;padding:7px 10px;font-size:11px;color:var(--text);">
+              <span style="flex:1;">Bins sized — want Pro Waste to confirm the room and prepare the WMP?</span>
+              <button onclick="wpEngageOpen('design_tab')" style="background:var(--teal);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:10.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">🤝 Engage Pro Waste Consultants</button>
+              <button onclick="wpEngageNudgeDismiss()" title="Dismiss" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:0 2px;">✕</button>
+            </div>
             <div class="wsl-groups" style="display:flex;flex-direction:column;gap:7px;flex:1;min-height:0;overflow:hidden;align-items:stretch;">
 
               <!-- Sections share the panel height by FLEX WEIGHT, never by fixed
@@ -6569,6 +6577,7 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
       &lt;span id=&quot;scan-council-label&quot; style=&quot;font-size:11px;color:var(--muted);&quot;&gt;&lt;/span&gt;
       &lt;span class=&quot;score-badge score-ready&quot; id=&quot;readiness-badge&quot;&gt;Not scanned&lt;/span&gt;
     &lt;/div&gt;
+    &lt;button class=&quot;btn&quot; style=&quot;font-size:11px;padding:4px 10px;display:none;border-color:#0E7C7B;color:#2DD4BF;&quot; id=&quot;engage-btn&quot; onclick=&quot;engageProWaste()&quot;&gt;&#x1F91D; Engage Pro Waste Consultants&lt;/button&gt;
     &lt;button class=&quot;btn&quot; style=&quot;font-size:11px;padding:4px 10px;display:none;&quot; id=&quot;export-btn&quot; onclick=&quot;exportReport()&quot;&gt;Export Report&lt;/button&gt;
     &lt;button class=&quot;btn btn-green&quot; style=&quot;font-size:11px;padding:4px 10px;display:none;&quot; id=&quot;submit-btn&quot; onclick=&quot;submitToCouncil()&quot;&gt;Submit to Council&lt;/button&gt;
     &lt;button class=&quot;btn btn-primary&quot; style=&quot;font-size:11px;padding:4px 12px;&quot; id=&quot;toolbar-scan-btn&quot; onclick=&quot;startScan()&quot;&gt;Run check&lt;/button&gt;
@@ -7712,6 +7721,12 @@ async function loadWMPFile(file) {
 }
 
 // ── SCAN ──────────────────────────────────────────────────────────────────
+function engageProWaste() {
+  // The modal lives in the platform, not this iframe — hand over.
+  if (window.parent &amp;&amp; window.parent !== window)
+    window.parent.postMessage({ type: &#x27;wp-engage&#x27;, source: &#x27;compliance&#x27; }, &#x27;*&#x27;);
+}
+
 function updateRunsBadge() {
   // Free-plan cap indicator. The count comes from the platform (wp-set-role /
   // wp-set-runs); paid and staff accounts send null and the label stays hidden.
@@ -8026,6 +8041,9 @@ function renderResults(data) {
   document.getElementById(&#x27;summary-content&#x27;).classList.add(&#x27;fade&#x27;);
   document.getElementById(&#x27;export-btn&#x27;).style.display = &#x27;inline-block&#x27;;
   document.getElementById(&#x27;submit-btn&#x27;).style.display = state.role === &#x27;council&#x27; ? &#x27;none&#x27; : &#x27;inline-block&#x27;;
+  // Failed clauses are exactly when a consultant helps — offer the handoff.
+  const eng = document.getElementById(&#x27;engage-btn&#x27;);
+  if (eng) eng.style.display = (fail &gt; 0 &amp;&amp; state.role !== &#x27;council&#x27;) ? &#x27;inline-block&#x27; : &#x27;none&#x27;;
 
   // RFI button for council
   if (state.role === &#x27;council&#x27;) {
@@ -8747,10 +8765,12 @@ const PROJ_FILTER = { status: 'all', state: 'all', q: '' };
 // PWC service pipeline: derived from review_requests, keyed by project_id
 const PROJ_SERVICE = { map: {}, fetchedAt: 0 };
 const SERVICE_LABELS = {
-  'wmp:pending':      { label: 'WMP requested',      c: '#FFB74D' },
-  'wmp:inprogress':   { label: 'WMP in preparation', c: '#7EB3F5' },
-  'wmp:rfi':          { label: 'RFI active',         c: '#EF8080' },
-  'wmp:reviewed':     { label: 'WMP delivered',      c: '#81C784' },
+  'wmp:pending':       { label: 'Pro Waste engaged',  c: '#FFB74D' },
+  'wmp:proposal_sent': { label: 'Fee proposal sent',  c: '#CE93D8' },
+  'wmp:inprogress':    { label: 'WMP in preparation', c: '#7EB3F5' },
+  'wmp:rfi':           { label: 'RFI active',         c: '#EF8080' },
+  'wmp:reviewed':      { label: 'WMP delivered',      c: '#81C784' },
+  'wmp:declined':      { label: 'Not proceeding',     c: '#90A4AE' },
   'review:pending':    { label: 'PWC review requested', c: '#FFB74D' },
   'review:inprogress': { label: 'Under PWC review',     c: '#7EB3F5' },
   'review:rfi':        { label: 'RFI active',           c: '#EF8080' },
@@ -8855,6 +8875,7 @@ function renderProjects(filter) {
       })()}
       ${(() => { const s = PROJ_SERVICE.map[p.id]; const m = s && SERVICE_LABELS[s.type + ':' + s.status]; return m ? `<span class="status-pill" style="background:${m.c}22;color:${m.c};">${m.label}</span>` : ''; })()}
       ${(() => { const s = PROJ_SERVICE.map[p.id]; return (s && s.resp) ? `<span class="status-pill" style="background:#2E7D3222;color:#81C784;cursor:pointer;" onclick="event.stopPropagation();viewReviewResponse('${p.id}')">📄 View response</span>` : ''; })()}
+      ${(() => { const s = PROJ_SERVICE.map[p.id]; return (s && s.type === 'wmp' && s.status !== 'declined') ? '' : `<span class="status-pill" style="background:#0E7C7B18;color:var(--teal);cursor:pointer;border:1px solid #0E7C7B44;" onclick="event.stopPropagation();wpEngageOpen('project_card','${p.id}')">🤝 Engage Pro Waste Consultants</span>`; })()}
       ${p.created ? `<span class="pc-created">${p.created}</span>` : ''}`;
     grid.insertBefore(card, empty);
   });
@@ -9497,6 +9518,10 @@ window.addEventListener('message', async (e) => {
   if (!e.data) return;
   if (e.data.type === 'wp-paywall') {
     if (typeof showPaywall === 'function') showPaywall(e.data.reason || 'compliance_cap');
+    return;
+  }
+  if (e.data.type === 'wp-engage') {
+    if (typeof wpEngageOpen === 'function') wpEngageOpen(e.data.source || 'compliance');
     return;
   }
   if (e.data.type !== 'wp-scan-done') return;
@@ -12127,6 +12152,159 @@ async function requestWMP() {
   }
 }
 
+// ── ENGAGE PRO WASTE CONSULTANTS ──────────────────────────────────────────
+// One button, one label, five placements: project card, project header,
+// design-tab nudge, compliance-checker fails, and the paywall. All of them
+// open this modal, and a submission lands in the SAME review_requests WMP
+// queue the old Request WMP flow used (request_type 'wmp', status 'pending',
+// full project snapshot) — the consultant-side pipeline is unchanged, the
+// client just states a scope now. Fee proposals are prepared outside the
+// app (template + Xero); CORE sends the client acknowledgement off the
+// wmp_requested event, so the app deliberately sends none of its own.
+const WP_ENGAGE_SCOPES = [
+  ['wmp_da', 'WMP for DA'],
+  ['design', 'Design advice on bin room / access'],
+  ['rfi',    'RFI response'],
+  ['unsure', 'Not sure yet'],
+];
+
+function wpEngageOpen(source, projectId) {
+  const projects = getProjects();
+  const p = projects.find(x => x.id === (projectId || currentProjectId)) || projects[0] || null;
+  const prior = p && PROJ_SERVICE.map[p.id];
+  if (prior && prior.type === 'wmp' && prior.status !== 'declined') {
+    alert('Pro Waste already has a request for "' + (p.name || 'this project') + '" — we’ll be in touch. Reply to your acknowledgement email to add anything in the meantime.');
+    return;
+  }
+  let m = document.getElementById('wp-engage-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'wp-engage-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11500;align-items:center;justify-content:center;';
+    const scopeRows = WP_ENGAGE_SCOPES.map(([id, label]) =>
+      `<label style="display:flex;align-items:center;gap:9px;font-size:13px;color:#374151;padding:7px 0;cursor:pointer;">
+         <input type="checkbox" class="wp-engage-scope" value="${id}" style="width:15px;height:15px;accent-color:var(--teal);">${label}</label>`).join('');
+    m.innerHTML = `
+      <div style="background:var(--white);border-radius:16px;width:460px;max-width:94vw;max-height:92vh;overflow:auto;padding:26px 30px;">
+        <div style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:4px;">Engage Pro Waste Consultants</div>
+        <div id="wp-engage-proj" style="font-size:12px;color:#6B7280;margin-bottom:16px;"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+          <input id="wp-engage-name" placeholder="Name" style="grid-column:1/-1;border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;">
+          <input id="wp-engage-email" type="email" placeholder="Email" style="border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;">
+          <input id="wp-engage-phone" type="tel" placeholder="Phone (optional)" style="border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;">
+        </div>
+        <div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.5px;margin:8px 0 2px;">What do you need?</div>
+        ${scopeRows}
+        <textarea id="wp-engage-note" placeholder="Anything we should know? (optional)" rows="2" style="width:100%;border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;margin-top:8px;resize:vertical;box-sizing:border-box;"></textarea>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#6B7280;margin-top:8px;">Target date (optional)
+          <input id="wp-engage-date" type="date" style="border:1.5px solid #D8E2E1;border-radius:8px;padding:6px 10px;font-size:12px;font-family:inherit;"></label>
+        <div id="wp-engage-msg" style="font-size:12px;color:#C62828;min-height:16px;margin-top:8px;"></div>
+        <button id="wp-engage-go" onclick="wpEngageSubmit()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Send to Pro Waste →</button>
+        <button onclick="wpEngageClose()" style="display:block;margin:12px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Cancel</button>
+      </div>`;
+    m.addEventListener('click', ev => { if (ev.target === m) wpEngageClose(); });
+    document.body.appendChild(m);
+  }
+  m.dataset.source = source || '';
+  m.dataset.projectId = p ? p.id : '';
+  document.getElementById('wp-engage-proj').textContent = p
+    ? 'For ' + p.name + (p.council ? ' — ' + p.council : '') + '. Your project data travels with the request, so nothing is re-keyed.'
+    : 'Your details go straight to a consultant.';
+  const prof = (typeof currentProfile !== 'undefined' && currentProfile) || {};
+  const nameEl = document.getElementById('wp-engage-name');
+  const emailEl = document.getElementById('wp-engage-email');
+  const phoneEl = document.getElementById('wp-engage-phone');
+  if (!nameEl.value) nameEl.value = prof.full_name || '';
+  if (!emailEl.value) emailEl.value = (typeof currentUser !== 'undefined' && currentUser?.email) || prof.email || '';
+  if (!phoneEl.value) phoneEl.value = prof.phone || '';
+  document.getElementById('wp-engage-msg').textContent = '';
+  const go = document.getElementById('wp-engage-go');
+  go.disabled = false; go.textContent = 'Send to Pro Waste →';
+  m.style.display = 'flex';
+  if (typeof logEvent === 'function') logEvent('engage_opened', { source: source || null, project_id: p?.id || null });
+}
+function wpEngageClose() {
+  const m = document.getElementById('wp-engage-modal');
+  if (m) m.style.display = 'none';
+}
+async function wpEngageSubmit() {
+  const m = document.getElementById('wp-engage-modal');
+  const msg = document.getElementById('wp-engage-msg');
+  const name = document.getElementById('wp-engage-name').value.trim();
+  const email = document.getElementById('wp-engage-email').value.trim();
+  const phone = document.getElementById('wp-engage-phone').value.trim();
+  const note = document.getElementById('wp-engage-note').value.trim();
+  const targetDate = document.getElementById('wp-engage-date').value || null;
+  const scope = [...m.querySelectorAll('.wp-engage-scope:checked')].map(el => el.value);
+  if (!name || !email) { msg.textContent = 'Name and email so we can come back to you.'; return; }
+  if (!scope.length) { msg.textContent = 'Pick at least one — "Not sure yet" is a fine answer.'; return; }
+  const go = document.getElementById('wp-engage-go');
+  go.disabled = true; go.textContent = 'Sending…';
+  const p = getProjects().find(x => x.id === m.dataset.projectId) || null;
+  const s = p ? getProjectSummary(p) : {};
+  const scopeLabels = scope.map(id => (WP_ENGAGE_SCOPES.find(x => x[0] === id) || [])[1] || id);
+  try {
+    if (p) {
+      // Same shape requestWMP files — the WMP queue and "Open in WMP
+      // Generator" read this without changes; the engage details ride in
+      // the snapshot so no schema change is needed.
+      const payload = {
+        project_id: p.id, project_name: p.name,
+        address: s.address || p.address || null,
+        council: s.council || p.council || null,
+        state: s.state || p.state || null,
+        dev_type: p.devType || null, levels: p.levels || null,
+        unit_mix: `1br×${s.apt_1br||0}, 2br×${s.apt_2br||0}, 3br×${s.apt_3br||0}, TH×${s.townhouses||0}`,
+        volumes: p.volumes ? `GW ${Math.round(p.volumes.gw||0)} / REC ${Math.round(p.volumes.rec||0)} / ORG ${Math.round(p.volumes.org||0)} / GLS ${Math.round(p.volumes.gls||0)} L/wk (${p.volumes.calculated||''})` : 'not calculated',
+        plans: p.pdf_name || 'none attached',
+        user_id: currentUser?.id || null, user_email: email || currentUser?.email || null,
+        org_id: p.orgId || ((typeof currentOrg !== 'undefined' && currentOrg) ? currentOrg.id : null),
+        request_type: 'wmp', status: 'pending',
+        submitted_at: new Date().toISOString(),
+        snapshot: {
+          summary: s || {}, schedule: p.schedule || null, calc_rooms: p.calc_rooms || null,
+          volumes: p.volumes || null, bin_rooms: s.bin_rooms || null,
+          devType: p.devType || null, levels: p.levels || null,
+          projId: p.projId || null, client: p.client || null,
+          captured_at: p.scheduleTs || null, app_version: 'wmpg-1',
+          engage: { scope, scope_labels: scopeLabels, note: note || null,
+            target_date: targetDate, source: m.dataset.source || null,
+            contact: { name, email, phone: phone || null } },
+        },
+      };
+      try { const { error } = await sb.from('review_requests').insert(payload); if (error) console.warn('engage insert:', error.message); } catch (e) {}
+      const ref = 'WMP-' + String(p.id).slice(-6).toUpperCase();
+      try { await sb.from('review_requests').update({ reference: ref }).eq('project_id', p.id).eq('request_type','wmp'); } catch (e) {}
+      // Email notification: reuses the existing Formspree endpoint (the
+      // brief names Resend, which this app has never integrated — flagged,
+      // not faked; swapping later means changing this one call).
+      try {
+        await fetch(REVIEW_FORMSPREE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ ...payload, scope: scopeLabels.join(', '), note, target_date: targetDate, phone,
+            _subject: `[Waste Planner] Engage Pro Waste — ${p.name} (${scopeLabels.join(', ')})` }),
+        });
+      } catch (e) {}
+      PROJ_SERVICE.map[p.id] = { type: 'wmp', status: 'pending' };
+      const wmpBtn = document.getElementById('btn-request-wmp');
+      if (wmpBtn && !(typeof wmpgIsStaff === 'function' && wmpgIsStaff())) { wmpBtn.dataset.submitted = 'true'; wmpBtn.textContent = '✓ Pro Waste engaged'; }
+      if (typeof renderProjects === 'function') renderProjects();
+    }
+    if (typeof logEvent === 'function') logEvent('wmp_requested', {
+      project_id: p?.id || null, council: (s.council || p?.council) || null,
+      scope, note: note || null, target_date: targetDate,
+      source: m.dataset.source || null, contact: { name, email, phone: phone || null },
+    });
+    wpEngageClose();
+    alert('Thanks — Pro Waste will send a fee proposal within one business day.');
+  } catch (err) {
+    console.error('engage error:', err);
+    go.disabled = false; go.textContent = 'Send to Pro Waste →';
+    msg.textContent = 'Something went wrong — please try again, or email lachy@prowaste.au.';
+  }
+}
+
 async function requestProWasteReview() {
   const projects = getProjects();
   const p = projects.find(x => x.id === currentProjectId);
@@ -13545,7 +13723,7 @@ function showPaywall(reason) {
         <div id="wp-paywall-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:10px;"></div>
         <div id="wp-paywall-body" style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:20px;"></div>
         <button onclick="wpPaywallUpgrade()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Upgrade — from $149/month</button>
-        <a href="https://www.prowaste.au/request-a-fee-proposal" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:12px;font-size:12.5px;color:var(--teal);font-weight:600;text-decoration:underline;">Or get a fee proposal — Pro Waste prepares it for you</a>
+        <button onclick="closePaywall();wpEngageOpen('paywall')" style="display:block;width:100%;margin-top:10px;padding:11px;border-radius:9px;font-size:13px;font-weight:600;border:1.5px solid var(--teal);color:var(--teal);background:none;cursor:pointer;font-family:inherit;">🤝 Engage Pro Waste Consultants</button>
         <button onclick="closePaywall()" style="display:block;margin:14px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Not now</button>
       </div>`;
     m.addEventListener('click', ev => { if (ev.target === m) closePaywall(); });
@@ -13587,8 +13765,8 @@ function updateProfileUI() {
   const wmpBtn = document.getElementById('btn-request-wmp');
   if (wmpBtn && wmpBtn.dataset.submitted !== 'true') {
     const staff = (typeof wmpgIsStaff === 'function') && wmpgIsStaff();
-    wmpBtn.textContent = staff ? '\u{1F4C4} Generate WMP' : '\u{1F4C4} Request WMP';
-    wmpBtn.title = staff ? 'Open the WMP generator' : 'A Pro Waste consultant prepares and certifies your WMP from this project\u2019s data';
+    wmpBtn.textContent = staff ? '\u{1F4C4} Generate WMP' : '\u{1F91D} Engage Pro Waste Consultants';
+    wmpBtn.title = staff ? 'Open the WMP generator' : 'A Pro Waste consultant prepares your WMP, advises on the design, or answers an RFI \u2014 from this project\u2019s data';
   }
   const queueNav = document.getElementById('nav-wmp-queue');
   if (queueNav) {
@@ -19795,8 +19973,26 @@ function wsRenderMarkups(mk, mpp) {
   }
 }
 
+function wpEngageNudgeUpdate() {
+  // Shows once the calculator has produced rooms (bins are sized), hides
+  // again after a request exists or the user dismisses it for this project.
+  const bar = document.getElementById('ws-engage-nudge'); if (!bar) return;
+  const pid = (typeof currentProjectId !== 'undefined' && currentProjectId) || null;
+  let dismissed = false;
+  try { dismissed = pid && localStorage.getItem('wp_engage_nudge_' + pid) === '1'; } catch (e) {}
+  const svc = pid && typeof PROJ_SERVICE !== 'undefined' && PROJ_SERVICE.map[pid];
+  const engaged = svc && svc.type === 'wmp' && svc.status !== 'declined';
+  const staff = typeof wmpgIsStaff === 'function' && wmpgIsStaff();
+  bar.style.display = (WS_CALC_ROOMS.length && !dismissed && !engaged && !staff) ? 'flex' : 'none';
+}
+function wpEngageNudgeDismiss() {
+  try { if (typeof currentProjectId !== 'undefined' && currentProjectId) localStorage.setItem('wp_engage_nudge_' + currentProjectId, '1'); } catch (e) {}
+  const bar = document.getElementById('ws-engage-nudge'); if (bar) bar.style.display = 'none';
+}
+
 function wsLayoutRenderTargets() {
   const wrap = document.getElementById('ws-layout-targets'); if (!wrap) return;
+  wpEngageNudgeUpdate();
   if (!WS_CALC_ROOMS.length) {
     wrap.innerHTML = '<span class="wsl-empty">Run the Bin Calculator tab and each bin room appears here as a card you can drag onto the plan.</span>';
     return;
@@ -24612,7 +24808,10 @@ function wmpgIsStaff() {
 }
 
 async function openWmpGenerator() {
-  if (!wmpgIsStaff()) return requestWMP();
+  // Non-staff route: the Engage Pro Waste modal (scope + note), which files
+  // into the same queue the old confirm-dialog requestWMP did. The generator
+  // itself stays staff-only.
+  if (!wmpgIsStaff()) return wpEngageOpen('project_header');
   const p = getProjects().find(x => x.id === currentProjectId);
   if (!p) { alert('Open a project first.'); return; }
   WMPG.projectId = p.id;
@@ -26332,7 +26531,7 @@ async function loadWmpQueue() {
   WMPQ.filter = filter;
   try {
     let q = sb.from('review_requests').select('*').eq('request_type', 'wmp');
-    if (filter === 'open') q = q.in('status', ['pending','inprogress','rfi']);
+    if (filter === 'open') q = q.in('status', ['pending','proposal_sent','inprogress','rfi']);
     else if (filter !== 'all') q = q.eq('status', filter);
     const { data, error } = await q.order('submitted_at', { ascending: false }).limit(200);
     if (error) throw error;
@@ -26344,7 +26543,7 @@ async function loadWmpQueue() {
     }
     updateWmpQueueBadge(WMPQ.rows.filter(r => r.status === 'pending').length);
 
-    const statusColour = { pending:'#E65100', inprogress:'#1565C0', rfi:'#C62828', reviewed:'#2E7D32' };
+    const statusColour = { pending:'#E65100', proposal_sent:'#8E24AA', inprogress:'#1565C0', rfi:'#C62828', reviewed:'#2E7D32', declined:'#607D8B' };
     list.innerHTML = WMPQ.rows.map(r => {
       const snap = r.snapshot || {};
       const s = snap.summary || {};
@@ -26377,11 +26576,14 @@ async function loadWmpQueue() {
           ${r.dev_type ? `<span>🏗 ${wmpqEsc(r.dev_type)}</span>` : ''}
           ${chips.length ? `<span style="color:var(--teal);">📦 ${wmpqEsc(chips.join(' · '))}</span>` : '<span style="color:#EFB080;">no snapshot — project data entered manually</span>'}
         </div>
+        ${snap.engage ? `<div style="font-size:11px;color:#CE93D8;margin-top:6px;">🤝 ${wmpqEsc((snap.engage.scope_labels || snap.engage.scope || []).join(', '))}${snap.engage.target_date ? ' · target ' + wmpqEsc(snap.engage.target_date) : ''}${snap.engage.contact?.phone ? ' · ☎ ' + wmpqEsc(snap.engage.contact.phone) : ''}${snap.engage.note ? `<br><span style="color:var(--text-3);">“${wmpqEsc(snap.engage.note)}”</span>` : ''}</div>` : ''}
         <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="wmpqOpenInGenerator('${r.id}')" ${ready ? '' : 'disabled title="This request has no project snapshot to hydrate from"'}
             style="font-size:11px;background:var(--green);color:var(--dark);border-color:var(--green);font-weight:700;${ready ? '' : 'opacity:.45;cursor:not-allowed;'}">📄 Open in WMP Generator</button>
+          <button onclick="wmpqSetStatus('${r.id}','proposal_sent')" style="font-size:10px;padding:3px 10px;border-radius:5px;border:1px solid #8E24AA;color:#CE93D8;background:none;cursor:pointer;font-family:inherit;">Proposal Sent</button>
           <button onclick="wmpqSetStatus('${r.id}','inprogress')" style="font-size:10px;padding:3px 10px;border-radius:5px;border:1px solid #1565C0;color:#7EB3F5;background:none;cursor:pointer;font-family:inherit;">In Progress</button>
           <button onclick="wmpqSetStatus('${r.id}','rfi')" style="font-size:10px;padding:3px 10px;border-radius:5px;border:1px solid #C62828;color:#EF8080;background:none;cursor:pointer;font-family:inherit;">RFI</button>
+          <button onclick="wmpqSetStatus('${r.id}','declined')" style="font-size:10px;padding:3px 10px;border-radius:5px;border:1px solid #607D8B;color:#90A4AE;background:none;cursor:pointer;font-family:inherit;">Declined</button>
           <button onclick="openReviewResponse('${r.id}','wmp')" style="font-size:10px;padding:3px 10px;border-radius:5px;border:1px solid #2E7D32;color:#81C784;background:none;cursor:pointer;font-family:inherit;">Complete / respond</button>
           ${r.user_email ? `<a href="mailto:${wmpqEsc(r.user_email)}?subject=${encodeURIComponent('Your Waste Management Plan — ' + (r.project_name || ''))}" style="font-size:10px;color:#7EB3F5;text-decoration:none;font-weight:600;">✉ Reply</a>` : ''}
         </div>

@@ -43,6 +43,7 @@ const RELAYED = new Set([
   "export",
   "paywall_shown",
   "subscribed",
+  "wmp_requested",
 ]);
 
 Deno.serve(async (req: Request): Promise<Response> => {

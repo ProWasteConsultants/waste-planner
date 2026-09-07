@@ -144,11 +144,11 @@ test('the checker carries the per-project run count and reports each scan', () =
   assert.ok(SOURCE.includes("type: 'wp-set-runs'"));
 });
 
-test('the paywall keeps what you have, offers checkout, and links a fee proposal', () => {
+test('the paywall keeps what you have, offers checkout, and the Pro Waste handoff', () => {
   const fn = extractBlock(/^function showPaywall\(reason\)/).text;
   assert.ok(fn.includes("logEvent('paywall_shown', { reason: reason || null })"));
   assert.ok(fn.includes('stays yours'), 'keep-what-you-have, stated plainly');
-  assert.ok(fn.includes('https://www.prowaste.au/request-a-fee-proposal'));
+  assert.ok(fn.includes("wpEngageOpen('paywall')"), '§4a: Engage Pro Waste replaces the external fee-proposal link');
   assert.ok(fn.includes('wpPaywallUpgrade()'), 'the upgrade button routes to Stripe checkout');
   assert.ok(!/only|hurry|last chance/i.test(fn), 'no pressure copy');
 });
@@ -187,6 +187,55 @@ test('the CRM relay lives in an edge function, and no CRM secret ships in the bu
     'events are enriched from profiles so the CRM gets a contact, not a UUID');
   assert.ok(fn.includes('SUPABASE_SERVICE_ROLE_KEY'), 'anon-key posts are refused');
   assert.ok(!SOURCE.includes('CRM_WEBHOOK'), 'the browser bundle never sees the CRM endpoint or secret');
+});
+
+// ── §4a: Engage Pro Waste Consultants ──
+test('one button, one label, five placements — all routed through wpEngageOpen', () => {
+  // 1. project card (secondary action, hidden once a request exists)
+  assert.ok(SOURCE.includes("wpEngageOpen('project_card','${p.id}')"));
+  // 2. project header: the old Request WMP button now opens the modal for non-staff
+  assert.ok(SOURCE.includes("if (!wmpgIsStaff()) return wpEngageOpen('project_header');"));
+  assert.ok(SOURCE.includes("'\\u{1F91D} Engage Pro Waste Consultants'"), 'header label for non-staff');
+  // 3. design tab nudge, gated on calculated rooms and per-project dismissal
+  assert.ok(SOURCE.includes('Bins sized — want Pro Waste to confirm the room and prepare the WMP?'));
+  assert.ok(SOURCE.includes("wpEngageOpen('design_tab')"));
+  const nudge = extractBlock(/^function wpEngageNudgeUpdate\(\)/).text;
+  assert.ok(nudge.includes('WS_CALC_ROOMS.length') && nudge.includes('wp_engage_nudge_'), 'shows on sized bins, dismiss sticks per project');
+  assert.ok(nudge.includes('!staff'), 'staff never see their own nudge');
+  // 4. compliance checker: button appears on failed clauses, hands over to the parent
+  assert.ok(SOURCE.includes('id=&quot;engage-btn&quot;'));
+  assert.ok(SOURCE.includes('(fail &gt; 0 &amp;&amp; state.role !== &#x27;council&#x27;)'), 'fails only, and never for council assessors');
+  assert.ok(SOURCE.includes('type: &#x27;wp-engage&#x27;, source: &#x27;compliance&#x27;'));
+  assert.ok(SOURCE.includes("if (typeof wpEngageOpen === 'function') wpEngageOpen(e.data.source || 'compliance');"));
+  // 5. paywall: Engage replaces the external fee-proposal link
+  assert.ok(SOURCE.includes("closePaywall();wpEngageOpen('paywall')"));
+  assert.ok(!SOURCE.includes('request-a-fee-proposal" target="_blank"'), 'no external form link left in the paywall');
+});
+
+test('an engagement files into the existing WMP queue with scope, and logs wmp_requested', () => {
+  const fn = extractBlock(/^async function wpEngageSubmit\(\)/).text;
+  assert.ok(fn.includes("request_type: 'wmp', status: 'pending'"), 'same queue pipeline as requestWMP');
+  assert.ok(fn.includes('engage: { scope, scope_labels: scopeLabels'), 'scope rides in the snapshot — no schema change');
+  assert.ok(fn.includes("logEvent('wmp_requested'"), 'CRM event fired');
+  assert.ok(fn.includes('Thanks — Pro Waste will send a fee proposal within one business day.'));
+  assert.ok(fn.includes('REVIEW_FORMSPREE'), 'email notification reuses the existing endpoint (Resend not integrated — deliberate)');
+  const open = extractBlock(/^function wpEngageOpen\(source, projectId\)/).text;
+  assert.ok(open.includes("prior.type === 'wmp' && prior.status !== 'declined'"), 'no duplicate requests while one is live');
+  // scope options exactly as briefed
+  for (const label of ['WMP for DA', 'Design advice on bin room / access', 'RFI response', 'Not sure yet'])
+    assert.ok(SOURCE.includes(`'${label}'`), 'scope option: ' + label);
+});
+
+test('queue gains proposal_sent and declined, staff-only gating unchanged', () => {
+  assert.ok(SOURCE.includes("'wmp:proposal_sent': { label: 'Fee proposal sent'"));
+  assert.ok(SOURCE.includes("'wmp:declined':      { label: 'Not proceeding'"));
+  assert.ok(SOURCE.includes(`"wmpqSetStatus('\${r.id}','proposal_sent')"`));
+  assert.ok(SOURCE.includes(`"wmpqSetStatus('\${r.id}','declined')"`));
+  assert.ok(SOURCE.includes("q.in('status', ['pending','proposal_sent','inprogress','rfi'])"), 'open filter includes proposals');
+  // the generator and queue stay staff-only
+  assert.ok(SOURCE.includes('if (!wmpgIsStaff()) { list.innerHTML') || /wmpgIsStaff\(\)\)\s*\{\s*list\.innerHTML/.test(SOURCE), 'queue refuses non-staff');
+  const crm = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'crm-events', 'index.ts'), 'utf8');
+  assert.ok(crm.includes('"wmp_requested"'), 'relay forwards the new event to CORE');
 });
 
 test('the billing functions are de-trialed and cancellation reverts to free', () => {
