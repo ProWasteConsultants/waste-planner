@@ -3957,6 +3957,17 @@ window.addEventListener('message', function(e) {
       ROOMS=[mkRoom('Bin Room 1','res')];
       ROOMS[0].alloc={...agg};
     }
+    // Commercial tenancies from the calculator handoff. Only when the project
+    // carries no commercial room of its own — restored rooms are the source of
+    // truth and must not be double-seeded on a re-fill.
+    if(Array.isArray(d.com)&amp;&amp;d.com.length&amp;&amp;!ROOMS.some(r=&gt;r.kind==='com')){
+      const valid=d.com.filter(c=&gt;c&amp;&amp;COMM[c.use]&amp;&amp;Number(c.value)&gt;0);
+      if(valid.length){
+        const cr=mkRoom('Commercial','com');
+        cr.com=valid.map(c=&gt;({use:c.use,value:Number(c.value),days:Number(c.days)&gt;0?Number(c.days):COMM[c.use].defaultDays}));
+        ROOMS.push(cr);
+      }
+    }
     renderRooms();
     wsCalcTrigger();
   }
@@ -6554,6 +6565,7 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
     &lt;div class=&quot;checker-toolbar-title&quot; id=&quot;checker-title&quot;&gt;Compliance Checker&lt;/div&gt;
     &lt;span id=&quot;mode-tabs-slot&quot;&gt;&lt;/span&gt;
     &lt;div class=&quot;scan-status&quot;&gt;
+      &lt;span id=&quot;runs-left-label&quot; style=&quot;font-size:11px;color:var(--muted);display:none;&quot;&gt;&lt;/span&gt;
       &lt;span id=&quot;scan-council-label&quot; style=&quot;font-size:11px;color:var(--muted);&quot;&gt;&lt;/span&gt;
       &lt;span class=&quot;score-badge score-ready&quot; id=&quot;readiness-badge&quot;&gt;Not scanned&lt;/span&gt;
     &lt;/div&gt;
@@ -6777,6 +6789,8 @@ let state = {
   wmpFileName: &#x27;&#x27;,
   council: &#x27;&#x27;,
   scanComplete: false,
+  runsCap: null,        // free-plan per-project cap from the platform; null = uncapped
+  runsRemaining: null,  // checks left on the open project; null = uncapped
   hl: { wmp: {}, guide: {} },  // pane -&gt; page -&gt; [{id,result,snippet,rects:[{x,y,w,h}]}]
 };
 
@@ -7698,7 +7712,27 @@ async function loadWMPFile(file) {
 }
 
 // ── SCAN ──────────────────────────────────────────────────────────────────
+function updateRunsBadge() {
+  // Free-plan cap indicator. The count comes from the platform (wp-set-role /
+  // wp-set-runs); paid and staff accounts send null and the label stays hidden.
+  const el = document.getElementById(&#x27;runs-left-label&#x27;);
+  if (!el) return;
+  if (typeof state.runsRemaining === &#x27;number&#x27; &amp;&amp; state.runsCap) {
+    el.style.display = &#x27;inline&#x27;;
+    el.textContent = state.runsRemaining === 0
+      ? &#x27;No free checks left on this project&#x27;
+      : state.runsRemaining + &#x27; of &#x27; + state.runsCap + &#x27; free checks left on this project&#x27;;
+  } else { el.style.display = &#x27;none&#x27;; el.textContent = &#x27;&#x27;; }
+}
+
 async function startScan() {
+  // Free plan: capped checker runs per project. This gate is UX — the count
+  // is enforced again server-side, so bypassing it here buys nothing.
+  if (state.runsRemaining === 0) {
+    if (window.parent &amp;&amp; window.parent !== window)
+      window.parent.postMessage({ type: &#x27;wp-paywall&#x27;, reason: &#x27;compliance_cap&#x27; }, &#x27;*&#x27;);
+    return;
+  }
   const apiKey = localStorage.getItem(&#x27;pw_api_key&#x27;);
   if (!apiKey &amp;&amp; !(state.aiIncluded &amp;&amp; state.aiToken)) { alert(&#x27;AI scanning is included with your subscription when signed in — or save your own API key in the top bar.&#x27;); return; }
   if (!state.pdfPages.length) { alert(&#x27;Please upload a WMP PDF first.&#x27;); return; }
@@ -8005,6 +8039,16 @@ function renderResults(data) {
 
   // Build highlights
   buildHighlights();
+
+  // Report the completed run to the platform: it owns the per-project counter
+  // (project row + database), logs the event, and pushes back the remaining
+  // count. Decrement locally too so the badge is honest before the round trip.
+  if (window.parent &amp;&amp; window.parent !== window)
+    window.parent.postMessage({ type: &#x27;wp-scan-done&#x27;, fails: fail, flags: flag, score }, &#x27;*&#x27;);
+  if (typeof state.runsRemaining === &#x27;number&#x27;) {
+    state.runsRemaining = Math.max(0, state.runsRemaining - 1);
+    updateRunsBadge();
+  }
 }
 
 // ── COMMENTS LIST ─────────────────────────────────────────────────────────
@@ -8329,10 +8373,21 @@ window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
     glCardRender();
     return;
   }
+  if (e.data?.type === &#x27;wp-set-runs&#x27;) {
+    // Platform pushes a fresh per-project run count (after a scan lands, or
+    // when the open project changes). null on either field = uncapped.
+    state.runsCap = (typeof e.data.runsCap === &#x27;number&#x27;) ? e.data.runsCap : null;
+    state.runsRemaining = (typeof e.data.runsRemaining === &#x27;number&#x27;) ? e.data.runsRemaining : null;
+    updateRunsBadge();
+    return;
+  }
   if (e.data?.type === &#x27;wp-set-role&#x27;) {
     state.aiIncluded = !!e.data.aiIncluded;
     state.aiToken = e.data.aiToken || null;
     state.aiUrl = e.data.aiUrl || null;
+    state.runsCap = (typeof e.data.runsCap === &#x27;number&#x27;) ? e.data.runsCap : null;
+    state.runsRemaining = (typeof e.data.runsRemaining === &#x27;number&#x27;) ? e.data.runsRemaining : null;
+    updateRunsBadge();
     // The platform decides the role — apply it through the SAME setRole the
     // (hidden) role tabs use, so every council affordance follows: assessment
     // mode, RFI + comment bank tabs, the guideline upload section, and the
@@ -8639,6 +8694,7 @@ function showScreen(name, navEl) {
         });
       } catch (e) { /* offline — the embedded + R2-merged list still applies */ }
       iframe.contentWindow?.postMessage({ type: 'wp-councils', list: cregistry }, '*');
+      const proj = currentProjectId ? getProjects().find(p => p.id === currentProjectId) : null;
       iframe.contentWindow?.postMessage({
         type: 'wp-set-role',
         role: isCouncil ? 'council' : 'planner',
@@ -8647,14 +8703,17 @@ function showScreen(name, navEl) {
         council: isCouncil
           ? ((typeof currentOrg !== 'undefined' && currentOrg?.kind === 'council') ? currentOrg.name : (currentProfile?.company || null))
           : null,
-        dailyLimit: AI_DAILY_LIMITS[currentProfile?.tier || 'lite'] || 1,
+        dailyLimit: AI_DAILY_LIMITS[currentProfile?.tier || 'none'] || 1,
         used: getAICallsToday(),
         aiIncluded: !!aiToken,
         aiToken,
         aiUrl: AI_PROXY_BASE + '/ai-user',
+        // Free plan: the per-project checker cap rides with the role handshake.
+        // null = uncapped (paid tier, staff, or no open project).
+        runsCap: (typeof wpFreeRunsCap === 'function') ? wpFreeRunsCap() : null,
+        runsRemaining: (typeof wpFreeRunsRemaining === 'function') ? wpFreeRunsRemaining(proj) : null,
       }, '*');
       // Pre-fill project fields from the open project, if any
-      const proj = currentProjectId ? getProjects().find(p => p.id === currentProjectId) : null;
       if (proj) {
         iframe.contentWindow?.postMessage({
           type: 'wp-set-project',
@@ -8863,6 +8922,9 @@ async function npExtract() {
   }
 }
 function openNewProject() {
+  // Free plan: one project, counted as created — deletion doesn't free the
+  // slot. The DB trigger enforces the same rule; this is just the honest UI.
+  if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
   document.getElementById('modal-overlay').classList.add('active');
   setTimeout(() => document.getElementById('np-name').focus(), 100);
 }
@@ -9425,6 +9487,34 @@ window.addEventListener('message', async (e) => {
     }
   } catch (err) {}
   try { e.source && e.source.postMessage(reply, '*'); } catch (err) {}
+});
+
+// Compliance-run accounting. The checker reports each completed scan and asks
+// for the paywall when its local count hits zero; the platform owns the real
+// counter (project row + compliance_runs column) and pushes the fresh
+// remaining count back so the checker's badge can never drift from it.
+window.addEventListener('message', async (e) => {
+  if (!e.data) return;
+  if (e.data.type === 'wp-paywall') {
+    if (typeof showPaywall === 'function') showPaywall(e.data.reason || 'compliance_cap');
+    return;
+  }
+  if (e.data.type !== 'wp-scan-done') return;
+  const projects = getProjects();
+  const proj = currentProjectId ? projects.find(p => p.id === currentProjectId) : null;
+  if (proj) {
+    proj.complianceRuns = (Number(proj.complianceRuns) || 0) + 1;
+    saveProjects(projects);
+    if (typeof saveProjectToDB === 'function') { try { await saveProjectToDB(proj); } catch (err) {} }
+  }
+  if (typeof logEvent === 'function')
+    logEvent('compliance_run', { project_id: proj?.id || null, fails: e.data.fails ?? null, score: e.data.score ?? null });
+  const iframe = document.getElementById('compliance-iframe');
+  iframe?.contentWindow?.postMessage({
+    type: 'wp-set-runs',
+    runsCap: (typeof wpFreeRunsCap === 'function') ? wpFreeRunsCap() : null,
+    runsRemaining: (typeof wpFreeRunsRemaining === 'function') ? wpFreeRunsRemaining(proj) : null,
+  }, '*');
 });
 
 async function docOpenInDesignDxf(docId) {
@@ -12573,7 +12663,7 @@ async function openBillingPortal() {
 
 
 // ── AI RATE LIMITING ──────────────────────────────────────────────────────
-const AI_DAILY_LIMITS = { standard: 10, founding: 10, council_paid: 10, lite: 1 }; // display only — the ai-user Edge Function is the enforced truth
+const AI_DAILY_LIMITS = { standard: 10, founding: 10, council_paid: 10, none: 1 }; // display only — the ai-user Edge Function is the enforced truth
 
 function getAICallsToday() {
   const key = 'wp_ai_calls_' + new Date().toISOString().substring(0,10);
@@ -12615,6 +12705,97 @@ function logEvent(name, meta) {
   } catch (e) {}
 })();
 
+// ── LANDING-PAGE CALC HANDOFF (?calc=) ─────────────────────────────────────
+// go.wasteplanner.au links here with a base64url JSON payload of the visitor's
+// calculation. Parse ONCE, park it in sessionStorage so it survives the
+// signup → email-confirm → return round trip, and strip the param. Anything
+// invalid is ignored silently, per the brief. UTM params are untouched —
+// captureAttribution above has already read them by the time this runs.
+(function captureCalcHandoff() {
+  try {
+    const q = new URLSearchParams(location.search);
+    const raw = q.get('calc');
+    if (!raw) return;
+    q.delete('calc');
+    history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+    const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+    const p = JSON.parse(atob(b64));
+    const num = v => Math.max(0, parseInt(v, 10) || 0);
+    const mix = p.mix || {};
+    const clean = {
+      state: ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'].includes(p.state) ? p.state : null,
+      council: typeof p.council === 'string' ? p.council : '',
+      mix: { apt_1br: num(mix.apt_1br), apt_2br: num(mix.apt_2br), apt_3br: num(mix.apt_3br), townhouse: num(mix.townhouse) },
+      com: Array.isArray(p.com)
+        ? p.com.filter(c => c && typeof c.use === 'string' && Number(c.value) > 0)
+            .map(c => ({ use: c.use, value: Number(c.value), days: Number(c.days) > 0 ? Number(c.days) : 0 })).slice(0, 20)
+        : [],
+    };
+    // a payload with nothing usable in it is not a prefill
+    if (!clean.state && !Object.values(clean.mix).some(v => v > 0) && !clean.com.length) return;
+    sessionStorage.setItem('wp_calc_prefill', JSON.stringify(clean));
+  } catch (e) { /* invalid payload: ignore silently */ }
+})();
+
+// Apply the parked calculation after the FIRST successful sign-in or signup:
+// create the project, open the Bin Calculator tab and push the mix into it
+// (the calculator's own ws-calc-fill listener seeds the room and runs the
+// calc). One shot — the prefill clears before anything can fail halfway and
+// re-apply on the next login.
+async function applyCalcPrefill() {
+  let pre = null;
+  try { pre = JSON.parse(sessionStorage.getItem('wp_calc_prefill') || 'null'); } catch (e) {}
+  if (!pre || !currentUser) return;
+  sessionStorage.removeItem('wp_calc_prefill');
+  // A capped free account can't take the prefill project — say so instead of
+  // silently dropping the payload, and don't burn the slot check on retries.
+  if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
+  let councilLabel = '';
+  try {
+    const list = (typeof COUNCILS_BY_STATE_P !== 'undefined' && COUNCILS_BY_STATE_P[pre.state]) || [];
+    councilLabel = (list.find(c => c.value === pre.council) || {}).label || '';
+  } catch (e) {}
+  const dwellings = Object.values(pre.mix).reduce((a, v) => a + v, 0);
+  const project = {
+    id: Date.now().toString(),
+    name: 'Bin calculation — ' + (councilLabel || pre.state || 'new project'),
+    address: '',
+    state: pre.state || '',
+    council: councilLabel,
+    devType: pre.com.length ? (dwellings ? 'Mixed Use' : 'Commercial') : 'Residential',
+    levels: '',
+    status: 'Design',
+    summary: { address: '', council: councilLabel, state: pre.state || 'NSW',
+      apt_1br: pre.mix.apt_1br, apt_2br: pre.mix.apt_2br, apt_3br: pre.mix.apt_3br, townhouses: pre.mix.townhouse },
+    complianceRuns: 0,
+    created: new Date().toLocaleDateString('en-AU'),
+    ts: Date.now(),
+  };
+  const projects = getProjects();
+  projects.unshift(project);
+  saveProjects(projects);
+  currentProjectId = project.id;
+  if (typeof saveProjectToDB === 'function') saveProjectToDB(project);
+  if (typeof currentProfile !== 'undefined' && currentProfile) currentProfile.projects_created = (Number(currentProfile.projects_created) || 0) + 1;
+  if (typeof renderProjects === 'function') renderProjects();
+  logEvent('project_created', { project_id: project.id, state: project.state || null, council: pre.council || null, source: 'calc_prefill' });
+  logEvent('calc_prefill_applied', { state: pre.state, council: pre.council, dwellings, tenancies: pre.com.length });
+  showScreen('calculator', document.getElementById('nav-calculator'));
+  // the calculator iframe already exists (srcdoc loads with the page); a short
+  // settle beats racing its ws-calc-ready handshake from a cold tab switch
+  setTimeout(() => {
+    const f = document.getElementById('calc-iframe');
+    f?.contentWindow?.postMessage({
+      type: 'ws-calc-fill',
+      state: pre.state || undefined,
+      council: pre.council || councilLabel,
+      res_1br: pre.mix.apt_1br, res_2br: pre.mix.apt_2br, res_3br: pre.mix.apt_3br,
+      res_townhouse: pre.mix.townhouse,
+      com: pre.com,
+    }, '*');
+  }, 900);
+}
+
 async function stampSignupSource() {
   try {
     const raw = localStorage.getItem('wp_attrib');
@@ -12629,7 +12810,7 @@ async function stampSignupSource() {
 }
 
 function checkAIRateLimit() {
-  const tier = currentProfile?.tier || 'lite';
+  const tier = currentProfile?.tier || 'none';
   const limit = AI_DAILY_LIMITS[tier] || 1;
   const used = getAICallsToday();
   if (used >= limit) {
@@ -12789,22 +12970,9 @@ renderProjects();
       <div class="auth-logo-sub">by Pro Waste Consultants</div>
     </div>
 
-    <!-- Lite free access banner -->
-    <div style="background:var(--lt);border:1px solid rgba(22,126,126,0.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;cursor:pointer;" onclick="continueAsGuest()">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span style="font-size:20px;">⚡</span>
-        <div>
-          <div style="font-size:13px;font-weight:700;color:var(--text);">Try WastePlanner free — no account needed</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">All tools available with monthly caps. No login required.</div>
-        </div>
-        <span style="margin-left:auto;font-size:18px;color:var(--teal);">→</span>
-      </div>
-    </div>
-
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
-      <div style="flex:1;height:1px;background:var(--border);"></div>
-      <span style="font-size:11px;color:var(--muted);white-space:nowrap;">or sign in for full access</span>
-      <div style="flex:1;height:1px;background:var(--border);"></div>
+    <!-- value line — swapped for the calc-handoff variant when ?calc= arrived -->
+    <div id="auth-value-line" style="text-align:center;font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:14px;">
+      <b style="color:var(--text);">Your first project is free.</b> All tools, exports included. No card needed.
     </div>
 
     <div class="auth-tabs">
@@ -12877,11 +13045,18 @@ renderProjects();
       </label>
       <button class="auth-btn" id="signup-btn" onclick="handleSignupToPay()">Continue to payment →</button>
       <button class="auth-btn" style="background:none;border:1px solid var(--border);color:var(--text);margin-top:8px;" onclick="handleFreeSignup()">Create a free account — try the AI tools once</button>
+      <div style="text-align:center;margin-top:12px;font-size:12px;color:var(--muted);">Already have an account?
+        <a href="#" onclick="switchAuthTab('login',document.querySelectorAll('.auth-tab')[0]);return false;" style="color:var(--teal);text-decoration:none;font-weight:600;">Sign in</a></div>
       <div style="font-size:10.5px;color:var(--muted);text-align:center;margin-top:4px;line-height:1.5;">Free accounts include a one-time AI trial of each tool. Paid plans include 10 AI uses per tool, per day.</div>
       <div class="auth-msg" id="signup-msg"></div>
       <div id="council-signup-note" style="display:none;background:rgba(66,133,244,0.15);border-radius:8px;padding:10px 12px;font-size:11px;color:#7EB3F5;margin-top:10px;line-height:1.5;">
         <strong>Council Officer access:</strong> $99/month — unlimited WMP compliance reviews, comment bank, RFI output, and guidelines library. Access is limited to the compliance checker in council assessment mode.
       </div>
+    </div>
+    <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--muted);">
+      <a href="privacy.html" target="_blank" style="color:var(--muted);text-decoration:underline;">Privacy</a>
+      &nbsp;·&nbsp;
+      <a href="terms.html" target="_blank" style="color:var(--muted);text-decoration:underline;">Terms</a>
     </div>
   </div>
 </div>
@@ -13086,6 +13261,7 @@ async function handleLogin() {
       // "enabled" 2FA never gets asked for.
       if (!(await ensureAal2())) { btn.disabled = false; btn.textContent = 'Sign In →'; return; }
       currentUser = data.user;
+      try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
       const profile = await loadProfile();
       showApp();
       // Free accounts (tier 'none') land in the app like everyone else —
@@ -13204,7 +13380,9 @@ async function handleFreeSignup() {
     // If this email already has an account with this password, just sign in.
     const { data: pre } = await sb.auth.signInWithPassword({ email, password });
     let user = pre?.user || null;
+    let isNewAccount = false;
     if (!user) {
+      isNewAccount = true;
       pendingSignup = { name, company, role, email, password };
       user = await handleSignup();
       if (user) {
@@ -13219,6 +13397,12 @@ async function handleFreeSignup() {
       return;
     }
     currentUser = user;
+    try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
+    if (isNewAccount && typeof logEvent === 'function') {
+      let utm = null; try { utm = JSON.parse(localStorage.getItem('wp_attrib') || 'null'); } catch (e2) {}
+      let hasPrefill = false; try { hasPrefill = !!sessionStorage.getItem('wp_calc_prefill'); } catch (e2) {}
+      logEvent('signup', { name, firm: company || null, role: role || null, utm, has_prefill: hasPrefill });
+    }
   } catch (err) {
     console.error('Free signup error:', err);
     msg.textContent = 'Account creation failed: ' + (err.message || err);
@@ -13229,7 +13413,7 @@ async function handleFreeSignup() {
   await loadProfile();
   showApp();
   applyRoleAccess();
-  alert('\u2705 Welcome to Waste Planner!\n\nYour free account includes a one-time AI trial of each tool \u2014 plus the calculator and layout tools on monthly caps.\n\nUpgrade anytime for 10 AI uses per tool, per day, with a 14-day free trial.');
+  alert('\u2705 Welcome to WastePlanner!\n\nYour first project is free \u2014 every tool, exports included, no card needed.\n\nUpgrade anytime for unlimited projects and daily AI use.');
 }
 
 async function handleLogout() {
@@ -13255,6 +13439,23 @@ sb.auth.onAuthStateChange(async (event, session) => {
   }
 });
 
+// ── AUTH SCREEN DEFAULTS ────────────────────────────────────────────────────
+// Fresh visitors land on Create Account; anyone this browser has signed in
+// before defaults back to Sign In. A parked calc handoff swaps the value line.
+(function initAuthDefaults() {
+  try {
+    if (sessionStorage.getItem('wp_calc_prefill')) {
+      const line = document.getElementById('auth-value-line');
+      if (line) line.innerHTML = '<b style="color:var(--text);">Your bin calculation is ready to save.</b> ' +
+        "Create a free account and we'll set up the project with your council and unit mix already filled in.";
+    }
+    if (!localStorage.getItem('wp_known_user')) {
+      const tabs = document.querySelectorAll('.auth-tab');
+      if (tabs[1]) switchAuthTab('signup', tabs[1]);
+    }
+  } catch (e) {}
+})();
+
 // Check for existing session on load
 (async () => {
   try {
@@ -13264,6 +13465,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
       // entering the app, or refreshing the page becomes a 2FA bypass.
       if (!(await ensureAal2())) return;
       currentUser = session.user;
+      try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
       await loadProfile();
       showApp();
     }
@@ -13289,13 +13491,86 @@ async function loadProfile() {
   }
 }
 
+// ── FREE PLAN ─────────────────────────────────────────────────────────────
+// The free plan is tier 'none' (what signup writes) — one project, every tool
+// unlocked inside it, except the compliance checker at 2 runs per project.
+// Paid tiers and staff are never capped. These client checks are UX only:
+// the database triggers (sql/2026-09-07-free-tier-enforcement.sql) and the
+// ai-user edge function are the enforcement.
+const WP_FREE_RUNS_CAP = 2;
+
+function wpIsFreePlan() {
+  if (!currentUser) return false;
+  if (typeof wmpgIsStaff === 'function' && wmpgIsStaff()) return false;
+  const t = currentProfile?.tier;
+  return !t || t === 'none';
+}
+
+function wpProjectsCreated() {
+  // Lifetime count — deleting a project never frees the slot. The DB column
+  // (profiles.projects_created, kept by trigger) is authoritative; the local
+  // project list is the floor for sessions on a pre-migration schema.
+  const n = Number(currentProfile?.projects_created);
+  return Math.max(Number.isFinite(n) ? n : 0, getProjects().length);
+}
+
+function wpFreeRunsCap() { return wpIsFreePlan() ? WP_FREE_RUNS_CAP : null; }
+
+function wpFreeRunsRemaining(proj) {
+  if (!wpIsFreePlan() || !proj) return null;    // null = uncapped / no project
+  return Math.max(0, WP_FREE_RUNS_CAP - (Number(proj.complianceRuns) || 0));
+}
+
+function wpProjectCapReached() {
+  return wpIsFreePlan() && wpProjectsCreated() >= 1;
+}
+
+// The paywall. Plain copy, no countdown, no dark patterns: what you have
+// stays yours (readable and exportable), here is what upgrading adds, and a
+// human path for people who would rather hand the job to Pro Waste.
+function showPaywall(reason) {
+  if (typeof logEvent === 'function') logEvent('paywall_shown', { reason: reason || null });
+  const copy = reason === 'project_cap'
+    ? { title: 'Your free plan includes one project',
+        body: 'You’ve used your free project. Everything in it stays yours — every tool keeps working and every export stays available. Upgrading adds unlimited projects and daily AI use.' }
+    : { title: 'You’ve used both free compliance checks on this project',
+        body: 'Your two included checks for this project are done. The results are saved and stay readable and exportable. Upgrading adds 10 checks a day across unlimited projects.' };
+  let m = document.getElementById('wp-paywall-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'wp-paywall-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11500;align-items:center;justify-content:center;';
+    m.innerHTML = `
+      <div style="background:var(--white);border-radius:16px;width:440px;max-width:94vw;padding:28px 30px;">
+        <div id="wp-paywall-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:10px;"></div>
+        <div id="wp-paywall-body" style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:20px;"></div>
+        <button onclick="wpPaywallUpgrade()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Upgrade — from $149/month</button>
+        <a href="https://www.prowaste.au/request-a-fee-proposal" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:12px;font-size:12.5px;color:var(--teal);font-weight:600;text-decoration:underline;">Or get a fee proposal — Pro Waste prepares it for you</a>
+        <button onclick="closePaywall()" style="display:block;margin:14px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Not now</button>
+      </div>`;
+    m.addEventListener('click', ev => { if (ev.target === m) closePaywall(); });
+    document.body.appendChild(m);
+  }
+  m.querySelector('#wp-paywall-title').textContent = copy.title;
+  m.querySelector('#wp-paywall-body').textContent = copy.body;
+  m.style.display = 'flex';
+}
+function closePaywall() {
+  const m = document.getElementById('wp-paywall-modal');
+  if (m) m.style.display = 'none';
+}
+function wpPaywallUpgrade() {
+  closePaywall();
+  showPricing();
+}
+
 function escOrgSafe(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function updateProfileUI() {
   if (!currentProfile) return;
   const p = currentProfile;
   const name = p.full_name || currentUser?.email || 'User';
   const initials = name.split(' ').filter(Boolean).map(n=>n[0]).join('').substring(0,2).toUpperCase();
-  const tierLabels = { standard:'Standard', council_paid:'Council', lite:'Lite', none:'—' };
+  const tierLabels = { standard:'Standard', founding:'Founding', council_paid:'Council', none:'Free' };
   const roleLabels = { architect:'Architect', planner:'Town Planner', developer:'Developer', council:'Council Officer', consultant:'Consultant' };
 
   // Sidebar
@@ -13397,7 +13672,7 @@ function updateProfileUI() {
         <div style="font-weight:600;font-size:13px;">${tierDisplay[p.tier]||'Unknown'}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Manage billing via Stripe customer portal</div>
       </div>
-      ${p.tier !== 'lite' && p.tier !== 'none'
+      ${p.tier && p.tier !== 'none'
         ? (p.trial_ends_at && new Date(p.trial_ends_at) > new Date()
             ? `<span style="background:#FFF3E0;color:#E65100;font-size:10px;font-weight:700;padding:3px 10px;border-radius:10px;">Trial — first charge ${new Date(p.trial_ends_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</span>`
             : '<span style="background:#E8F5E9;color:#2E7D32;font-size:10px;font-weight:700;padding:3px 10px;border-radius:10px;">Active</span>')
@@ -13412,6 +13687,9 @@ function showApp() {
   // Orgs load in the background: accepts pending invites, restores the saved
   // workspace context, and re-fetches projects if that context is an org.
   if (typeof loadOrgs === 'function') loadOrgs();
+  // Calculator handoff (?calc=…) applies once the app is visible; the function
+  // self-clears its sessionStorage payload, so repeated showApp calls are safe.
+  setTimeout(() => { if (typeof applyCalcPrefill === 'function') applyCalcPrefill(); }, 400);
 }
 
 // ── PROJECTS — SUPABASE ───────────────────────────────────────────────────
@@ -13497,6 +13775,9 @@ async function deleteProjectFromDB(id) {
 // Override createProject to also save to DB
 const _origCreateProject = createProject;
 window.createProject = async function() {
+  // Re-check at the moment of creation — the modal may have been opened
+  // before the cap was hit (or by an older cached UI state).
+  if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { closeModal(); showPaywall('project_cap'); return; }
   const name = document.getElementById('np-name').value.trim();
   if (!name) { alert('Please enter a project name.'); return; }
   const project = {
@@ -13528,6 +13809,8 @@ window.createProject = async function() {
   const projects = getProjects();
   projects.unshift(project);
   saveProjects(projects);
+  if (typeof logEvent === 'function') logEvent('project_created', { project_id: project.id, devType: project.devType || null, state: project.state || null });
+  if (currentProfile) currentProfile.projects_created = (Number(currentProfile.projects_created) || 0) + 1;
   if (NP.buf) storeProjectPdf(project.id, NP.buf, NP.name); // async
   await saveProjectToDB(project);
   npReset();
@@ -13594,7 +13877,7 @@ function incrementCouncilReviews() {
 function applyRoleAccess() {
   const role = currentProfile?.role || 'architect';
   const config = ROLE_CONFIG[role] || ROLE_CONFIG.architect;
-  const tier = currentProfile?.tier || 'lite';
+  const tier = currentProfile?.tier || 'none';
   const isCouncil = role === 'council';
   
   const isPaidCouncil = tier === 'standard' || tier === 'council_paid';
@@ -13631,13 +13914,13 @@ function applyRoleAccess() {
   // getCouncilReviewsThisMonth()/incrementCouncilReviews() still track usage.
 
   // Update user tier display in sidebar
-  const tierLabels = { lite: 'Lite', standard: 'Standard', council_paid: 'Council — Unlimited' };
+  const tierLabels = { none: 'Free', standard: 'Standard', founding: 'Founding', council_paid: 'Council — Unlimited' };
   const roleLabel = config.label;
   if (document.querySelector('.user-tier')) {
     document.querySelector('.user-tier').textContent =
       (currentProfile?.company_name || '') +
       ' · ' + roleLabel +
-      (tier !== 'lite' ? ' · ' + (tierLabels[tier] || tier) : '');
+      ' · ' + (tierLabels[tier] || tier);
   }
 }
 
@@ -13668,136 +13951,10 @@ window.loadProfile = async function() {
   applyRoleAccess();
 };
 
-// ── GUEST / LITE MODE ─────────────────────────────────────────────────────
-const LITE_CAPS = {
-  calculator: 3,   // calculations per month
-  layout: 2,       // DXF exports per month  
-  compliance: 1,   // compliance scans per month
-  upload: 1,       // AI plan uploads per month
-};
-
-function getLiteCap(tool) {
-  const key = 'pw_lite_' + tool + '_' + new Date().toISOString().substring(0,7);
-  return parseInt(localStorage.getItem(key) || '0');
-}
-function incrementLiteCap(tool) {
-  const key = 'pw_lite_' + tool + '_' + new Date().toISOString().substring(0,7);
-  localStorage.setItem(key, String(getLiteCap(tool) + 1));
-}
-function liteCapRemaining(tool) {
-  return Math.max(0, (LITE_CAPS[tool] || 0) - getLiteCap(tool));
-}
-
-function continueAsGuest() {
-  currentUser = null;
-  currentProfile = { role: 'guest', tier: 'lite' };
-  document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app-content').style.display = 'flex';
-
-  // Update the account chip to show guest state (ids, not the pre-rail classes)
-  const gset = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
-  gset('user-avatar-initials', '?');
-  gset('user-display-name', 'Guest User');
-  gset('user-display-tier', 'Lite — Free (capped)');
-
-  // Replace the profile action with a sign-in prompt
-  const gpill = document.getElementById('user-pill-btn');
-  if (gpill) gpill.onclick = () => {
-    document.getElementById('app-content').style.display = 'none';
-    document.getElementById('auth-screen').style.display = 'flex';
-  };
-
-  // Add lite mode cap banner to topbar
-  addLiteCapBanner();
-  applyGuestAccess();
-}
-
-function addLiteCapBanner() {
-  const existing = document.getElementById('lite-cap-banner');
-  if (existing) return;
-  const banner = document.createElement('div');
-  banner.id = 'lite-cap-banner';
-  banner.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:8px;';
-  banner.innerHTML = `
-    <span style="font-size:11px;color:var(--muted);">Lite mode</span>
-    <button onclick="document.getElementById('auth-screen').style.display='flex';document.getElementById('app-content').style.display='none';"
-      style="background:var(--teal);color:#fff;border:none;border-radius:7px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">
-      Sign up for full access
-    </button>`;
-  const topbarActions = document.querySelector('.topbar-actions');
-  if (topbarActions) topbarActions.prepend(banner);
-}
-
-function applyGuestAccess() {
-  // All tools visible but capped — show remaining caps in nav
-  const tools = ['calculator','layout','upload','compliance'];
-  tools.forEach(tool => {
-    const navEl = document.getElementById('nav-' + tool);
-    if (!navEl) return;
-    const remaining = liteCapRemaining(tool);
-    const existing = navEl.querySelector('.cap-remaining');
-    if (existing) existing.remove();
-    if (LITE_CAPS[tool]) {
-      const badge = document.createElement('span');
-      badge.className = 'cap-remaining';
-      badge.style.cssText = `font-size:9px;padding:1px 5px;border-radius:8px;font-weight:700;margin-left:auto;${remaining <= 0 ? 'background:#FFEBEE;color:#C62828;' : 'background:var(--lt);color:var(--teal);'}`;
-      badge.textContent = remaining <= 0 ? 'Capped' : remaining + ' left';
-      navEl.appendChild(badge);
-    }
-  });
-}
-
-function checkLiteCap(tool, onAllowed, onCapped) {
-  // If logged in paid user, always allow
-  const paidTiers = ['standard', 'founding', 'council_paid'];
-  if (paidTiers.includes(currentProfile?.tier)) { onAllowed(); return; }
-  // Guest or lite
-  const remaining = liteCapRemaining(tool);
-  if (remaining <= 0) {
-    onCapped(tool);
-  } else {
-    onAllowed();
-  }
-}
-
-function showCapUpgrade(tool) {
-  const toolNames = { calculator:'Bin Calculator', layout:'Layout Generator', compliance:'Compliance Checker', upload:'AI Plan Upload' };
-  const overlay = document.createElement('div');
-  overlay.className = 'upgrade-overlay';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:9998;';
-  overlay.innerHTML = `
-    <div class="upgrade-card">
-      <div class="upgrade-icon">🔒</div>
-      <div class="upgrade-title">Monthly limit reached — ${toolNames[tool] || tool}</div>
-      <div class="upgrade-sub">
-        You've used your free ${LITE_CAPS[tool]} ${tool === 'calculator' ? 'calculations' : 'uses'} for this month on the Lite plan.<br><br>
-        Sign up for <strong>Waste Planner Standard</strong> for unlimited access to all tools, project saving, and a 25–30% discount on Pro Waste Consultants WMP fees.
-      </div>
-      <button class="upgrade-btn" onclick="document.getElementById('auth-screen').style.display='flex';document.getElementById('app-content').style.display='none';this.closest('.upgrade-overlay').remove();switchAuthTab('signup',document.querySelectorAll('.auth-tab')[1])">
-        Create account — from $149/month
-      </button>
-      <button class="upgrade-btn secondary" onclick="this.closest('.upgrade-overlay').remove()">Continue on Lite</button>
-    </div>`;
-  document.body.appendChild(overlay);
-}
-
-// Override showScreen to check caps for guest users
-const _origShowScreen = showScreen;
-window.showScreen = function(name, navEl) {
-  const capTools = ['calculator','layout','compliance']; // 'upload' excluded — cap enforced at extraction time
-  const paidTiers = ['standard', 'founding', 'council_paid'];
-  // Only apply caps to true guests (no currentUser) or explicit lite/none tier
-  const isGuestOrLite = !currentUser && (currentProfile?.tier === 'lite' || !currentProfile?.tier);
-  const isExplicitLite = currentUser && (currentProfile?.tier === 'lite' || currentProfile?.tier === 'none');
-  if ((isGuestOrLite || isExplicitLite) && !paidTiers.includes(currentProfile?.tier) && capTools.includes(name)) {
-    checkLiteCap(name,
-      () => { _origShowScreen(name, navEl); },
-      (tool) => { showCapUpgrade(tool); }
-    );
-    return;
-  }
-  _origShowScreen(name, navEl);
-};
+// ── ANONYMOUS MODE: REMOVED ───────────────────────────────────────────────
+// There is no guest path and no monthly cap. Every tool requires a signed-in
+// account; the free plan is one project with everything unlocked (see
+// wpIsFreePlan and the paywall). Do not reintroduce a signed-out mode.
 
 // Show council note when council role selected at signup
 document.getElementById('signup-role')?.addEventListener('change', function() {
@@ -13824,7 +13981,7 @@ document.addEventListener('keydown', e => {
     <!-- Plan selection view -->
     <div id="pricing-plan-view">
       <div class="pricing-modal-title">Upgrade to Waste Planner</div>
-      <div class="pricing-modal-sub">Every plan starts with a 14-day free trial — full access, no charge until day 15. Cancel anytime.</div>
+      <div class="pricing-modal-sub">Your free project and everything in it stays yours. Upgrade for unlimited projects and daily AI use — cancel anytime.</div>
 
       <div class="pricing-cards">
         <div class="pricing-card featured">
@@ -13841,7 +13998,7 @@ document.addEventListener('keydown', e => {
             <li>Project history + file saving</li>
             <li>25–30% off Pro Waste WMP fees</li>
           </ul>
-          <button class="pricing-cta primary" onclick="selectPlan('founding')">Start 14-day free trial →</button>
+          <button class="pricing-cta primary" onclick="selectPlan('founding')">Upgrade — $149/month →</button>
         </div>
 
         <div class="pricing-card">
@@ -13854,7 +14011,7 @@ document.addEventListener('keydown', e => {
             <li>Priority support</li>
             <li>API access (coming soon)</li>
           </ul>
-          <button class="pricing-cta secondary" onclick="selectPlan('standard')">Start free trial at standard →</button>
+          <button class="pricing-cta secondary" onclick="selectPlan('standard')">Upgrade — $249/month →</button>
         </div>
       </div>
 
@@ -13874,11 +14031,11 @@ document.addEventListener('keydown', e => {
         <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">Card details</label>
         <div id="card-element" style="border:1.5px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;min-height:44px;"></div>
         <div id="card-errors" style="font-size:12px;color:#C62828;margin-bottom:8px;min-height:18px;"></div>
-        <button id="stripe-submit-btn" onclick="handlePayment()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Start 14-day free trial</button>
+        <button id="stripe-submit-btn" onclick="handlePayment()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Subscribe →</button>
         <div style="text-align:center;margin-top:8px;">
           <button onclick="backToPricing()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;font-family:inherit;">← Back to plans</button>
         </div>
-        <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--muted);margin-top:10px;">🔒 Secured by Stripe · No charge for 14 days · GST included · Cancel anytime</div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--muted);margin-top:10px;">🔒 Secured by Stripe · GST included · Cancel anytime</div>
       </div>
     </div>
 
@@ -13962,7 +14119,7 @@ function selectPlan(plan) {
   document.getElementById('payment-plan-price').textContent = label.price;
   showModalView('payment');
   document.getElementById('stripe-submit-btn').disabled = false;
-  document.getElementById('stripe-submit-btn').textContent = 'Start 14-day free trial';
+  document.getElementById('stripe-submit-btn').textContent = 'Subscribe →';
   document.getElementById('card-errors').textContent = '';
   // Mount Stripe card element — remount if needed
   setTimeout(() => {
@@ -14014,7 +14171,7 @@ async function handlePayment() {
 
     if (error) {
       document.getElementById('card-errors').textContent = error.message;
-      btn.disabled = false; btn.textContent = 'Start 14-day free trial';
+      btn.disabled = false; btn.textContent = 'Subscribe →';
       return;
     }
 
@@ -14026,7 +14183,7 @@ async function handlePayment() {
       const newUser = await handleSignup();
       if (!newUser) {
         document.getElementById('card-errors').textContent = 'Account creation failed: ' + (lastSignupError || 'unknown error — check that this email isn\u2019t already registered, or try Sign In.');
-        btn.disabled = false; btn.textContent = 'Start 14-day free trial';
+        btn.disabled = false; btn.textContent = 'Subscribe →';
         return;
       }
       // Sign them in using captured credentials
@@ -14043,9 +14200,11 @@ async function handlePayment() {
       }
     }
 
-    // Create the REAL subscription server-side: 14-day free trial, card on
-    // file, tier written by the billing system (the browser can no longer set
-    // its own tier — the DB trigger blocks it).
+    // Create the REAL subscription server-side: billed from day one (no
+    // trial), tier written by the billing system (the browser can no longer
+    // set its own tier — the DB trigger blocks it). The create-subscription
+    // edge function must drop trial_period_days to match; until it does, any
+    // trial_ends_at it returns is displayed honestly below.
     const { data: { session } } = await sb.auth.getSession();
     if (!session) throw new Error('No session after sign-in');
     const subResp = await fetch(`${AI_PROXY_BASE}/create-subscription`, {
@@ -14056,31 +14215,33 @@ async function handlePayment() {
     const subOut = await subResp.json().catch(() => ({}));
     if (!subResp.ok) {
       document.getElementById('card-errors').textContent = subOut?.error || 'Subscription setup failed. You have not been charged.';
-      btn.disabled = false; btn.textContent = 'Start 14-day free trial';
+      btn.disabled = false; btn.textContent = 'Subscribe →';
       return;
     }
     if (currentProfile) { currentProfile.tier = subOut.tier; currentProfile.trial_ends_at = subOut.trial_ends_at; }
     if (typeof updateProfileUI === 'function') updateProfileUI();
 
+    if (typeof logEvent === 'function') logEvent('subscribed', { plan: selectedPlan || null, tier: subOut.tier || null });
     closePricing();
     showApp();
-    const firstCharge = subOut.trial_ends_at ? new Date(subOut.trial_ends_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long' }) : '';
-    alert(`🎉 Your 14-day free trial of ${PLAN_LABELS[selectedPlan].name} has started!\n\nFull access from right now. Your first charge is on ${firstCharge} — cancel anytime before then and you won't be billed.`);
+    if (subOut.trial_ends_at) {
+      // Server still granted a trial (edge function not yet de-trialed) — say
+      // what actually happened rather than pretending it billed today.
+      const firstCharge = new Date(subOut.trial_ends_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long' });
+      alert(`🎉 You're on ${PLAN_LABELS[selectedPlan].name}!\n\nFull access from right now. Your first charge is on ${firstCharge}.`);
+    } else {
+      alert(`🎉 You're on ${PLAN_LABELS[selectedPlan].name}!\n\nUnlimited projects and daily AI use are live now. Manage or cancel anytime from your profile.`);
+    }
     applyRoleAccess();
-    document.getElementById('lite-cap-banner')?.remove();
     document.getElementById('sidebar-upgrade-btn')?.remove();
 
   } catch(err) {
     console.error('Payment error:', err);
     document.getElementById('card-errors').textContent = 'Something went wrong. Please try again. You have not been charged.';
-    btn.disabled = false; btn.textContent = 'Start 14-day free trial';
+    btn.disabled = false; btn.textContent = 'Subscribe →';
   }
 }
 
-// Hook upgrade buttons to show pricing modal
-window.showCapUpgrade = function(tool) {
-  showPricing();
-};
 window.showCouncilUpgrade = function() {
   selectPlan('council');
   document.getElementById('pricing-modal').classList.add('active');
@@ -14089,7 +14250,7 @@ window.showCouncilUpgrade = function() {
 
 // Add upgrade button to topbar for lite users
 function addUpgradeToSidebar() {
-  if (currentProfile?.tier !== 'lite' && currentProfile?.role !== 'guest') return;
+  if (!(typeof wpIsFreePlan === 'function' && wpIsFreePlan())) return;
   const actions = document.querySelector('.topbar-actions');
   if (!actions || document.getElementById('sidebar-upgrade-btn')) return;
   const btn = document.createElement('button');
@@ -19848,6 +20009,7 @@ function wsLayoutExportDXF() {
   a.download = 'wasteplanner-layout-p' + (WS.currentPage || 1) + '.dxf';
   a.click();
   if (currentProjectId) blob.arrayBuffer().then(buf => docStore(currentProjectId, buf, a.download, 'Export'));
+  if (typeof logEvent === 'function') logEvent('export', { type: 'layout_dxf', project_id: currentProjectId || null });
   wsLayoutStatus('DXF exported — mm units, bins on stream layers, rooms on BINROOM.');
 }
 
@@ -21665,6 +21827,7 @@ function wsSweptDXF(){
   a.download = 'swept_paths.dxf';
   a.click();
   if (currentProjectId) blob.arrayBuffer().then(buf => docStore(currentProjectId, buf, a.download, 'Export'));
+  if (typeof logEvent === 'function') logEvent('export', { type: 'swept_dxf', project_id: currentProjectId || null });
 }
 
 function wsRenderSweptLayer() {
@@ -22492,6 +22655,7 @@ async function wsSheetExport() {
     const fname = [s.projectName || 'wasteplanner', s.drawingNo || s.title, 'rev' + (s.rev || 'A')]
       .join('-').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/-+/g, '-').toLowerCase() + '.pdf';
     doc.save(fname);
+    if (typeof logEvent === 'function') logEvent('export', { type: 'sheet_pdf', project_id: currentProjectId || null });
     const blob = doc.output('blob');
     if (currentProjectId && typeof docStore === 'function') {
       blob.arrayBuffer()
@@ -23157,14 +23321,7 @@ async function runPlanExtraction() {
   }
   if (!_planPdfData) return;
 
-  // Cap check for guest/lite users — only blocks extraction, not opening the screen
-  const paidTiers = ['standard', 'founding', 'council_paid'];
-  if (!paidTiers.includes(currentProfile?.tier)) {
-    if (liteCapRemaining('upload') <= 0) {
-      showCapUpgrade('upload');
-      return;
-    }
-  }
+  if (!currentUser) { promptFreeSignup(); return; }
 
   document.getElementById('pu-no-key').style.display = 'none';
   document.getElementById('pu-progress').style.display = 'block';
@@ -23262,12 +23419,6 @@ OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
       showPlanResults(extracted);
       btn.disabled = false; btn.style.opacity = '1';
     }, 400);
-
-    // Increment usage cap for guest/lite users
-    if (currentProfile?.tier !== 'standard' && currentProfile?.tier !== 'founding' && currentProfile?.tier !== 'council_paid') {
-      incrementLiteCap('upload');
-      applyGuestAccess();
-    }
 
   } catch(err) {
     document.getElementById('pu-progress').style.display = 'none';
@@ -24028,13 +24179,13 @@ async function submitToCouncil() {
 document.addEventListener('DOMContentLoaded', () => {
   const legal = document.getElementById('account-legal');
   if (legal) {
+    // Terms + Privacy are the standalone pages (same repo, linkable from
+    // anywhere); the AI policy stays an in-app modal — it has no page yet.
     legal.innerHTML = [
-      ['Terms', 'terms'],
-      ['Privacy', 'privacy'],
-      ['AI Policy', 'ai']
-    ].map(([label, doc]) =>
-      `<a href="#" onclick="showLegal('${doc}');return false;" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">${label}</a>`
-    ).join('<span style="color:var(--border);font-size:10px;margin:0 8px;">·</span>');
+      `<a href="terms.html" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Terms</a>`,
+      `<a href="privacy.html" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Privacy</a>`,
+      `<a href="#" onclick="showLegal('ai');return false;" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">AI Policy</a>`
+    ].join('<span style="color:var(--border);font-size:10px;margin:0 8px;">·</span>');
   }
 });
 </script>
@@ -25487,6 +25638,7 @@ async function wmpgExportDocx(skipQA) {
     const blob = await D.Packer.toBlob(doc);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = fileLabel; a.click();
+    if (typeof logEvent === 'function') logEvent('export', { type: 'wmp_docx', project_id: WMPG.projectId || currentProjectId || null });
 
     // Record the revision, bump for next time, and file a copy on the project.
     d.history = (d.history || []).concat([{ ver:d.ver, status:d.status || 'Draft', date:d.date, author:d.author }]);
@@ -26113,6 +26265,7 @@ async function wmpgFinalizeExport(blob, note) {
   const d = WMPG.data;
   const fileLabel = wmpgFileName('docx');
   if (typeof logEvent === 'function') logEvent('wmp_exported', { ver: d.ver || null });
+  if (typeof logEvent === 'function') logEvent('export', { type: 'wmp_docx', project_id: WMPG.projectId || null });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = fileLabel; a.click();
   d.history = (d.history || []).concat([{ ver:d.ver, status:d.status || 'Draft', date:d.date, author:d.author }]);
@@ -26840,6 +26993,7 @@ async function pkgBuild() {
     const blob = new Blob([bytes], { type:'application/pdf' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = fileName; a.click();
+    if (typeof logEvent === 'function') logEvent('export', { type: 'issue_package', project_id: currentProjectId || null });
 
     try {
       await docStore(currentProjectId, bytes.buffer, fileName, 'WMP');
