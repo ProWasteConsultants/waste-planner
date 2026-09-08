@@ -1784,9 +1784,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="ws-mark-btn" id="ws-mark-btn-text"     onclick="wsMarkMode('text')"><span class="ws-mark-swatch" style="background:#ECEFF1;"></span>T Callout</button>
             <button class="ws-mark-btn" id="ws-mark-btn-measure"  onclick="wsMarkMode('measure')"><span class="ws-mark-swatch" style="background:#00E5FF;"></span>↔ Measure length</button>
             <button class="ws-mark-btn" id="ws-mark-btn-area"     onclick="wsMarkMode('area')"><span class="ws-mark-swatch" style="background:#7FD8D8;"></span>⬠ Area</button>
-            <button class="ws-mark-btn" id="ws-mark-btn-disposal" onclick="wsMarkMode('disposal')"><span class="ws-mark-swatch" style="background:#4BED12;"></span>→ Disposal route</button>
-            <button class="ws-mark-btn" id="ws-mark-btn-transfer" onclick="wsMarkMode('transfer')"><span class="ws-mark-swatch" style="background:#008080;"></span>⇢ Transfer route (resi)</button>
-            <button class="ws-mark-btn" id="ws-mark-btn-transferc" onclick="wsMarkMode('transferc')" style="margin-bottom:0;"><span class="ws-mark-swatch" style="background:#B38600;"></span>⇢ Transfer route (comm)</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-disposal" onclick="wsMarkMode('disposal')"><span class="ws-mark-swatch" style="background:#4BED12;"></span>→ Disposal route (resi)</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-transferc" onclick="wsMarkMode('transferc')"><span class="ws-mark-swatch" style="background:#00B3B3;"></span>→ Disposal route (comm)</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-transfer" onclick="wsMarkMode('transfer')" style="margin-bottom:0;"><span class="ws-mark-swatch" style="background:#008080;"></span>⇢ Bin transfer route</button>
           </div>
         </div>
         </div>
@@ -18729,7 +18729,8 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
   (slot.markups || []).forEach(m => {
     const layer = m.kind === 'text' ? 'A-ANNO-TEXT'
       : (m.kind === 'area' || m.kind === 'measure') ? 'A-ANNO-DIMS' : 'E-WASTE-ROUTE';
-    const aci = m.kind === 'disposal' ? 3 : m.kind === 'transfer' ? 2 : m.kind === 'transferc' ? 30 : 4;
+    // nearest R12 ACI to each route colour: green, cyan, blue (no true colour in AC1009)
+    const aci = m.kind === 'disposal' ? 3 : m.kind === 'transfer' ? 5 : m.kind === 'transferc' ? 4 : 4;
     if (m.kind === 'text') {
       const boxP = m.pts.length >= 2 ? m.pts[1] : m.pts[0];
       if (m.pts.length >= 2) d += poly(layer, 5, [[boxP.x, boxP.y], [m.pts[0].x, m.pts[0].y]]);
@@ -19916,12 +19917,12 @@ const WS_MARK_STYLE = {
   // aids; the renderer scales dots, dashes and arrowheads off `w` to match.
   measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false, w: 2 },
   area:     { col: '#7FD8D8', label: 'Area',           closed: true,  arrow: false, w: 2 },
-  disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 6 },
-  // Transfer routes carry the res/com colour pair the room outlines already
-  // use (wsRoomStroke): teal residential, dark-gold commercial. Saved 'transfer'
-  // markups predate the split and stay residential.
-  transfer: { col: '#008080', label: 'Transfer route (residential)', closed: false, arrow: true,  w: 6 },
-  transferc:{ col: '#B38600', label: 'Transfer route (commercial)',  closed: false, arrow: true,  w: 6 },
+  // Kind ids predate the naming and stay put so saved drawings keep their
+  // routes: 'disposal' is the residential disposal route, 'transferc' the
+  // commercial one, and 'transfer' the bin transfer to the collection point.
+  disposal: { col: '#4BED12', label: 'Waste disposal route (residential)', closed: false, arrow: true,  w: 6 },
+  transferc:{ col: '#00B3B3', label: 'Waste disposal route (commercial)',  closed: false, arrow: true,  w: 6 },
+  transfer: { col: '#008080', label: 'Bin transfer route to collection point', closed: false, arrow: true,  w: 6 },
   text:     { col: '#ECEFF1', label: 'Note',           closed: false, arrow: false, w: 2 },
 };
 // ── MARKUP MODE SUSPEND / RESTORE ────────────────────────────────────────────
@@ -22800,9 +22801,9 @@ function wsLegendItems(layers, content) {
     if (c.aisle) out.push({ key: 'aisle', label: 'Access aisle — keep clear', style: 'hatch', col: '#F5B400' });
   }
   if (on('markups')) {
-    if (c.disposal) out.push({ key: 'disposal', label: 'Waste disposal route', style: 'arrow', col: '#4BED12' });
-    if (c.transfer) out.push({ key: 'transfer', label: 'Residential transfer route', style: 'arrow', col: '#008080' });
-    if (c.transferc) out.push({ key: 'transferc', label: 'Commercial transfer route', style: 'arrow', col: '#B38600' });
+    if (c.disposal) out.push({ key: 'disposal', label: 'Waste disposal route (residential)', style: 'arrow', col: '#4BED12' });
+    if (c.transferc) out.push({ key: 'transferc', label: 'Waste disposal route (commercial)', style: 'arrow', col: '#00B3B3' });
+    if (c.transfer) out.push({ key: 'transfer', label: 'Bin transfer route to collection point', style: 'arrow', col: '#008080' });
     if (c.callout) out.push({ key: 'callout', label: 'Callout / note', style: 'leader', col: '#8A8A8A' });
     if (c.measure) out.push({ key: 'measure', label: 'Measured dimension', style: 'dim', col: '#00A0B0' });
     if (c.area) out.push({ key: 'area', label: 'Measured area', style: 'poly', col: '#4FA3A3' });
