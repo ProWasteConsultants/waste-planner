@@ -17716,13 +17716,17 @@ function wsLayoutBind() {
         if (eq) grabbed = { kind: 'equip', id: eq.id, offX: p.x - eq.x, offY: p.y - eq.y, moved: false, locked: !!eq.locked };
       }
     }
-    // callouts: draggable box and re-aimable arrow tip (no selection pill — pure drag)
+    // callouts: click selects (so Del deletes, same as every markup); the box
+    // drags the callout, the arrow tip re-aims it
     if (!grabbed && WS.layers.markups !== false) {
       const mh = wsLayoutHitCallout(p.x, p.y);
       if (mh) {
+        wsSelSet([mh.id], 'markup');
         WS_LAYOUT.drag = { kind: 'mark', part: mh.part, id: mh.id, offX: p.x - mh.px, offY: p.y - mh.py, moved: false };
         WS.isPanning = false;
-        wsLayoutStatus(mh.part === 'tip' ? 'Re-aiming the callout arrow — release to set.' : 'Moving the callout — release to place.');
+        wsLayoutStatus(mh.part === 'tip' ? 'Re-aiming the callout arrow — release to set.'
+          : 'Callout selected — drag to move it, drag the arrowhead to re-aim, Del deletes it.');
+        wsRenderLayoutLayer();
         e.preventDefault();
         return;
       }
@@ -20129,6 +20133,19 @@ function wsRenderMarkups(mk, mpp) {
       const t = mk('text', { x: box.x, y: box.y + 4.5 * F, fill: CALLOUT_TEXT, 'font-size': fs(13),
         'font-weight': 600, 'text-anchor': 'middle' });
       t.textContent = label;
+      if (sel) {
+        // dashed ring around the box and the arrow target — the same cyan the
+        // other selections wear. Screen-px sized, and gone on export because
+        // the export clears the selection before rendering.
+        const S = wsCanvasPerScreen();
+        mk('rect', { x: (bx - 3 * S).toFixed(1), y: (by - 3 * S).toFixed(1),
+          width: (bw + 6 * S).toFixed(1), height: (bh + 6 * S).toFixed(1),
+          rx: (4 * S).toFixed(1), fill: 'none', stroke: '#00d4d4',
+          'stroke-width': (1.6 * S).toFixed(2),
+          'stroke-dasharray': (4 * S).toFixed(1) + ' ' + (3 * S).toFixed(1) });
+        if (pts.length >= 2) mk('circle', { cx: target.x.toFixed(1), cy: target.y.toFixed(1),
+          r: (6 * S).toFixed(1), fill: 'none', stroke: '#00d4d4', 'stroke-width': (1.6 * S).toFixed(2) });
+      }
       return;
     }
     const seq = st.closed ? pts.concat([pts[0]]) : pts;

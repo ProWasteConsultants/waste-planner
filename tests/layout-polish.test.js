@@ -1803,6 +1803,18 @@ test('markup editing is wired end to end: select, drag, insert, remove, delete',
   assert.ok(rend.includes("if (sel) mk('polyline'"), 'the halo draws only when selected');
 });
 
+test('callouts select on click and delete through the same markup selection', () => {
+  const down = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousedown'"),
+                            SOURCE.indexOf("area.addEventListener('contextmenu'"));
+  assert.ok(down.includes("wsSelSet([mh.id], 'markup')"), 'clicking a callout selects it');
+  // deletion is the kind-agnostic markup branch pinned above — a selected
+  // callout is just a markup with kind "text", so Del reaches it for free
+  const rend = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wpEngageNudgeUpdate'));
+  const textBranch = rend.slice(rend.indexOf("if (kind === 'text')"), rend.indexOf('const seq = st.closed'));
+  assert.ok(textBranch.includes("if (sel) {"), 'the selected callout wears a ring');
+  assert.ok(textBranch.includes("stroke: '#00d4d4'"), 'in the same cyan as every other selection');
+});
+
 test('wsMarkConstrainPt: Shift locks the next route leg to 90°', () => {
   const prev = { x: 100, y: 100 };
   // dominant-axis lock, same rule as the room drag (wsSnapAxis)
