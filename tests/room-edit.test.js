@@ -437,7 +437,7 @@ test('the markups card lives in the side stack below the layers card', () => {
   const iMark = stack.indexOf('id="ws-markup-panel"');
   assert.ok(iLayers > 0 && iMark > 0, 'both cards must be inside the side stack');
   assert.ok(iMark > iLayers, 'the markups card belongs below the layers card');
-  for (const kind of ['text', 'measure', 'area', 'disposal', 'transfer'])
+  for (const kind of ['text', 'measure', 'area', 'disposal', 'transfer', 'transferc'])
     assert.match(stack, new RegExp(`wsMarkMode\\('${kind}'\\)`), `${kind} markup button missing from the card`);
   // and they are gone from the layout tab's toolbar
   const panel = SOURCE.slice(SOURCE.indexOf('<div class="wsl-group-hd">Markups</div>'));

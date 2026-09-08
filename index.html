@@ -1785,7 +1785,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="ws-mark-btn" id="ws-mark-btn-measure"  onclick="wsMarkMode('measure')"><span class="ws-mark-swatch" style="background:#00E5FF;"></span>↔ Measure length</button>
             <button class="ws-mark-btn" id="ws-mark-btn-area"     onclick="wsMarkMode('area')"><span class="ws-mark-swatch" style="background:#7FD8D8;"></span>⬠ Area</button>
             <button class="ws-mark-btn" id="ws-mark-btn-disposal" onclick="wsMarkMode('disposal')"><span class="ws-mark-swatch" style="background:#4BED12;"></span>→ Disposal route</button>
-            <button class="ws-mark-btn" id="ws-mark-btn-transfer" onclick="wsMarkMode('transfer')" style="margin-bottom:0;"><span class="ws-mark-swatch" style="background:#008080;"></span>⇢ Transfer route</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-transfer" onclick="wsMarkMode('transfer')"><span class="ws-mark-swatch" style="background:#008080;"></span>⇢ Transfer route (resi)</button>
+            <button class="ws-mark-btn" id="ws-mark-btn-transferc" onclick="wsMarkMode('transferc')" style="margin-bottom:0;"><span class="ws-mark-swatch" style="background:#B38600;"></span>⇢ Transfer route (comm)</button>
           </div>
         </div>
         </div>
@@ -16162,6 +16163,19 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
       wsRenderLayoutLayer(); wsLayoutAutosave();
       return;
     }
+    // A selected route / measure / area deletes as one markup, points and all.
+    if (WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel) {
+      const mi = (slot.markups || []).findIndex(x => x.id === WS_LAYOUT.sel);
+      if (mi >= 0) {
+        wsLayoutSnapshot();
+        const lbl = (WS_MARK_STYLE[slot.markups[mi].kind] || {}).label || 'Markup';
+        slot.markups.splice(mi, 1);
+        wsSelSet([]);
+        wsLayoutStatus(lbl + ' deleted.');
+        wsRenderLayoutLayer(); wsLayoutAutosave();
+        return;
+      }
+    }
     const selRows = wsSelected(slot);
     if (selRows.length > 1) {
       const live = selRows.filter(r => !r.item.locked);
@@ -17712,6 +17726,42 @@ function wsLayoutBind() {
         e.preventDefault();
         return;
       }
+      // routes, measures and areas: click selects; corner handles drag, the
+      // selected path's ⊕ midpoints insert a corner, the line body drags the
+      // whole path, Alt/right-click a corner removes it, Del deletes the path.
+      const hm = wsLayoutHitMarkup(wsLayoutSlot().markups, p.x, p.y, wsHandleHitR(),
+        8 * wsCanvasPerScreen(), WS_LAYOUT.selKind === 'markup' ? WS_LAYOUT.sel : null);
+      if (hm) {
+        const m = wsLayoutSlot().markups.find(x => x.id === hm.id);
+        if (e.button === 2 && hm.part !== 'vertex') return;   // right-click acts on corners only
+        wsSelSet([m.id], 'markup');
+        WS.isPanning = false;
+        if (hm.part === 'vertex' && (e.altKey || e.button === 2)) {
+          if (m.pts.length > (m.kind === 'area' ? 3 : 2)) {
+            wsLayoutSnapshot();
+            wsMarkDeleteVertex(m, hm.vi);
+            wsLayoutAutosave();
+            wsLayoutStatus('Point removed.');
+          } else wsLayoutStatus('A route keeps at least two points — press Del to delete the whole path.');
+          if (e.button === 2) WS_LAYOUT._markCtx = true;   // squelch the browser menu that follows
+          WS_LAYOUT.drag = null;
+        } else if (hm.part === 'vertex') {
+          WS_LAYOUT.drag = { kind: 'markvert', id: m.id, vi: hm.vi, moved: false };
+          wsLayoutStatus('Reshaping — drag the point, release to set. Right-click a point removes it.');
+        } else if (hm.part === 'mid') {
+          wsLayoutSnapshot();
+          const a = m.pts[hm.vi], b = m.pts[(hm.vi + 1) % m.pts.length];
+          m.pts.splice(hm.vi + 1, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+          WS_LAYOUT.drag = { kind: 'markvert', id: m.id, vi: hm.vi + 1, moved: true };
+          wsLayoutStatus('Point added — drag to position it.');
+        } else {
+          WS_LAYOUT.drag = { kind: 'markbody', id: m.id, lastX: p.x, lastY: p.y, moved: false };
+          wsLayoutStatus(`${(WS_MARK_STYLE[m.kind] || {}).label || 'Markup'} selected — drag to move it, points reshape, ⊕ adds one, Del deletes it.`);
+        }
+        wsRenderLayoutLayer();
+        e.preventDefault();
+        return;
+      }
     }
     // An UNSELECTED room's corner can be grabbed directly, without selecting the
     // room first — but only after contents, so a bin sitting on a corner still wins.
@@ -17767,6 +17817,8 @@ function wsLayoutBind() {
   });
   area.addEventListener('contextmenu', e => {
     if (!WS_LAYOUT.tabActive || WS._mode) return;
+    // a right-click just removed a markup point in mousedown — eat the menu
+    if (WS_LAYOUT._markCtx) { WS_LAYOUT._markCtx = false; e.preventDefault(); return; }
     const p = wsLayoutEvt(e);
     const slotC = wsLayoutSlot();
     // the selected room first, then any room, matching the handle hit order
@@ -17887,6 +17939,26 @@ function wsLayoutBind() {
           if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
           const t = dg.part === 'tip' ? m.pts[0] : (m.pts[1] || m.pts[0]);
           t.x = p.x - dg.offX; t.y = p.y - dg.offY;
+        }
+        if (!WS_LAYOUT._raf) {
+          WS_LAYOUT._raf = true;
+          requestAnimationFrame(() => { WS_LAYOUT._raf = false; wsRenderLayoutLayer(); });
+        }
+        return;
+      }
+      if (dg.kind === 'markvert' || dg.kind === 'markbody') {
+        const m = (slot2.markups || []).find(x => x.id === dg.id);
+        if (m) {
+          if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
+          if (dg.kind === 'markvert') {
+            const q = m.pts[dg.vi];
+            if (q) { q.x = wsLayoutSnap(p.x, mpp); q.y = wsLayoutSnap(p.y, mpp); }
+          } else {
+            // incremental delta, same as a whole-room drag — no single anchor point
+            const mdx = p.x - dg.lastX, mdy = p.y - dg.lastY;
+            m.pts.forEach(q => { q.x += mdx; q.y += mdy; });
+            dg.lastX = p.x; dg.lastY = p.y;
+          }
         }
         if (!WS_LAYOUT._raf) {
           WS_LAYOUT._raf = true;
@@ -18641,7 +18713,7 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
   (slot.markups || []).forEach(m => {
     const layer = m.kind === 'text' ? 'A-ANNO-TEXT'
       : (m.kind === 'area' || m.kind === 'measure') ? 'A-ANNO-DIMS' : 'E-WASTE-ROUTE';
-    const aci = m.kind === 'disposal' ? 3 : m.kind === 'transfer' ? 2 : 4;
+    const aci = m.kind === 'disposal' ? 3 : m.kind === 'transfer' ? 2 : m.kind === 'transferc' ? 30 : 4;
     if (m.kind === 'text') {
       const boxP = m.pts.length >= 2 ? m.pts[1] : m.pts[0];
       if (m.pts.length >= 2) d += poly(layer, 5, [[boxP.x, boxP.y], [m.pts[0].x, m.pts[0].y]]);
@@ -19829,7 +19901,11 @@ const WS_MARK_STYLE = {
   measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false, w: 2 },
   area:     { col: '#7FD8D8', label: 'Area',           closed: true,  arrow: false, w: 2 },
   disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 6 },
-  transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true,  w: 6 },
+  // Transfer routes carry the res/com colour pair the room outlines already
+  // use (wsRoomStroke): teal residential, dark-gold commercial. Saved 'transfer'
+  // markups predate the split and stay residential.
+  transfer: { col: '#008080', label: 'Transfer route (residential)', closed: false, arrow: true,  w: 6 },
+  transferc:{ col: '#B38600', label: 'Transfer route (commercial)',  closed: false, arrow: true,  w: 6 },
   text:     { col: '#ECEFF1', label: 'Note',           closed: false, arrow: false, w: 2 },
 };
 // ── MARKUP MODE SUSPEND / RESTORE ────────────────────────────────────────────
@@ -19919,6 +19995,58 @@ function wsMarkFinish() {
   }
   wsMarkExit(); wsRenderLayoutLayer();
 }
+// Hit-test for the polyline markups (measure, area, disposal/transfer routes).
+// Callouts have their own test (wsLayoutHitCallout). The selected markup's
+// handles are tried first (same convention as room handles), then topmost-first
+// with vertices before segment bodies. Midpoint (insert) handles exist only on
+// the selected markup — only there do they render, and what renders is what
+// must be grabbable. Pure: geometry in, {id, part, vi} or null out.
+function wsLayoutHitMarkup(markups, x, y, vr, lineR, selId) {
+  const d2seg = (a, b) => {
+    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / L2)) : 0;
+    return Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t));
+  };
+  const editable = m => m.kind !== 'text' && m.pts && m.pts.length >= 2;
+  const nearestVertex = m => {
+    let best = -1, bd = vr;
+    for (let vi = 0; vi < m.pts.length; vi++) {
+      const d = Math.hypot(x - m.pts[vi].x, y - m.pts[vi].y);
+      if (d <= bd) { bd = d; best = vi; }
+    }
+    return best;
+  };
+  const segCount = m => m.pts.length - (m.kind === 'area' ? 0 : 1);
+  const sel = (markups || []).find(m => m.id === selId);
+  if (sel && editable(sel)) {
+    const vi = nearestVertex(sel);
+    if (vi >= 0) return { id: sel.id, part: 'vertex', vi };
+    for (let si = 0; si < segCount(sel); si++) {
+      const a = sel.pts[si], b = sel.pts[(si + 1) % sel.pts.length];
+      if (Math.hypot(x - (a.x + b.x) / 2, y - (a.y + b.y) / 2) <= vr)
+        return { id: sel.id, part: 'mid', vi: si };
+    }
+  }
+  for (let i = (markups || []).length - 1; i >= 0; i--) {
+    const m = markups[i];
+    if (!editable(m)) continue;
+    const vi = nearestVertex(m);
+    if (vi >= 0) return { id: m.id, part: 'vertex', vi };
+    for (let si = 0; si < segCount(m); si++)
+      if (d2seg(m.pts[si], m.pts[(si + 1) % m.pts.length]) <= lineR)
+        return { id: m.id, part: 'seg', vi: si };
+  }
+  return null;
+}
+// A route keeps at least its two endpoints; a measured area keeps a triangle.
+// Returns false (and leaves the markup untouched) at the floor — deleting the
+// whole markup is Del on the selection, never a silent collapse.
+function wsMarkDeleteVertex(m, vi) {
+  const min = m.kind === 'area' ? 3 : 2;
+  if (!m || !m.pts || m.pts.length <= min || vi < 0 || vi >= m.pts.length) return false;
+  m.pts.splice(vi, 1);
+  return true;
+}
 function wsLayoutHitCallout(x, y) {
   const mks = (wsLayoutSlot().markups || []);
   for (let i = mks.length - 1; i >= 0; i--) {   // topmost first
@@ -19942,7 +20070,7 @@ function wsMarkLen(pts, mpp) {
 }
 function wsRenderMarkups(mk, mpp) {
   const slot = wsLayoutSlot();
-  const draw = (kind, pts, text, live) => {
+  const draw = (kind, pts, text, live, sel) => {
     const st = WS_MARK_STYLE[kind] || WS_MARK_STYLE.measure;
     if (kind === 'text') {
       const CALLOUT_BLUE = '#1976D2', CALLOUT_FILL = '#FFF9C4', CALLOUT_TEXT = '#111';
@@ -19984,9 +20112,33 @@ function wsRenderMarkups(mk, mpp) {
     }
     const seq = st.closed ? pts.concat([pts[0]]) : pts;
     const lw = st.w || 2;
+    const HS = sel ? wsCanvasPerScreen() : 1;
+    if (sel) mk('polyline', { points: seq.map(p => p.x + ',' + p.y).join(' '), fill: 'none',
+      stroke: 'rgba(0,212,212,0.45)', 'stroke-width': lw + 5 * HS,
+      'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
     mk('polyline', { points: seq.map(p => p.x + ',' + p.y).join(' '), fill: st.closed ? 'rgba(127,216,216,0.08)' : 'none',
       stroke: st.col, 'stroke-width': lw,
       'stroke-dasharray': live ? '6 4' : (st.arrow ? `${Math.round(lw * 2.7)} ${Math.round(lw * 1.5)}` : '') });
+    if (sel) {
+      // Edit handles in the room editor's language: ⊕ midpoints insert a corner,
+      // squares drag one. Screen-px sized (HS), drawn to the same radius the hit
+      // test uses. Rendered only while selected, and export clears the selection
+      // first — editing chrome never prints.
+      for (let si = 0; si < (st.closed ? pts.length : pts.length - 1); si++) {
+        const a = pts[si], b = pts[(si + 1) % pts.length];
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, rr = 5 * HS, arm = 2.6 * HS;
+        mk('circle', { cx: mx.toFixed(1), cy: my.toFixed(1), r: rr.toFixed(1),
+          fill: 'rgba(13,51,51,0.92)', stroke: '#00d4d4', 'stroke-width': (1.4 * HS).toFixed(2) });
+        mk('line', { x1: (mx - arm).toFixed(1), y1: my.toFixed(1), x2: (mx + arm).toFixed(1), y2: my.toFixed(1),
+          stroke: '#00d4d4', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' });
+        mk('line', { x1: mx.toFixed(1), y1: (my - arm).toFixed(1), x2: mx.toFixed(1), y2: (my + arm).toFixed(1),
+          stroke: '#00d4d4', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' });
+      }
+      const hs = 5.5 * HS;
+      pts.forEach(q => mk('rect', { x: (q.x - hs).toFixed(1), y: (q.y - hs).toFixed(1),
+        width: (hs * 2).toFixed(1), height: (hs * 2).toFixed(1),
+        rx: (2 * HS).toFixed(1), fill: '#0d3333', stroke: '#00d4d4', 'stroke-width': (2 * HS).toFixed(2) }));
+    }
     pts.forEach(p => mk('circle', { cx: p.x, cy: p.y, r: Math.max(3, lw * 0.9), fill: st.col }));
     if (st.arrow && pts.length >= 2) {
       const a = pts[pts.length - 2], b = pts[pts.length - 1];
@@ -20001,7 +20153,8 @@ function wsRenderMarkups(mk, mpp) {
     const lbl = mk('text', { x: last.x + 8, y: last.y - 6, fill: st.col, 'font-size': 12, 'font-weight': 700 });
     lbl.textContent = st.closed ? `${wsPolyArea(pts, mpp).toFixed(1)} m²` : `${wsMarkLen(pts, mpp).toFixed(2)} m`;
   };
-  (slot.markups || []).forEach(m => draw(m.kind, m.pts, m.text, false));
+  (slot.markups || []).forEach(m => draw(m.kind, m.pts, m.text, false,
+    WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel === m.id));
   const live = WS_LAYOUT._mark;
   if (live && live.pts.length) {
     const pts = live.pts.slice();
@@ -22581,7 +22734,7 @@ function wsSheetContent(slot, sweptSlot) {
     streams,
     equip: equip.some(e => !e.aisle),
     aisle: equip.some(e => !!e.aisle),
-    disposal: has('disposal'), transfer: has('transfer'), callout: has('text'),
+    disposal: has('disposal'), transfer: has('transfer'), transferc: has('transferc'), callout: has('text'),
     measure: has('measure'), area: has('area'),
     swept: !!(sweptSlot && (sweptSlot.paths || []).some(p => p.result)),
     zones: wsZoneLegendItems(equip),
@@ -22607,7 +22760,8 @@ function wsLegendItems(layers, content) {
   }
   if (on('markups')) {
     if (c.disposal) out.push({ key: 'disposal', label: 'Waste disposal route', style: 'arrow', col: '#4BED12' });
-    if (c.transfer) out.push({ key: 'transfer', label: 'Waste transfer route', style: 'arrow', col: '#008080' });
+    if (c.transfer) out.push({ key: 'transfer', label: 'Residential transfer route', style: 'arrow', col: '#008080' });
+    if (c.transferc) out.push({ key: 'transferc', label: 'Commercial transfer route', style: 'arrow', col: '#B38600' });
     if (c.callout) out.push({ key: 'callout', label: 'Callout / note', style: 'leader', col: '#8A8A8A' });
     if (c.measure) out.push({ key: 'measure', label: 'Measured dimension', style: 'dim', col: '#00A0B0' });
     if (c.area) out.push({ key: 'area', label: 'Measured area', style: 'poly', col: '#4FA3A3' });
