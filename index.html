@@ -17952,7 +17952,18 @@ function wsLayoutBind() {
           if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
           if (dg.kind === 'markvert') {
             const q = m.pts[dg.vi];
-            if (q) { q.x = wsLayoutSnap(p.x, mpp); q.y = wsLayoutSnap(p.y, mpp); }
+            if (q) {
+              let vx = wsLayoutSnap(p.x, mpp), vy = wsLayoutSnap(p.y, mpp);
+              if (e.shiftKey) {
+                // square to a neighbour, like a room corner; an area wraps around
+                const n = m.pts.length, wrap = m.kind === 'area';
+                const sn = wsSnapVertexOrtho({ x: vx, y: vy },
+                  dg.vi > 0 ? m.pts[dg.vi - 1] : (wrap ? m.pts[n - 1] : null),
+                  dg.vi < n - 1 ? m.pts[dg.vi + 1] : (wrap ? m.pts[0] : null));
+                vx = sn.x; vy = sn.y;
+              }
+              q.x = vx; q.y = vy;
+            }
           } else {
             // incremental delta, same as a whole-room drag — no single anchor point
             const mdx = p.x - dg.lastX, mdy = p.y - dg.lastY;
@@ -18007,6 +18018,7 @@ function wsLayoutBind() {
       }
     } else if (inMode) {
       WS_LAYOUT.hover = p;
+      WS_LAYOUT.hoverShift = e.shiftKey;   // the markup rubber-band mirrors the 90° lock live
     } else {
       // Track the pointer even outside a placement mode — Backspace-to-drop-a-corner
       // needs to know which corner is under the cursor. No re-render on plain hover.
@@ -19963,9 +19975,17 @@ function wsMarkMode(kind) {
   wsMarkSyncButtons();
   wsLayoutStatus(kind === 'text'
     ? 'Callout: click what the arrow should POINT AT.'
-    : `${WS_MARK_STYLE[kind].label}: click each point, then press Enter or double-click to finish. Esc cancels.`);
+    : `${WS_MARK_STYLE[kind].label}: click each point (Shift holds 90°), then press Enter or double-click to finish. Esc cancels.`);
 }
-function wsMarkClick(x, y) {
+// Shift while drawing a route/measure/area locks the leg to 90° — the point
+// lands on the dominant axis from the previous one, the same convention as the
+// room drag axis-lock (wsSnapAxis). Pure.
+function wsMarkConstrainPt(prev, x, y) {
+  if (!prev) return { x, y };
+  const lock = wsSnapAxis(x - prev.x, y - prev.y);
+  return { x: prev.x + lock.dx, y: prev.y + lock.dy };
+}
+function wsMarkClick(x, y, shift) {
   const m = WS_LAYOUT._mark; if (!m) { wsLayoutEndMode(); return; }
   if (m.kind === 'text') {
     m.pts.push({ x, y });
@@ -19982,8 +20002,9 @@ function wsMarkClick(x, y) {
     }
     wsMarkExit(); wsRenderLayoutLayer(); return;
   }
+  if (shift && m.pts.length) ({ x, y } = wsMarkConstrainPt(m.pts[m.pts.length - 1], x, y));
   m.pts.push({ x, y });
-  wsLayoutStatus(`${WS_MARK_STYLE[m.kind].label}: ${m.pts.length} point${m.pts.length === 1 ? '' : 's'} — Enter or double-click to finish.`);
+  wsLayoutStatus(`${WS_MARK_STYLE[m.kind].label}: ${m.pts.length} point${m.pts.length === 1 ? '' : 's'} — Shift holds 90°, Enter or double-click finishes.`);
   wsRenderLayoutLayer();
 }
 function wsMarkFinish() {
@@ -20158,7 +20179,10 @@ function wsRenderMarkups(mk, mpp) {
   const live = WS_LAYOUT._mark;
   if (live && live.pts.length) {
     const pts = live.pts.slice();
-    if (WS_LAYOUT.hover) pts.push(WS_LAYOUT.hover);
+    // the rubber-band leg shows the same 90° lock the click will commit
+    if (WS_LAYOUT.hover) pts.push(live.kind !== 'text' && WS_LAYOUT.hoverShift
+      ? wsMarkConstrainPt(pts[pts.length - 1], WS_LAYOUT.hover.x, WS_LAYOUT.hover.y)
+      : WS_LAYOUT.hover);
     if (pts.length >= 1) draw(live.kind, pts, '', true);
   }
 }
@@ -22409,7 +22433,7 @@ function wsOnCanvasClick(e) {
   } else if (WS._mode === 'layoutfixture') {
     wsFixtureAt(x, y);
   } else if (WS._mode === 'layoutmark') {
-    wsMarkClick(x, y);
+    wsMarkClick(x, y, e.shiftKey);
   } else if (WS._mode === 'layoutstamp') {
     wsLayoutStampAt(x, y);
   } else if (layoutIdle) {

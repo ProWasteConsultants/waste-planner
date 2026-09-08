@@ -1791,7 +1791,8 @@ test('markup editing is wired end to end: select, drag, insert, remove, delete',
   const move = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousemove'"),
                             SOURCE.indexOf('const endDrag'));
   assert.ok(move.includes("dg.kind === 'markvert' || dg.kind === 'markbody'"), 'both markup drags are handled');
-  assert.ok(move.includes('q.x = wsLayoutSnap(p.x, mpp)'), 'vertex drags snap like room corners');
+  assert.ok(move.includes('let vx = wsLayoutSnap(p.x, mpp), vy = wsLayoutSnap(p.y, mpp);'),
+    'vertex drags snap like room corners');
   const del = SOURCE.slice(SOURCE.indexOf('function wsLayoutDo'), SOURCE.indexOf('function wsLayoutClearPage'));
   assert.ok(del.includes("WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel"), 'Del deletes the selected markup');
   assert.ok(del.includes('slot.markups.splice(mi, 1)'), 'as one markup, points and all');
@@ -1800,6 +1801,36 @@ test('markup editing is wired end to end: select, drag, insert, remove, delete',
   const rend = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wpEngageNudgeUpdate'));
   assert.ok(rend.includes("WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel === m.id"), 'sel flag comes from the live selection');
   assert.ok(rend.includes("if (sel) mk('polyline'"), 'the halo draws only when selected');
+});
+
+test('wsMarkConstrainPt: Shift locks the next route leg to 90°', () => {
+  const prev = { x: 100, y: 100 };
+  // dominant-axis lock, same rule as the room drag (wsSnapAxis)
+  assert.deepEqual(ws.wsMarkConstrainPt(prev, 180, 120), { x: 180, y: 100 });
+  assert.deepEqual(ws.wsMarkConstrainPt(prev, 120, 180), { x: 100, y: 180 });
+  // a tie goes horizontal, matching wsSnapAxis's >=
+  assert.deepEqual(ws.wsMarkConstrainPt(prev, 150, 150), { x: 150, y: 100 });
+  // the first point of a path has nothing to square against
+  assert.deepEqual(ws.wsMarkConstrainPt(null, 33, 44), { x: 33, y: 44 });
+});
+
+test('the 90° lock is wired into click, rubber-band preview and vertex drags', () => {
+  assert.ok(SOURCE.includes('wsMarkClick(x, y, e.shiftKey);'), 'the click passes the Shift state');
+  const click = SOURCE.slice(SOURCE.indexOf('function wsMarkClick'), SOURCE.indexOf('function wsMarkFinish'));
+  assert.ok(click.includes('if (shift && m.pts.length) ({ x, y } = wsMarkConstrainPt(m.pts[m.pts.length - 1], x, y));'),
+    'a shifted click commits the constrained point');
+  // the preview leg must show the same lock the click will commit, or the line
+  // lands somewhere other than where the rubber band pointed
+  const rend = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wpEngageNudgeUpdate'));
+  assert.ok(rend.includes("live.kind !== 'text' && WS_LAYOUT.hoverShift"), 'preview honours Shift, callouts exempt');
+  assert.ok(rend.includes('wsMarkConstrainPt(pts[pts.length - 1], WS_LAYOUT.hover.x, WS_LAYOUT.hover.y)'),
+    'through the same pure constraint');
+  assert.ok(SOURCE.includes('WS_LAYOUT.hoverShift = e.shiftKey;'), 'hover tracks the Shift state');
+  // editing keeps the convention: Shift on a vertex drag squares to a neighbour
+  const move = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousemove'"), SOURCE.indexOf('const endDrag'));
+  const mv = move.slice(move.indexOf("dg.kind === 'markvert'"));
+  assert.ok(mv.includes('wsSnapVertexOrtho({ x: vx, y: vy },'), 'markup vertices square like room corners');
+  assert.ok(mv.includes("wrap = m.kind === 'area'"), 'a measured area wraps its neighbours around');
 });
 
 test('commercial transfer routes are a separate kind on every surface', () => {
