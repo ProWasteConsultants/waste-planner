@@ -9544,7 +9544,11 @@ window.addEventListener('message', async (e) => {
 
 async function docOpenInDesignDxf(docId) {
   const rec = await docLoad(currentProjectId, docId); if (!rec) return alert('Document unavailable offline.');
-  showScreen('workspace', document.getElementById('nav-workspace'));
+  // Route through wsOpenProject: showScreen alone switches tabs without loading
+  // the project into the canvas — no plan, no saved layout/swept state, no name.
+  const p = getProjects().find(x => x.id === currentProjectId);
+  if (p && typeof wsOpenProject === 'function') wsOpenProject(p);
+  else showScreen('workspace', document.getElementById('nav-workspace'));
   if (typeof wsDxfLoadText === 'function') wsDxfLoadText(new TextDecoder().decode(rec.buf));
 }
 async function docSignedUrl(projectId, docId) {
@@ -9589,7 +9593,13 @@ async function docOpenInDesign(docId) {
   await storeProjectPdf(currentProjectId, rec.buf, rec.name);
   const projects = getProjects(); const p = projects.find(x => x.id === currentProjectId);
   if (p) { p.pdf_name = rec.name; saveProjects(projects); }
-  showScreen('workspace', document.getElementById('nav-workspace'));
+  // The stored plan just changed: clear the session marker so wsOpenProject's
+  // auto-load refetches instead of keeping whatever PDF is already on canvas.
+  if (typeof WS !== 'undefined') WS.loadedProjectPdfFor = null;
+  // Route through wsOpenProject: showScreen alone switches tabs without loading
+  // the project into the canvas — no plan, no saved layout/swept state, no name.
+  if (p && typeof wsOpenProject === 'function') wsOpenProject(p);
+  else showScreen('workspace', document.getElementById('nav-workspace'));
 }
 async function docOpenInCompliance(docId) {
   const rec = await docLoad(currentProjectId, docId); if (!rec) return alert('Document unavailable offline.');

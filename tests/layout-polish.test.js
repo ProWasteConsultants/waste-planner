@@ -455,6 +455,31 @@ test('project documents are a visual card grid with cached thumbnails', () => {
     'review responses render as tagged cards keeping their behaviour');
 });
 
+test('Open in Design loads the project into the canvas, not just the tab', () => {
+  // Regression: when the old Plans section was removed, docOpenInDesign replaced
+  // openCurrentProjectInPlanner but only called showScreen — the workspace opened
+  // with no plan, no saved layout state and no project name. Both grid actions
+  // must route through wsOpenProject, which owns plan auto-load + state restore.
+  const pdfFn = SOURCE.slice(SOURCE.indexOf('async function docOpenInDesign('),
+                             SOURCE.indexOf('async function docOpenInCompliance('));
+  assert.ok(pdfFn.includes('wsOpenProject(p)'),
+    'docOpenInDesign routes through wsOpenProject');
+  assert.ok(pdfFn.includes('WS.loadedProjectPdfFor = null'),
+    'and clears the session marker so a newly chosen document replaces the PDF already up');
+  const dxfFn = SOURCE.slice(SOURCE.indexOf('async function docOpenInDesignDxf('),
+                             SOURCE.indexOf('async function docSignedUrl('));
+  assert.ok(dxfFn.includes('wsOpenProject(p)'),
+    'the DXF grid action carries the project context too');
+  // wsOpenProject itself must keep its auto-load path — it is what the grid relies on
+  const open = SOURCE.slice(SOURCE.indexOf('function wsOpenProject(project)'),
+                            SOURCE.indexOf('let _wsPanelCollapsed'));
+  assert.ok(open.includes('loadProjectPdf(project.id).then(rec =>') &&
+            open.includes('wsLoadPdfBytes(rec.buf.slice(0), rec.name)'),
+    'wsOpenProject auto-loads the stored plan into the canvas');
+  assert.ok(open.includes("localStorage.getItem('ws_state_' + project.id)"),
+    'and restores the saved design state for the project');
+});
+
 test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
   const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
   const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;',
