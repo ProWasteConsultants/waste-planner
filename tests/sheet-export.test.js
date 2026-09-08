@@ -348,23 +348,27 @@ test('wsLegendItems: a commercial room adds its own outline row', () => {
   assert.equal(ws.wsLegendItems(ALL_ON, com).some(r => r.key === 'room-com'), true);
 });
 
-test('wsLegendItems: residential and commercial transfer routes are separate rows in the room-kind colours', () => {
-  // The res/com colour pair matches the room outlines (wsRoomStroke): teal
-  // residential, dark-gold commercial. A saved pre-split 'transfer' markup
-  // stays residential.
-  const both = ws.wsSheetContent({ rooms: [], bins: [], equip: [],
-    markups: [mark('transfer'), mark('transferc')] }, null);
-  const rows = ws.wsLegendItems(ALL_ON, both);
-  const resi = rows.find(r => r.key === 'transfer'), com = rows.find(r => r.key === 'transferc');
-  assert.equal(resi.col, '#008080');
-  assert.equal(com.col, '#B38600');
-  assert.notEqual(resi.col, com.col, 'the two transfer routes must never share a colour');
-  assert.match(resi.label, /[Rr]esidential/);
-  assert.match(com.label, /[Cc]ommercial/);
+test('wsLegendItems: the three route kinds are separate rows, each in its own colour', () => {
+  // disposal = residential disposal (vivid green), transferc = commercial
+  // disposal (teal), transfer = bin transfer to the collection point (dark
+  // teal). Kind ids predate the naming and stay put for saved drawings.
+  const all3 = ws.wsSheetContent({ rooms: [], bins: [], equip: [],
+    markups: [mark('disposal'), mark('transfer'), mark('transferc')] }, null);
+  const rows = ws.wsLegendItems(ALL_ON, all3);
+  const resi = rows.find(r => r.key === 'disposal'), com = rows.find(r => r.key === 'transferc');
+  const bin2cp = rows.find(r => r.key === 'transfer');
+  assert.equal(resi.col, '#4BED12');
+  assert.equal(com.col, '#00B3B3');
+  assert.equal(bin2cp.col, '#008080');
+  assert.equal(new Set([resi.col, com.col, bin2cp.col]).size, 3, 'route kinds never share a colour');
+  assert.match(resi.label, /disposal route \(residential\)/i);
+  assert.match(com.label, /disposal route \(commercial\)/i);
+  assert.match(bin2cp.label, /transfer route to collection point/i);
   // only the kinds actually on the page get a row
-  const onlyResi = ws.wsLegendItems(ALL_ON, ws.wsSheetContent({ rooms: [], bins: [], equip: [],
+  const one = ws.wsLegendItems(ALL_ON, ws.wsSheetContent({ rooms: [], bins: [], equip: [],
     markups: [mark('transfer')] }, null));
-  assert.equal(onlyResi.some(r => r.key === 'transferc'), false);
+  assert.equal(one.some(r => r.key === 'transferc'), false);
+  assert.equal(one.some(r => r.key === 'disposal'), false);
 });
 
 test('wsLegendItems: an empty page produces an empty legend, not an empty box', () => {

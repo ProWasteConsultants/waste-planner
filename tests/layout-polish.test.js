@@ -1706,9 +1706,9 @@ test('the hand-drawn texture backs all four roomy surfaces; the built asset stay
 test('route markups run heavier than measuring aids, and the renderer scales off the width', () => {
   // a transfer/disposal route is the FIGURE on an issued drawing — a reviewer
   // traces it — while measure/area are working aids that should stay light
-  assert.ok(SOURCE.includes("disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 6 }"));
-  assert.ok(SOURCE.includes("transfer: { col: '#008080', label: 'Transfer route (residential)', closed: false, arrow: true,  w: 6 }"));
-  assert.ok(SOURCE.includes("transferc:{ col: '#B38600', label: 'Transfer route (commercial)',  closed: false, arrow: true,  w: 6 }"));
+  assert.ok(SOURCE.includes("disposal: { col: '#4BED12', label: 'Waste disposal route (residential)', closed: false, arrow: true,  w: 6 }"));
+  assert.ok(SOURCE.includes("transferc:{ col: '#00B3B3', label: 'Waste disposal route (commercial)',  closed: false, arrow: true,  w: 6 }"));
+  assert.ok(SOURCE.includes("transfer: { col: '#008080', label: 'Bin transfer route to collection point', closed: false, arrow: true,  w: 6 }"));
   assert.ok(SOURCE.includes("measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false, w: 2 }"));
   const fn = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wsLayoutRenderTargets'));
   assert.ok(fn.includes("'stroke-width': lw,"), 'the polyline takes the per-kind width');
@@ -1849,8 +1849,8 @@ test('commercial transfer routes are a separate kind on every surface', () => {
   assert.ok(SOURCE.includes(`wsMarkMode('transferc')`), 'the markups card offers the commercial route');
   assert.ok(SOURCE.includes('id="ws-mark-btn-transferc"'), 'with its own button for wsMarkSyncButtons');
   // DXF: routes share the E-WASTE-ROUTE layer but never a colour
-  assert.ok(SOURCE.includes("m.kind === 'disposal' ? 3 : m.kind === 'transfer' ? 2 : m.kind === 'transferc' ? 30 : 4"),
-    'transferc gets its own ACI colour on the route layer');
+  assert.ok(SOURCE.includes("m.kind === 'disposal' ? 3 : m.kind === 'transfer' ? 5 : m.kind === 'transferc' ? 4 : 4"),
+    'each route kind gets its own ACI colour on the route layer');
 });
 
 test('the 60% screen touches the base-plan raster ONLY — markups ride over it at full strength', () => {
