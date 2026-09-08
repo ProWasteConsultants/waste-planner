@@ -1707,13 +1707,138 @@ test('route markups run heavier than measuring aids, and the renderer scales off
   // a transfer/disposal route is the FIGURE on an issued drawing — a reviewer
   // traces it — while measure/area are working aids that should stay light
   assert.ok(SOURCE.includes("disposal: { col: '#4BED12', label: 'Disposal route', closed: false, arrow: true,  w: 6 }"));
-  assert.ok(SOURCE.includes("transfer: { col: '#008080', label: 'Transfer route', closed: false, arrow: true,  w: 6 }"));
+  assert.ok(SOURCE.includes("transfer: { col: '#008080', label: 'Transfer route (residential)', closed: false, arrow: true,  w: 6 }"));
+  assert.ok(SOURCE.includes("transferc:{ col: '#B38600', label: 'Transfer route (commercial)',  closed: false, arrow: true,  w: 6 }"));
   assert.ok(SOURCE.includes("measure:  { col: '#00E5FF', label: 'Measure',        closed: false, arrow: false, w: 2 }"));
   const fn = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wsLayoutRenderTargets'));
   assert.ok(fn.includes("'stroke-width': lw,"), 'the polyline takes the per-kind width');
   assert.ok(fn.includes('s = 11 + lw;'), 'arrowheads grow with the stroke so they never look undersized');
   assert.ok(fn.includes('r: Math.max(3, lw * 0.9)'), 'vertex dots keep pace with the line');
   assert.ok(fn.includes('`${Math.round(lw * 2.7)} ${Math.round(lw * 1.5)}`'), 'dash rhythm scales with the width');
+});
+
+// ── markup select / edit ────────────────────────────────────────────────
+const mkRoute = (id, kind, pts) => ({ id, kind, pts });
+const MK_PTS = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }];
+
+test('wsLayoutHitMarkup: vertices beat segment bodies, topmost markup first', () => {
+  const a = mkRoute('a', 'transfer', MK_PTS.map(p => ({ ...p })));
+  const b = mkRoute('b', 'disposal', [{ x: 0, y: 50 }, { x: 200, y: 50 }]);
+  // vertex of the topmost markup wins even with a's segment nearby
+  assert.deepEqual(ws.wsLayoutHitMarkup([a, b], 199, 51, 8, 8, null),
+    { id: 'b', part: 'vertex', vi: 1 });
+  // b was drawn later, so where both lines pass, b's body wins
+  assert.deepEqual(ws.wsLayoutHitMarkup([a, b], 50, 52, 8, 8, null),
+    { id: 'b', part: 'seg', vi: 0 });
+  // clear of b, a's segment is hit within the line radius…
+  assert.deepEqual(ws.wsLayoutHitMarkup([a, b], 50, 6, 8, 8, null),
+    { id: 'a', part: 'seg', vi: 0 });
+  // …and missed outside it
+  assert.equal(ws.wsLayoutHitMarkup([a, b], 50, 20, 8, 8, null), null);
+});
+
+test('wsLayoutHitMarkup: midpoint (insert) handles exist only on the selected markup', () => {
+  const a = mkRoute('a', 'transfer', MK_PTS.map(p => ({ ...p })));
+  // unselected: the midpoint of the first segment reads as a body grab
+  assert.equal(ws.wsLayoutHitMarkup([a], 50, 0, 8, 8, null).part, 'seg');
+  // selected: the same click is the ⊕ insert handle
+  assert.deepEqual(ws.wsLayoutHitMarkup([a], 50, 0, 8, 8, 'a'),
+    { id: 'a', part: 'mid', vi: 0 });
+  // the selected markup's handles also beat a later markup's body — same
+  // convention as a selected room's corners over its contents
+  const b = mkRoute('b', 'disposal', [{ x: 40, y: -2 }, { x: 60, y: -2 }]);
+  assert.equal(ws.wsLayoutHitMarkup([a, b], 50, 0, 8, 8, 'a').part, 'mid');
+});
+
+test('wsLayoutHitMarkup: callouts and unfinished markups are never hit', () => {
+  const t = { id: 't', kind: 'text', pts: [{ x: 0, y: 0 }, { x: 10, y: 10 }], text: 'note' };
+  const stub = { id: 's', kind: 'transfer', pts: [{ x: 0, y: 0 }] };
+  assert.equal(ws.wsLayoutHitMarkup([t, stub], 0, 0, 8, 8, null), null);
+});
+
+test('wsLayoutHitMarkup: a measured area tests its closing edge too', () => {
+  const area = mkRoute('z', 'area', MK_PTS.map(p => ({ ...p })));
+  // the closing edge runs (100,100)→(0,0); its middle is nowhere near the open-path segments
+  assert.deepEqual(ws.wsLayoutHitMarkup([area], 52, 48, 4, 4, null),
+    { id: 'z', part: 'seg', vi: 2 });
+});
+
+test('wsMarkDeleteVertex: splices a point but never collapses the shape', () => {
+  const r = mkRoute('r', 'transfer', MK_PTS.map(p => ({ ...p })));
+  assert.equal(ws.wsMarkDeleteVertex(r, 1), true);
+  assert.deepEqual(r.pts, [{ x: 0, y: 0 }, { x: 100, y: 100 }]);
+  // floor: an open path keeps two points
+  assert.equal(ws.wsMarkDeleteVertex(r, 0), false);
+  assert.equal(r.pts.length, 2);
+  // floor: a measured area keeps its triangle
+  const z = mkRoute('z', 'area', MK_PTS.map(p => ({ ...p })));
+  assert.equal(ws.wsMarkDeleteVertex(z, 0), false);
+  assert.equal(z.pts.length, 3);
+  // out-of-range indexes refuse rather than splicing from the end
+  const r2 = mkRoute('r2', 'transfer', [{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }]);
+  assert.equal(ws.wsMarkDeleteVertex(r2, -1), false);
+  assert.equal(ws.wsMarkDeleteVertex(r2, 3), false);
+});
+
+test('markup editing is wired end to end: select, drag, insert, remove, delete', () => {
+  const down = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousedown'"),
+                            SOURCE.indexOf("area.addEventListener('contextmenu'"));
+  assert.ok(down.includes("wsSelSet([m.id], 'markup')"), 'clicking a route selects it');
+  assert.ok(down.includes("{ kind: 'markvert', id: m.id, vi: hm.vi, moved: false }"), 'corner handles start a vertex drag');
+  assert.ok(down.includes("{ kind: 'markbody', id: m.id, lastX: p.x, lastY: p.y, moved: false }"), 'the line body drags the whole path');
+  assert.ok(down.includes('m.pts.splice(hm.vi + 1, 0,'), 'the ⊕ midpoint inserts a corner');
+  assert.ok(down.includes('wsMarkDeleteVertex(m, hm.vi)'), 'Alt/right-click removes a corner');
+  const move = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousemove'"),
+                            SOURCE.indexOf('const endDrag'));
+  assert.ok(move.includes("dg.kind === 'markvert' || dg.kind === 'markbody'"), 'both markup drags are handled');
+  assert.ok(move.includes('let vx = wsLayoutSnap(p.x, mpp), vy = wsLayoutSnap(p.y, mpp);'),
+    'vertex drags snap like room corners');
+  const del = SOURCE.slice(SOURCE.indexOf('function wsLayoutDo'), SOURCE.indexOf('function wsLayoutClearPage'));
+  assert.ok(del.includes("WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel"), 'Del deletes the selected markup');
+  assert.ok(del.includes('slot.markups.splice(mi, 1)'), 'as one markup, points and all');
+  // selection handles render only for the selected markup, so the export path
+  // (which clears the selection before rendering) never prints editing chrome
+  const rend = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wpEngageNudgeUpdate'));
+  assert.ok(rend.includes("WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel === m.id"), 'sel flag comes from the live selection');
+  assert.ok(rend.includes("if (sel) mk('polyline'"), 'the halo draws only when selected');
+});
+
+test('wsMarkConstrainPt: Shift locks the next route leg to 90°', () => {
+  const prev = { x: 100, y: 100 };
+  // dominant-axis lock, same rule as the room drag (wsSnapAxis)
+  assert.deepEqual(ws.wsMarkConstrainPt(prev, 180, 120), { x: 180, y: 100 });
+  assert.deepEqual(ws.wsMarkConstrainPt(prev, 120, 180), { x: 100, y: 180 });
+  // a tie goes horizontal, matching wsSnapAxis's >=
+  assert.deepEqual(ws.wsMarkConstrainPt(prev, 150, 150), { x: 150, y: 100 });
+  // the first point of a path has nothing to square against
+  assert.deepEqual(ws.wsMarkConstrainPt(null, 33, 44), { x: 33, y: 44 });
+});
+
+test('the 90° lock is wired into click, rubber-band preview and vertex drags', () => {
+  assert.ok(SOURCE.includes('wsMarkClick(x, y, e.shiftKey);'), 'the click passes the Shift state');
+  const click = SOURCE.slice(SOURCE.indexOf('function wsMarkClick'), SOURCE.indexOf('function wsMarkFinish'));
+  assert.ok(click.includes('if (shift && m.pts.length) ({ x, y } = wsMarkConstrainPt(m.pts[m.pts.length - 1], x, y));'),
+    'a shifted click commits the constrained point');
+  // the preview leg must show the same lock the click will commit, or the line
+  // lands somewhere other than where the rubber band pointed
+  const rend = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wpEngageNudgeUpdate'));
+  assert.ok(rend.includes("live.kind !== 'text' && WS_LAYOUT.hoverShift"), 'preview honours Shift, callouts exempt');
+  assert.ok(rend.includes('wsMarkConstrainPt(pts[pts.length - 1], WS_LAYOUT.hover.x, WS_LAYOUT.hover.y)'),
+    'through the same pure constraint');
+  assert.ok(SOURCE.includes('WS_LAYOUT.hoverShift = e.shiftKey;'), 'hover tracks the Shift state');
+  // editing keeps the convention: Shift on a vertex drag squares to a neighbour
+  const move = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousemove'"), SOURCE.indexOf('const endDrag'));
+  const mv = move.slice(move.indexOf("dg.kind === 'markvert'"));
+  assert.ok(mv.includes('wsSnapVertexOrtho({ x: vx, y: vy },'), 'markup vertices square like room corners');
+  assert.ok(mv.includes("wrap = m.kind === 'area'"), 'a measured area wraps its neighbours around');
+});
+
+test('commercial transfer routes are a separate kind on every surface', () => {
+  assert.ok(SOURCE.includes(`wsMarkMode('transferc')`), 'the markups card offers the commercial route');
+  assert.ok(SOURCE.includes('id="ws-mark-btn-transferc"'), 'with its own button for wsMarkSyncButtons');
+  // DXF: routes share the E-WASTE-ROUTE layer but never a colour
+  assert.ok(SOURCE.includes("m.kind === 'disposal' ? 3 : m.kind === 'transfer' ? 2 : m.kind === 'transferc' ? 30 : 4"),
+    'transferc gets its own ACI colour on the route layer');
 });
 
 test('the 60% screen touches the base-plan raster ONLY — markups ride over it at full strength', () => {

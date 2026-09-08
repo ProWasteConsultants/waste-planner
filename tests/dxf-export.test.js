@@ -91,6 +91,8 @@ function sampleSlot() {
     markups: [
       { kind: 'text', pts: [{ x: 120, y: 120 }, { x: 140, y: 130 }], text: 'NOTE' },
       { kind: 'area', pts: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 200, y: 200 }] },
+      { kind: 'transfer', pts: [{ x: 110, y: 110 }, { x: 180, y: 140 }] },
+      { kind: 'transferc', pts: [{ x: 130, y: 250 }, { x: 320, y: 260 }] },
     ],
   };
 }

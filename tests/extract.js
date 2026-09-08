@@ -152,6 +152,9 @@ const LAYOUT_BLOCKS = [
   ['WS_ZONE_PURPLE',    /^const WS_ZONE_PURPLE = /],
   ['wsIsHardWasteZone', /^function wsIsHardWasteZone\(/],
   ['wsRoomStroke',      /^function wsRoomStroke\(/],
+  ['wsLayoutHitMarkup', /^function wsLayoutHitMarkup\(/],
+  ['wsMarkDeleteVertex', /^function wsMarkDeleteVertex\(/],
+  ['wsMarkConstrainPt', /^function wsMarkConstrainPt\(/],
 ];
 
 // Sheet export: scale selection and legend content. Pure maths and data, no PDF

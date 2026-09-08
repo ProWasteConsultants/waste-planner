@@ -348,6 +348,25 @@ test('wsLegendItems: a commercial room adds its own outline row', () => {
   assert.equal(ws.wsLegendItems(ALL_ON, com).some(r => r.key === 'room-com'), true);
 });
 
+test('wsLegendItems: residential and commercial transfer routes are separate rows in the room-kind colours', () => {
+  // The res/com colour pair matches the room outlines (wsRoomStroke): teal
+  // residential, dark-gold commercial. A saved pre-split 'transfer' markup
+  // stays residential.
+  const both = ws.wsSheetContent({ rooms: [], bins: [], equip: [],
+    markups: [mark('transfer'), mark('transferc')] }, null);
+  const rows = ws.wsLegendItems(ALL_ON, both);
+  const resi = rows.find(r => r.key === 'transfer'), com = rows.find(r => r.key === 'transferc');
+  assert.equal(resi.col, '#008080');
+  assert.equal(com.col, '#B38600');
+  assert.notEqual(resi.col, com.col, 'the two transfer routes must never share a colour');
+  assert.match(resi.label, /[Rr]esidential/);
+  assert.match(com.label, /[Cc]ommercial/);
+  // only the kinds actually on the page get a row
+  const onlyResi = ws.wsLegendItems(ALL_ON, ws.wsSheetContent({ rooms: [], bins: [], equip: [],
+    markups: [mark('transfer')] }, null));
+  assert.equal(onlyResi.some(r => r.key === 'transferc'), false);
+});
+
 test('wsLegendItems: an empty page produces an empty legend, not an empty box', () => {
   assert.deepEqual(ws.wsLegendItems(ALL_ON, ws.wsSheetContent({}, null)), []);
   assert.deepEqual(ws.wsLegendItems({}, {}), []);
