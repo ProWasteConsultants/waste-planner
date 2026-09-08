@@ -8986,7 +8986,8 @@ function createProject() {
   projects.unshift(project);
   saveProjects(projects);
   if (typeof logEvent === 'function') logEvent('project_created', { devType: project.devType || null, state: project.state || null });
-  if (NP.buf) storeProjectPdf(project.id, NP.buf, NP.name); // async
+  // Plan slot for the Design canvas + a document record so the grid shows it
+  if (NP.buf) { storeProjectPdf(project.id, NP.buf, NP.name); docStore(project.id, NP.buf, NP.name, 'Plans'); } // async
   npReset();
   closeModal();
   // Clear form
@@ -9259,6 +9260,20 @@ function docsRender() {
   if (emptyEl) emptyEl.style.display = 'none';
   const docs = (p?.docs || []).slice().sort((a, b) => b.ts - a.ts);
   const cards = docs.map(d => docCardHtml(p, d));
+  // Legacy plan slot: projects created before plans were also filed as
+  // documents hold their PDF at {uid}/{projectId}.pdf with NO document record
+  // — without this card the plan is saved but unreachable from the grid.
+  const planOrphan = !!p?.pdf_name && !docs.some(d => d.name === p.pdf_name);
+  if (planOrphan) {
+    cards.unshift(`<div class="doc-card">
+      <div class="doc-face" onclick="docOpenProjectPlan()" title="${docEsc(p.pdf_name)}">` +
+      `<img id="docthumb_plan" alt="" style="display:none;width:100%;height:100%;object-fit:cover;object-position:top;">` +
+      `<span class="doc-face-glyph" id="docglyph_plan">📄</span>` +
+      `<span class="doc-tag">Plan</span></div>
+      <div class="doc-name" title="${docEsc(p.pdf_name)}">${docEsc(docMidTrunc(p.pdf_name, 30))}</div>
+      <button class="doc-primary" onclick="docOpenProjectPlan()">Open in Design</button>
+    </div>`);
+  }
   // review response rides in the same grid, tagged, keeping its behaviour
   const svc = (typeof PROJ_SERVICE !== 'undefined') ? PROJ_SERVICE.map[currentProjectId] : null;
   if (svc && svc.resp) {
@@ -9273,7 +9288,9 @@ function docsRender() {
     <div class="doc-name" style="color:var(--muted);">${docs.length ? 'Add document' : 'Add your first document — plans, WMPs, exports'}</div>
   </div>`);
   list.innerHTML = cards.join('');
-  docsThumbBackfill(p, docs);   // async: fills PDF/DXF previews, cached forever
+  // async: fills PDF/DXF previews, cached forever (the legacy plan slot rides
+  // along as a pseudo-doc so its card gets a preview too)
+  docsThumbBackfill(p, planOrphan ? [{ id: 'plan', name: p.pdf_name }, ...docs] : docs);
 }
 function docMenuToggle(id) {
   document.querySelectorAll('.doc-menu.open').forEach(m => { if (m.id !== 'docmenu_' + id) m.classList.remove('open'); });
@@ -9309,7 +9326,7 @@ async function docThumbEnsure(projectId, d) {
       if (data) { const buf = await data.arrayBuffer(); await idbPutPdf(docThumbKey(projectId, d.id), buf, 'thumb.png'); return buf; }
     } catch (e) {}
   }
-  const rec = await docLoad(projectId, d.id);
+  const rec = d.id === 'plan' ? await loadProjectPdf(projectId) : await docLoad(projectId, d.id);
   if (!rec) return null;
   let canvas = null;
   try {
@@ -9587,6 +9604,15 @@ async function docDownload(docId) {
   const rec = await docLoad(currentProjectId, docId); if (!rec) return alert('Document unavailable offline.');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([rec.buf])); a.download = rec.name; a.click();
+}
+function docOpenProjectPlan() {
+  // The legacy plan-slot card: no document record to hand over, so open the
+  // project itself — wsOpenProject auto-loads the stored plan (IDB, then the
+  // cloud {uid}/{projectId}.pdf copy) into the canvas.
+  const p = getProjects().find(x => x.id === currentProjectId);
+  if (!p) return;
+  if (typeof wsOpenProject === 'function') wsOpenProject(p);
+  else showScreen('workspace', document.getElementById('nav-workspace'));
 }
 async function docOpenInDesign(docId) {
   const rec = await docLoad(currentProjectId, docId); if (!rec) return alert('Document unavailable offline.');
@@ -13999,7 +14025,8 @@ window.createProject = async function() {
   saveProjects(projects);
   if (typeof logEvent === 'function') logEvent('project_created', { project_id: project.id, devType: project.devType || null, state: project.state || null });
   if (currentProfile) currentProfile.projects_created = (Number(currentProfile.projects_created) || 0) + 1;
-  if (NP.buf) storeProjectPdf(project.id, NP.buf, NP.name); // async
+  // Plan slot for the Design canvas + a document record so the grid shows it
+  if (NP.buf) { storeProjectPdf(project.id, NP.buf, NP.name); docStore(project.id, NP.buf, NP.name, 'Plans'); } // async
   await saveProjectToDB(project);
   npReset();
   closeModal();

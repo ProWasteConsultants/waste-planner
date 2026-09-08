@@ -480,6 +480,30 @@ test('Open in Design loads the project into the canvas, not just the tab', () =>
     'and restores the saved design state for the project');
 });
 
+test('a plan saved before plans were filed as documents still gets a grid card', () => {
+  // Regression: createProject stored a picked PDF in the project-plan slot only
+  // ({uid}/{projectId}.pdf, p.pdf_name) with no document record, and docsRender
+  // renders p.docs only — the plan was saved but had no card, so there was
+  // nothing to click to open it in Design.
+  const grid = SOURCE.slice(SOURCE.indexOf('function docsRender()'),
+                            SOURCE.indexOf('function docMenuToggle'));
+  assert.ok(grid.includes('!docs.some(d => d.name === p.pdf_name)'),
+    'the plan-slot card appears only while no document record covers the stored plan');
+  assert.ok(grid.includes('docOpenProjectPlan()'),
+    'and its primary action opens it in Design');
+  assert.ok(grid.includes("[{ id: 'plan', name: p.pdf_name }, ...docs]"),
+    'the pseudo-doc rides the thumbnail backfill');
+  const openFn = SOURCE.slice(SOURCE.indexOf('function docOpenProjectPlan()'),
+                              SOURCE.indexOf('async function docOpenInDesign('));
+  assert.ok(openFn.includes('wsOpenProject(p)'),
+    'docOpenProjectPlan routes through wsOpenProject, which owns plan auto-load');
+  assert.ok(SOURCE.includes("d.id === 'plan' ? await loadProjectPdf(projectId) : await docLoad(projectId, d.id)"),
+    'docThumbEnsure can read the project-plan slot for the pseudo-doc');
+  // and the gap stops growing: both createProject paths now file the plan as a document
+  const filed = SOURCE.match(/docStore\(project\.id, NP\.buf, NP\.name, 'Plans'\)/g) || [];
+  assert.equal(filed.length, 2, 'both createProject paths file the picked plan as a document');
+});
+
 test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
   const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
   const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;',
