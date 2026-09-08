@@ -455,6 +455,55 @@ test('project documents are a visual card grid with cached thumbnails', () => {
     'review responses render as tagged cards keeping their behaviour');
 });
 
+test('Open in Design loads the project into the canvas, not just the tab', () => {
+  // Regression: when the old Plans section was removed, docOpenInDesign replaced
+  // openCurrentProjectInPlanner but only called showScreen — the workspace opened
+  // with no plan, no saved layout state and no project name. Both grid actions
+  // must route through wsOpenProject, which owns plan auto-load + state restore.
+  const pdfFn = SOURCE.slice(SOURCE.indexOf('async function docOpenInDesign('),
+                             SOURCE.indexOf('async function docOpenInCompliance('));
+  assert.ok(pdfFn.includes('wsOpenProject(p)'),
+    'docOpenInDesign routes through wsOpenProject');
+  assert.ok(pdfFn.includes('WS.loadedProjectPdfFor = null'),
+    'and clears the session marker so a newly chosen document replaces the PDF already up');
+  const dxfFn = SOURCE.slice(SOURCE.indexOf('async function docOpenInDesignDxf('),
+                             SOURCE.indexOf('async function docSignedUrl('));
+  assert.ok(dxfFn.includes('wsOpenProject(p)'),
+    'the DXF grid action carries the project context too');
+  // wsOpenProject itself must keep its auto-load path — it is what the grid relies on
+  const open = SOURCE.slice(SOURCE.indexOf('function wsOpenProject(project)'),
+                            SOURCE.indexOf('let _wsPanelCollapsed'));
+  assert.ok(open.includes('loadProjectPdf(project.id).then(rec =>') &&
+            open.includes('wsLoadPdfBytes(rec.buf.slice(0), rec.name)'),
+    'wsOpenProject auto-loads the stored plan into the canvas');
+  assert.ok(open.includes("localStorage.getItem('ws_state_' + project.id)"),
+    'and restores the saved design state for the project');
+});
+
+test('a plan saved before plans were filed as documents still gets a grid card', () => {
+  // Regression: createProject stored a picked PDF in the project-plan slot only
+  // ({uid}/{projectId}.pdf, p.pdf_name) with no document record, and docsRender
+  // renders p.docs only — the plan was saved but had no card, so there was
+  // nothing to click to open it in Design.
+  const grid = SOURCE.slice(SOURCE.indexOf('function docsRender()'),
+                            SOURCE.indexOf('function docMenuToggle'));
+  assert.ok(grid.includes('!docs.some(d => d.name === p.pdf_name)'),
+    'the plan-slot card appears only while no document record covers the stored plan');
+  assert.ok(grid.includes('docOpenProjectPlan()'),
+    'and its primary action opens it in Design');
+  assert.ok(grid.includes("[{ id: 'plan', name: p.pdf_name }, ...docs]"),
+    'the pseudo-doc rides the thumbnail backfill');
+  const openFn = SOURCE.slice(SOURCE.indexOf('function docOpenProjectPlan()'),
+                              SOURCE.indexOf('async function docOpenInDesign('));
+  assert.ok(openFn.includes('wsOpenProject(p)'),
+    'docOpenProjectPlan routes through wsOpenProject, which owns plan auto-load');
+  assert.ok(SOURCE.includes("d.id === 'plan' ? await loadProjectPdf(projectId) : await docLoad(projectId, d.id)"),
+    'docThumbEnsure can read the project-plan slot for the pseudo-doc');
+  // and the gap stops growing: both createProject paths now file the plan as a document
+  const filed = SOURCE.match(/docStore\(project\.id, NP\.buf, NP\.name, 'Plans'\)/g) || [];
+  assert.equal(filed.length, 2, 'both createProject paths file the picked plan as a document');
+});
+
 test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
   const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
   const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;',
