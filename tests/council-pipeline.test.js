@@ -313,3 +313,48 @@ test('C6: the near-duplicate guard matches by label and by dimensions', () => {
   assert.equal(ws6.eqpNearDuplicates({ label: 'Different', width_mm: 2500, depth_mm: 900 }, live).length, 0,
     'a genuinely different footprint passes clean');
 });
+
+// ── C3: extraction survives the response length cap ─────────────────────
+// Regression: a 64-requirement guideline overran max_tokens 8192 and the raw
+// "Unterminated string in JSON" surfaced as the whole error. Rows land in a
+// human review queue verified before approval — so the complete rows of a
+// truncated reply are recoverable by design, and the truncation is reported.
+const { loadEngine } = require('./extract.js');
+const px = loadEngine({ blocks: [
+  ['wsSalvageJsonRows', /^function wsSalvageJsonRows\(/],
+  ['wsParseExtractionRows', /^function wsParseExtractionRows\(/],
+] });
+
+test('wsSalvageJsonRows: recovers every complete row from a truncated payload', () => {
+  const whole = '{"rows":[{"a":1},{"b":"x{y}"},{"c":"esc\\"brace{"}]}';
+  assert.deepEqual(px.wsSalvageJsonRows(whole, 'rows'), [{ a: 1 }, { b: 'x{y}' }, { c: 'esc"brace{' }]);
+  // cut mid-string, exactly the failure mode from the screenshot
+  const cut = '{"rows":[{"clause_ref":"3.2","value_text":"ok"},{"clause_ref":"4.1","value_text":"cut off he';
+  assert.deepEqual(px.wsSalvageJsonRows(cut, 'rows'), [{ clause_ref: '3.2', value_text: 'ok' }]);
+  // nested objects inside a row survive intact
+  const nested = '{"rows":[{"a":{"b":{"c":1}}},{"d":2},{"e":';
+  assert.deepEqual(px.wsSalvageJsonRows(nested, 'rows'), [{ a: { b: { c: 1 } } }, { d: 2 }]);
+  // no key / no array → not salvageable, never a guess
+  assert.equal(px.wsSalvageJsonRows('plain prose reply', 'rows'), null);
+  assert.equal(px.wsSalvageJsonRows('{"rows": 4}', 'rows'), null);
+});
+
+test('wsParseExtractionRows: clean parse, salvage, or an error that names the cap', () => {
+  const ok = px.wsParseExtractionRows({ content: [{ text: '```json\n{"rows":[{"a":1}]}\n```' }], stop_reason: 'end_turn' }, 'rows');
+  assert.deepEqual(ok.rows, [{ a: 1 }]);
+  assert.equal(ok.truncated, false);
+  const cut = px.wsParseExtractionRows({ content: [{ text: '{"rows":[{"a":1},{"b":"unterminat' }], stop_reason: 'max_tokens' }, 'rows');
+  assert.deepEqual(cut.rows, [{ a: 1 }]);
+  assert.equal(cut.truncated, true);
+  assert.throws(() => px.wsParseExtractionRows({ content: [{ text: 'not json at all' }], stop_reason: 'max_tokens' }, 'rows'),
+    /length cap/, 'an unsalvageable capped reply names the cap, not just the parse error');
+});
+
+test('both extraction calls carry the raised cap and report truncation to the admin', () => {
+  assert.equal((SOURCE.match(/max_tokens: 16000,/g) || []).length, 2, 'crqExtract and the guideline extractor both raised');
+  assert.ok(!SOURCE.includes('max_tokens: 8192'), 'no extraction is left on the old cap');
+  assert.ok(SOURCE.includes("wsParseExtractionRows(resp, 'rows')"), 'the queue extraction parses through the salvage path');
+  assert.ok(SOURCE.includes("wsParseExtractionRows(data, 'requirements')"), 'the guideline extraction too');
+  const warns = SOURCE.match(/he reply hit the length cap — complete rows were recovered/g) || [];
+  assert.ok(warns.length >= 2, 'truncation is reported on both surfaces, never silent');
+});
