@@ -2522,21 +2522,68 @@ const CHUTE_SPECS={
   TRIPLE:{label:'Triple',openings:3,fp:2.10*0.91},
 };
 const RECV_SPECS={
-  NONE:      {label:'None',              fp:0,          bins:0,size:0},
-  BIN_240:   {label:'240L bin',          fp:0.58*0.73,  bins:1,size:240},
-  BIN_660:   {label:'660L bin',          fp:1.37*0.77,  bins:1,size:660},
-  BIN_1100:  {label:'1100L bin',         fp:1.37*1.07,  bins:1,size:1100},
-  INDEX_2:   {label:'2×1100L bin index', fp:1.40*4.42,  bins:2,size:1100},
-  CAROUSEL_4:{label:'4×1100L bin carousel',fp:4.35*4.35,bins:4,size:1100},
-  COMPACTOR: {label:'Compactor',         fp:null,       bins:0,size:0,compactor:true},
+  NONE:      {label:'None',              fp:0,          bins:0,size:0,h_mm:0},
+  BIN_240:   {label:'240L bin',          fp:0.58*0.73,  bins:1,size:240, h_mm:1080},
+  BIN_660:   {label:'660L bin',          fp:1.37*0.77,  bins:1,size:660, h_mm:1190},
+  BIN_1100:  {label:'1100L bin',         fp:1.37*1.07,  bins:1,size:1100,h_mm:1330},
+  INDEX_2:   {label:'2×1100L bin index', fp:1.40*4.42,  bins:2,size:1100,h_mm:1330},
+  CAROUSEL_4:{label:'4×1100L bin carousel',fp:4.35*4.35,bins:4,size:1100,h_mm:1330},
+  COMPACTOR: {label:'Compactor',         fp:null,       bins:0,size:0,h_mm:null,compactor:true},
 };
 const RECV_BY_STREAM={
   GW: ['BIN_660','BIN_1100','INDEX_2','CAROUSEL_4','COMPACTOR','NONE'],
   REC:['BIN_660','BIN_1100','INDEX_2','CAROUSEL_4','NONE'],
   ORG:['BIN_240','NONE'],
 };
+// Library-backed receivers (equipment category chute_receiver), merged over
+// the built-ins above — the built-ins are the offline fallback, same pattern
+// as the vehicle library. Keys are LIB_&lt;code&gt; so a legacy save's built-in
+// key can never collide with a record.
+let RECV_LIB={};
+const RECV_STREAM_ID={GW:'garbage',REC:'recycling',ORG:'fogo',GLS:'glass'};
+function rebuildRecvLib(){
+  RECV_LIB={};
+  (EQUIP_DB||[]).forEach(r=&gt;{
+    if(!r||r.category!=='chute_receiver'||r.active===false)return;
+    const fp=Number(r.footprint_m2)||((Number(r.width_mm)&gt;0&amp;&amp;Number(r.depth_mm)&gt;0)?(r.width_mm*r.depth_mm/1e6):null);
+    const comp=(Number(r.compaction_ratio)||0)&gt;1||/compactor/i.test(String(r.label||''));
+    RECV_LIB['LIB_'+r.code]={label:r.label||r.code,fp:fp,bins:Number(r.bin_count)||0,
+      size:Number(r.bin_size_l)||0,compactor:comp,ratio:Number(r.compaction_ratio)||null,
+      h_mm:Number(r.height_mm)||null,w_mm:Number(r.width_mm)||null,d_mm:Number(r.depth_mm)||null,
+      inlet_mm:Number(r.inlet_height_mm)||null,
+      streams:Array.isArray(r.streams)?r.streams.filter(Boolean):[],lib:true};
+  });
+}
+function recvOf(key){return RECV_LIB[key]||RECV_SPECS[key]||null;}
+function recvOptsFor(stream){
+  const out=(RECV_BY_STREAM[stream]||['NONE']).slice();
+  const want=RECV_STREAM_ID[stream];
+  Object.entries(RECV_LIB).forEach(([k,v])=&gt;{
+    if(v.compactor&amp;&amp;stream!=='GW')return;   // compactor is garbage only, always
+    if(v.streams.length&amp;&amp;v.streams.indexOf(want)&lt;0)return;
+    out.splice(out.length-1,0,k);            // library items sit above 'None'
+  });
+  return out;
+}
 const CHUTE_STREAMS=['GW','REC','ORG'];
 const CHUTE_ANGLE={GW:45,ORG:45,REC:22.5};
+const CHUTE_REC_PREF=22.5,CHUTE_ANGLE_HARD_MAX=45;
+// Chute-angle geometry, Method 1 default case (the level table's two-level
+// form): drop = ffh − termination height − slab, then r_max = drop×tan(θ).
+// 3100/300 live in normChute as DEFAULTS only — every value is editable.
+function chuteDropMm(c,o){
+  const rs=recvOf(o.recv);
+  const termH=rs&amp;&amp;rs.h_mm!=null?rs.h_mm:(rs&amp;&amp;rs.compactor?1500:1330);
+  return Math.max(0,(Number(c.ffh_mm)||3100)-termH-(Number(c.slab_mm)||300));
+}
+function chuteMaxDeg(c,stream){
+  const pref=CHUTE_ANGLE[stream]!=null?CHUTE_ANGLE[stream]:45;
+  if(pref&gt;=CHUTE_ANGLE_HARD_MAX)return pref;
+  return Math.min(CHUTE_ANGLE_HARD_MAX,Math.max(pref,Number(c.rec_deg)||pref));
+}
+function chuteRmaxMm(c,o){
+  return chuteDropMm(c,o)*Math.tan(chuteMaxDeg(c,o.stream)*Math.PI/180);
+}
 function chuteServed(room){
   if(!room||!room.chute||!room.chute.on)return {};
   const out={};
@@ -3075,10 +3122,21 @@ function normChute(c){
     const o=src[k]||{};
     const stream=CHUTE_STREAMS.indexOf(o.stream)&gt;=0?o.stream:(k===0?'GW':(k===1?'REC':'ORG'));
     const allowed=RECV_BY_STREAM[stream]||['NONE'];
-    const recv=allowed.indexOf(o.recv)&gt;=0?o.recv:allowed[0];
+    // a LIB_ receiver is kept even before the equipment payload arrives —
+    // resetting it here would silently swap a saved receiver for the default
+    const recv=(allowed.indexOf(o.recv)&gt;=0||/^LIB_/.test(String(o.recv||'')))?o.recv:allowed[0];
     out.push({stream,recv});
   }
-  return {on:!!(c&amp;&amp;c.on),type:t,openings:out};
+  // chute-angle geometry (Method 1 default case). 3100 / 300 / 150 are the
+  // DEFAULTS for a fresh or migrated room — every one is editable, and the
+  // recycling max angle may be raised to 45° as a stated worst case.
+  return {on:!!(c&amp;&amp;c.on),type:t,openings:out,
+    ffh_mm:Math.max(2000,Number(c&amp;&amp;c.ffh_mm)||3100),
+    slab_mm:Math.max(0,Number(c&amp;&amp;c.slab_mm!=null?c.slab_mm:300)||0),
+    clearance_mm:Math.max(0,Number(c&amp;&amp;c.clearance_mm!=null?c.clearance_mm:150)||0),
+    rec_deg:Math.min(CHUTE_ANGLE_HARD_MAX,Math.max(CHUTE_REC_PREF,Number(c&amp;&amp;c.rec_deg)||CHUTE_REC_PREF)),
+    // helper-calculator scratch (Methods 2/3) — carried, never validated
+    _m2x:(c&amp;&amp;c._m2x)||0,_m3x:(c&amp;&amp;c._m3x)||0,_m3v:(c&amp;&amp;c._m3v)||0};
 }
 function restoreRooms(arr){
   if(!Array.isArray(arr)||!arr.length)return false;
@@ -3180,20 +3238,63 @@ function chuteEditorHtml(r){
     h+=`&lt;select data-room=&quot;${r.id}&quot; onchange=&quot;chuteType(this)&quot;&gt;`+
        Object.entries(CHUTE_SPECS).map(([k,s])=&gt;`&lt;option value=&quot;${k}&quot;${k===c.type?' selected':''}&gt;${s.label} — ${s.openings} opening${s.openings===1?'':'s'}&lt;/option&gt;`).join('')+
        '&lt;/select&gt;&lt;/div&gt;';
+    // chute-angle geometry inputs — defaults, never hardcoded downstream
+    h+='&lt;div class=&quot;ws-chuterow&quot;&gt;';
+    h+=`&lt;input type=&quot;number&quot; step=&quot;50&quot; min=&quot;2000&quot; value=&quot;${c.ffh_mm}&quot; title=&quot;Floor-to-floor height, mm&quot; data-room=&quot;${r.id}&quot; data-f=&quot;ffh_mm&quot; onchange=&quot;chuteNum(this)&quot; style=&quot;background:#2a2a2a;border:1px solid #444;color:#e2e8e8;border-radius:4px;padding:3px 5px;font-size:10px;&quot;&gt;`;
+    h+=`&lt;input type=&quot;number&quot; step=&quot;25&quot; min=&quot;0&quot; value=&quot;${c.slab_mm}&quot; title=&quot;Slab thickness of the level above, mm&quot; data-room=&quot;${r.id}&quot; data-f=&quot;slab_mm&quot; onchange=&quot;chuteNum(this)&quot; style=&quot;background:#2a2a2a;border:1px solid #444;color:#e2e8e8;border-radius:4px;padding:3px 5px;font-size:10px;&quot;&gt;`;
+    h+='&lt;/div&gt;&lt;div class=&quot;ws-chuteopen&quot;&gt;FFH mm · slab mm&lt;/div&gt;';
+    if(c.openings.some(o=&gt;CHUTE_ANGLE[o.stream]&lt;CHUTE_ANGLE_HARD_MAX)){
+      h+='&lt;div class=&quot;ws-chuterow&quot;&gt;&lt;span style=&quot;font-size:9px;color:rgba(255,255,255,0.45);align-self:center;&quot;&gt;Recycling max angle&lt;/span&gt;';
+      h+=`&lt;select data-room=&quot;${r.id}&quot; onchange=&quot;chuteRecDeg(this)&quot;&gt;`+
+        [22.5,30,37.5,45].map(a=&gt;`&lt;option value=&quot;${a}&quot;${a===c.rec_deg?' selected':''}&gt;${a}°${a&gt;CHUTE_REC_PREF?' — worst case':' (preferred)'}&lt;/option&gt;`).join('')+
+        '&lt;/select&gt;&lt;/div&gt;';
+      if(c.rec_deg&gt;CHUTE_REC_PREF)h+=`&lt;div style=&quot;font-size:9px;color:#EFB080;margin-top:2px;&quot;&gt;⚠ ${c.rec_deg}° exceeds the preferred ${CHUTE_REC_PREF}° — every recycling receiver will be tagged in warnings.&lt;/div&gt;`;
+    }
     h+='&lt;div class=&quot;ws-chuteopen&quot;&gt;Openings &amp;amp; receivers&lt;/div&gt;';
     c.openings.forEach((o,k)=&gt;{
-      const allowed=RECV_BY_STREAM[o.stream]||['NONE'];
+      const allowed=recvOptsFor(o.stream);
+      const known=allowed.indexOf(o.recv)&gt;=0;
       h+='&lt;div class=&quot;ws-chuterow&quot;&gt;';
       h+=`&lt;select data-room=&quot;${r.id}&quot; data-op=&quot;${k}&quot; onchange=&quot;chuteStream(this)&quot;&gt;`+
          CHUTE_STREAMS.map(s=&gt;`&lt;option value=&quot;${s}&quot;${s===o.stream?' selected':''}&gt;${STREAM_META[s].label}&lt;/option&gt;`).join('')+
          '&lt;/select&gt;';
       h+=`&lt;select data-room=&quot;${r.id}&quot; data-op=&quot;${k}&quot; onchange=&quot;chuteRecv(this)&quot;&gt;`+
-         allowed.map(rk=&gt;`&lt;option value=&quot;${rk}&quot;${rk===o.recv?' selected':''}&gt;${RECV_SPECS[rk].label}&lt;/option&gt;`).join('')+
+         allowed.map(rk=&gt;{const rs=recvOf(rk);return `&lt;option value=&quot;${rk}&quot;${rk===o.recv?' selected':''}&gt;${rs?rs.label:rk}&lt;/option&gt;`;}).join('')+
+         (known?'':`&lt;option value=&quot;${o.recv}&quot; selected&gt;${(recvOf(o.recv)||{}).label||'Saved receiver (not in library)'}&lt;/option&gt;`)+
          '&lt;/select&gt;';
       h+='&lt;/div&gt;';
+      // live Method-1 readout: available drop and max transition per opening
+      if(o.recv!=='NONE'){
+        const drop=chuteDropMm(c,o),rmax=chuteRmaxMm(c,o),deg=chuteMaxDeg(c,o.stream);
+        h+=`&lt;div style=&quot;font-size:9px;color:#7EA6F5;margin:1px 0 0 2px;&quot;&gt;drop ${(drop/1000).toFixed(2)} m → r&lt;sub&gt;max&lt;/sub&gt; ${(rmax/1000).toFixed(2)} m @ ${deg}°&lt;/div&gt;`;
+      }
     });
+    // Methods 2 and 3: the working-the-other-way helpers
+    const m2x=Number(c._m2x)||0,m3x=Number(c._m3x)||0,m3v=Number(c._m3v)||0;
+    const m2deg=chuteMaxDeg(c,c.openings[0]?c.openings[0].stream:'GW');
+    const m2out=m2x&gt;0?(m2x/Math.tan(m2deg*Math.PI/180)/1000).toFixed(2)+' m clear needed':'—';
+    const m3deg=m3x&gt;0&amp;&amp;m3v&gt;0?(Math.atan2(m3x,m3v)*180/Math.PI):null;
+    const m3out=m3deg!=null?m3deg.toFixed(1)+'°'+(m3deg&gt;m2deg?' — over the '+m2deg+'° max':' ✓'):'—';
+    h+='&lt;div class=&quot;ws-chuteopen&quot;&gt;Check a shown transition&lt;/div&gt;';
+    h+=`&lt;div class=&quot;ws-chuterow&quot;&gt;&lt;input type=&quot;number&quot; min=&quot;0&quot; step=&quot;10&quot; value=&quot;${m2x||''}&quot; placeholder=&quot;need x mm&quot; title=&quot;Required horizontal transition, mm — shows the minimum vertical clear above the receiver&quot; data-room=&quot;${r.id}&quot; data-f=&quot;_m2x&quot; onchange=&quot;chuteNum(this)&quot; style=&quot;background:#2a2a2a;border:1px solid #444;color:#e2e8e8;border-radius:4px;padding:3px 5px;font-size:10px;&quot;&gt;&lt;span style=&quot;font-size:9px;color:rgba(255,255,255,0.55);align-self:center;&quot;&gt;${m2out}&lt;/span&gt;&lt;/div&gt;`;
+    h+=`&lt;div class=&quot;ws-chuterow&quot;&gt;&lt;input type=&quot;number&quot; min=&quot;0&quot; step=&quot;10&quot; value=&quot;${m3x||''}&quot; placeholder=&quot;shown x mm&quot; data-room=&quot;${r.id}&quot; data-f=&quot;_m3x&quot; onchange=&quot;chuteNum(this)&quot; style=&quot;background:#2a2a2a;border:1px solid #444;color:#e2e8e8;border-radius:4px;padding:3px 5px;font-size:10px;&quot;&gt;`+
+      `&lt;input type=&quot;number&quot; min=&quot;0&quot; step=&quot;10&quot; value=&quot;${m3v||''}&quot; placeholder=&quot;over v mm&quot; title=&quot;The architect's shown transition x over vertical v — the resulting angle vs the max&quot; data-room=&quot;${r.id}&quot; data-f=&quot;_m3v&quot; onchange=&quot;chuteNum(this)&quot; style=&quot;background:#2a2a2a;border:1px solid #444;color:#e2e8e8;border-radius:4px;padding:3px 5px;font-size:10px;&quot;&gt;&lt;/div&gt;`;
+    h+=`&lt;div style=&quot;font-size:9px;color:rgba(255,255,255,0.55);margin:1px 0 0 2px;&quot;&gt;angle: ${m3out}&lt;/div&gt;`;
   }
   return h+'&lt;/div&gt;';
+}
+function chuteNum(el){
+  const r=roomById(el.dataset.room);if(!r)return;
+  r.chute=normChute(r.chute);
+  r.chute[el.dataset.f]=Number(el.value)||0;
+  if(el.dataset.f.charAt(0)!=='_')r.chute=normChute(r.chute);   // clamp real fields, keep helper scratch as typed
+  renderRooms();wsCalcTrigger();
+}
+function chuteRecDeg(el){
+  const r=roomById(el.dataset.room);if(!r)return;
+  r.chute=normChute(r.chute);
+  r.chute.rec_deg=Number(el.value)||CHUTE_REC_PREF;
+  renderRooms();wsCalcTrigger();
 }
 function chuteToggle(el){const r=roomById(el.dataset.room);if(!r)return;r.chute=normChute(r.chute);r.chute.on=el.checked;renderRooms();wsCalcTrigger();}
 function chuteType(el){const r=roomById(el.dataset.room);if(!r)return;r.chute.type=el.value;r.chute=normChute(r.chute);renderRooms();wsCalcTrigger();}
@@ -3331,28 +3432,43 @@ function provision(rr,sec,stream,streams){
   const container=eqOf(rr.id,sec,stream);          // collectable unit, if chosen
   let plant=plantOf(rr.id,sec,stream);             // non-collectable unit
   const served=(sec==='r')?chuteServed(rr)[stream]:null;
-  const recv=served?RECV_SPECS[served.recv]:null;
-  // a compactor under a chute is plant: it compacts into the container below it,
-  // it is not itself collected
-  const chutePlant=(recv&amp;&amp;recv.compactor)?(EQUIP_LIB.CHUTE_COMP||null):null;
+  const recv=served?recvOf(served.recv):null;
+  // a compactor under a chute is plant: it compacts into the container below
+  // it, it is not itself collected. A library receiver that bundles its own
+  // compactor (Compactor + carousel etc.) IS the compaction plant for the
+  // room, carrying the record's own ratio; the legacy dropdown compactor
+  // falls back to the CHUTE_COMP seed as before.
+  const chutePlant=(recv&amp;&amp;recv.compactor)
+    ?(recv.lib?{id:'RECV_COMBO',label:recv.label,ratio:recv.ratio,fp:0,_recvCombo:true}
+              :(EQUIP_LIB.CHUTE_COMP||null))
+    :null;
+  const overridden=!!(chutePlant&amp;&amp;plant);   // manual pick beats the receiver link
   if(!plant&amp;&amp;chutePlant)plant=chutePlant;
   const sz=container?(Number(container.cap)||curSize(rr.id,sec,stream)):curSize(rr.id,sec,stream);
   const cRatio=container&amp;&amp;container.ratio?Number(container.ratio):1;
   const pRatio=plant&amp;&amp;plant.ratio?Number(plant.ratio):1;
   const per=sz*cRatio*pRatio*cw;
-  const nCalc=per&gt;0?Math.max(0,Math.ceil(vol/per)):0;
+  // bins that physically exist in the receiver (index 2, carousel 4 — with or
+  // without a bundled compactor) floor the count: they are there regardless
+  const minBins=(!container&amp;&amp;recv&amp;&amp;(recv.bins||0)&gt;1&amp;&amp;vol&gt;0)?recv.bins:0;
+  const nCalc=per&gt;0?Math.max(minBins,Math.max(0,Math.ceil(vol/per))):0;
   const ov=_binOv[ovKey(rr.id,sec,stream)];
   const n=ov!=null?ov:nCalc;
   const cap=n*per;
-  const atChute=(!container&amp;&amp;recv&amp;&amp;!recv.compactor)?Math.min(n,recv.bins):0;
+  const atChute=(!container&amp;&amp;recv)?Math.min(n,recv.bins||0):0;
   let fp;
   if(container)fp=(container.fp!=null)?n*container.fp:null;
+  // the receiver's footprint is counted ONCE here — a bundled compactor must
+  // not add a second footprint through the plant line below. A library
+  // receiver with no dimensions yet makes the area unknown, never smaller.
+  else if(recv&amp;&amp;recv.lib&amp;&amp;recv.fp==null)fp=null;
   else fp=(n-atChute)*binFP(sz)+(recv?recv.fp:0);
-  if(plant){
+  if(plant&amp;&amp;!plant._recvCombo){
     if(plant.fp!=null)fp=(fp==null?0:fp)+plant.fp;
     else fp=null; // plant of unknown size must not silently vanish from the area
   }
-  return {vol,eq:container,container,plant,chutePlant:!!chutePlant,sz,cw,per,cRatio,pRatio,
+  return {vol,eq:container,container,plant,chutePlant:!!chutePlant,chuteOverridden:overridden,
+          volAfter:pRatio&gt;1?vol/pRatio:null,minBins,sz,cw,per,cRatio,pRatio,
           nCalc,n,cap,fp,atChute,recv,served:!!served};
 }
 // ── results rendering: one block per bin room, plus development totals ───────
@@ -3417,20 +3533,30 @@ function eqRowHtml(rr,sec,s,p){
     }
     let m2=null;
     if(p.plant){
-      const q=['not collected',`×${p.plant.ratio} on ${p.container?'each container':'each bin'}`];
-      if(p.chutePlant&amp;&amp;!_plantSel[ovKey(rr.id,sec,s)])q.push('beneath the chute');
+      const q=['not collected'];
+      if(p.plant.ratio)q.push(`×${p.plant.ratio} on ${p.container?'each container':'each bin'}`);
+      if(p.chutePlant&amp;&amp;!_plantSel[ovKey(rr.id,sec,s)])q.push('from chute receiver');
       txt+=' &lt;span class=&quot;wsr-eq-meta&quot;&gt;· '+q.join(' · ')+'&lt;/span&gt;';
-      m2=p.plant.fp!=null?fmtM2(p.plant.fp):null;
+      // post-compaction volume: what the collection bins are actually sized on
+      if(p.volAfter!=null)txt+=` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· after compaction ${fmtVol(p.volAfter)}/wk (from ${fmtVol(p.vol)})&lt;/span&gt;`;
+      m2=p.plant._recvCombo?null:(p.plant.fp!=null?fmtM2(p.plant.fp):null);
     }
     bits.push({icon:'⬚',cls:'wsr-eq-plant',txt:txt,m2:m2});
   }
-  if(p.served&amp;&amp;p.recv&amp;&amp;!p.recv.compactor&amp;&amp;!p.container){
+  if(p.served&amp;&amp;p.recv&amp;&amp;!p.container&amp;&amp;(p.recv.bins||0)&gt;0){
     // only worth spelling out the share when the receiver holds some but not all
     const share=(p.atChute&lt;p.n)?` · ${p.atChute} of ${p.n} bins`:'';
-    bits.push({icon:'⇣',cls:'wsr-eq-chute',txt:`beneath chute: &lt;b&gt;${p.recv.label}&lt;/b&gt;${share}`,
-               m2:fmtM2(p.recv.fp)});
+    const min=(p.minBins&gt;0)?` · minimum ${p.minBins} — those bins exist physically`:'';
+    bits.push({icon:'⇣',cls:'wsr-eq-chute',txt:`beneath chute: &lt;b&gt;${p.recv.label}&lt;/b&gt;${share}${min}`,
+               m2:p.recv.fp!=null?fmtM2(p.recv.fp):null});
   }
   const w=[];
+  if(p.served&amp;&amp;p.recv&amp;&amp;p.recv.lib&amp;&amp;p.recv.fp==null)
+    w.push(`${p.recv.label} has no dimensions in the equipment library — the room area is incomplete until they are confirmed.`);
+  if(p.chuteOverridden)
+    w.push('Compaction plant is manually overridden — the chute receiver\'s compactor no longer drives this row. Set it back to None to relink.');
+  if(p.plant&amp;&amp;p.plant._recvCombo&amp;&amp;!p.plant.ratio&amp;&amp;p.vol&gt;0)
+    w.push(`${p.plant.label} has no compaction ratio in the equipment library — bins are calculated uncompacted until it is set.`);
   if(p.container&amp;&amp;p.container.fp==null&amp;&amp;p.n&gt;0)w.push(`${p.container.label} has no footprint in the equipment library — the room area is incomplete.`);
   if(p.plant&amp;&amp;p.plant.fp==null&amp;&amp;p.n&gt;0)w.push(`${p.plant.label} has no footprint in the equipment library — the room area is incomplete.`);
   if(p.n&gt;0&amp;&amp;p.vol&gt;0&amp;&amp;p.cap&gt;p.vol*20&amp;&amp;(p.container||p.plant))
@@ -3638,12 +3764,20 @@ function rebuildRoomCards(){
       units.push({code:'CHUTE_'+ch.type,label:cs.label+' chute',qty:1,fpM2:cs.fp,ratio:null,stream:null});
       // the drawing needs a footprint for a compactor receiver; it only exists
       // if the equipment library supplies one, so pass it through explicitly
-      chOut={on:true,type:ch.type,openings:ch.openings.map(o=&gt;{
-        const rs=RECV_SPECS[o.recv];
-        const fp=(rs&amp;&amp;rs.compactor)?(EQUIP_LIB.CHUTE_COMP?EQUIP_LIB.CHUTE_COMP.fp:null):(rs?rs.fp:0);
+      chOut={on:true,type:ch.type,
+        ffh_mm:ch.ffh_mm,slab_mm:ch.slab_mm,clearance_mm:ch.clearance_mm,rec_deg:ch.rec_deg,
+        openings:ch.openings.map(o=&gt;{
+        const rs=recvOf(o.recv);
+        // a library receiver carries its own footprint, compactor bundled or
+        // not; the legacy dropdown compactor still reads the CHUTE_COMP seed
+        const fp=rs?(rs.lib?rs.fp:(rs.compactor?(EQUIP_LIB.CHUTE_COMP?EQUIP_LIB.CHUTE_COMP.fp:null):rs.fp)):0;
         // a compactor receiver is already listed by the provision loop above
         if(rs&amp;&amp;o.recv!=='NONE'&amp;&amp;!rs.compactor&amp;&amp;rs.fp&gt;0)units.push({code:'RECV_'+o.recv,label:rs.label+' receiver',qty:1,fpM2:rs.fp,ratio:null,stream:o.stream});
-        return {stream:o.stream,recv:o.recv,fpM2:fp};
+        // real dimensions ride to the layout so the drawing uses the record's
+        // footprint and the chute-angle geometry its overall height
+        return {stream:o.stream,recv:o.recv,fpM2:fp,
+          wM:rs&amp;&amp;rs.w_mm&gt;0?rs.w_mm/1000:null,dM:rs&amp;&amp;rs.d_mm&gt;0?rs.d_mm/1000:null,
+          hM:rs&amp;&amp;rs.h_mm&gt;0?rs.h_mm/1000:null,lbl:rs?rs.label:null};
       })};
     }
     const allowM2=roomAllowTotal(room2,getActiveProfile());
@@ -3764,7 +3898,7 @@ function runCalc(){
       if(e){anyComp=true;if(!e.ratio)noRatio=true;}
     }));
     const served=chuteServed(r);
-    Object.values(served).forEach(o=&gt;{if(RECV_SPECS[o.recv]&amp;&amp;RECV_SPECS[o.recv].compactor)anyComp=true;});
+    Object.values(served).forEach(o=&gt;{const rs=recvOf(o.recv);if(rs&amp;&amp;rs.compactor)anyComp=true;});
   });
   if(anyChute){
     notes.push(&quot;Chute angles: 45° maximum for general waste and organics, 22.5° for recycling. Assumes a 300 mm slab — confirm against structure.&quot;);
@@ -3922,7 +4056,7 @@ window.addEventListener('message', function(e) {
   if (e.data &amp;&amp; e.data.type === 'ws-calc-fill') {
     const d = e.data;
     if (Array.isArray(d.equipment)) {
-      EQUIP_DB = d.equipment; rebuildEquipLib();
+      EQUIP_DB = d.equipment; rebuildEquipLib(); rebuildRecvLib();
       if (typeof _stored !== 'undefined' &amp;&amp; _stored) { renderAllRooms(); renderRooms(); }
       if (d.bin_rooms === undefined &amp;&amp; d.res_1br === undefined &amp;&amp; d.state === undefined) return;
     }
@@ -10162,6 +10296,7 @@ const EQL = { items: [], deletes: [], cols: [
   ['item_kind','Item kind',70,'text'], ['collectable','Collectable',52,'bool'],
   ['height_mm','Height mm',56,'num'], ['width_mm','Width mm',56,'num'], ['depth_mm','Depth mm',56,'num'],
   ['footprint_m2','Footprint m²',58,'num'], ['capacity_l','Capacity (L)',60,'num'], ['compaction_ratio','Compaction',56,'num'], ['streams','Streams',120,'streams'],
+  ['inlet_height_mm','Inlet mm',54,'num'], ['bin_size_l','Bin size L',52,'num'], ['bin_count','Bin count',48,'num'], ['active','Active',44,'bool'],
   ['company','Company',100,'text'], ['website','Website',130,'text'], ['phone','Phone',95,'text'],
   ['include_in_supplier_table','In supplier tbl',52,'bool'] ] };
 const CTL = { items: [], deletes: [], cols: [
@@ -10206,7 +10341,7 @@ function edCell(spec, i, val) {
       `<div style="font-size:8.5px;color:var(--muted);margin-top:1px;">${hint} · none = unrestricted</div></td>`;
   }
   if (kind === 'cat') {
-    const opts = ['bin','compactor','chute','carousel','other'].map(o=>`<option ${o===val?'selected':''}>${o}</option>`).join('');
+    const opts = ['bin','compactor','chute','chute_receiver','carousel','other'].map(o=>`<option ${o===val?'selected':''}>${o}</option>`).join('');
     return `<td style="padding:2px 5px;"><select ${base} ${st}>${opts}</select></td>`;
   }
   const v = (val ?? '');
@@ -15733,22 +15868,85 @@ const WS_CHUTE_SPECS = {
   TWIN:   { label: 'Twin chute',   w: 0.91, d: 1.43, penDia: 0.58, crit: 0.55, offsets: [[0, -0.353], [0, 0.353]] },
   TRIPLE: { label: 'Triple chute', w: 2.10, d: 0.91, penDia: 0.58, crit: 0.55, offsets: [[-0.705, 0], [0, 0], [0.705, 0]] },
 };
+// The chute package's own colours: royal blue for symbol, connectors and the
+// drag-time radius circles; red only for a connector past its r_max. Neither
+// is a stream or zone colour — chute linework must never read as either.
+const WS_CHUTE_BLUE = '#4169E1', WS_CHUTE_RED = '#E06B4E';
 const WS_RECV_SPECS = {
-  NONE:       { label: 'None',             w: 0,    d: 0,    keepoutR: 0,     render: 'none' },
-  BIN_240:    { label: '240L bin',         w: 0.58, d: 0.73, keepoutR: 0,     render: 'bin' },
-  BIN_660:    { label: '660L bin',         w: 1.37, d: 0.77, keepoutR: 0,     render: 'bin' },
-  BIN_1100:   { label: '1100L bin',        w: 1.37, d: 1.07, keepoutR: 0,     render: 'bin' },
-  INDEX_2:    { label: '2×1100L index',    w: 1.40, d: 4.42, keepoutR: 0,     render: 'index', frameD: 3.12, clr: 1.30 },
-  CAROUSEL_4: { label: '4×1100L carousel', w: 4.35, d: 4.35, keepoutR: 2.175, render: 'carousel', dia: 3.75 },
-  COMPACTOR:  { label: 'Compactor',        w: null, d: null, keepoutR: 0,     render: 'box' },
+  // `h` is the receiver's overall height in metres — the chute terminates onto
+  // it, so it is the termination height in the chute-angle geometry below.
+  NONE:       { label: 'None',             w: 0,    d: 0,    h: 0,    keepoutR: 0,     render: 'none' },
+  BIN_240:    { label: '240L bin',         w: 0.58, d: 0.73, h: 1.08, keepoutR: 0,     render: 'bin' },
+  BIN_660:    { label: '660L bin',         w: 1.37, d: 0.77, h: 1.19, keepoutR: 0,     render: 'bin' },
+  BIN_1100:   { label: '1100L bin',        w: 1.37, d: 1.07, h: 1.33, keepoutR: 0,     render: 'bin' },
+  INDEX_2:    { label: '2×1100L index',    w: 1.40, d: 4.42, h: 1.33, keepoutR: 0,     render: 'index', frameD: 3.12, clr: 1.30 },
+  CAROUSEL_4: { label: '4×1100L carousel', w: 4.35, d: 4.35, h: 1.33, keepoutR: 2.175, render: 'carousel', dia: 3.75 },
+  COMPACTOR:  { label: 'Compactor',        w: null, d: null, h: null, keepoutR: 0,     render: 'box' },
 };
 const WS_RECV_GAP = 0.6; // clear gap between the chute opening and its receiver
-function wsRecvDims(recvKey, fpM2) {
+function wsRecvDims(recvKey, fpM2, lib) {
+  // library-backed receiver: the opening carries the record's dimensions, so
+  // the drawing uses real footprints and Admin edits flow through untouched
+  if (lib && lib.wM > 0 && lib.dM > 0)
+    return { w: lib.wM, d: lib.dM, spec: { label: lib.lbl || recvKey, render: 'bin', keepoutR: 0, h: lib.hM || null }, known: true };
   const s = WS_RECV_SPECS[recvKey] || WS_RECV_SPECS.NONE;
   if (s.w && s.d) return { w: s.w, d: s.d, spec: s, known: true };
   // a compactor's size comes from the equipment library, never from a guess
   if (fpM2 > 0) { const w = Math.sqrt(fpM2 * 1.5); return { w, d: fpM2 / w, spec: s, known: true }; }
   return { w: 2.0, d: 1.4, spec: s, known: false };
+}
+// ── CHUTE ANGLE GEOMETRY (PW_WMP_Master.xlsm, "Chute Angle" tab, Method 1) ──
+// The chute drops vertically; on any level flagged as deflecting the section
+// between floors may be angled, giving a horizontal transition. Transitions on
+// consecutive deflecting levels add up. All values in METRES.
+const WS_CHUTE_DEFAULTS = { ffhMm: 3100, slabMm: 300, clearanceMm: 150 };
+// Max angle from the vertical plane per stream. Recycling prefers 22.5° and
+// may be overridden up to 45° as a stated worst case — anything past the
+// preferred angle is tagged in warnings, never silently accepted.
+const WS_CHUTE_ANGLE = { GW: 45, ORG: 45, REC: 22.5, GLS: 22.5 };
+const WS_CHUTE_ANGLE_HARD_MAX = 45;
+// Available vertical drop per level (spreadsheet G7), bottom→top:
+//   drop_L = (ffl_above − ffl_L) − termH×[terminate_L] − slab×[not deflecting_above]
+// The slab of the level above is subtracted only when the chute passes
+// STRAIGHT through it — a deflecting level above owns its own transition.
+function wsChuteLevelDrops(levels, termHM) {
+  const out = [];
+  for (let i = 0; i < (levels || []).length - 1; i++) {
+    const L = levels[i], above = levels[i + 1];
+    const slabM = L.slabM != null ? L.slabM : WS_CHUTE_DEFAULTS.slabMm / 1000;
+    const drop = (above.fflM - L.fflM)
+      - (L.terminate ? (termHM || 0) : 0)
+      - (above.deflecting ? 0 : slabM);
+    out.push({ drop: Math.max(0, drop), deflecting: !!L.deflecting });
+  }
+  return out;
+}
+// Maximum horizontal transition: Σ drop_L × tan(θ) over deflecting levels.
+function wsChuteRmaxM(levels, termHM, angleDeg) {
+  const t = Math.tan((angleDeg || 0) * Math.PI / 180);
+  return wsChuteLevelDrops(levels, termHM).reduce((a, d) => a + (d.deflecting ? d.drop * t : 0), 0);
+}
+// Total vertical drop over the deflecting levels — the connector's live angle
+// is atan(offset / this).
+function wsChuteDropM(levels, termHM) {
+  return wsChuteLevelDrops(levels, termHM).reduce((a, d) => a + (d.deflecting ? d.drop : 0), 0);
+}
+// The default single-room case: two levels, the chute deflects only on the
+// termination level and passes straight through the slab above. With 3100
+// floor-to-floor, a 300 slab and a 1330 bin: drop = 1.47 m.
+function wsChuteDefaultLevels(ffhM, slabM) {
+  const s = slabM != null ? slabM : WS_CHUTE_DEFAULTS.slabMm / 1000;
+  return [{ fflM: 0, deflecting: true, terminate: true, slabM: s },
+          { fflM: ffhM || WS_CHUTE_DEFAULTS.ffhMm / 1000, deflecting: false, terminate: false, slabM: s }];
+}
+// Method 2: minimum vertical clear above the receiver for a required transition.
+function wsChuteMinVerticalM(xM, angleDeg) {
+  const t = Math.tan((angleDeg || 0) * Math.PI / 180);
+  return t > 0 ? xM / t : Infinity;
+}
+// Method 3: the angle an architect's shown transition x over vertical v implies.
+function wsChuteAngleDeg(xM, vM) {
+  return Math.atan2(Math.max(0, xM), Math.max(0, vM)) * 180 / Math.PI;
 }
 const WS_LAYOUT = { byPage: {}, sel: null, selKind: 'bin', undo: [], redo: [], roomStart: null, activeCalcRoom: null,
                     hover: null, drag: null, tabActive: false, _bound: false, _raf: false, _justDragged: false,
@@ -15876,6 +16074,13 @@ async function wsLoadEquipmentDB() {
         // carried through for the calculator's compaction layer — a compactor
         // row often has no width/depth, so it must not be filtered out here
         compactionRatio: +r.compaction_ratio || null,
+        // chute-receiver records (category chute_receiver) feed the Dev
+        // Summary receiver dropdown and the chute-angle geometry
+        category: r.category || null,
+        active: r.active !== false,
+        inletHeightMm: +r.inlet_height_mm || null,
+        binSizeL: +r.bin_size_l || null,
+        binCount: +r.bin_count || null,
         // B2/B3 pairing metadata. `streams` is the ALLOWABLE set for the picker,
         // never a runtime inference source: an empty array means unrestricted
         // (generic bins), a populated one means physically restricted.
@@ -15920,6 +16125,10 @@ function wsPushEquipToCalc() {
     .map(x => ({ code: x.code, label: x.label, capacity_l: x.capacityL,
                  compaction_ratio: x.compactionRatio, footprint_m2: x.footprintM2,
                  collectable: x.collectableDefault,
+                 category: x.category, active: x.active,
+                 height_mm: x.heightM != null ? x.heightM * 1000 : null,
+                 inlet_height_mm: x.inletHeightMm, bin_size_l: x.binSizeL,
+                 bin_count: x.binCount, streams: x.streams,
                  width_mm: x.w * 1000, depth_mm: x.d * 1000 })) }, '*');
 }
 function wsLayoutBinList() {
@@ -17535,9 +17744,10 @@ function wsLayoutSelectAt(x, y, additive) {
     pick(ch.chute.id, ch.op == null ? 'chute' : 'recv');
     wsRenderLayoutLayer();
     const cs = WS_CHUTE_SPECS[ch.chute.type] || {};
+    const opSel = ch.op == null ? null : ch.chute.openings[ch.op];
     wsLayoutStatus(ch.op == null
       ? `Selected ${cs.label} — drag to move, R rotates (receivers follow), Del deletes.`
-      : `Selected ${(WS_RECV_SPECS[ch.chute.openings[ch.op].recv] || {}).label} receiver — drag to reposition beneath the opening.`);
+      : `Selected ${wsRecvDims(opSel.recv, opSel.fpM2, opSel).spec.label} receiver — drag to reposition; the circles show the chute-angle limits.`);
     return;
   }
   const eq = wsLayoutHitEquip(x, y, mpp);
@@ -18123,6 +18333,9 @@ function wsLayoutBind() {
       // release the held edit cursor; the next mousemove re-derives it from hover
       if (dg.kind === 'room' || dg.kind === 'roomvert') wsLayoutSetCursor(null);
       WS_LAYOUT.drag = null;
+      // chute/receiver grabs draw drag-only radius circles — clear them on
+      // release whether or not anything moved
+      if (dg.kind === 'chute' || dg.kind === 'recv') wsRenderLayoutLayer();
     }
   };
   area.addEventListener('mouseup', endDrag);
@@ -18374,22 +18587,51 @@ function wsRenderLayoutLayer() {
     const grp = mk('g', {});
     mk('rect', { x: ch.x - hw, y: ch.y - hd, width: hw * 2, height: hd * 2,
       transform: `rotate(${ch.rot || 0} ${ch.x} ${ch.y})`,
-      fill: 'rgba(96,125,139,0.22)', stroke: selected ? '#FFD54F' : '#90A4AE',
+      fill: 'rgba(65,105,225,0.10)', stroke: selected ? '#FFD54F' : WS_CHUTE_BLUE,
       'stroke-width': selected ? 3 : 2 }, grp);
     keepouts.push({ kind: 'rect', x: ch.x, y: ch.y, w: cs.w, d: cs.d, rot: ch.rot || 0, why: 'chute shaft' });
     (ch.openings || []).forEach((o, k) => {
       const off = cs.offsets[k] || [0, 0];
       const c = toCanvas(off[0], off[1]);
       const st = WS_STREAMS.find(s => s.id === (WS_STREAM_KEYMAP[String(o.stream).toUpperCase()] || 'garbage')) || WS_STREAMS[0];
-      // 580 mm penetration
-      mk('circle', { cx: c.x, cy: c.y, r: cs.penDia / 2 / mpp, fill: 'none',
-        stroke: st.col, 'stroke-width': 2, 'stroke-dasharray': '5 4' }, grp);
+      // chute drop point: circle of the chute diameter with a cross marker —
+      // royal blue, the chute package's own colour, distinct from every stream
+      const pr = cs.penDia / 2 / mpp;
+      mk('circle', { cx: c.x, cy: c.y, r: pr, fill: 'none',
+        stroke: WS_CHUTE_BLUE, 'stroke-width': 2 }, grp);
+      mk('line', { x1: c.x - pr, y1: c.y, x2: c.x + pr, y2: c.y, stroke: WS_CHUTE_BLUE, 'stroke-width': 1.2, opacity: 0.8 }, grp);
+      mk('line', { x1: c.x, y1: c.y - pr, x2: c.x, y2: c.y + pr, stroke: WS_CHUTE_BLUE, 'stroke-width': 1.2, opacity: 0.8 }, grp);
+      // stream identity stays visible at the opening as a small dot
+      mk('circle', { cx: c.x + pr * 0.7, cy: c.y - pr * 0.7, r: Math.max(3, pr * 0.18), fill: st.col }, grp);
       if (o.rx == null) return;
-      const dm = wsRecvDims(o.recv, o.fpM2);
+      const dm = wsRecvDims(o.recv, o.fpM2, o);
       if (dm.spec.render === 'none') return;
-      // connector from opening to receiver
-      mk('line', { x1: c.x, y1: c.y, x2: o.rx, y2: o.ry, stroke: st.col,
-        'stroke-width': 1.2, 'stroke-dasharray': '3 5', opacity: 0.75 }, grp);
+      const geom = wsChuteOpeningGeom(ch, o);
+      const offsetM = Math.hypot(o.rx - c.x, o.ry - c.y) * mpp;
+      const liveDeg = wsChuteAngleDeg(offsetM, geom.dropM);
+      const exceeds = offsetM > geom.rmaxM + 1e-6;
+      // radius circles ONLY while this chute or receiver is being dragged:
+      // r_max solid 1.5px, the preferred angle dashed 1px, both 40% opacity
+      const dg2 = WS_LAYOUT.drag;
+      const dragging = dg2 && dg2.id === ch.id &&
+        (dg2.kind === 'chute' || (dg2.kind === 'recv' && dg2.op === k));
+      if (dragging) {
+        if (geom.rmaxM > 0) mk('circle', { cx: c.x, cy: c.y, r: geom.rmaxM / mpp, fill: 'none',
+          stroke: WS_CHUTE_BLUE, 'stroke-width': 1.5, opacity: 0.4 }, grp);
+        if (geom.rprefM > 0) mk('circle', { cx: c.x, cy: c.y, r: geom.rprefM / mpp, fill: 'none',
+          stroke: WS_CHUTE_BLUE, 'stroke-width': 1, opacity: 0.4, 'stroke-dasharray': '5 4' }, grp);
+      }
+      // connector from drop point to receiver inlet — royal blue dashed; red
+      // only past r_max, with the breach named rather than just recoloured
+      const ccol = exceeds ? WS_CHUTE_RED : WS_CHUTE_BLUE;
+      mk('line', { x1: c.x, y1: c.y, x2: o.rx, y2: o.ry, stroke: ccol,
+        'stroke-width': 1.6, 'stroke-dasharray': '4 3', opacity: 0.9 }, grp);
+      if (offsetM > 0.02 && geom.dropM > 0) {
+        const at = mk('text', { x: (c.x + o.rx) / 2 + 6, y: (c.y + o.ry) / 2 - 4, fill: ccol,
+          'font-size': 10, 'font-weight': 700 }, grp);
+        at.textContent = liveDeg.toFixed(liveDeg < 10 ? 1 : 0) + '°' +
+          (exceeds ? ` — exceeds ${geom.maxDeg}°` : '');
+      }
       const rw = dm.w / 2 / mpp, rd = dm.d / 2 / mpp;
       if (dm.spec.render === 'carousel') {
         mk('circle', { cx: o.rx, cy: o.ry, r: dm.spec.keepoutR / mpp, fill: 'rgba(255,138,80,0.08)',
@@ -18405,9 +18647,11 @@ function wsRenderLayoutLayer() {
           'stroke-dasharray': dm.known ? '' : '7 5' }, grp);
         keepouts.push({ kind: 'rect', x: o.rx, y: o.ry, w: dm.w, d: dm.d, rot: ch.rot || 0, why: 'receiver' });
       }
-      const lb = mk('text', { x: o.rx, y: o.ry + 4, fill: '#ECEFF1', 'font-size': 10,
+      const overPref = !exceeds && geom.rprefM != null && offsetM > geom.rprefM + 1e-6;
+      const lb = mk('text', { x: o.rx, y: o.ry + 4, fill: exceeds ? WS_CHUTE_RED : '#ECEFF1', 'font-size': 10,
         'font-weight': 700, 'text-anchor': 'middle' }, grp);
-      lb.textContent = dm.known ? dm.spec.label : dm.spec.label + ' (size TBC)';
+      lb.textContent = (dm.known ? dm.spec.label : dm.spec.label + ' (size TBC)') +
+        (exceeds ? ` — exceeds ${geom.maxDeg}°` : overPref ? ` — exceeds preferred ${geom.prefDeg}°` : '');
     });
     const t = mk('text', { x: ch.x - hw, y: ch.y - hd - 6, fill: '#B0BEC5', 'font-size': 11, 'font-weight': 700 }, grp);
     t.textContent = cs.label + (ch.roomName ? ' — ' + ch.roomName : '');
@@ -18789,21 +19033,32 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
     d += text(layer, aci, last.x, last.y, 180,
       closed ? wsPolyArea(m.pts, mpp).toFixed(1) + ' m2' : wsMarkLen(m.pts, mpp).toFixed(2) + ' m');
   });
-  // chutes, receivers and keepouts
+  // chutes, receivers and keepouts. The chute symbol and its connectors live
+  // on their own CHUTE layer in blue (ACI 5), matching the on-screen royal
+  // blue, so the styling survives into architectural drawings; receivers keep
+  // the E-CHUTE-RECV layer.
   slot.chutes.forEach(ch => {
     const cs = WS_CHUTE_SPECS[ch.type] || WS_CHUTE_SPECS.SINGLE;
-    d += rect('E-CHUTE', 8, ch.x, ch.y, cs.w, cs.d, ch.rot || 0);
-    d += text('E-CHUTE', 8, ch.x - cs.w / 2 / mpp, ch.y - (cs.d / 2 + 0.15) / mpp, 200,
+    d += rect('CHUTE', 5, ch.x, ch.y, cs.w, cs.d, ch.rot || 0);
+    d += text('CHUTE', 5, ch.x - cs.w / 2 / mpp, ch.y - (cs.d / 2 + 0.15) / mpp, 200,
       cs.label + (ch.roomName ? ' - ' + ch.roomName : ''));
     const a = (ch.rot || 0) * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
     (ch.openings || []).forEach((o, k) => {
       const off = cs.offsets[k] || [0, 0];
       const ox = ch.x + (off[0] * cos - off[1] * sin) / mpp;
       const oy = ch.y + (off[0] * sin + off[1] * cos) / mpp;
-      d += circ('E-CHUTE', 8, ox, oy, cs.penDia / 2);
+      // drop point: chute-diameter circle with a cross, same as on screen
+      d += circ('CHUTE', 5, ox, oy, cs.penDia / 2);
+      const cr = cs.penDia / 2 / mpp;
+      d += poly('CHUTE', 5, [[ox - cr, oy], [ox + cr, oy]]);
+      d += poly('CHUTE', 5, [[ox, oy - cr], [ox, oy + cr]]);
       if (o.rx == null) return;
-      const dm = wsRecvDims(o.recv, o.fpM2);
+      const dm = wsRecvDims(o.recv, o.fpM2, o);
       if (dm.spec.render === 'none') return;
+      // connector from drop point to receiver; red (ACI 1) past r_max
+      const geom = wsChuteOpeningGeom(ch, o);
+      const exceeds = Math.hypot(o.rx - ox, o.ry - oy) * mpp > geom.rmaxM + 1e-6;
+      d += poly('CHUTE', exceeds ? 1 : 5, [[ox, oy], [o.rx, o.ry]]);
       if (dm.spec.render === 'carousel') {
         d += circ('E-CHUTE-RECV', 8, o.rx, o.ry, dm.spec.dia / 2);
         d += circ('E-CHUTE-KEEPOUT', 1, o.rx, o.ry, dm.spec.keepoutR);
@@ -18928,6 +19183,9 @@ function wsLayoutSetTargets(schedule, rooms) {
   }));
   WS_CALC_TARGETS = Object.values(flat);
   if (WS_LAYOUT.activeCalcRoom && !WS_CALC_ROOMS.some(r => r.id === WS_LAYOUT.activeCalcRoom)) WS_LAYOUT.activeCalcRoom = null;
+  // chute toggles/edits in the calculator land on the plan immediately —
+  // wsLayoutChuteMode still exists for placing by hand, but is never required
+  if (typeof wsChuteSyncFromCalc === 'function') wsChuteSyncFromCalc();
   wsLayoutRenderTargets();
 }
 // Which drawn rectangle (if any) a point falls inside, so bins placed in a
@@ -19498,6 +19756,12 @@ function wsLayoutDropRoom(roomId, x, y) {
         known: true, calcRoom: roomId, compactor: p.it.compactor });
     }
   });
+  // a chute-served room gets its chute (and receivers) with the drop, unless
+  // one is already placed for this calc room — a dragged chute stays put
+  if (rm.chute && !slot.chutes.some(c => c.calcRoom === roomId)) {
+    const cs = WS_CHUTE_SPECS[rm.chute.type] || WS_CHUTE_SPECS.SINGLE;
+    wsChutePlaceFor(rm, (target.x1 + target.x2) / 2, target.y1 + (cs.d / 2 + 0.3) / mpp);
+  }
   WS_LAYOUT.activeCalcRoom = roomId;
   wsLayoutAutosave(); wsRenderLayoutLayer();
   wsLayoutStatus(res.left > 0
@@ -20355,13 +20619,21 @@ function wsLayoutRenderTargets() {
       String(u.code).indexOf('RECV_') !== 0 && String(u.code).indexOf('ALLOW_') !== 0);
     const extraLine = extras.length
       ? `<div class="wsl-card-line" style="color:#F5B400;"><span>+ ${extras.length} unit${extras.length === 1 ? '' : 's'}</span><span>${extras.map(u => u.label).join(', ').slice(0, 26)}</span></div>` : '';
+    // chute-served rooms carry their chute on the card: placed state plus a
+    // by-hand (re)placement entry — the wsLayoutChuteMode caller lives HERE
+    const chutePlaced = rm.chute && wsLayoutSlot().chutes.some(c => c.calcRoom === rm.id);
+    const chuteLine = rm.chute
+      ? `<div class="wsl-card-line" style="color:#7EA6F5;"><span>⇣ ${(WS_CHUTE_SPECS[rm.chute.type] || {}).label || 'Chute'}</span>` +
+        `<button style="background:none;border:1px solid #3d5aa8;border-radius:5px;color:#7EA6F5;font-size:9px;padding:1px 7px;cursor:pointer;font-family:inherit;" ` +
+        `onclick="event.stopPropagation();wsLayoutChuteMode('${rm.id}')" ` +
+        `title="Click, then click the plan to ${chutePlaced ? 're-place' : 'place'} the chute — receivers drop in beneath each opening">${chutePlaced ? 'placed ✓ · move' : 'place'}</button></div>` : '';
     return `<div class="wsl-card${done ? ' done' : ''}" draggable="true" ondragstart="wsCardDragStart(event,'${rm.id}')" ` +
       `title="~${(rm.areaM2 || 0).toFixed(1)} m² · ${drawn[rm.id] ? 'drawn — drag onto the plan to re-fill' : 'drag onto the plan to place this room and lay its bins out inside'}" onclick="wsLayoutPickRoom('${rm.id}')">` +
       `<div class="wsl-card-hd"><span style="width:7px;height:7px;border-radius:50%;background:${kindCol};flex:0 0 auto;align-self:center;" title="${rm.kind === 'com' ? 'commercial' : 'residential'}"></span>` +
       `<span class="wsl-card-nm" style="color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${rm.name}</span>` +
       `<span class="wsl-card-meta">${got}/${need}${done ? ' ✓' : ''}</span></div>` +
       lines + allowLines +
-      `<div class="wsl-card-more">` + extraLine +
+      `<div class="wsl-card-more">` + chuteLine + extraLine +
       `<div class="wsl-card-ft">~${(rm.areaM2 || 0).toFixed(1)} m² · ${drawn[rm.id] ? 'drawn — drag to re-fill' : 'drag onto the plan'}</div></div></div>`;
   }).join('');
   const orphan = wsLayoutUntagged();
@@ -20394,6 +20666,38 @@ function wsLayoutRoomSizeMode(roomId) {
   document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
   wsLayoutStatus('Click the top-left corner for ' + rm.name + ' (~' + rm.areaM2.toFixed(1) + ' m²).');
 }
+// Live chute-angle geometry for one placed chute opening. Reads the calc
+// room's CURRENT chute settings (so editing ffh in the calculator resizes the
+// circles live), falling back to the copy stored on the placed chute. Level
+// table: a room carrying levels_mm uses it; otherwise the default two-level
+// case is built from ffh/slab — 3100/300 are defaults, never hardcoded here.
+function wsChuteOpeningGeom(ch, o) {
+  const rm = ((typeof WS_CALC_ROOMS !== 'undefined' && WS_CALC_ROOMS) || []).find(r => r.id === ch.calcRoom);
+  const src = (rm && rm.chute) || ch.geom || {};
+  const ffhM = (Number(src.ffh_mm) || WS_CHUTE_DEFAULTS.ffhMm) / 1000;
+  const slabM = (Number(src.slab_mm) || WS_CHUTE_DEFAULTS.slabMm) / 1000;
+  const levels = Array.isArray(src.levels_mm) && src.levels_mm.length >= 2
+    ? src.levels_mm.map(l => ({ fflM: (Number(l.ffl_mm) || 0) / 1000, deflecting: !!l.deflecting,
+                                terminate: !!l.terminate, slabM: (Number(l.slab_mm) || src.slab_mm || WS_CHUTE_DEFAULTS.slabMm) / 1000 }))
+    : wsChuteDefaultLevels(ffhM, slabM);
+  // termination height: the receiver record's overall height; built-ins from
+  // WS_RECV_SPECS; an unsized compactor gets a conservative 1.5 m estimate
+  // (taller receiver → less drop → tighter circle, so the guess only tightens)
+  const termHM = o.hM > 0 ? o.hM : ((WS_RECV_SPECS[o.recv] || {}).h ?? 1.5);
+  const stream = String(o.stream || 'GW').toUpperCase();
+  const prefDeg = WS_CHUTE_ANGLE[stream] != null ? WS_CHUTE_ANGLE[stream] : 45;
+  // recycling-family streams may be overridden up to the hard max as a stated
+  // worst case; the preferred circle stays on the plan as the dashed reminder
+  const maxDeg = prefDeg < WS_CHUTE_ANGLE_HARD_MAX
+    ? Math.min(WS_CHUTE_ANGLE_HARD_MAX, Math.max(prefDeg, Number(src.rec_deg) || prefDeg))
+    : prefDeg;
+  return {
+    dropM: wsChuteDropM(levels, termHM),
+    rmaxM: wsChuteRmaxM(levels, termHM, maxDeg),
+    rprefM: maxDeg > prefDeg ? wsChuteRmaxM(levels, termHM, prefDeg) : null,
+    maxDeg, prefDeg, termHM,
+  };
+}
 // Auto-place each receiver directly beneath its chute opening.
 function wsChuteResetRecv(ch) {
   const mpp = wsSweptMpp(); if (!mpp) return;
@@ -20420,24 +20724,81 @@ function wsLayoutChuteMode(roomId) {
   const cs = WS_CHUTE_SPECS[rm.chute.type] || WS_CHUTE_SPECS.SINGLE;
   wsLayoutStatus('Click where the ' + cs.label.toLowerCase() + ' sits — receivers drop in beneath each opening.');
 }
-function wsLayoutChuteAt(x, y) {
-  const mpp = wsLayoutMpp(); if (!mpp) return;
-  const rm = WS_CALC_ROOMS.find(r => r.id === WS_LAYOUT.activeCalcRoom);
-  if (!rm || !rm.chute) { wsLayoutEndMode(); return; }
+// One placement routine for every path in: the click mode below, the calc-
+// toggle sync, and the room-card drop. Replaces any chute this calc room
+// already had.
+function wsChutePlaceFor(rm, x, y) {
+  const mpp = wsSweptMpp(); if (!mpp || !rm || !rm.chute) return null;
   const slot = wsLayoutSlot();
-  wsLayoutSnapshot();
   const keep = slot.chutes.filter(c => c.calcRoom !== rm.id);
   slot.chutes.length = 0; keep.forEach(c => slot.chutes.push(c));
   const ch = { id: 'chute_' + Date.now(), x: wsLayoutSnap(x, mpp), y: wsLayoutSnap(y, mpp),
     type: rm.chute.type, rot: 0, calcRoom: rm.id, roomName: rm.name,
-    openings: (rm.chute.openings || []).map(o => ({ stream: o.stream, recv: o.recv, fpM2: o.fpM2 || null })) };
+    // geometry copy rides along so an orphaned chute (calc room deleted)
+    // still knows its levels; the live calc room wins while it exists
+    geom: { ffh_mm: rm.chute.ffh_mm, slab_mm: rm.chute.slab_mm, rec_deg: rm.chute.rec_deg },
+    openings: (rm.chute.openings || []).map(o => ({ stream: o.stream, recv: o.recv, fpM2: o.fpM2 || null,
+      wM: o.wM || null, dM: o.dM || null, hM: o.hM || null, lbl: o.lbl || null })) };
   slot.chutes.push(ch);
   wsChuteResetRecv(ch);
+  return ch;
+}
+function wsLayoutChuteAt(x, y) {
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  const rm = WS_CALC_ROOMS.find(r => r.id === WS_LAYOUT.activeCalcRoom);
+  if (!rm || !rm.chute) { wsLayoutEndMode(); return; }
+  wsLayoutSnapshot();
+  const ch = wsChutePlaceFor(rm, x, y);
+  if (!ch) { wsLayoutEndMode(); return; }
   WS_LAYOUT.sel = ch.id;
   wsLayoutAutosave(); wsLayoutEndMode();
-  const unknown = ch.openings.filter(o => !wsRecvDims(o.recv, o.fpM2).known);
+  const unknown = ch.openings.filter(o => !wsRecvDims(o.recv, o.fpM2, o).known);
   wsLayoutStatus((WS_CHUTE_SPECS[ch.type] || {}).label + ' placed for ' + rm.name +
     (unknown.length ? ' — compactor size is a placeholder until the equipment library has its footprint.' : ' — drag the body or any receiver to adjust.'));
+}
+// Keep placed chutes in step with the calculator's chute settings. Runs on
+// every calc update: a toggle ON with a drawn room places the chute in that
+// room immediately; OFF removes it; a type/opening change rebuilds it in
+// place. Same-shape updates only refresh the receiver metadata, so dragged
+// receiver positions survive an ffh or receiver-size edit.
+function wsChuteSyncFromCalc() {
+  const mpp = wsSweptMpp(); if (!mpp) return;
+  // an empty payload (calc still restoring) must never sweep placed chutes
+  if (!WS_CALC_ROOMS.length) return;
+  const slot = wsLayoutSlot();
+  if (!slot.chutes) slot.chutes = [];
+  let changed = false;
+  // remove chutes whose calc room no longer has one
+  const dead = slot.chutes.filter(c => c.calcRoom &&
+    !WS_CALC_ROOMS.some(r => r.id === c.calcRoom && r.chute && r.chute.on !== false));
+  if (dead.length) {
+    slot.chutes = slot.chutes.filter(c => dead.indexOf(c) < 0);
+    changed = true;
+  }
+  WS_CALC_ROOMS.forEach(rm => {
+    if (!rm.chute) return;
+    const placed = slot.chutes.find(c => c.calcRoom === rm.id);
+    const shape = c => JSON.stringify([c.type, (c.openings || []).map(o => [o.stream, o.recv])]);
+    if (placed && shape(placed) === shape(rm.chute)) {
+      // same chute — refresh per-opening metadata and the geometry copy only
+      placed.geom = { ffh_mm: rm.chute.ffh_mm, slab_mm: rm.chute.slab_mm, rec_deg: rm.chute.rec_deg };
+      (placed.openings || []).forEach((o, k) => {
+        const src = (rm.chute.openings || [])[k]; if (!src) return;
+        o.fpM2 = src.fpM2 || null; o.wM = src.wM || null; o.dM = src.dM || null;
+        o.hM = src.hM || null; o.lbl = src.lbl || null;
+      });
+      return;
+    }
+    // place (or re-place) inside the drawn room, top-centre — draggable after
+    const room = slot.rooms.find(r => r.calcRoom === rm.id);
+    if (!room && !placed) return;   // nowhere to put it yet; the card button remains
+    const cs = WS_CHUTE_SPECS[rm.chute.type] || WS_CHUTE_SPECS.SINGLE;
+    const x = placed ? placed.x : (room.x1 + room.x2) / 2;
+    const y = placed ? placed.y : room.y1 + (cs.d / 2 + 0.3) / mpp;
+    wsChutePlaceFor(rm, x, y);
+    changed = true;
+  });
+  if (changed) { wsLayoutAutosave(); wsRenderLayoutLayer(); }
 }
 function wsLayoutEquipMode(roomId, code) {
   if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }

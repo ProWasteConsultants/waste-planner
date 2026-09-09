@@ -159,6 +159,18 @@ const LAYOUT_BLOCKS = [
   ['WS_CALLOUT_MIN_W',  /^const WS_CALLOUT_MIN_W = /],
   ['wsCalloutWrap',     /^function wsCalloutWrap\(/],
   ['wsCalloutDims',     /^function wsCalloutDims\(/],
+  ['WS_RECV_SPECS',     /^const WS_RECV_SPECS = \{/],
+  ['wsRecvDims',        /^function wsRecvDims\(/],
+  ['WS_CHUTE_DEFAULTS', /^const WS_CHUTE_DEFAULTS = /],
+  ['WS_CHUTE_ANGLE',    /^const WS_CHUTE_ANGLE = \{/],
+  ['WS_CHUTE_ANGLE_HARD_MAX', /^const WS_CHUTE_ANGLE_HARD_MAX = /],
+  ['wsChuteLevelDrops', /^function wsChuteLevelDrops\(/],
+  ['wsChuteRmaxM',      /^function wsChuteRmaxM\(/],
+  ['wsChuteDropM',      /^function wsChuteDropM\(/],
+  ['wsChuteDefaultLevels', /^function wsChuteDefaultLevels\(/],
+  ['wsChuteMinVerticalM', /^function wsChuteMinVerticalM\(/],
+  ['wsChuteAngleDeg',   /^function wsChuteAngleDeg\(/],
+  ['wsChuteOpeningGeom', /^function wsChuteOpeningGeom\(/],
 ];
 
 // Sheet export: scale selection and legend content. Pure maths and data, no PDF

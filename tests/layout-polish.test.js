@@ -1937,6 +1937,62 @@ test('commercial transfer routes are a separate kind on every surface', () => {
     'each route kind gets its own ACI colour on the route layer');
 });
 
+// ── chute placement + geometry wiring ───────────────────────────────────
+test('chute placement is reachable again: card button, calc-toggle sync, room drop', () => {
+  // Regression: wsLayoutChuteMode existed with NO caller — the room card lost
+  // its chute entry in a panel redesign, so a chute could never be placed and
+  // "toggle chute on" drew nothing. Three ways in now:
+  assert.ok(SOURCE.includes("wsLayoutChuteMode('${rm.id}')"), 'the room card has the by-hand placement button');
+  const targets = SOURCE.slice(SOURCE.indexOf('function wsLayoutSetTargets'), SOURCE.indexOf('function wsLayoutCalcRoomAt'));
+  assert.ok(targets.includes('wsChuteSyncFromCalc()'), 'every calc update syncs chutes onto the plan');
+  const drop = SOURCE.slice(SOURCE.indexOf('function wsLayoutDropRoom'), SOURCE.indexOf('function wsWireCanvasDrop'));
+  assert.ok(drop.includes('wsChutePlaceFor(rm,'), 'dropping a chute-served room places its chute');
+  const sync = SOURCE.slice(SOURCE.indexOf('function wsChuteSyncFromCalc'), SOURCE.indexOf('function wsLayoutEquipMode'));
+  assert.ok(sync.includes('slot.chutes = slot.chutes.filter'), 'toggling OFF removes the placed chute');
+  assert.ok(sync.includes('o.hM = src.hM || null'), 'same-shape updates keep dragged receiver positions');
+});
+
+test('chute linework is royal blue; circles are drag-only; breaches go red and are named', () => {
+  assert.ok(SOURCE.includes("const WS_CHUTE_BLUE = '#4169E1', WS_CHUTE_RED = '#E06B4E';"));
+  const rend = SOURCE.slice(SOURCE.indexOf('// ── chutes, receivers and keepouts ──'),
+                            SOURCE.indexOf('// Architectural door symbol'));
+  assert.ok(rend.includes("'stroke-dasharray': '4 3'"), 'connector dash per spec');
+  assert.ok(rend.includes('const dragging = dg2 && dg2.id === ch.id'), 'radius circles only while dragging this chute');
+  assert.ok(rend.includes("'stroke-width': 1.5, opacity: 0.4"), 'r_max solid 1.5px at 40%');
+  assert.ok(rend.includes("'stroke-width': 1, opacity: 0.4, 'stroke-dasharray': '5 4'"), 'preferred circle dashed 1px');
+  assert.ok(rend.includes('exceeds ? WS_CHUTE_RED : WS_CHUTE_BLUE'), 'red only past r_max');
+  assert.ok(rend.includes('— exceeds ${geom.maxDeg}°'), 'the breach is named at the connector');
+  assert.ok(rend.includes('exceeds preferred ${geom.prefDeg}°'), 'recycling past 22.5° is tagged even inside the override');
+  // circles clear on release whether or not the pointer moved
+  const end = SOURCE.slice(SOURCE.indexOf('const endDrag'), SOURCE.indexOf("area.addEventListener('mouseup'"));
+  const afterNull = end.slice(end.indexOf('WS_LAYOUT.drag = null;'));
+  assert.ok(afterNull.includes("dg.kind === 'chute' || dg.kind === 'recv'"), 'release re-render clears the circles');
+});
+
+test('calculator: receivers come from the library, compactors stay garbage-only, compaction flows through', () => {
+  // the receiver dropdown reads chute_receiver records merged over built-ins
+  assert.ok(SOURCE.includes("if(!r||r.category!=='chute_receiver'||r.active===false)return;"),
+    'RECV_LIB takes active chute_receiver records only');
+  assert.ok(SOURCE.includes("if(v.compactor&amp;&amp;stream!=='GW')return;"),
+    'a recycling opening never lists a compactor, whatever the record claims');
+  // §5: receiver-bundled compactor IS the compaction plant, footprint once
+  assert.ok(SOURCE.includes("{id:'RECV_COMBO',label:recv.label,ratio:recv.ratio,fp:0,_recvCombo:true}"),
+    'a bundled compactor becomes the plant with the record\'s own ratio');
+  assert.ok(SOURCE.includes('if(plant&amp;&amp;!plant._recvCombo){'),
+    'its footprint is never added twice');
+  assert.ok(SOURCE.includes('const minBins=(!container&amp;&amp;recv&amp;&amp;(recv.bins||0)&gt;1&amp;&amp;vol&gt;0)?recv.bins:0;'),
+    'carousel/index bins floor the count — those bins exist physically');
+  assert.ok(SOURCE.includes('after compaction ${fmtVol(p.volAfter)}/wk (from ${fmtVol(p.vol)})'),
+    'the row shows pre- and post-compaction volumes');
+  assert.ok(SOURCE.includes('Compaction plant is manually overridden'),
+    'overriding the chute link warns instead of silently unlinking');
+  // §2 travels with the room: geometry + receiver dims reach the layout
+  assert.ok(SOURCE.includes('ffh_mm:ch.ffh_mm,slab_mm:ch.slab_mm,clearance_mm:ch.clearance_mm,rec_deg:ch.rec_deg'),
+    'chute geometry rides the room payload');
+  assert.ok(SOURCE.includes('hM:rs&amp;&amp;rs.h_mm&gt;0?rs.h_mm/1000:null'),
+    'the receiver\'s overall height reaches the chute-angle maths');
+});
+
 test('the 60% screen touches the base-plan raster ONLY — markups ride over it at full strength', () => {
   // vector path: the overlay goes through doc.svg, never the screened canvas
   // (sheet-export.test.js pins that). This guards the FALLBACK: a rasterised
