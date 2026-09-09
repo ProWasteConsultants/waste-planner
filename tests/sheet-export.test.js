@@ -335,8 +335,14 @@ test('wsLegendItems: hiding a layer removes its styles', () => {
 
 test('wsLegendItems: the swept layer contributes envelope, clearance and wheel path', () => {
   const c = ws.wsSheetContent({}, { paths: [{ result: {} }] });
-  const keys = ws.wsLegendItems(ALL_ON, c).map(r => r.key);
-  assert.deepEqual(keys, ['swept', 'swept-clr', 'swept-wheel']);
+  const rows = ws.wsLegendItems(ALL_ON, c);
+  assert.deepEqual(rows.map(r => r.key), ['swept', 'swept-clr', 'swept-wheel']);
+  // the legend states what the swept renderer draws: green body envelope,
+  // the same green dashed clearance, lime dashed wheel paths — never colours
+  // the drawing doesn't use
+  assert.equal(rows.find(r => r.key === 'swept').col, '#00A651');
+  assert.equal(rows.find(r => r.key === 'swept-clr').col, '#00A651');
+  assert.equal(rows.find(r => r.key === 'swept-wheel').col, '#4BED12');
   // ...and nothing when the layer is on but no path has been generated
   assert.deepEqual(ws.wsLegendItems(ALL_ON, ws.wsSheetContent({}, null)), []);
 });
