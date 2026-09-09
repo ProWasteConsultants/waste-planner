@@ -49,6 +49,15 @@ const BLOCKS = [
   ['wsLayoutEquipList', /^function wsLayoutEquipList\(/],
   ['wsBinType',         /^function wsBinType\(/],
   ['WS_CHUTE_SPECS',    /^const WS_CHUTE_SPECS = \{/],
+  ['WS_CHUTE_DEFAULTS', /^const WS_CHUTE_DEFAULTS = /],
+  ['WS_CHUTE_ANGLE',    /^const WS_CHUTE_ANGLE = \{/],
+  ['WS_CHUTE_ANGLE_HARD_MAX', /^const WS_CHUTE_ANGLE_HARD_MAX = /],
+  ['wsChuteLevelDrops', /^function wsChuteLevelDrops\(/],
+  ['wsChuteRmaxM',      /^function wsChuteRmaxM\(/],
+  ['wsChuteDropM',      /^function wsChuteDropM\(/],
+  ['wsChuteDefaultLevels', /^function wsChuteDefaultLevels\(/],
+  ['wsChuteAngleDeg',   /^function wsChuteAngleDeg\(/],
+  ['wsChuteOpeningGeom', /^function wsChuteOpeningGeom\(/],
   ['WS_RECV_SPECS',     /^const WS_RECV_SPECS = \{/],
   ['WS_RECV_GAP',       /^const WS_RECV_GAP = /],
   ['wsRecvDims',        /^function wsRecvDims\(/],
@@ -155,6 +164,17 @@ test('no orphan blocks and no dangling INSERTs', () => {
   // doors, aisles and zones are raw linework — they must not define blocks
   for (const nm of defined)
     assert.ok(!/WP_DOOR|WP_AISLE|WP_ZONE/.test(nm), 'raw-linework item leaked a block: ' + nm);
+});
+
+test('chute symbol and connectors export on a blue CHUTE layer', () => {
+  const { doc, ents } = buildDoc();
+  assert.ok(doc.includes('0\nLAYER\n2\nCHUTE\n'), 'CHUTE layer is defined in the table');
+  assert.ok(/8\nCHUTE\n62\n5\n/.test(ents), 'chute linework carries ACI 5 (blue)');
+  assert.ok(ents.includes('8\nE-CHUTE-RECV\n'), 'receivers keep their own layer');
+  // the connector from drop point to receiver is on the CHUTE layer too — the
+  // receiver in the fixture sits inside its r_max, so it stays blue
+  const chute = ents.slice(ents.indexOf('8\nCHUTE\n'));
+  assert.ok(chute.includes('0\nPOLYLINE\n8\nCHUTE\n62\n5\n'), 'connector polyline present in blue');
 });
 
 test('the export parses in ezdxf — a real CAD parser, not our own assertions', () => {

@@ -203,6 +203,38 @@ Labels layer. Room line style is *not* exported to DXF (the entity writer emits
 layer and colour only, no linetype group code), so screen styling is free to
 change — a test guards that assumption.
 
+## Chutes and receivers
+
+The chute-angle geometry mirrors the "Chute Angle" tab of `PW_WMP_Master.xlsm`
+(Method 1): per level, `drop = (ffl_above − ffl) − termH×[terminate] −
+slab×[not deflecting_above]`; the max horizontal transition is
+`Σ drop×tan(θ)` over deflecting levels. Pure functions (`wsChuteLevelDrops`,
+`wsChuteRmaxM`, `wsChuteOpeningGeom`) are covered by
+`tests/chute-geometry.test.js`; the reference case is 3100 FFH / 300 slab /
+1330 bin → drop 1.47 m, r_max 1.47 m @45°, 0.609 m @22.5°.
+
+- **3100 / 300 / 150 / 22.5° are defaults, set in `normChute` only** — every
+  value is per-room editable in the calc chute editor, and a room carrying a
+  `levels_mm` array uses the full multi-level table instead of the two-level
+  default. Angles: GW/ORG 45°; REC prefers 22.5°, may be raised to 45° as a
+  stated worst case — past 22.5° every REC receiver is tagged in warnings.
+- **Chute linework is royal blue `#4169E1`** (symbol, connectors, drag-only
+  radius circles); red `#E06B4E` only past r_max, always with the breach
+  named. Not a stream or zone colour. DXF: symbol + connectors on `CHUTE`
+  (ACI 5), receivers on `E-CHUTE-RECV`.
+- **Placement has three ways in, all through `wsChutePlaceFor`**: the calc
+  toggle (`wsChuteSyncFromCalc`, runs on every calc payload — it never sweeps
+  when the payload is empty), the room-card drop, and the card's by-hand
+  button (`wsLayoutChuteMode`). A same-shape calc edit refreshes metadata but
+  keeps dragged receiver positions.
+- **Receivers are library records** (`equipment.category = 'chute_receiver'`,
+  keys `LIB_<code>`), merged over the `RECV_SPECS`/`WS_RECV_SPECS` built-ins
+  which stay as the offline fallback. Anything containing a compactor is
+  garbage-only, enforced in `recvOptsFor` regardless of the record. A
+  receiver-bundled compactor IS the room's compaction plant (record's own
+  ratio, footprint counted once); index/carousel bin counts floor the
+  collection-bin count because those bins exist physically.
+
 ## Equipment, compaction and reconciliation
 
 A placed item references the equipment library **by id** (`equipmentId`) and carries
