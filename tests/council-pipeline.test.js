@@ -200,6 +200,58 @@ test('C4: export is a diff for the human flow — nothing writes, ever', () => {
     'the export never calls the publish edge function');
 });
 
+// ── C4: the apply lane — residential diff rows into res_rates ───────────
+test('C4: crxApplyPlan applies residential rate rows only and refuses everything else with a reason', () => {
+  const { loadEngine } = require('./extract.js');
+  const ws = loadEngine({ blocks: [['crxApplyPlan', /^function crxApplyPlan\(/]] });
+  const base = { kind: 'generation_rate', status: 'changed', state: 'NSW', councilValue: 'randwick',
+    target: 'resRates.apt_2br.GW', value: 120, unit: 'L/week', council: 'Randwick City Council' };
+  const p = ws.crxApplyPlan(base);
+  assert.equal(p.ok, true);
+  assert.deepEqual(p.rec, { state: 'NSW', council_value: 'randwick', unit_type: 'apt_2br', stream: 'GW', l_per_week: 120 },
+    'the plan is the exact upsert the Rates DB editor would make by hand');
+  assert.equal(p.unitWarning, null);
+  assert.equal(p.needsCouncil, false);
+  // an unresolved council means CREATE one — a council rate must never land on state defaults
+  const noCv = ws.crxApplyPlan({ ...base, councilValue: null });
+  assert.equal(noCv.ok, true);
+  assert.equal(noCv.needsCouncil, true);
+  assert.equal(noCv.rec.council_value, null);
+  // a non-weekly unit warns (res_rates stores L/week) — the human decides, nothing converts silently
+  assert.match(ws.crxApplyPlan({ ...base, unit: 'L/day' }).unitWarning, /L\/week/);
+  assert.equal(ws.crxApplyPlan({ ...base, unit: 'L/wk/dwelling' }).unitWarning, null);
+  // refusals, each with a stated reason
+  for (const [over, why] of [
+    [{ kind: 'stream_split', target: 'splits.cafe.REC_CARD' }, /no Rates DB column/],
+    [{ target: 'comRates.cafe.GW' }, /per-day \/ per-100m/],
+    [{ status: 'conflicting' }, /reject one/],
+    [{ status: 'same' }, /nothing to apply/],
+    [{ status: 'unmapped', target: null }, /nothing to apply/],
+    [{ target: 'resRates.apt_2br.CARD' }, /GW\/REC\/ORG\/GLS only/],
+    [{ state: null }, /no state/],
+    [{ value: null }, /no numeric value/],
+  ]) {
+    const r = ws.crxApplyPlan({ ...base, ...over });
+    assert.equal(r.ok, false, JSON.stringify(over) + ' must refuse');
+    assert.match(r.why, why);
+  }
+  assert.equal(ws.crxApplyPlan(null).ok, false);
+});
+
+test('C4: applying a row is confirmed, writes the plan into res_rates only, and never publishes', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApply('), SOURCE.indexOf('// ── the review queue'));
+  assert.ok(fn.includes('crxApplyPlan(d)'), 'the write is exactly what the pure plan computed');
+  assert.ok(fn.includes('if (!confirm('), 'human-confirmed, never silent');
+  assert.ok(fn.includes("from('res_rates')") && fn.includes("onConflict: 'state,council_value,unit_type,stream'"),
+    'same table, same key as the Rates DB editor — one write shape');
+  assert.ok(!fn.includes('publish-rates') && !fn.includes('rdbPublish'),
+    'going live stays the separate explicit ⬆ Publish to live step');
+  assert.ok(SOURCE.includes('onclick="crxApply(${i})"'), 'the diff rows actually wire the apply button');
+  assert.ok(SOURCE.includes('crxApplyPlan(d).ok ?'), 'the button renders only on rows the plan accepts');
+  assert.ok(SOURCE.includes('How a number in a guideline PDF becomes live:'),
+    'the queue carries the end-to-end pipeline map');
+});
+
 // ── C5: layout soft warnings ────────────────────────────────────────────
 test('C5: warnings compare council minima to measured layout facts, citing clause + version', () => {
   const { loadEngine } = require('./extract.js');
