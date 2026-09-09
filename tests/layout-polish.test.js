@@ -504,6 +504,22 @@ test('a plan saved before plans were filed as documents still gets a grid card',
   assert.equal(filed.length, 2, 'both createProject paths file the picked plan as a document');
 });
 
+test('an exported sheet is never offered as a Design base plan', () => {
+  // Regression: exported sheets are filed as 'Export' documents, and their
+  // card's primary action was Open in Design — which silently replaced the
+  // project's base plan with the flattened export. The next sheet export then
+  // screened the burned-in layout at 60% like any base plan, under a crisp
+  // live copy. Screening itself was never wrong; the input was.
+  const card = SOURCE.slice(SOURCE.indexOf('function docCardHtml'), SOURCE.indexOf('function docsRender()'));
+  assert.ok(card.includes("isPdf && kind === 'Export'"), 'Export PDFs are special-cased before the plan branch');
+  const exportBranch = card.slice(card.indexOf("isPdf && kind === 'Export'"), card.indexOf('isPlan && isPdf'));
+  assert.ok(exportBranch.includes("{ label: 'Download', fn: `docDownload('${d.id}')` }"),
+    'their primary action is Download; Treat as → Plan is the deliberate override');
+  // DXF exports keep Open in Design — a DXF loads as an underlay layer and
+  // never touches the project plan slot
+  assert.ok(card.includes("docOpenInDesignDxf('${d.id}')"));
+});
+
 test('compliance checker setup: upload + scan at the top, toolbar-style headings', () => {
   const panel = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;setup-inner fade&quot;&gt;'), SOURCE.indexOf('&lt;!-- CHECKER WRAP --&gt;'));
   const order = ['&lt;!-- WMP Upload --&gt;', '&lt;!-- Scan button --&gt;',

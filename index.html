@@ -9219,6 +9219,12 @@ function docCardHtml(p, d) {
     primary = submitPrimary
       ? { label: 'Submit WMP', fn: `openCouncilSubmit()` }
       : { label: 'Open in Compliance Checker', fn: `docOpenInCompliance('${d.id}')` };
+  } else if (isPdf && kind === 'Export') {
+    // An exported sheet is OUTPUT, not a base plan: opening it in Design would
+    // silently replace the project plan, and the next export would screen the
+    // burned-in layout at 60% under a crisp live copy. Deliberate override:
+    // "Treat as → Plan" reclassifies it, and then Open in Design returns.
+    primary = { label: 'Download', fn: `docDownload('${d.id}')` };
   } else if (isPlan && isPdf) primary = { label: 'Open in Design', fn: `docOpenInDesign('${d.id}')` };
   else if (isDxf) primary = { label: 'Open in Design', fn: `docOpenInDesignDxf('${d.id}')` };
   else if (isPdf) primary = { label: 'Open in Design', fn: `docOpenInDesign('${d.id}')` };
