@@ -504,6 +504,20 @@ test('a plan saved before plans were filed as documents still gets a grid card',
   assert.equal(filed.length, 2, 'both createProject paths file the picked plan as a document');
 });
 
+test('the export dialog is isolated from the canvas pan/select handlers', () => {
+  // Regression: #ws-sheet-modal is a CHILD of #ws-canvas-area, whose mousedown
+  // handlers preventDefault unclaimed clicks (pan, marquee, markup hit tests) —
+  // which blocked focusing the dialog's inputs, so the fields could not be
+  // edited at all. Every pointer event from the dialog must stop at the modal.
+  const modal = SOURCE.slice(SOURCE.indexOf('id="ws-sheet-modal"'), SOURCE.indexOf('id="ws-sheet-modal"') + 700);
+  assert.ok(modal.includes('event.stopPropagation();" onmousemove="event.stopPropagation()"'),
+    'mousedown and mousemove stop at the modal');
+  assert.ok(modal.includes('onwheel="event.stopPropagation()"'),
+    'scrolling the dialog must not zoom the plan behind it');
+  assert.ok(modal.includes('if(event.target===this)wsSheetDlgClose()'),
+    'clicking the backdrop still closes the dialog');
+});
+
 test('an exported sheet is never offered as a Design base plan', () => {
   // Regression: exported sheets are filed as 'Export' documents, and their
   // card's primary action was Open in Design — which silently replaced the

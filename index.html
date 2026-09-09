@@ -1713,7 +1713,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         </div>
 
         <!-- Sheet export dialog -->
-        <div id="ws-sheet-modal" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;padding:20px;" onmousedown="if(event.target===this)wsSheetDlgClose()">
+        <!-- The modal is a CHILD of the canvas area, whose pan/select handlers
+             preventDefault unclaimed mousedowns — which blocks focusing these
+             inputs. Nothing from the dialog may reach the canvas handlers. -->
+        <div id="ws-sheet-modal" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;padding:20px;" onmousedown="if(event.target===this)wsSheetDlgClose();event.stopPropagation();" onmousemove="event.stopPropagation()" onmouseup="event.stopPropagation()" onwheel="event.stopPropagation()" ondblclick="event.stopPropagation()">
           <div style="background:#1a1a1a;border:1px solid #3a4747;border-radius:11px;width:min(680px,100%);max-height:90vh;overflow:auto;box-shadow:0 18px 50px rgba(0,0,0,0.6);">
             <div style="display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #2c3636;">
               <div>
@@ -22904,9 +22907,13 @@ function wsLegendItems(layers, content) {
     c.zones.forEach(z => out.push(z));
   }
   if (on('swept') && c.swept) {
-    out.push({ key: 'swept', label: 'Swept path envelope', style: 'line', col: '#00A651' });
-    out.push({ key: 'swept-clr', label: '300 mm clearance envelope', style: 'dash', col: '#E08A00' });
-    out.push({ key: 'swept-wheel', label: 'Wheel path', style: 'dash', col: '#2E6BD6' });
+    // Colours state what the swept renderer actually draws: solid bottle-green
+    // body envelope, the same green dashed for the 300mm clearance, and lime
+    // dashed wheel paths. A legend that names colours the drawing doesn't use
+    // sends a reviewer hunting for lines that aren't there.
+    out.push({ key: 'swept', label: 'Swept path envelope (reverse in red)', style: 'line', col: '#00A651' });
+    out.push({ key: 'swept-clr', label: '300 mm clearance envelope', style: 'dash', col: '#00A651' });
+    out.push({ key: 'swept-wheel', label: 'Wheel path', style: 'dash', col: '#4BED12' });
   }
   return out;
 }
