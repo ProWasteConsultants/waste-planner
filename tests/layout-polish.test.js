@@ -1815,6 +1815,60 @@ test('callouts select on click and delete through the same markup selection', ()
   assert.ok(textBranch.includes("stroke: '#00d4d4'"), 'in the same cyan as every other selection');
 });
 
+// ── callout wrap + resize ───────────────────────────────────────────────
+test('wsCalloutWrap: greedy word wrap into the width, long words hard-break', () => {
+  // 120 units − 14 padding = 106 / 7.4 ≈ 14 chars per line
+  assert.deepEqual(ws.wsCalloutWrap('Dual chute termination point', 120),
+    ['Dual chute', 'termination', 'point']);
+  assert.deepEqual(ws.wsCalloutWrap('short', 120), ['short']);
+  assert.deepEqual(ws.wsCalloutWrap('', 120), ['']);
+  // a word longer than the line breaks rather than overflowing the box
+  const hard = ws.wsCalloutWrap('antidisestablishmentarianism', 120);
+  assert.ok(hard.length > 1 && hard.every(l => l.length <= 14), JSON.stringify(hard));
+  // explicit newlines in the text are respected as paragraph breaks
+  assert.deepEqual(ws.wsCalloutWrap('one\ntwo', 300), ['one', 'two']);
+});
+
+test('wsCalloutDims: auto width is capped so long notes wrap by default; a dragged width takes over', () => {
+  // short text: the legacy single-line box, exact width, one line
+  const short = ws.wsCalloutDims('NOTE', null);
+  assert.equal(short.w, Math.max(46, 4 * 7.4 + 14));
+  assert.deepEqual(short.lines, ['NOTE']);
+  assert.equal(short.h, 22);
+  // long text with no stored width: capped at the auto max and wrapped
+  const long = ws.wsCalloutDims('Dual chute termination point: beneath-chute compactor plus 1100L garbage bin and 1100L commingled recycling bin', null);
+  assert.equal(long.w, 300);
+  assert.ok(long.lines.length > 1, 'wraps by default');
+  assert.equal(long.h, 22 + (long.lines.length - 1) * 15);
+  // a dragged width re-wraps and never drops below the floor
+  const dragged = ws.wsCalloutDims('Dual chute termination point', 120);
+  assert.equal(dragged.w, 120);
+  assert.equal(dragged.lines.length, 3);
+  assert.equal(ws.wsCalloutDims('x', 10).w, 60, 'width floor holds');
+});
+
+test('callout resize is wired: handle hit, drag re-wraps, all surfaces share wsCalloutDims', () => {
+  const down = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousedown'"),
+                            SOURCE.indexOf("area.addEventListener('contextmenu'"));
+  assert.ok(down.includes("{ kind: 'markresize', id: selM.id, moved: false }"),
+    'the selected callout has a resize grab');
+  assert.ok(down.includes('boxC.x + cb.w * Fc / 2'), 'tested at the right edge, where the handle draws');
+  const move = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousemove'"), SOURCE.indexOf('const endDrag'));
+  assert.ok(move.includes("dg.kind === 'markresize'"), 'the drag is handled');
+  assert.ok(move.includes('m.w = Math.max(WS_CALLOUT_MIN_W, (p.x - boxC.x) * 2 / wsCalloutF())'),
+    'width stored in F=1 units so it scales with the text');
+  // renderer, hit test and DXF writer all size the box through wsCalloutDims —
+  // one computation, so the box you see is the box you grab and the box CAD gets
+  for (const [name, fn] of [['wsRenderMarkups', 'function wsLayoutRenderTargets'],
+                            ['wsLayoutHitCallout', 'function wsMarkLen'],
+                            ['wsLayoutDXFEntities', 'function wsLayoutExportDXF']]) {
+    const body = SOURCE.slice(SOURCE.indexOf('function ' + name), SOURCE.indexOf(fn));
+    assert.ok(body.includes('wsCalloutDims('), name + ' sizes the callout box through wsCalloutDims');
+  }
+  const rend = SOURCE.slice(SOURCE.indexOf('function wsRenderMarkups'), SOURCE.indexOf('function wsLayoutRenderTargets'));
+  assert.ok(rend.includes('cb.lines.forEach'), 'the renderer draws every wrapped line');
+});
+
 test('wsMarkConstrainPt: Shift locks the next route leg to 90°', () => {
   const prev = { x: 100, y: 100 };
   // dominant-axis lock, same rule as the room drag (wsSnapAxis)

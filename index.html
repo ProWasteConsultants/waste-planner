@@ -17719,6 +17719,22 @@ function wsLayoutBind() {
     // callouts: click selects (so Del deletes, same as every markup); the box
     // drags the callout, the arrow tip re-aims it
     if (!grabbed && WS.layers.markups !== false) {
+      // the selected callout's right-edge handle resizes, re-wrapping the text
+      // — tested before the box, which would otherwise swallow the edge click
+      if (WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel) {
+        const selM = wsLayoutSlot().markups.find(x => x.id === WS_LAYOUT.sel);
+        if (selM && selM.kind === 'text' && selM.pts?.length) {
+          const Fc = wsCalloutF(), cb = wsCalloutDims(selM.text, selM.w);
+          const boxC = selM.pts[1] || selM.pts[0];
+          if (Math.hypot(p.x - (boxC.x + cb.w * Fc / 2), p.y - boxC.y) <= wsHandleHitR()) {
+            WS_LAYOUT.drag = { kind: 'markresize', id: selM.id, moved: false };
+            WS.isPanning = false;
+            wsLayoutStatus('Resizing the callout — the text re-wraps to the width. Release to set.');
+            e.preventDefault();
+            return;
+          }
+        }
+      }
       const mh = wsLayoutHitCallout(p.x, p.y);
       if (mh) {
         wsSelSet([mh.id], 'markup');
@@ -17943,6 +17959,21 @@ function wsLayoutBind() {
           if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
           const t = dg.part === 'tip' ? m.pts[0] : (m.pts[1] || m.pts[0]);
           t.x = p.x - dg.offX; t.y = p.y - dg.offY;
+        }
+        if (!WS_LAYOUT._raf) {
+          WS_LAYOUT._raf = true;
+          requestAnimationFrame(() => { WS_LAYOUT._raf = false; wsRenderLayoutLayer(); });
+        }
+        return;
+      }
+      if (dg.kind === 'markresize') {
+        const m = (slot2.markups || []).find(x => x.id === dg.id);
+        if (m) {
+          if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
+          const boxC = m.pts[1] || m.pts[0];
+          // the box stays centred on its point, so the dragged right edge sets
+          // twice the pointer offset; stored in F=1 units to scale with the text
+          m.w = Math.max(WS_CALLOUT_MIN_W, (p.x - boxC.x) * 2 / wsCalloutF());
         }
         if (!WS_LAYOUT._raf) {
           WS_LAYOUT._raf = true;
@@ -18734,7 +18765,12 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
     if (m.kind === 'text') {
       const boxP = m.pts.length >= 2 ? m.pts[1] : m.pts[0];
       if (m.pts.length >= 2) d += poly(layer, 5, [[boxP.x, boxP.y], [m.pts[0].x, m.pts[0].y]]);
-      d += text(layer, aci, boxP.x, boxP.y, 200, m.text || '');
+      // a wrapped callout emits one TEXT per line so CAD shows the same note;
+      // 280mm line pitch pairs with the 200 text height
+      const clines = wsCalloutDims(m.text, m.w).lines;
+      const lh = 0.28 / mpp;
+      clines.forEach((ln, li) =>
+        d += text(layer, aci, boxP.x, boxP.y + (li - (clines.length - 1) / 2) * lh, 200, ln));
       return;
     }
     const closed = m.kind === 'area';
@@ -20073,6 +20109,44 @@ function wsMarkDeleteVertex(m, vi) {
   m.pts.splice(vi, 1);
   return true;
 }
+// ── CALLOUT BOX GEOMETRY ─────────────────────────────────────────────────────
+// One computation shared by the renderer, the hit test, the resize handle and
+// the DXF writer — the box you see is the box you grab and the box CAD gets.
+// All sizes are in F=1 units (multiply by wsCalloutF() for canvas px), so a
+// dragged width keeps scaling with the text across plan scales.
+const WS_CALLOUT_CHAR_W = 7.4, WS_CALLOUT_LINE_H = 15, WS_CALLOUT_PAD = 14;
+const WS_CALLOUT_MIN_W = 60, WS_CALLOUT_MAX_AUTO_W = 300;
+// Greedy word wrap into the character budget the width buys. A single word
+// longer than a line hard-breaks rather than overflowing the box. Pure.
+function wsCalloutWrap(text, w) {
+  const cpl = Math.max(4, Math.floor((w - WS_CALLOUT_PAD) / WS_CALLOUT_CHAR_W));
+  const out = [];
+  for (const para of String(text || '').split('\n')) {
+    let line = '';
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      let wd = word;
+      while (wd.length > cpl) {
+        if (line) { out.push(line); line = ''; }
+        out.push(wd.slice(0, cpl)); wd = wd.slice(cpl);
+      }
+      if (!line) line = wd;
+      else if (line.length + 1 + wd.length <= cpl) line += ' ' + wd;
+      else { out.push(line); line = wd; }
+    }
+    out.push(line);
+  }
+  return out.length ? out : [''];
+}
+// Box dimensions + wrapped lines for a callout. No stored width → sized to the
+// text but capped, so a long note wraps by default instead of running the full
+// sheet; a dragged width (m.w) takes over from there. Pure.
+function wsCalloutDims(text, w) {
+  const label = String(text || '');
+  const auto = Math.min(Math.max(46, label.length * WS_CALLOUT_CHAR_W + WS_CALLOUT_PAD), WS_CALLOUT_MAX_AUTO_W);
+  const bw = w > 0 ? Math.max(WS_CALLOUT_MIN_W, w) : auto;
+  const lines = wsCalloutWrap(label, bw);
+  return { w: bw, h: 22 + (lines.length - 1) * WS_CALLOUT_LINE_H, lines };
+}
 function wsLayoutHitCallout(x, y) {
   const mks = (wsLayoutSlot().markups || []);
   for (let i = mks.length - 1; i >= 0; i--) {   // topmost first
@@ -20083,7 +20157,8 @@ function wsLayoutHitCallout(x, y) {
       return { id: m.id, part: 'tip', px: m.pts[0].x, py: m.pts[0].y };
     const box = m.pts[1] || m.pts[0];
     const F = wsCalloutF();
-    const bw = Math.max(46 * F, (m.text || '').length * 7.4 * F + 14 * F), bh = 22 * F;
+    const cb = wsCalloutDims(m.text, m.w);
+    const bw = cb.w * F, bh = cb.h * F;
     if (Math.abs(x - box.x) <= bw/2 + 2 && Math.abs(y - box.y) <= bh/2 + 2)
       return { id: m.id, part: 'box', px: box.x, py: box.y };
   }
@@ -20096,7 +20171,7 @@ function wsMarkLen(pts, mpp) {
 }
 function wsRenderMarkups(mk, mpp) {
   const slot = wsLayoutSlot();
-  const draw = (kind, pts, text, live, sel) => {
+  const draw = (kind, pts, text, live, sel, boxW) => {
     const st = WS_MARK_STYLE[kind] || WS_MARK_STYLE.measure;
     if (kind === 'text') {
       const CALLOUT_BLUE = '#1976D2', CALLOUT_FILL = '#FFF9C4', CALLOUT_TEXT = '#111';
@@ -20107,7 +20182,8 @@ function wsRenderMarkups(mk, mpp) {
       // becomes unreadable. `fs` cancels the render helper's own wsLblF scaling so
       // the glyphs land on the callout floor rather than being scaled twice.
       const F = wsCalloutF(), base = wsLblF() || 1, fs = v => v * F / base;
-      const bw = Math.max(46 * F, label.length * 7.4 * F + 14 * F), bh = 22 * F;
+      const cb = wsCalloutDims(label, boxW);
+      const bw = cb.w * F, bh = cb.h * F;
       const bx = box.x - bw/2, by = box.y - bh/2;
       if (live) { // placement preview: crosshair at target, rubber leader to cursor
         mk('circle', { cx: target.x, cy: target.y, r: 4, fill: 'none', stroke: CALLOUT_BLUE, 'stroke-width': 2 });
@@ -20131,9 +20207,12 @@ function wsRenderMarkups(mk, mpp) {
       }
       mk('rect', { x: bx, y: by, width: bw, height: bh, rx: (3 * F).toFixed(2),
         fill: CALLOUT_FILL, stroke: CALLOUT_BLUE, 'stroke-width': (1.4 * F).toFixed(2) });
-      const t = mk('text', { x: box.x, y: box.y + 4.5 * F, fill: CALLOUT_TEXT, 'font-size': fs(13),
-        'font-weight': 600, 'text-anchor': 'middle' });
-      t.textContent = label;
+      cb.lines.forEach((ln, li) => {
+        const t = mk('text', { x: box.x,
+          y: box.y + 4.5 * F + (li - (cb.lines.length - 1) / 2) * WS_CALLOUT_LINE_H * F,
+          fill: CALLOUT_TEXT, 'font-size': fs(13), 'font-weight': 600, 'text-anchor': 'middle' });
+        t.textContent = ln;
+      });
       if (sel) {
         // dashed ring around the box and the arrow target — the same cyan the
         // other selections wear. Screen-px sized, and gone on export because
@@ -20146,6 +20225,12 @@ function wsRenderMarkups(mk, mpp) {
           'stroke-dasharray': (4 * S).toFixed(1) + ' ' + (3 * S).toFixed(1) });
         if (pts.length >= 2) mk('circle', { cx: target.x.toFixed(1), cy: target.y.toFixed(1),
           r: (6 * S).toFixed(1), fill: 'none', stroke: '#00d4d4', 'stroke-width': (1.6 * S).toFixed(2) });
+        // right-edge resize handle: drag re-wraps the text to the new width,
+        // drawn where the hit test looks for it
+        const hsq = 5 * S;
+        mk('rect', { x: (bx + bw - hsq).toFixed(1), y: (box.y - hsq).toFixed(1),
+          width: (hsq * 2).toFixed(1), height: (hsq * 2).toFixed(1), rx: (2 * S).toFixed(1),
+          fill: '#0d3333', stroke: '#00d4d4', 'stroke-width': (2 * S).toFixed(2) });
       }
       return;
     }
@@ -20193,7 +20278,7 @@ function wsRenderMarkups(mk, mpp) {
     lbl.textContent = st.closed ? `${wsPolyArea(pts, mpp).toFixed(1)} m²` : `${wsMarkLen(pts, mpp).toFixed(2)} m`;
   };
   (slot.markups || []).forEach(m => draw(m.kind, m.pts, m.text, false,
-    WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel === m.id));
+    WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel === m.id, m.w));
   const live = WS_LAYOUT._mark;
   if (live && live.pts.length) {
     const pts = live.pts.slice();

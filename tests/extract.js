@@ -155,6 +155,10 @@ const LAYOUT_BLOCKS = [
   ['wsLayoutHitMarkup', /^function wsLayoutHitMarkup\(/],
   ['wsMarkDeleteVertex', /^function wsMarkDeleteVertex\(/],
   ['wsMarkConstrainPt', /^function wsMarkConstrainPt\(/],
+  ['WS_CALLOUT_CHAR_W', /^const WS_CALLOUT_CHAR_W = /],
+  ['WS_CALLOUT_MIN_W',  /^const WS_CALLOUT_MIN_W = /],
+  ['wsCalloutWrap',     /^function wsCalloutWrap\(/],
+  ['wsCalloutDims',     /^function wsCalloutDims\(/],
 ];
 
 // Sheet export: scale selection and legend content. Pure maths and data, no PDF
