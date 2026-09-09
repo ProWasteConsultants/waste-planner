@@ -1993,6 +1993,52 @@ test('calculator: receivers come from the library, compactors stay garbage-only,
     'the receiver\'s overall height reaches the chute-angle maths');
 });
 
+// ── design tab: scale persistence + any-tab canvas interaction ──────────
+test('the drawing scale persists: saved in the draft, restored before the layers render', () => {
+  const draft = SOURCE.slice(SOURCE.indexOf('function wsBuildDraft'), SOURCE.indexOf('function wsFlushState'));
+  assert.ok(draft.includes("scale: document.getElementById('ws-scale-sel')?.value || ''"), 'scale rides the draft');
+  assert.ok(draft.includes("paper: document.getElementById('ws-paper-sel')?.value || ''"), 'paper size too');
+  // a change flushes immediately — the 30 s debounce loses the scale on a quick exit
+  const chg = SOURCE.slice(SOURCE.indexOf('function wsOnScaleChanged'), SOURCE.indexOf('function wsApplySavedScale'));
+  assert.ok(chg.includes('wsFlushState()'), 'a scale change persists immediately');
+  // restore validates against the selects' own options — a corrupt save can
+  // never invent a scale the app does not offer
+  const app = SOURCE.slice(SOURCE.indexOf('function wsApplySavedScale'), SOURCE.indexOf('function wsPassPdfToSwept'));
+  assert.ok(app.includes('[...el.options].some(o => o.value === String(v))'), 'only offered values restore');
+  // both restore paths apply it BEFORE the dimensioned layers render
+  const open = SOURCE.slice(SOURCE.indexOf('function wsOpenProject'), SOURCE.indexOf('let _wsPanelCollapsed'));
+  assert.ok(open.indexOf('wsApplySavedScale(st)') >= 0 &&
+            open.indexOf('wsApplySavedScale(st)') < open.indexOf('setTimeout(wsRenderLayoutLayer, 50)'),
+    'project open restores the scale, then renders');
+  const rest = SOURCE.slice(SOURCE.indexOf('function wsRestoreDraft'), SOURCE.indexOf('// Restore draft on workspace open'));
+  assert.ok(rest.includes('wsApplySavedScale(draft)'), 'crash-recovery drafts restore it too');
+});
+
+test('the canvas works from every tool tab: scale control, selection, markups', () => {
+  const tab = SOURCE.slice(SOURCE.indexOf('function wsShowTab'), SOURCE.indexOf('// Receive results from the bin calculator iframe'));
+  assert.ok(tab.includes("if (scaleWrap) scaleWrap.style.display = 'flex';"), 'the scale selector shows in every tab');
+  assert.ok(!tab.includes("scaleWrap.style.display = 'none'"), 'no tab hides it any more');
+  assert.ok(tab.includes('wsLayoutBind();'), 'the layout handlers bind whichever tab opens first');
+  assert.ok(!tab.includes("pointerEvents = 'none'"), 'the overlay stays interactive on every tab');
+  // the mousedown guard: item grabs from any tab; marquee, room-interior and
+  // unselected-corner grabs stay layout-only so a plain drag elsewhere pans
+  const down = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousedown'"),
+                            SOURCE.indexOf("area.addEventListener('contextmenu'"));
+  assert.ok(down.includes('if (WS._mode || !WS.pdfDoc) return;'), 'no tab-active bail on the pointer');
+  assert.ok(down.includes('if (!grabbed && WS_LAYOUT.tabActive && !WS_SPACE_PAN'), 'marquee is layout-tab-only');
+  const move = SOURCE.slice(SOURCE.indexOf("area.addEventListener('mousemove'"), SOURCE.indexOf('const endDrag'));
+  assert.ok(move.includes('if (!WS_LAYOUT.drag && !WS_LAYOUT.tabActive && !inMode) return;'),
+    'a drag started from any tab keeps moving');
+  // the markup right-click squelch precedes the tab bail — markup edits are any-tab
+  const ctx = SOURCE.slice(SOURCE.indexOf("area.addEventListener('contextmenu'"), SOURCE.indexOf("area.addEventListener('mousemove'"));
+  assert.ok(ctx.indexOf('WS_LAYOUT._markCtx') < ctx.indexOf('if (!WS_LAYOUT.tabActive || WS._mode) return;'),
+    'markup menu squelch runs before the tab bail');
+  // Ctrl+Z on the swept tab stays the swept tool's node-undo
+  const keys = SOURCE.slice(SOURCE.indexOf('// Selection works from every tool tab now'), SOURCE.indexOf('function wsRenderLayoutLayer()'));
+  assert.ok(keys.includes("if (sweptTab && sweptTab.style.display !== 'none') return;"),
+    'layout undo yields to the swept node-undo on the swept tab');
+});
+
 test('the 60% screen touches the base-plan raster ONLY — markups ride over it at full strength', () => {
   // vector path: the overlay goes through doc.svg, never the screened canvas
   // (sheet-export.test.js pins that). This guards the FALLBACK: a rasterised

@@ -427,8 +427,12 @@ test('markup modes suspend and restore the tool that was already armed', () => {
   // both exits restore rather than hard-ending the mode
   assert.match(SOURCE, /wsMarkExit\(\); wsRenderLayoutLayer\(\); return;/, 'callout finish does not restore');
   assert.match(SOURCE, /if \(WS\._mode === 'layoutmark'\) \{ wsMarkExit\(\); return; \}/, 'Escape does not restore');
-  assert.match(SOURCE, /if \(!WS_LAYOUT\.tabActive && WS\._mode !== 'layoutmark'\) return;/,
-    'markup keys do not work outside the layout tab');
+  // keys now follow the selection across every tool tab: the gate is the
+  // workspace screen, and a non-layout armed mode (swept drive) owns the keys
+  assert.match(SOURCE, /if \(!wsScreen \|\| !wsScreen\.classList\.contains\('active'\)\) return;/,
+    'layout keys are gated on the workspace screen, not the layout tab');
+  assert.match(SOURCE, /if \(WS\._mode && String\(WS\._mode\)\.indexOf\('layout'\) !== 0\) return;/,
+    'an armed non-layout mode owns the keyboard');
 });
 
 test('the markups card lives in the side stack below the layers card', () => {

@@ -14903,6 +14903,21 @@ function wsRefreshApiKeyUI() {
 function wsOnScaleChanged() {
   if (typeof wsRenderSweptLayer === 'function') wsRenderSweptLayer();
   if (typeof wsRenderLayoutLayer === 'function') wsRenderLayoutLayer();
+  // the scale is project state, not a session setting: flush immediately so
+  // it survives closing the app, not just the 30 s autosave window
+  if (typeof wsFlushState === 'function') wsFlushState();
+}
+// Restore a saved scale/paper pair into the selectors (no-op for values the
+// selects don't offer, so a corrupt save can never invent a scale).
+function wsApplySavedScale(st) {
+  if (!st) return false;
+  let applied = false;
+  [['ws-scale-sel', st.scale], ['ws-paper-sel', st.paper]].forEach(([id, v]) => {
+    const el = document.getElementById(id);
+    if (!el || v == null || v === '') return;
+    if ([...el.options].some(o => o.value === String(v))) { el.value = String(v); applied = true; }
+  });
+  return applied;
 }
 
 function wsPassPdfToSwept() {
@@ -15039,6 +15054,13 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   ['ws-export-btn', 'ws-exportpdf-btn'].forEach(id => {
     const b = document.getElementById(id); if (b) b.style.display = '';
   });
+  // The scale control and the canvas interactions belong to the DRAWING, not
+  // to a tool tab — live from the moment a plan is up, before any tab click.
+  const sw = document.getElementById('ws-scale-wrap');
+  if (sw) sw.style.display = 'flex';
+  if (typeof wsLayoutBind === 'function') wsLayoutBind();
+  const ov = document.getElementById('ws-overlay-svg');
+  if (ov) ov.style.pointerEvents = 'all';
 
   // Build the page filmstrip: numbered slots immediately, real page previews
   // rendered in behind them (wsRenderThumbs). The strip stays COLLAPSED —
@@ -15310,34 +15332,33 @@ function wsShowTab(name, btn) {
   // Plan viewer chrome (project name, page nav, zoom) lives in EVERY tab
   if (floatBar) floatBar.style.display = 'flex';
   if (pageNav) pageNav.style.display = (WS.totalPages > 1 ? 'flex' : 'none');
+  // The scale selector lives in every tab — it is the drawing's scale, not a
+  // tool's. Selection, item drags and markup edits also work from every tab,
+  // so the layout handlers stay bound and the overlay stays interactive.
+  if (scaleWrap) scaleWrap.style.display = 'flex';
+  wsLayoutBind();
+  { const osvg = document.getElementById('ws-overlay-svg'); if (osvg) osvg.style.pointerEvents = 'all'; }
   if (name !== 'layout' && typeof WS_LAYOUT !== 'undefined') {
     WS_LAYOUT.tabActive = false;
     if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark') wsLayoutEndMode();
-    if (!WS._mode) { const osvg = document.getElementById('ws-overlay-svg'); if (osvg) osvg.style.pointerEvents = 'none'; }
   }
   if (name === 'layout') {
     if (sweptOverlay) sweptOverlay.style.display = 'none';   // native tool — draws on the plan
-    if (scaleWrap) scaleWrap.style.display = 'flex';
     const eb = document.getElementById('ws-export-btn');
     if (eb) eb.style.display = '';
     WS_LAYOUT.tabActive = true;
     if (WS_EQUIP_DB === null) wsLoadEquipmentDB(); else wsLayoutPopulateBins();
     if (typeof wsCouncilReqsRefresh === 'function') wsCouncilReqsRefresh();
-    wsLayoutBind();
-    const osvg = document.getElementById('ws-overlay-svg');
-    if (osvg) osvg.style.pointerEvents = 'all';
     wsRenderLayoutLayer();
     wsLayoutStatus('Pick a bin + stream then Place bins, or Draw room. Click a bin to select — drag moves, R rotates, Del deletes.');
   } else if (name === 'swept') {
     if (sweptOverlay) sweptOverlay.style.display = 'none';   // native tool — no iframe
-    if (scaleWrap) scaleWrap.style.display = 'flex';          // scale drives real-world units
     const eb2 = document.getElementById('ws-export-btn');
     if (eb2) eb2.style.display = 'none';
     if (WS_VEH_DB === null) wsLoadVehiclesDB();
     wsSweptPopulateVehicles();
   } else {
     if (sweptOverlay) sweptOverlay.style.display = 'none';
-    if (scaleWrap) scaleWrap.style.display = 'none';
   }
 
   // Side panel: each tab has its own preset width (wsPanelWidthFor)
@@ -17853,7 +17874,11 @@ function wsLayoutBind() {
   const area = document.getElementById('ws-canvas-area');
   if (!area) return;
   area.addEventListener('mousedown', e => {
-    if (!WS_LAYOUT.tabActive || WS._mode) return;
+    // Selection, item drags and markup edits work from EVERY tool tab. Only
+    // the marquee, the room-interior drag and unselected-corner grabs stay
+    // layout-tab-only (guarded below), so a plain drag on another tab still
+    // pans the plan the way it always has.
+    if (WS._mode || !WS.pdfDoc) return;
     const mpp = wsSweptMpp(); if (!mpp) return;
     const p = wsLayoutEvt(e);
     // the rotation handle wins over everything under it
@@ -18004,13 +18029,13 @@ function wsLayoutBind() {
     }
     // An UNSELECTED room's corner can be grabbed directly, without selecting the
     // room first — but only after contents, so a bin sitting on a corner still wins.
-    if (!grabbed) {
+    if (!grabbed && WS_LAYOUT.tabActive) {
       const any = wsAnyRoomHandleAt(wsLayoutSlot().rooms, p.x, p.y);
       if (any) { startRoomHandle(any.room, any.handle); return; }
     }
     // Nothing under the pointer and no room to grab → rubber-band select.
     const roomUnder = wsRoomAt(p.x, p.y);
-    if (!grabbed && !WS_SPACE_PAN && e.button !== 1 && !(roomUnder && wsSelHas(roomUnder.id))) {
+    if (!grabbed && WS_LAYOUT.tabActive && !WS_SPACE_PAN && e.button !== 1 && !(roomUnder && wsSelHas(roomUnder.id))) {
       WS_LAYOUT.drag = { kind: 'marquee', x0: p.x, y0: p.y, x1: p.x, y1: p.y,
                          add: e.shiftKey, base: (WS_LAYOUT.selIds || []).slice(), moved: false };
       WS.isPanning = false;
@@ -18021,7 +18046,7 @@ function wsLayoutBind() {
     }
     // Room interior — LAST, so bins, equipment, chutes and callouts always win the
     // grab. Dragging the interior moves the whole polygon and everything tagged to it.
-    if (!grabbed) {
+    if (!grabbed && WS_LAYOUT.tabActive) {
       const room = roomUnder;
       if (room) {
         wsSelSet([room.id], 'room');
@@ -18055,9 +18080,10 @@ function wsLayoutBind() {
     }
   });
   area.addEventListener('contextmenu', e => {
-    if (!WS_LAYOUT.tabActive || WS._mode) return;
-    // a right-click just removed a markup point in mousedown — eat the menu
+    // a right-click just removed a markup point in mousedown — eat the menu.
+    // Markup edits work from every tab, so this precedes the tab bail.
     if (WS_LAYOUT._markCtx) { WS_LAYOUT._markCtx = false; e.preventDefault(); return; }
+    if (!WS_LAYOUT.tabActive || WS._mode) return;
     const p = wsLayoutEvt(e);
     const slotC = wsLayoutSlot();
     // the selected room first, then any room, matching the handle hit order
@@ -18074,7 +18100,9 @@ function wsLayoutBind() {
   });
   area.addEventListener('mousemove', e => {
     const inMode = WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark';
-    if (!WS_LAYOUT.tabActive && !inMode) return;
+    // a drag started from any tab keeps moving; idle hover tracking stays
+    // layout-tab-only (the cursor affordances are the layout tab's language)
+    if (!WS_LAYOUT.drag && !WS_LAYOUT.tabActive && !inMode) return;
     const p = wsLayoutEvt(e);
     if (WS_LAYOUT.drag) {
       const mpp = wsSweptMpp(); if (!mpp) return;
@@ -18345,8 +18373,12 @@ function wsLayoutBind() {
       const ar = document.getElementById('ws-canvas-area'); if (ar) ar.classList.remove('ws-panready'); }
   });
   document.addEventListener('keydown', e => {
-    // A markup can be armed from any tab, so its Enter/Esc must work there too.
-    if (!WS_LAYOUT.tabActive && WS._mode !== 'layoutmark') return;
+    // Selection works from every tool tab now, so its keys follow it: gate on
+    // the workspace being the active screen, not on the layout tab.
+    const wsScreen = document.getElementById('screen-workspace');
+    if (!wsScreen || !wsScreen.classList.contains('active')) return;
+    // another tool's armed mode owns the keyboard (swept drive/auto etc.)
+    if (WS._mode && String(WS._mode).indexOf('layout') !== 0) return;
     const tag = (document.activeElement?.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
     if (e.code === 'Space' && !WS._mode) { WS_SPACE_PAN = true;
@@ -18379,7 +18411,13 @@ function wsLayoutBind() {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) { wsLayoutDo('selectall'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) { wsLayoutDo('paste'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) { wsLayoutDo('duplicate'); e.preventDefault(); return; }
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { wsLayoutDo(e.shiftKey ? 'redo' : 'undo'); e.preventDefault(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      // on the swept tab Ctrl+Z stays the swept tool's node-undo (its own
+      // handler owns it there) — firing layout undo too would double-undo
+      const sweptTab = document.getElementById('ws-tab-swept');
+      if (sweptTab && sweptTab.style.display !== 'none') return;
+      wsLayoutDo(e.shiftKey ? 'redo' : 'undo'); e.preventDefault(); return;
+    }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) { wsLayoutDo('redo'); e.preventDefault(); return; }
     if (e.ctrlKey || e.metaKey) return;   // don't hijack browser shortcuts (Ctrl+R etc.)
     if (e.key === 'Escape') {
@@ -23884,6 +23922,9 @@ function wsOpenProject(project) {
     if (st && st.calcTargets && typeof WS_CALC_TARGETS !== 'undefined') WS_CALC_TARGETS = st.calcTargets;
     WS_PROVISION_CUSTOM = (st && st.provisionCustom) || [];
     if (st && st.currentPage) WS.currentPage = st.currentPage;
+    // the saved scale/paper come back BEFORE the layer renders — without them
+    // every dimensioned layer bails on a null mpp and the plan looks empty
+    if (typeof wsApplySavedScale === 'function') wsApplySavedScale(st);
     if (typeof wsRenderLayoutLayer === 'function') setTimeout(wsRenderLayoutLayer, 50);
     if (typeof wsRenderSweptLayer === 'function') setTimeout(wsRenderSweptLayer, 50);
   }
@@ -24118,6 +24159,10 @@ function wsBuildDraft() {
     projectId: WS.projectId,
     projectName: document.getElementById('ws-project-name')?.textContent,
     currentPage: WS.currentPage,
+    // the drawing scale is project state — losing it on exit blanked every
+    // dimensioned layer until the user re-picked it
+    scale: document.getElementById('ws-scale-sel')?.value || '',
+    paper: document.getElementById('ws-paper-sel')?.value || '',
     layers: WS.layers,
     extractData: WS.extractData,
     layoutData: WS_LAYOUT?.byPage || {},
@@ -24164,6 +24209,7 @@ function wsRestoreDraft() {
       if (typeof wsSweptPopulateVehicles === 'function') wsSweptPopulateVehicles(true);
     }
     if (draft.calcTargets?.length) WS_CALC_TARGETS = draft.calcTargets;
+    if (typeof wsApplySavedScale === 'function') wsApplySavedScale(draft);
     if (draft.layoutData) { WS_LAYOUT.byPage = draft.layoutData; wsRenderLayoutLayer(); }
     // legacy draft.layoutRooms (old rooms-only format) intentionally dropped — incompatible coordinates
     if (draft.sweptByPage) WS_SWEPT.byPage = draft.sweptByPage;
