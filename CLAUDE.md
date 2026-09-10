@@ -416,6 +416,40 @@ plan-view canvas. The engine is pure and lives at column 0 near `WS_VEH`
   padded with invented ground; overhang tips past the profile ends are judged
   against the end segment's grade extended.
 
+## Manoeuvrability checks (layout tab)
+
+The "Can it be wheeled?" panel animates a bin/equipment footprint along
+user-clicked waypoints and checks every pose — travel, chute bin swap (two
+runs + a swept-envelope conflict test), spin-in-place, and an automated
+easy-to-reach peel. Engine is pure, column 0, next to the wsFp* SAT section
+it builds on (`tests/manoeuvre.test.js`):
+
+- **Two-tier turning model**: small MGBs (≤ 360L) pivot on the spot; 660L+
+  and large equipment turn wide on an effective radius (fillet arcs, clamped
+  and *flagged* when a corner is too sharp). Per-record override via
+  `equipment.turn_type` / `turn_radius_mm`; everything else is a size-based
+  default and the result says the behaviour is **assumed**.
+- **Walls are door-trimmed segments** (`wsManWalls`): doorway spans are cut
+  out of the room edges, so passing through a door is legal and brushing the
+  jamb still counts. Aisles, zones and doors are walkable; fixtures, chutes,
+  receivers and other bins are obstacles.
+- **The operator zone is a separate verdict.** A person-width strip trails
+  the bin; a route can fit the bin and still squeeze the pusher — that reads
+  amber, never silently green.
+- **Access peel** (`wsManAccess`): a bin is directly takeable when it can
+  slide out along one of its own axes by its diagonal plus a hand's-width;
+  peeling rounds give tiers. Tiers count *rounds of clearing*, not exact bins
+  — the UI says so.
+- **Friendly on the surface, numbers underneath.** Building managers and
+  cleaners see this panel: canvas labels stay plain ("stuck here", "tight for
+  the pusher"); mm values live under "Numbers for the report", the PNG
+  snapshot and the DXF.
+- **Export hygiene**: the overlay is editing chrome — `wsSheetOverlayClone`
+  strips `#ws-man-overlay`, so a paused animation never prints. The DXF
+  envelope (corner traces + endpoints on `A-WASTE-MAN`, ACI 6) is written
+  ONLY while a check is live on screen — an issued DXF never grows silent
+  extra content.
+
 ## Swept-path refinement
 
 `wsRefinePos` polishes **hand-driven** paths only. Cursor jitter shows up as steering
