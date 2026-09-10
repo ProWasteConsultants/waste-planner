@@ -1744,6 +1744,79 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           </div>
         </div>
 
+        <!-- Ramp section workspace — longitudinal grade-clearance check.
+             Same modal contract as the sheet dialog: nothing may reach the
+             canvas pan/select handlers underneath. -->
+        <div id="ws-ramp-modal" style="display:none;position:fixed;inset:0;z-index:60;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;padding:14px;" onmousedown="event.stopPropagation()" onmousemove="event.stopPropagation()" onmouseup="event.stopPropagation()" onwheel="event.stopPropagation()" ondblclick="event.stopPropagation()">
+          <div style="background:#141414;border:1px solid #3a4747;border-radius:11px;width:min(1300px,98vw);height:min(880px,94vh);display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(0,0,0,0.65);overflow:hidden;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 16px;border-bottom:1px solid #2c3636;flex:0 0 auto;">
+              <div>
+                <div style="font-size:14px;font-weight:700;color:#fff;">Ramp section — grade clearance check</div>
+                <div style="font-size:10.5px;color:rgba(255,255,255,0.45);margin-top:2px;">Walks the vehicle underside along the section: scrape &amp; ground-out at grade changes, plus the AS 2890.1 light-vehicle grade-change reference</div>
+              </div>
+              <button onclick="wsRampClose()" style="background:none;border:1px solid #3a4747;border-radius:6px;color:rgba(255,255,255,0.6);font-size:13px;padding:3px 9px;cursor:pointer;">✕</button>
+            </div>
+            <div style="display:flex;flex:1;min-height:0;">
+              <div style="flex:0 0 292px;overflow-y:auto;padding:10px 12px;border-right:1px solid #2c3636;display:flex;flex-direction:column;gap:10px;">
+                <div>
+                  <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">1 · Section drawing (reference only)</div>
+                  <input type="file" id="ws-ramp-file" accept=".pdf,image/*" style="display:none;" onchange="wsRampFile(event)">
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                    <button class="wsl-btn" onclick="document.getElementById('ws-ramp-file').click()">⇪ Load PDF / image</button>
+                    <button class="wsl-btn" onclick="wsRampCalStart()" title="Click two ends of a known dimension on the drawing, then type the real distance in metres">📏 Scale</button>
+                    <button class="wsl-btn" id="ws-ramp-move-btn" onclick="wsRampMoveToggle()">✋ Move</button>
+                    <button class="wsl-btn" onclick="wsRampUnderClear()">✕</button>
+                  </div>
+                  <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;line-height:1.5;">The drawing is a tracing backdrop — nothing from it is stored. The saved profile is purely the segments below.</div>
+                </div>
+                <div>
+                  <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">2 · Ramp profile</div>
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;">
+                    <button class="wsl-btn" id="ws-ramp-trace-btn" onclick="wsRampTraceStart()" title="Click along the ramp SURFACE in the direction of travel; ✓ Done converts the trace to grade/length segments">✏ Trace surface</button>
+                    <button class="wsl-btn" onclick="wsRampTraceDone()" style="color:#4BED12;">✓ Done</button>
+                    <button class="wsl-btn" onclick="wsRampTraceCancel()">✕</button>
+                  </div>
+                  <div id="ws-ramp-segs"></div>
+                  <div style="display:flex;gap:5px;margin-top:5px;">
+                    <button class="wsl-btn" onclick="wsRampSegRowAdd()">+ Segment</button>
+                    <button class="wsl-btn" onclick="wsRampSegsApply()" style="color:#00B3B3;">Apply table</button>
+                  </div>
+                  <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;line-height:1.5;">Row 1 is the start of travel. Grade is signed % (+ uphill in the direction of travel); run is horizontal metres. Type segments directly if the drawing is too rough to trace.</div>
+                </div>
+                <div>
+                  <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">3 · Vehicle</div>
+                  <select id="ws-ramp-vehicle" class="wsl-sel" style="width:100%;margin-bottom:6px;" onchange="wsRampVehChanged()"></select>
+                  <div id="ws-ramp-veh-dims" style="font-size:10.5px;color:rgba(255,255,255,0.55);margin-bottom:6px;"></div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;font-size:10px;color:rgba(255,255,255,0.55);">
+                    <label>Under front mm<input type="number" id="ws-ramp-gcf" min="0" step="10" class="wsl-sel" style="width:100%;margin-top:2px;" oninput="WS_RAMP.secTouched=true;wsRampAssumedBadge()"></label>
+                    <label>Belly mm<input type="number" id="ws-ramp-gcm" min="0" step="10" class="wsl-sel" style="width:100%;margin-top:2px;" oninput="WS_RAMP.secTouched=true;wsRampAssumedBadge()"></label>
+                    <label>Under rear mm<input type="number" id="ws-ramp-gcr" min="0" step="10" class="wsl-sel" style="width:100%;margin-top:2px;" oninput="WS_RAMP.secTouched=true;wsRampAssumedBadge()"></label>
+                  </div>
+                  <div id="ws-ramp-assumed" style="font-size:10px;margin-top:4px;line-height:1.5;"></div>
+                </div>
+                <div>
+                  <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">4 · Check</div>
+                  <button class="wsl-btn" onclick="wsRampAnalyse()" style="color:#4BED12;font-weight:700;width:100%;">▶ Analyse</button>
+                  <div id="ws-ramp-results" style="margin-top:7px;"></div>
+                </div>
+                <div>
+                  <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px;">5 · Export</div>
+                  <button class="wsl-btn" onclick="wsRampSnapshot()" title="PNG snapshot of the section view with the check summary — for a WMP or referral report">⬇ PNG snapshot</button>
+                </div>
+                <div id="ws-ramp-status" style="font-size:10.5px;color:rgba(255,255,255,0.55);line-height:1.5;margin-top:auto;">Load the ramp's longitudinal section, scale it, trace the surface — or type the segments — then Analyse.</div>
+              </div>
+              <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+                <svg id="ws-ramp-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" style="flex:1;width:100%;min-height:0;background:#101717;cursor:crosshair;" onmousedown="wsRampSvgDown(event)" onmousemove="wsRampSvgMove(event)" onmouseup="wsRampSvgUp(event)"></svg>
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid #2c3636;flex:0 0 auto;">
+                  <button class="wsl-btn" id="ws-ramp-play" onclick="wsRampPlay()" disabled style="opacity:.5;">▶</button>
+                  <input type="range" id="ws-ramp-slider" min="0" max="0" value="0" disabled style="flex:1;" oninput="wsRampSlide(+this.value)">
+                  <div id="ws-ramp-pos" style="font-size:11px;color:rgba(255,255,255,0.6);min-width:220px;text-align:right;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Layer panel + Markups card -->
         <div class="ws-side-stack" id="ws-side-stack">
         <div class="ws-layer-panel" id="ws-layer-panel" style="display:none;">
@@ -1992,6 +2065,13 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <!-- SWEPT PATH TAB — sectioned like the layout tab: vehicle (with a
                live plan-view diagram), path verbs, options, output. -->
           <div id="ws-tab-swept" style="display:none;flex:1;min-height:0;overflow:hidden;padding:6px 10px;flex-direction:column;gap:7px;">
+            <div class="wsl-group">
+              <div class="wsl-group-hd">View</div>
+              <div style="display:flex;gap:6px;">
+                <button class="wsl-btn" style="flex:1;background:#1d3a3a;border:1px solid #00B3B3;color:#7FD8D8;cursor:default;" title="Top-down swept path analysis — this tab's canvas">▦ Plan view</button>
+                <button class="wsl-btn" style="flex:1;color:#FFD740;" onclick="wsRampOpen()" title="Longitudinal ramp grade check — will this vehicle scrape or ground out at a grade change? Upload the ramp's section drawing, trace the surface (or type grade/length per segment) and scan the vehicle's underside along it.">⛰ Ramp section…</button>
+              </div>
+            </div>
             <div class="wsl-group" style="display:flex;flex-direction:column;">
               <div class="wsl-group-hd">Vehicle</div>
               <select id="ws-swept-vehicle" class="wsl-sel" style="width:100%;margin-bottom:7px;font-size:12px;" onchange="wsSweptVehDiagram()"></select>
@@ -10319,6 +10399,7 @@ const CTL = { items: [], deletes: [], cols: [
   ['state','State',44,'text'], ['council_value','Council value',100,'text'],
   ['wheelbase_m','WB m',48,'num'], ['track_m','Track m',50,'num'], ['front_oh_m','Front OH m',56,'num'], ['rear_oh_m','Rear OH m',54,'num'],
   ['kerb_radius_m','Kerb-kerb R',58,'num'], ['wall_radius_m','Wall-wall R',58,'num'], ['ground_clearance_m','Grnd clr m',54,'num'],
+  ['gc_front_m','Under frt m',54,'num'], ['gc_rear_m','Under rear m',54,'num'],
   ['operating_height_m','Operating ht m',56,'num'], ['cab_height_m','Cab ht m',52,'num'], ['body_height_m','Body ht m',52,'num'],
   ['front_axles','Frt axles',44,'num'], ['front_axle_spread_m','Frt spread m',54,'num'],
   ['rear_axles','Rear axles',44,'num'], ['rear_axle_spread_m','Rear spread m',54,'num'],
@@ -10448,6 +10529,13 @@ async function ctlSave() {
       state: it.state || null, council_value: it.council_value || null,
       wheelbase_m: it.wheelbase_m, track_m: it.track_m, front_oh_m: it.front_oh_m, rear_oh_m: it.rear_oh_m,
       kerb_radius_m: it.kerb_radius_m, wall_radius_m: it.wall_radius_m, ground_clearance_m: it.ground_clearance_m,
+      // Every column the table edits must reach the upsert — the D2 elevation
+      // fields were editable but silently unsaved before this line existed.
+      gc_front_m: it.gc_front_m, gc_rear_m: it.gc_rear_m,
+      operating_height_m: it.operating_height_m, cab_height_m: it.cab_height_m, body_height_m: it.body_height_m,
+      front_axles: it.front_axles, front_axle_spread_m: it.front_axle_spread_m,
+      rear_axles: it.rear_axles, rear_axle_spread_m: it.rear_axle_spread_m,
+      source: it.source || null,
       swept_verified: it.swept_verified===true,
       active: it.active !== false }));
     const badSwept = rows.find(r => r.include_in_swept && (!r.wheelbase_m || !(r.kerb_radius_m || r.wall_radius_m)));
@@ -22117,6 +22205,626 @@ const WS_VEH = [
  {id:'au_sut125', name:'Austroads Single Unit Truck/Bus 12.5m (HRV)', cat:'Austroads AP-G34-23 Design Vehicles', wb:6.85, tw:2.50, bw:2.50, fo:2.20, ro:3.45, minR:12.5},
 ];
 
+/* ── RAMP SECTION MODE — longitudinal grade-clearance engine ─────────────────
+   Will the truck scrape at a grade change? The vehicle underside is modelled
+   as the three flat lines the section brief names — front-overhang underside
+   at gcf, belly (between axles) at gcm, rear-overhang underside at gcr, all
+   heights above ground on the flat, held rigid perpendicular to the wheelbase
+   chord — and walked along the ramp profile with both wheel contacts on the
+   surface. Clearance is measured VERTICALLY from each underside sample to the
+   surface below it, so a negative number is mm of interference, which is what
+   a scrape report should quote. This is the ground-clearance-template method
+   commercial vehicles are assessed by (AS 2890.2 approach); the AS 2890.1
+   light-vehicle grade-change rule is available as DATA (WS_RAMP_RULES), a
+   reference check only.
+   All functions here are PURE — plain numbers/objects in and out, no DOM, no
+   globals — and are what tests/ramp-section.test.js covers. Units: metres,
+   signed grades in % (rise/run, + uphill), travel in +x. */
+
+// Underside heights nobody has entered yet fall back to per-category values —
+// ASSUMED, and flagged as such all the way to the report: a scrape verdict on
+// a guessed sump height is not a verdict. Real values come from the vehicle
+// library (contractors.gc_front_m / gc_rear_m / ground_clearance_m).
+const WS_RAMP_SEC_DEFAULTS = {
+  'Mini Rear Loader': { gcf: 0.35, gcr: 0.30, gcm: 0.22 },
+  'Rear Loader':      { gcf: 0.40, gcr: 0.30, gcm: 0.25 },
+  'Side Loader':      { gcf: 0.40, gcr: 0.40, gcm: 0.25 },
+  'Front Loader':     { gcf: 0.35, gcr: 0.45, gcm: 0.25 },
+  'Hook Lift':        { gcf: 0.40, gcr: 0.35, gcm: 0.25 },
+  default:            { gcf: 0.40, gcr: 0.35, gcm: 0.25 },
+};
+const WS_RAMP_WHEEL_R = 0.45; // tyre zone either side of an axle — the wheel, not the underside, meets the road there
+function wsRampSecOf(v) {
+  if (!v) return null;
+  const d = WS_RAMP_SEC_DEFAULTS[v.cat] || WS_RAMP_SEC_DEFAULTS.default;
+  const gcf = v.gcFrontM != null ? +v.gcFrontM : null;
+  const gcr = v.gcRearM != null ? +v.gcRearM : null;
+  const gcm = v.gcMidM != null ? +v.gcMidM : null;
+  return {
+    wb: +v.wb, fo: +v.fo, ro: +v.ro,
+    gcf: gcf != null ? gcf : d.gcf,
+    gcr: gcr != null ? gcr : d.gcr,
+    gcm: gcm != null ? gcm : d.gcm,
+    assumed: gcf == null || gcr == null || gcm == null,
+  };
+}
+
+// Segments [{grade %, len m horizontal run}] → profile vertices [{x, z}].
+function wsRampProfilePts(segs) {
+  const pts = [{ x: 0, z: 0 }];
+  let x = 0, z = 0;
+  (segs || []).forEach(s => {
+    const len = +s.len;
+    if (!(len > 0)) return;
+    x += len; z += len * (+s.grade || 0) / 100;
+    pts.push({ x: +x.toFixed(4), z: +z.toFixed(4) });
+  });
+  return pts;
+}
+
+// Traced points (metres, x increasing = direction of travel) → segments.
+// A hand-traced straight is many nearly-collinear clicks, not many segments,
+// so consecutive runs are merged while the direction change stays inside
+// tolDeg. Grade is recomputed over the merged run, never averaged.
+function wsRampSegsFromTrace(pts, tolDeg) {
+  const tol = tolDeg == null ? 0.75 : +tolDeg;
+  const out = [];
+  for (let i = 1; i < (pts || []).length; i++) {
+    const dx = pts[i].x - pts[i - 1].x, dz = pts[i].z - pts[i - 1].z;
+    if (!(dx > 0.01)) continue;                       // zero or backward run: unusable
+    const grade = 100 * dz / dx;
+    const prev = out[out.length - 1];
+    if (prev && Math.abs(Math.atan(grade / 100) - Math.atan(prev.grade / 100)) * 180 / Math.PI < tol) {
+      const run = prev.len + dx, rise = prev.len * prev.grade / 100 + dz;
+      prev.len = run; prev.grade = 100 * rise / run;
+    } else out.push({ grade, len: dx });
+  }
+  return out.map(s => ({ grade: +s.grade.toFixed(2), len: +s.len.toFixed(3) }));
+}
+
+// Surface height at x. Beyond either end the END SEGMENT's grade continues —
+// an overhang tip poking past the drawn profile is judged against the drawn
+// surface extended, never against an invented flat.
+function wsRampZAt(pts, x) {
+  if (!pts || !pts.length) return 0;
+  if (pts.length === 1) return pts[0].z;
+  let i = 1;
+  if (x >= pts[pts.length - 1].x) i = pts.length - 1;
+  else while (i < pts.length - 1 && pts[i].x < x) i++;
+  const a = pts[i - 1], b = pts[i];
+  const t = (x - a.x) / ((b.x - a.x) || 1);
+  return a.z + (b.z - a.z) * t;
+}
+
+// Both wheel contacts on the surface, chord between them = wheelbase. The
+// chord length grows monotonically as the front contact moves forward, so
+// bisection is safe on any single-valued profile.
+function wsRampPose(pts, xr, wb) {
+  const zr = wsRampZAt(pts, xr);
+  const f = x => Math.hypot(x - xr, wsRampZAt(pts, x) - zr) - wb;
+  let lo = xr, hi = xr + wb * 1.5 + 0.5;
+  while (f(hi) < 0) hi += wb;
+  for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (f(m) < 0) lo = m; else hi = m; }
+  const xf = (lo + hi) / 2, zf = wsRampZAt(pts, xf);
+  return { xr, zr, xf, zf, theta: Math.atan2(zf - zr, xf - xr) };
+}
+
+// Clearance of the three underside lines at one pose. On flat ground each
+// feature reads exactly its entered height — the ramp's cost is legible.
+function wsRampClearanceAt(pts, pose, sec) {
+  const ux = (pose.xf - pose.xr) / sec.wb, uz = (pose.zf - pose.zr) / sec.wb;
+  const feat = (a0, a1, h, n) => {
+    let min = Infinity, at = null;
+    if (a1 < a0) a0 = a1;                              // overhang shorter than the tyre zone
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + (a1 - a0) * (i / n);
+      const x = pose.xr + a * ux - h * uz;
+      const z = pose.zr + a * uz + h * ux;
+      const c = z - wsRampZAt(pts, x);
+      if (c < min) { min = c; at = x; }
+    }
+    return { min, x: at };
+  };
+  const rw = WS_RAMP_WHEEL_R;
+  return {
+    rear:  feat(-sec.ro, -rw, sec.gcr, 16),
+    belly: feat(rw, sec.wb - rw, sec.gcm, 32),
+    front: feat(sec.wb + rw, sec.wb + sec.fo, sec.gcf, 16),
+  };
+}
+
+// Walk the vehicle along the whole profile. Contacts stay on the drawn
+// profile (a profile shorter than the wheelbase is reported, not padded).
+function wsRampScan(pts, sec, step) {
+  if (!pts || pts.length < 2 || !sec || !(sec.wb > 0)) return null;
+  const x0 = pts[0].x, x1 = pts[pts.length - 1].x;
+  if (!(x1 - x0 > sec.wb)) return { short: true, x0, x1, samples: [], scrapes: [], ok: false };
+  const st = step || Math.max(0.05, (x1 - x0) / 400);
+  const samples = [];
+  const worst = { front: { min: Infinity }, belly: { min: Infinity }, rear: { min: Infinity } };
+  for (let xr = x0; ; xr = +(xr + st).toFixed(6)) {
+    const pose = wsRampPose(pts, xr, sec.wb);
+    if (pose.xf > x1 + 1e-6) break;
+    const c = wsRampClearanceAt(pts, pose, sec);
+    samples.push({ xr, pose, c });
+    ['front', 'belly', 'rear'].forEach(k => { if (c[k].min < worst[k].min) worst[k] = { min: c[k].min, x: c[k].x, atXr: xr }; });
+  }
+  const scrapes = [];
+  ['front', 'belly', 'rear'].forEach(k => {
+    let cur = null;
+    samples.forEach(s => {
+      const c = s.c[k];
+      if (c.min <= 0) {
+        if (!cur) { cur = { feature: k, x0: c.x, x1: c.x, min: c.min }; scrapes.push(cur); }
+        else { cur.x1 = Math.max(cur.x1, c.x); cur.x0 = Math.min(cur.x0, c.x); if (c.min < cur.min) cur.min = c.min; }
+      } else cur = null;
+    });
+  });
+  return { samples, worst, scrapes, ok: samples.length > 0 && !scrapes.length, x0, x1, step: st };
+}
+
+// Interior vertices where the grade actually changes, classified crest/sag.
+function wsRampVertices(segs) {
+  const out = []; let x = 0;
+  for (let i = 0; i < (segs || []).length - 1; i++) {
+    x += +segs[i].len;
+    const g1 = +segs[i].grade || 0, g2 = +segs[i + 1].grade || 0;
+    const change = Math.abs(g2 - g1);
+    if (change < 0.05) continue;
+    out.push({ x: +x.toFixed(3), g1, g2, change: +change.toFixed(2), kind: g2 < g1 ? 'crest' : 'sag' });
+  }
+  return out;
+}
+
+// Grade-change check against a named rule — the rule is DATA, not code, so a
+// standards revision is a data edit. A vertex passes when the change across
+// it is within maxChangePct; the standard's own remedy (an intermediate
+// transition segment at roughly half grade, at least minTransLenM long)
+// makes BOTH of that segment's vertices pass this same check, so a correctly
+// drawn transition needs no special-casing.
+function wsRampTransitionCheck(segs, rule) {
+  const rows = wsRampVertices(segs).map(v => {
+    const pass = v.change <= rule.maxChangePct + 1e-9;
+    return { ...v, pass, why: pass ? null :
+      'grade change ' + v.change + '% exceeds ' + rule.maxChangePct + '% — insert a transition ≥ ' +
+      rule.minTransLenM + ' m at ≈ ' + ((v.g1 + v.g2) / 2).toFixed(1) + '%' };
+  });
+  return { rule, rows, ok: rows.every(r => r.pass) };
+}
+
+// The light-vehicle grade-change rule ships as a labelled reference, never as
+// the truck verdict — the clearance scan above IS the commercial-vehicle
+// check. Values must be verified against the current edition before citing.
+const WS_RAMP_RULES = {
+  as2890_1: { id: 'as2890_1', label: 'AS 2890.1 light-vehicle reference', maxChangePct: 12.5, minTransLenM: 2.0,
+    note: 'Change > 1:8 (12.5%) needs a ≥ 2.0 m transition at half grade. Light-vehicle table — reference only for trucks; verify against your current edition before citing.' },
+};
+
+// Approach / departure / ramp-breakover angles from the entered geometry —
+// the numbers a supplier spec sheet quotes, for cross-checking the inputs.
+function wsRampAngles(sec) {
+  const d = r => +(r * 180 / Math.PI).toFixed(1);
+  return {
+    approach: d(Math.atan2(sec.gcf, sec.fo)),
+    departure: d(Math.atan2(sec.gcr, sec.ro)),
+    breakover: d(2 * Math.atan2(sec.gcm, sec.wb / 2)),
+  };
+}
+
+/* ── Ramp section UI — modal workspace over #ws-ramp-modal ──────────────────
+   The underlay drawing is a tracing backdrop only (same contract as the
+   admin shape tracer): nothing from it is stored. The persisted model is the
+   segment table — grade % + horizontal run per segment — which survives in
+   the layout slot (slot.ramp) alongside the chosen vehicle and any hand-
+   entered underside heights. */
+const WS_RAMP = { under: null, mppx: null, mode: null, trace: [], anchor: null, dir: 1,
+  segs: [], veh: null, res: null, chk: null, pts: null, idx: 0, playing: null,
+  cal: null, drag: null, secTouched: false };
+
+function wsRampMsg(t, warn) {
+  const el = document.getElementById('ws-ramp-status');
+  if (el) { el.textContent = t; el.style.color = warn ? '#FFD740' : 'rgba(255,255,255,0.55)'; }
+}
+
+function wsRampOpen() {
+  const m = document.getElementById('ws-ramp-modal');
+  if (!m) return;
+  m.style.display = 'flex';
+  wsRampVehPopulate();
+  // hydrate a previously saved check for this plan page
+  try {
+    const sl = (typeof wsLayoutSlot === 'function') ? wsLayoutSlot() : null;
+    if (sl && sl.ramp && !WS_RAMP.segs.length) {
+      WS_RAMP.segs = (sl.ramp.segs || []).map(s => ({ grade: +s.grade, len: +s.len }));
+      if (sl.ramp.vehId) { const sel = document.getElementById('ws-ramp-vehicle'); if ([...sel.options].some(o => o.value === sl.ramp.vehId)) sel.value = sl.ramp.vehId; }
+      wsRampVehChanged();
+      if (sl.ramp.sec) {
+        WS_RAMP.secTouched = true;
+        ['gcf', 'gcm', 'gcr'].forEach(k => { if (sl.ramp.sec[k] > 0) document.getElementById('ws-ramp-' + k).value = Math.round(sl.ramp.sec[k] * 1000); });
+        wsRampAssumedBadge();
+      }
+    } else wsRampVehChanged();
+  } catch (e) { wsRampVehChanged(); }
+  wsRampSegsRender();
+  wsRampRender();
+}
+function wsRampClose() {
+  if (WS_RAMP.playing) { clearInterval(WS_RAMP.playing); WS_RAMP.playing = null; }
+  const m = document.getElementById('ws-ramp-modal');
+  if (m) m.style.display = 'none';
+}
+
+// ── underlay ──
+async function wsRampFile(e) {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    let dataUrl, iw, ih;
+    if (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)) {
+      const pageNo = parseInt(prompt('Which page has the ramp section?', '1') || '1', 10) || 1;
+      wsRampMsg('Rendering PDF page…');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const doc = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+      const page = await doc.getPage(Math.min(pageNo, doc.numPages));
+      const vp = page.getViewport({ scale: 2 });
+      const cnv = document.createElement('canvas');
+      cnv.width = vp.width; cnv.height = vp.height;
+      await page.render({ canvasContext: cnv.getContext('2d'), viewport: vp }).promise;
+      dataUrl = cnv.toDataURL('image/png'); iw = vp.width; ih = vp.height;
+    } else {
+      dataUrl = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+      ({ iw, ih } = await new Promise(res => { const im = new Image(); im.onload = () => res({ iw: im.width, ih: im.height }); im.src = dataUrl; }));
+    }
+    const s = Math.min(1000 / iw, 640 / ih) * 0.95;
+    WS_RAMP.under = { img: dataUrl, iw, ih, s, ox: (1000 - iw * s) / 2, oy: (640 - ih * s) / 2 };
+    WS_RAMP.mode = null; WS_RAMP.mppx = null; WS_RAMP.anchor = null;
+    wsRampMsg('Section loaded — 📏 Scale it against a known dimension, then ✏ Trace the ramp surface.');
+    wsRampRender();
+  } catch (err) { wsRampMsg('Load failed: ' + (err.message || err), true); }
+}
+function wsRampCalStart() {
+  if (!WS_RAMP.under) { wsRampMsg('Load a section drawing first.', true); return; }
+  WS_RAMP.mode = 'cal1'; WS_RAMP.cal = null;
+  wsRampMsg('Scale: click the FIRST end of a known dimension on the drawing (a dimension line, a level difference).');
+}
+function wsRampMoveToggle() {
+  if (!WS_RAMP.under) { wsRampMsg('Load a section drawing first.', true); return; }
+  WS_RAMP.mode = WS_RAMP.mode === 'move' ? null : 'move';
+  const b = document.getElementById('ws-ramp-move-btn');
+  if (b) b.style.background = WS_RAMP.mode === 'move' ? 'var(--teal)' : '';
+  wsRampMsg(WS_RAMP.mode === 'move' ? 'Move: drag the drawing into place. Click ✋ again when done.' : 'Ready.');
+}
+function wsRampUnderClear() {
+  WS_RAMP.under = null; WS_RAMP.mode = null; WS_RAMP.mppx = null; WS_RAMP.anchor = null;
+  const b = document.getElementById('ws-ramp-move-btn'); if (b) b.style.background = '';
+  wsRampRender();
+}
+
+// ── pointer handling on the section SVG ──
+function wsRampSvgPt(e) {
+  const svg = document.getElementById('ws-ramp-svg');
+  const r = svg.getBoundingClientRect();
+  const s = Math.min(r.width / 1000, r.height / 640) || 1;
+  return { x: (e.clientX - r.left - (r.width - 1000 * s) / 2) / s,
+           y: (e.clientY - r.top - (r.height - 640 * s) / 2) / s };
+}
+function wsRampSvgDown(e) {
+  e.preventDefault();
+  const p = wsRampSvgPt(e);
+  if (WS_RAMP.mode === 'move' && WS_RAMP.under) {
+    WS_RAMP.drag = { sx: p.x, sy: p.y, ox: WS_RAMP.under.ox, oy: WS_RAMP.under.oy };
+    return;
+  }
+  if (WS_RAMP.mode === 'cal1') { WS_RAMP.cal = { x1: p.x, y1: p.y }; WS_RAMP.mode = 'cal2'; wsRampMsg('Scale: now click the SECOND end of that dimension.'); wsRampRender(); return; }
+  if (WS_RAMP.mode === 'cal2') {
+    const c = WS_RAMP.cal; c.x2 = p.x; c.y2 = p.y;
+    const dpx = Math.hypot(c.x2 - c.x1, c.y2 - c.y1);
+    const m = parseFloat(prompt('Real distance between those two points, in metres:', '') || '');
+    WS_RAMP.mode = null;
+    if (!(m > 0) || dpx < 2) { wsRampMsg('Calibration cancelled.', true); wsRampRender(); return; }
+    WS_RAMP.mppx = m / dpx;
+    wsRampMsg('Scale set — 1 px = ' + (WS_RAMP.mppx * 1000).toFixed(1) + ' mm. Now ✏ Trace the ramp surface in the direction of travel.');
+    wsRampRender(); return;
+  }
+  if (WS_RAMP.mode === 'trace') { WS_RAMP.trace.push(p); wsRampRender(); return; }
+}
+function wsRampSvgMove(e) {
+  if (!WS_RAMP.drag || !WS_RAMP.under) return;
+  const p = wsRampSvgPt(e);
+  WS_RAMP.under.ox = WS_RAMP.drag.ox + (p.x - WS_RAMP.drag.sx);
+  WS_RAMP.under.oy = WS_RAMP.drag.oy + (p.y - WS_RAMP.drag.sy);
+  wsRampRender();
+}
+function wsRampSvgUp() { WS_RAMP.drag = null; }
+
+// ── trace → segments ──
+function wsRampTraceStart() {
+  if (WS_RAMP.under && !WS_RAMP.mppx) { wsRampMsg('📏 Scale the drawing first — traced grades are meaningless without it.', true); return; }
+  if (!WS_RAMP.under) { wsRampMsg('No drawing loaded — type the segments in the table instead, or load a section to trace.', true); return; }
+  WS_RAMP.mode = 'trace'; WS_RAMP.trace = [];
+  wsRampMsg('Trace: click along the ramp SURFACE in the direction of travel — every grade change needs a click. ✓ Done when finished.');
+  wsRampRender();
+}
+function wsRampTraceCancel() { WS_RAMP.mode = null; WS_RAMP.trace = []; wsRampRender(); wsRampMsg('Trace cancelled.'); }
+function wsRampTraceDone() {
+  const tr = WS_RAMP.trace;
+  if (WS_RAMP.mode !== 'trace' || tr.length < 2) { wsRampMsg('Trace at least two points along the surface first.', true); return; }
+  const dir = tr[tr.length - 1].x >= tr[0].x ? 1 : -1;   // travel = click order; drawing may face either way
+  const ax = tr[0].x, ay = tr[0].y, mppx = WS_RAMP.mppx;
+  const pts = tr.map(p => ({ x: dir * (p.x - ax) * mppx, z: (ay - p.y) * mppx }));
+  const segs = wsRampSegsFromTrace(pts);
+  if (!segs.length) { wsRampMsg('Could not read segments from that trace — click strictly along the direction of travel.', true); return; }
+  WS_RAMP.segs = segs; WS_RAMP.anchor = { x: ax, y: ay }; WS_RAMP.dir = dir;
+  WS_RAMP.mode = null; WS_RAMP.trace = []; WS_RAMP.res = null; WS_RAMP.chk = null;
+  wsRampSegsRender(); wsRampPersist(); wsRampRender();
+  wsRampMsg(segs.length + ' segment' + (segs.length === 1 ? '' : 's') + ' from the trace — check the grades in the table, then ▶ Analyse.');
+}
+
+// ── segment table ──
+function wsRampSegsRender() {
+  const wrap = document.getElementById('ws-ramp-segs'); if (!wrap) return;
+  const rows = WS_RAMP.segs.map((s, i) => `
+    <div style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
+      <span style="font-size:10px;color:rgba(255,255,255,0.35);width:14px;">${i + 1}</span>
+      <input type="number" step="0.1" value="${s.grade}" data-ramp="${i}:grade" class="wsl-sel" style="width:64px;" title="Grade % (signed, + uphill)">
+      <span style="font-size:10px;color:rgba(255,255,255,0.35);">%</span>
+      <input type="number" step="0.1" min="0" value="${s.len}" data-ramp="${i}:len" class="wsl-sel" style="width:64px;" title="Horizontal run, m">
+      <span style="font-size:10px;color:rgba(255,255,255,0.35);">m</span>
+      <span style="font-size:11px;">${s.grade > 0.05 ? '↗' : s.grade < -0.05 ? '↘' : '→'}</span>
+      <button class="wsl-btn" style="padding:1px 6px;font-size:10px;color:#ED1C24;" onclick="wsRampSegDel(${i})">✕</button>
+    </div>`).join('');
+  wrap.innerHTML = rows || '<div style="font-size:10.5px;color:rgba(255,255,255,0.35);">No segments yet — trace the drawing or + Segment.</div>';
+}
+function wsRampSegRowAdd() { WS_RAMP.segs.push({ grade: 0, len: 5 }); wsRampSegsRender(); }
+function wsRampSegDel(i) { WS_RAMP.segs.splice(i, 1); WS_RAMP.res = null; wsRampSegsRender(); wsRampRender(); }
+function wsRampSegsApply() {
+  const next = WS_RAMP.segs.map((s, i) => ({ ...s }));
+  document.querySelectorAll('[data-ramp]').forEach(el => {
+    const [i, f] = el.getAttribute('data-ramp').split(':');
+    if (next[+i]) next[+i][f] = parseFloat(el.value) || 0;
+  });
+  WS_RAMP.segs = next.filter(s => s.len > 0);
+  WS_RAMP.res = null; WS_RAMP.chk = null;
+  wsRampSegsRender(); wsRampPersist(); wsRampRender();
+  wsRampMsg('Segments applied — ▶ Analyse to run the check.');
+}
+
+// ── vehicle ──
+function wsRampVehPopulate() {
+  const sel = document.getElementById('ws-ramp-vehicle'); if (!sel) return;
+  const cur = sel.value || (document.getElementById('ws-swept-vehicle') || {}).value || '';
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  sel.innerHTML = wsVehAll().map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join('');
+  if (cur && [...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+function wsRampVehChanged() {
+  const sel = document.getElementById('ws-ramp-vehicle'); if (!sel) return;
+  const v = wsVehById(sel.value);
+  WS_RAMP.veh = v; WS_RAMP.secTouched = false; WS_RAMP.res = null;
+  const sec = wsRampSecOf(v);
+  ['gcf', 'gcm', 'gcr'].forEach(k => { const el = document.getElementById('ws-ramp-' + k); if (el) el.value = Math.round(sec[k] * 1000); });
+  const dims = document.getElementById('ws-ramp-veh-dims');
+  if (dims) dims.textContent = `WB ${v.wb.toFixed(2)} m · front OH ${v.fo.toFixed(2)} m · rear OH ${v.ro.toFixed(2)} m`;
+  wsRampAssumedBadge();
+  wsRampRender();
+}
+function wsRampSecRead() {
+  const v = WS_RAMP.veh || wsVehById((document.getElementById('ws-ramp-vehicle') || {}).value);
+  const base = wsRampSecOf(v);
+  const mm = k => { const el = document.getElementById('ws-ramp-' + k); const n = el ? parseFloat(el.value) : NaN; return n > 0 ? n / 1000 : base[k]; };
+  return { wb: base.wb, fo: base.fo, ro: base.ro, gcf: mm('gcf'), gcm: mm('gcm'), gcr: mm('gcr'),
+           assumed: base.assumed && !WS_RAMP.secTouched };
+}
+function wsRampAssumedBadge() {
+  const el = document.getElementById('ws-ramp-assumed'); if (!el) return;
+  const sec = wsRampSecRead();
+  const a = wsRampAngles(sec);
+  const angles = `approach ${a.approach}° · breakover ${a.breakover}° · departure ${a.departure}°`;
+  if (sec.assumed) { el.style.color = '#FFD740'; el.innerHTML = '⚠ Underside heights are category ASSUMPTIONS — confirm with the contractor before citing this check.<br>' + angles; }
+  else if (WS_RAMP.secTouched) { el.style.color = 'rgba(255,255,255,0.55)'; el.innerHTML = 'Underside heights entered by hand for this check.<br>' + angles; }
+  else { el.style.color = '#4BED12'; el.innerHTML = '✓ Underside heights from the vehicle library.<br>' + angles; }
+}
+
+// ── analysis + results ──
+function wsRampAnalyse() {
+  if (!WS_RAMP.segs.length) { wsRampMsg('No ramp profile yet — trace the drawing or enter segments first.', true); return; }
+  const sec = wsRampSecRead();
+  const pts = wsRampProfilePts(WS_RAMP.segs);
+  const res = wsRampScan(pts, sec);
+  if (!res || res.short) {
+    wsRampMsg('The profile (' + (pts[pts.length - 1].x - pts[0].x).toFixed(1) + ' m) is shorter than the wheelbase — trace some approach either side of the ramp so the whole vehicle fits on it.', true);
+    return;
+  }
+  WS_RAMP.pts = pts; WS_RAMP.res = res; WS_RAMP.sec = sec; WS_RAMP.idx = 0;
+  WS_RAMP.chk = wsRampTransitionCheck(WS_RAMP.segs, WS_RAMP_RULES.as2890_1);
+  const sl = document.getElementById('ws-ramp-slider');
+  sl.max = res.samples.length - 1; sl.value = 0; sl.disabled = false;
+  const pb = document.getElementById('ws-ramp-play'); pb.disabled = false; pb.style.opacity = '1';
+  wsRampResultsRender(); wsRampPersist(); wsRampRender();
+  wsRampMsg(res.ok ? '✓ No scrape along the profile. Step the vehicle through with the slider to inspect each transition.'
+                   : '⚠ ' + res.scrapes.length + ' scrape zone' + (res.scrapes.length === 1 ? '' : 's') + ' found — see the red intervals.', !res.ok);
+}
+function wsRampResultsRender() {
+  const el = document.getElementById('ws-ramp-results'); if (!el) return;
+  const res = WS_RAMP.res, chk = WS_RAMP.chk, sec = WS_RAMP.sec;
+  if (!res) { el.innerHTML = ''; return; }
+  const mm = v => Math.round(v * 1000);
+  const featRow = (k, lbl) => {
+    const w = res.worst[k];
+    const col = w.min <= 0 ? '#ED1C24' : w.min < 0.1 ? '#FFD740' : '#4BED12';
+    return `<div style="display:flex;justify-content:space-between;font-size:11px;"><span>${lbl}</span><b style="color:${col};">${mm(w.min)} mm @ ch ${w.x.toFixed(1)} m</b></div>`;
+  };
+  const scrapeRows = res.scrapes.map(s =>
+    `<div style="font-size:10.5px;color:#ED1C24;">⚠ ${s.feature === 'belly' ? 'BELLY grounds' : s.feature.toUpperCase() + ' overhang scrapes'} ch ${s.x0.toFixed(1)}–${s.x1.toFixed(1)} m — ${mm(-s.min)} mm interference</div>`).join('');
+  const tr = chk ? chk.rows.map(r =>
+    `<div style="display:flex;justify-content:space-between;font-size:10.5px;color:${r.pass ? 'rgba(255,255,255,0.55)' : '#FFD740'};" title="${r.why || ''}">
+      <span>ch ${r.x.toFixed(1)} · ${r.kind} · Δ${r.change}%</span><b>${r.pass ? '✓' : '✕ needs transition'}</b></div>`).join('') : '';
+  el.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:3px;border:1px solid ${res.ok ? '#2c4a2c' : '#5a2c2c'};border-radius:7px;padding:7px 9px;background:${res.ok ? '#14201a' : '#201414'};">
+      <div style="font-size:11px;font-weight:700;color:${res.ok ? '#4BED12' : '#ED1C24'};">${res.ok ? '✓ CLEARS along the full profile' : '✕ SCRAPES — see below'}</div>
+      ${featRow('front', 'Front overhang')}${featRow('belly', 'Belly / breakover')}${featRow('rear', 'Rear overhang')}
+      ${scrapeRows}
+      ${sec.assumed ? '<div style="font-size:10px;color:#FFD740;">⚠ verdict rests on ASSUMED underside heights</div>' : ''}
+    </div>
+    ${chk && chk.rows.length ? `<div style="margin-top:6px;border:1px solid #2c3636;border-radius:7px;padding:7px 9px;">
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.45);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;" title="${chk.rule.note}">${chk.rule.label}</div>
+      ${tr}
+      <div style="font-size:9.5px;color:rgba(255,255,255,0.35);margin-top:3px;line-height:1.5;">${chk.rule.note}</div>
+    </div>` : ''}`;
+}
+
+// ── slider / animation ──
+function wsRampSlide(i) {
+  WS_RAMP.idx = Math.max(0, Math.min(i, (WS_RAMP.res?.samples.length || 1) - 1));
+  const s = WS_RAMP.res?.samples[WS_RAMP.idx];
+  const pos = document.getElementById('ws-ramp-pos');
+  if (pos && s) {
+    const mm = v => Math.round(v * 1000);
+    pos.textContent = `ch ${s.xr.toFixed(1)} m · front ${mm(s.c.front.min)} / belly ${mm(s.c.belly.min)} / rear ${mm(s.c.rear.min)} mm`;
+  }
+  wsRampRender();
+}
+function wsRampPlay() {
+  const b = document.getElementById('ws-ramp-play');
+  if (WS_RAMP.playing) { clearInterval(WS_RAMP.playing); WS_RAMP.playing = null; if (b) b.textContent = '▶'; return; }
+  if (!WS_RAMP.res) return;
+  if (b) b.textContent = '⏸';
+  WS_RAMP.playing = setInterval(() => {
+    const max = WS_RAMP.res.samples.length - 1;
+    const next = WS_RAMP.idx >= max ? 0 : WS_RAMP.idx + 1;
+    document.getElementById('ws-ramp-slider').value = next;
+    wsRampSlide(next);
+  }, 40);
+}
+
+// ── section-view rendering ──
+function wsRampViewMap() {
+  const pts = wsRampProfilePts(WS_RAMP.segs);
+  if (WS_RAMP.anchor && WS_RAMP.mppx) {
+    return { k: 1 / WS_RAMP.mppx, ax: WS_RAMP.anchor.x, ay: WS_RAMP.anchor.y, dir: WS_RAMP.dir, pts };
+  }
+  const xs = pts.map(p => p.x), zs = pts.map(p => p.z);
+  const w = (Math.max(...xs) - Math.min(...xs)) || 1, h = (Math.max(...zs) - Math.min(...zs)) || 1;
+  const k = Math.min(900 / w, 440 / h, 80);
+  // centre the profile in the viewBox, leaving headroom for the silhouette
+  return { k, ax: 50 - Math.min(...xs) * k, ay: (640 - h * k) / 2 + Math.max(...zs) * k, dir: 1, pts };
+}
+function wsRampRender() {
+  const svg = document.getElementById('ws-ramp-svg'); if (!svg) return;
+  const parts = [];
+  const u = WS_RAMP.under;
+  if (u) parts.push(`<image href="${u.img}" x="${u.ox.toFixed(1)}" y="${u.oy.toFixed(1)}" width="${(u.iw * u.s).toFixed(1)}" height="${(u.ih * u.s).toFixed(1)}" opacity="0.8" preserveAspectRatio="none"/>`);
+  if (WS_RAMP.mode === 'cal2' && WS_RAMP.cal)
+    parts.push(`<circle cx="${WS_RAMP.cal.x1}" cy="${WS_RAMP.cal.y1}" r="5" fill="none" stroke="#FFD740" stroke-width="2"/>`);
+  if (WS_RAMP.trace.length) {
+    parts.push(`<polyline points="${WS_RAMP.trace.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ')}" fill="none" stroke="#FFD740" stroke-width="2" stroke-dasharray="6 4"/>`);
+    WS_RAMP.trace.forEach(p => parts.push(`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="#FFD740"/>`));
+  }
+  if (WS_RAMP.segs.length) {
+    const map = wsRampViewMap();
+    const X = x => map.ax + map.dir * x * map.k, Y = z => map.ay - z * map.k;
+    const pl = map.pts.map(p => X(p.x).toFixed(1) + ',' + Y(p.z).toFixed(1)).join(' ');
+    parts.push(`<polyline points="${pl}" fill="none" stroke="#00B3B3" stroke-width="2.5"/>`);
+    map.pts.forEach(p => parts.push(`<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.z).toFixed(1)}" r="3" fill="#00B3B3"/>`));
+    // per-segment grade labels
+    let cx = 0;
+    WS_RAMP.segs.forEach(s => {
+      const midx = cx + s.len / 2, midz = wsRampZAt(map.pts, midx);
+      parts.push(`<text x="${X(midx).toFixed(1)}" y="${(Y(midz) + 16).toFixed(1)}" fill="#7FD8D8" font-size="11" text-anchor="middle">${s.grade > 0 ? '+' : ''}${s.grade}% · ${s.len} m</text>`);
+      cx += +s.len;
+    });
+    // transition verdicts at the vertices
+    if (WS_RAMP.chk) WS_RAMP.chk.rows.forEach(r => {
+      const col = r.pass ? '#4BED12' : '#FFD740';
+      parts.push(`<text x="${X(r.x).toFixed(1)}" y="${(Y(wsRampZAt(map.pts, r.x)) - 10).toFixed(1)}" fill="${col}" font-size="10" text-anchor="middle">${r.kind} Δ${r.change}%${r.pass ? '' : ' ✕'}</text>`);
+    });
+    // scrape intervals hugged to the surface
+    if (WS_RAMP.res) WS_RAMP.res.scrapes.forEach(s => {
+      const seg = [];
+      for (let x = s.x0; x <= s.x1 + 1e-6; x += Math.max((s.x1 - s.x0) / 24, 0.05))
+        seg.push(X(x).toFixed(1) + ',' + Y(wsRampZAt(map.pts, x)).toFixed(1));
+      if (seg.length < 2) seg.push(X(s.x1).toFixed(1) + ',' + Y(wsRampZAt(map.pts, s.x1)).toFixed(1));
+      parts.push(`<polyline points="${seg.join(' ')}" fill="none" stroke="#ED1C24" stroke-width="6" stroke-linecap="round" opacity="0.85"/>`);
+      const mx = (s.x0 + s.x1) / 2;
+      parts.push(`<text x="${X(mx).toFixed(1)}" y="${(Y(wsRampZAt(map.pts, mx)) + 32).toFixed(1)}" fill="#ED1C24" font-size="11" font-weight="700" text-anchor="middle">⚠ ${s.feature} ${Math.round(-s.min * 1000)} mm</text>`);
+    });
+    // vehicle at the slider position
+    const smp = WS_RAMP.res && WS_RAMP.res.samples[WS_RAMP.idx];
+    if (smp && WS_RAMP.sec) parts.push(wsRampVehSvg(smp, WS_RAMP.sec, map));
+  } else if (!u) {
+    parts.push('<text x="500" y="310" fill="rgba(255,255,255,0.25)" font-size="14" text-anchor="middle">Load the ramp’s longitudinal section, or add segments by hand</text>');
+  }
+  svg.innerHTML = parts.join('\n');
+}
+function wsRampVehSvg(smp, sec, map) {
+  const pose = smp.pose;
+  const ux = (pose.xf - pose.xr) / sec.wb, uz = (pose.zf - pose.zr) / sec.wb;
+  const P = (a, h) => {
+    const x = pose.xr + a * ux - h * uz, z = pose.zr + a * uz + h * ux;
+    return (map.ax + map.dir * x * map.k).toFixed(1) + ',' + (map.ay - z * map.k).toFixed(1);
+  };
+  const rw = WS_RAMP_WHEEL_R, hb = Math.max((WS_RAMP.veh && WS_RAMP.veh.heightM) || 3.0, 2.2);
+  const out = [];
+  // body outline (schematic — the yellow underside lines are the checked geometry)
+  out.push(`<path d="M ${P(-sec.ro, sec.gcr)} L ${P(-sec.ro, hb)} L ${P(sec.wb + sec.fo * 0.35, hb)} L ${P(sec.wb + sec.fo, hb * 0.72)} L ${P(sec.wb + sec.fo, sec.gcf)} Z" fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.75)" stroke-width="1.3"/>`);
+  // wheels
+  [0, sec.wb].forEach(a => out.push(`<circle cx="${P(a, rw).split(',')[0]}" cy="${P(a, rw).split(',')[1]}" r="${(rw * map.k).toFixed(1)}" fill="#182121" stroke="rgba(255,255,255,0.8)" stroke-width="1.3"/>`));
+  // the three checked underside lines
+  out.push(`<path d="M ${P(-sec.ro, sec.gcr)} L ${P(-rw, sec.gcr)}" stroke="#FFD740" stroke-width="2.2"/>`);
+  out.push(`<path d="M ${P(rw, sec.gcm)} L ${P(sec.wb - rw, sec.gcm)}" stroke="#FFD740" stroke-width="2.2"/>`);
+  out.push(`<path d="M ${P(sec.wb + rw, sec.gcf)} L ${P(sec.wb + sec.fo, sec.gcf)}" stroke="#FFD740" stroke-width="2.2"/>`);
+  // live clearance markers at each feature's worst point for this pose
+  [['front', smp.c.front], ['belly', smp.c.belly], ['rear', smp.c.rear]].forEach(([k, c]) => {
+    if (c.x == null) return;
+    const zs = wsRampZAt(map.pts, c.x), zu = zs + c.min;
+    const X = (map.ax + map.dir * c.x * map.k).toFixed(1);
+    const col = c.min <= 0 ? '#ED1C24' : '#4BED12';
+    out.push(`<path d="M ${X},${(map.ay - zu * map.k).toFixed(1)} L ${X},${(map.ay - zs * map.k).toFixed(1)}" stroke="${col}" stroke-width="1.4" stroke-dasharray="3 2"/>`);
+    out.push(`<text x="${X}" y="${(map.ay - zs * map.k + 12).toFixed(1)}" fill="${col}" font-size="9.5" text-anchor="middle">${Math.round(c.min * 1000)}</text>`);
+  });
+  return '<g>' + out.join('\n') + '</g>';
+}
+
+// ── snapshot export ──
+async function wsRampSnapshot() {
+  if (!WS_RAMP.segs.length) { wsRampMsg('Nothing to export yet.', true); return; }
+  const svg = document.getElementById('ws-ramp-svg');
+  const ser = new XMLSerializer().serializeToString(svg);
+  const img = new Image();
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(ser); });
+  const W = 2000, HDR = 150, H = HDR + 1280;
+  const cnv = document.createElement('canvas'); cnv.width = W; cnv.height = H;
+  const g = cnv.getContext('2d');
+  g.fillStyle = '#101717'; g.fillRect(0, 0, W, H);
+  g.drawImage(img, 0, HDR, W, 1280);
+  const res = WS_RAMP.res, sec = WS_RAMP.sec, mm = v => Math.round(v * 1000);
+  g.fillStyle = '#fff'; g.font = '700 34px sans-serif';
+  g.fillText('Ramp section — grade clearance check', 30, 48);
+  g.font = '24px sans-serif'; g.fillStyle = 'rgba(255,255,255,0.75)';
+  g.fillText((WS_RAMP.veh ? WS_RAMP.veh.name + ' · ' : '') + new Date().toISOString().slice(0, 10) +
+    (res ? ` · front ${mm(res.worst.front.min)} / belly ${mm(res.worst.belly.min)} / rear ${mm(res.worst.rear.min)} mm min` : ' · not analysed'), 30, 86);
+  g.fillStyle = res && res.ok ? '#4BED12' : '#ED1C24'; g.font = '700 26px sans-serif';
+  g.fillText(res ? (res.ok ? '✓ CLEARS along the full profile' : '✕ SCRAPES — red intervals') : '', 30, 122);
+  if (sec && sec.assumed) { g.fillStyle = '#FFD740'; g.font = '22px sans-serif'; g.fillText('⚠ underside heights are category assumptions — confirm with the contractor before citing', 620, 122); }
+  const a = document.createElement('a');
+  a.href = cnv.toDataURL('image/png'); a.download = 'ramp-section-check.png'; a.click();
+  wsRampMsg('Snapshot downloaded.');
+}
+
+// ── persistence: the segment model rides in the layout slot ──
+function wsRampPersist() {
+  try {
+    if (typeof wsLayoutSlot !== 'function') return;
+    const sl = wsLayoutSlot(); if (!sl) return;
+    sl.ramp = {
+      segs: WS_RAMP.segs.map(s => ({ grade: +s.grade, len: +s.len })),
+      vehId: (document.getElementById('ws-ramp-vehicle') || {}).value || null,
+      sec: WS_RAMP.secTouched ? { gcf: wsRampSecRead().gcf, gcm: wsRampSecRead().gcm, gcr: wsRampSecRead().gcr } : null,
+    };
+    if (typeof wsFlushState === 'function') wsFlushState();
+  } catch (e) {}
+}
+
 // ── Ackermann kinematics per Austroads AP-G34-23 §3.5 ──
 // minR = kerb-to-kerb turning radius in metres (outer front WHEEL path — what spec sheets quote).
 // rww  = wall-to-wall turning radius (outer front BODY corner) — takes precedence when present.
@@ -22177,6 +22885,11 @@ async function wsLoadVehiclesDB() {
       frontAxleSpreadM: r.front_axle_spread_m != null ? +r.front_axle_spread_m : null,
       rearAxles: r.rear_axles != null ? +r.rear_axles : null,
       rearAxleSpreadM: r.rear_axle_spread_m != null ? +r.rear_axle_spread_m : null,
+      // Ramp-section underside heights (metres). Null falls back to the
+      // per-category ASSUMED values in WS_RAMP_SEC_DEFAULTS, flagged as such.
+      gcFrontM: r.gc_front_m != null ? +r.gc_front_m : null,
+      gcRearM: r.gc_rear_m != null ? +r.gc_rear_m : null,
+      gcMidM: r.ground_clearance_m != null ? +r.ground_clearance_m : null,
       verified: !!r.swept_verified, notes: r.notes || ''
     })).filter(v => v.wb > 0 && (v.minR > 0 || v.rww > 0));
   } catch (e) {
