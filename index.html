@@ -2055,6 +2055,30 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
             </div>
 
+            <!-- Manoeuvrability: friendly wheel-through checks. Building managers
+                 and cleaners see this panel, so the words on screen stay plain —
+                 the engineering numbers live under "Numbers for the report". -->
+            <div class="wsl-group">
+              <div class="wsl-group-hd">Can it be wheeled? <span style="font-weight:400;font-size:9.5px;color:rgba(255,255,255,0.4);text-transform:none;letter-spacing:0;">bins &amp; equipment</span></div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;">
+                <button class="wsl-btn" onclick="wsManTravelStart()" title="Pick a bin, click its route, and watch it move — green means it fits, red shows where it gets stuck.">▶ Watch a bin move</button>
+                <button class="wsl-btn" onclick="wsManChangeoverStart()" title="Chute rooms: swap the full bin under the chute for an empty one — checks both routes and whether they can happen at the same time.">🔄 Chute bin swap</button>
+              </div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;">
+                <button class="wsl-btn" onclick="wsManAccessRun()" title="Checks every bin: which can be grabbed straight away, and which are boxed in behind others.">🙋 Easy to reach?</button>
+                <button class="wsl-btn" onclick="wsManSpinRun()" title="Select a bin first — checks how far it can turn on the spot without hitting anything.">🔃 Spin test</button>
+                <button class="wsl-btn" onclick="wsManClear()" title="Clear the check from the plan">✕</button>
+              </div>
+              <label style="font-size:10px;color:rgba(255,255,255,0.5);display:flex;align-items:center;gap:5px;">Room for the person pushing
+                <select id="ws-man-buffer" class="wsl-sel">
+                  <option value="0.6" selected>normal (600 mm)</option>
+                  <option value="0.8">generous (800 mm)</option>
+                  <option value="0">none</option>
+                </select>
+              </label>
+              <div id="ws-man-result" style="margin-top:6px;"></div>
+            </div>
+
             <!-- C5: council soft warnings — advisory only, never blocking -->
             <div id="ws-council-warn" style="display:none;flex-direction:column;gap:3px;padding:7px 10px;background:rgba(90,60,20,0.35);border:1px solid #8a6a3a;border-radius:7px;font-size:10.5px;line-height:1.5;color:#FFD8A8;"></div>
 
@@ -10388,6 +10412,7 @@ const EQL = { items: [], deletes: [], cols: [
   ['height_mm','Height mm',56,'num'], ['width_mm','Width mm',56,'num'], ['depth_mm','Depth mm',56,'num'],
   ['footprint_m2','Footprint m²',58,'num'], ['capacity_l','Capacity (L)',60,'num'], ['compaction_ratio','Compaction',56,'num'], ['streams','Streams',120,'streams'],
   ['inlet_height_mm','Inlet mm',54,'num'], ['bin_size_l','Bin size L',52,'num'], ['bin_count','Bin count',48,'num'], ['active','Active',44,'bool'],
+  ['turn_type','Turn (pivot/wide)',72,'text'], ['turn_radius_mm','Turn R mm',56,'num'],
   ['company','Company',100,'text'], ['website','Website',130,'text'], ['phone','Phone',95,'text'],
   ['include_in_supplier_table','In supplier tbl',52,'bool'] ] };
 const CTL = { items: [], deletes: [], cols: [
@@ -10489,6 +10514,10 @@ async function eqlSave() {
       capacity_l: it.capacity_l, width_mm: it.width_mm, depth_mm: it.depth_mm, height_mm: it.height_mm,
       footprint_m2: it.footprint_m2, compaction_ratio: it.compaction_ratio,
       streams: Array.isArray(it.streams) ? it.streams : [],
+      // manoeuvrability: 'pivot' or 'wide' (anything else falls back to the
+      // size-based default in wsManBehaviour), radius used only when wide
+      turn_type: (it.turn_type === 'pivot' || it.turn_type === 'wide') ? it.turn_type : null,
+      turn_radius_mm: it.turn_radius_mm,
       supplier_type: it.supplier_type, company: it.company, website: it.website, phone: it.phone,
       collectable: it.collectable===true, include_in_supplier_table: it.include_in_supplier_table===true,
       active: it.active !== false }));
@@ -15563,7 +15592,7 @@ function wsShowTab(name, btn) {
   { const osvg = document.getElementById('ws-overlay-svg'); if (osvg) osvg.style.pointerEvents = 'all'; }
   if (name !== 'layout' && typeof WS_LAYOUT !== 'undefined') {
     WS_LAYOUT.tabActive = false;
-    if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark') wsLayoutEndMode();
+    if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark' || WS._mode === 'layoutman') wsLayoutEndMode();
   }
   if (name === 'layout') {
     if (sweptOverlay) sweptOverlay.style.display = 'none';   // native tool — draws on the plan
@@ -16711,6 +16740,7 @@ function wsLayoutRoomMode() {
 function wsLayoutEndMode() {
   WS._mode = null; WS_LAYOUT.roomStart = null; WS_LAYOUT.hover = null; WS_LAYOUT._equipPend = null;
   WS_LAYOUT.roomPts = null; WS_LAYOUT._mark = null; WS_LAYOUT._fixture = null; WS_LAYOUT._zonePoly = null;
+  if (typeof WS_MAN !== 'undefined') WS_MAN.pend = null;   // an in-progress manoeuvre route dies with its mode; results stay
   WS_MARK_SUSPEND = null;   // an explicit end-of-mode discards any parked tool
   if (typeof wsMarkSyncButtons === 'function') wsMarkSyncButtons();
   const area = document.getElementById('ws-canvas-area');
@@ -17790,6 +17820,688 @@ function wsKeepoutFps(slot, mpp, opts) {
   });
   return out;
 }
+
+/* ── MANOEUVRABILITY ENGINE ──────────────────────────────────────────────────
+   Can a bin actually be WHEELED where it needs to go? Static footprints fit on
+   paper; the swept arc through a doorway or corner is what jams. The engine
+   walks a bin/equipment footprint along user-clicked waypoints — pivot-on-spot
+   for small MGBs, filleted wide turns for big bins — and checks every pose
+   against walls (door openings excepted), other bins, equipment and chute
+   keepouts, on the same wsFp* SAT geometry the generator and clash overlay
+   already share. A configurable operator zone rides behind the bin: collection
+   staff need somewhere to stand.
+   All functions here are PURE — canvas px + mpp in, plain objects out, no DOM
+   — and tests/manoeuvre.test.js covers them. The UI (friendly wording, the
+   animation, snapshots) sits on top. */
+
+// Turning behaviour is a two-tier model: small MGBs pivot almost on their own
+// castors; 660L+ bins and compactor bins turn wide on an effective radius.
+// These are BEHAVIOURAL DEFAULTS (editable per run, and per equipment record
+// via turn_type / turn_radius_mm) — flagged assumed, never silently trusted.
+const WS_MAN_DEFAULTS = { pivotMaxL: 360, wideRM: 1.2, operatorM: 0.6, pivotMaxDimM: 0.9 };
+function wsManBehaviour(mover, lib) {
+  const d = WS_MAN_DEFAULTS;
+  if (mover.kind === 'bin') {
+    const cap = parseInt(String(mover.type || '').replace(/\D/g, ''), 10) || 0;
+    return cap > d.pivotMaxL ? { turn: 'wide', rM: d.wideRM, assumed: true }
+                             : { turn: 'pivot', rM: 0, assumed: true };
+  }
+  const rec = lib || null;
+  if (rec && (rec.turn_type === 'pivot' || rec.turn_type === 'wide')) {
+    return { turn: rec.turn_type,
+             rM: rec.turn_type === 'wide' ? ((rec.turn_radius_mm > 0 ? rec.turn_radius_mm / 1000 : d.wideRM)) : 0,
+             assumed: !(rec.turn_type === 'pivot' || rec.turn_radius_mm > 0) };
+  }
+  const big = Math.max(mover.w || 0, mover.d || 0);
+  return big > d.pivotMaxDimM ? { turn: 'wide', rM: Math.max(d.wideRM, big * 0.9), assumed: true }
+                              : { turn: 'pivot', rM: 0, assumed: true };
+}
+
+// The footprint at a pose: the item travels along its DEPTH axis (handle at
+// the back), so local +y aligns with the heading.
+function wsManFpAt(x, y, hdg, hwPx, hdPx) {
+  return wsFpRect(x, y, hwPx, hdPx, hdg * 180 / Math.PI - 90);
+}
+// Operator zone: a person-width strip behind the item, same heading.
+function wsManOperatorFp(x, y, hdg, hwPx, hdPx, bufPx) {
+  const mx = Math.cos(hdg), my = Math.sin(hdg);
+  return wsFpRect(x - mx * (hdPx + bufPx / 2), y - my * (hdPx + bufPx / 2),
+                  Math.max(hwPx, 0.3), bufPx / 2, hdg * 180 / Math.PI - 90);
+}
+
+// Waypoints → sampled poses {x, y, hdg}. Pivot: translate each leg, rotate in
+// place at each corner. Wide: fillet arcs of the effective turning radius,
+// clamped when a corner is too tight for the circle (and flagged — a clamped
+// fillet means the real bin needs a multi-point shuffle there).
+function wsManPoses(pts, beh, opts) {
+  const o = opts || {};
+  const step = o.stepPx || 6, rotStep = 10 * Math.PI / 180;
+  const RPx = o.rPx || 0;
+  if (!pts || pts.length < 2) return { poses: [], clamped: [] };
+  const poses = [], clamped = [];
+  const hdgOf = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
+  const norm = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+  const line = (a, b, h) => {
+    const L = Math.hypot(b.x - a.x, b.y - a.y), n = Math.max(1, Math.ceil(L / step));
+    for (let i = 0; i <= n; i++) poses.push({ x: a.x + (b.x - a.x) * i / n, y: a.y + (b.y - a.y) * i / n, hdg: h });
+  };
+  if (beh.turn !== 'wide' || !(RPx > 0)) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const h = hdgOf(pts[i], pts[i + 1]);
+      if (i > 0) {                                     // pivot on the corner
+        const h0 = hdgOf(pts[i - 1], pts[i]), dh = norm(h - h0);
+        const n = Math.max(1, Math.ceil(Math.abs(dh) / rotStep));
+        for (let k = 1; k < n; k++) poses.push({ x: pts[i].x, y: pts[i].y, hdg: h0 + dh * k / n });
+      }
+      line(pts[i], pts[i + 1], h);
+    }
+    return { poses, clamped };
+  }
+  // wide turns: walk leg → arc → leg, tangent points pulled back from each corner
+  let cur = pts[0];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const A = pts[i - 1], V = pts[i], B = pts[i + 1];
+    const h1 = hdgOf(A, V), h2 = hdgOf(V, B), dh = norm(h2 - h1);
+    if (Math.abs(dh) < 0.02) { continue; }
+    const lenIn = Math.hypot(V.x - cur.x, V.y - cur.y), lenOut = Math.hypot(B.x - V.x, B.y - V.y);
+    let t = RPx * Math.tan(Math.abs(dh) / 2), R = RPx;
+    const tMax = Math.max(2, Math.min(lenIn, lenOut) * 0.48);
+    if (t > tMax) { t = tMax; R = t / Math.tan(Math.abs(dh) / 2); clamped.push({ x: V.x, y: V.y, rPx: R }); }
+    const u1 = { x: Math.cos(h1), y: Math.sin(h1) };
+    const T1 = { x: V.x - u1.x * t, y: V.y - u1.y * t };
+    line(cur, T1, h1);
+    // arc centre from the tangency condition: the tangent at T1, walked in the
+    // direction the angle sweeps (sign of dh), must equal the leg heading
+    const a0 = h1 - Math.sign(dh) * Math.PI / 2;
+    const C = { x: T1.x - Math.cos(a0) * R, y: T1.y - Math.sin(a0) * R };
+    const n = Math.max(2, Math.ceil(Math.abs(dh) * R / step));
+    for (let k = 1; k <= n; k++) {
+      const a = a0 + dh * k / n;
+      poses.push({ x: C.x + Math.cos(a) * R, y: C.y + Math.sin(a) * R, hdg: h1 + dh * k / n });
+    }
+    cur = { x: C.x + Math.cos(a0 + dh) * R, y: C.y + Math.sin(a0 + dh) * R };
+  }
+  line(cur, pts[pts.length - 1], hdgOf(pts[pts.length - 2], pts[pts.length - 1]));
+  return { poses, clamped };
+}
+
+// Room walls as segments with door openings CUT OUT, so travelling through a
+// doorway is legal and brushing the jamb still counts. A door "covers" the
+// stretch of wall its opening width spans, when it sits on that wall.
+function wsManWalls(rooms, doors, mpp) {
+  const out = [];
+  const band = 0.35 / mpp;
+  (rooms || []).forEach(r => {
+    const pts = r.pts || [];
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length];
+      const vx = q.x - p.x, vy = q.y - p.y, L = Math.hypot(vx, vy) || 1;
+      let spans = [[0, 1]];
+      (doors || []).forEach(dr => {
+        const t = ((dr.x - p.x) * vx + (dr.y - p.y) * vy) / (L * L);
+        if (t < -0.05 || t > 1.05) return;
+        const px = p.x + vx * t, py = p.y + vy * t;
+        if (Math.hypot(dr.x - px, dr.y - py) > band) return;     // not on this wall
+        const half = (dr.wPx || 0) / 2 / L;
+        const c0 = t - half, c1 = t + half;
+        spans = spans.flatMap(([s0, s1]) =>
+          c1 <= s0 || c0 >= s1 ? [[s0, s1]] :
+          [[s0, Math.max(s0, c0)], [Math.min(s1, c1), s1]].filter(([a, b]) => b - a > 0.001));
+      });
+      spans.forEach(([s0, s1]) => out.push({
+        a: { x: p.x + vx * s0, y: p.y + vy * s0 },
+        b: { x: p.x + vx * s1, y: p.y + vy * s1 } }));
+    }
+  });
+  return out;
+}
+
+// Does a wall segment enter the footprint, and how deep (px)? Segment taken
+// into the rect's local frame, clipped to the box, deepest point reported.
+function wsManWallHit(fp, walls) {
+  const a = -(fp.rot || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  let depth = 0;
+  (walls || []).forEach(w => {
+    const lx1 = (w.a.x - fp.x) * c - (w.a.y - fp.y) * s, ly1 = (w.a.x - fp.x) * s + (w.a.y - fp.y) * c;
+    const lx2 = (w.b.x - fp.x) * c - (w.b.y - fp.y) * s, ly2 = (w.b.x - fp.x) * s + (w.b.y - fp.y) * c;
+    // clip the segment to the box with the slab method
+    let t0 = 0, t1 = 1;
+    const dx = lx2 - lx1, dy = ly2 - ly1;
+    for (const [pv, dv, lim] of [[lx1, dx, fp.hw], [ly1, dy, fp.hd]]) {
+      if (Math.abs(dv) < 1e-9) { if (Math.abs(pv) > lim) return; continue; }
+      let ta = (-lim - pv) / dv, tb = (lim - pv) / dv;
+      if (ta > tb) { const tmp = ta; ta = tb; tb = tmp; }
+      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+      if (t0 > t1) return;
+    }
+    for (const t of [t0, (t0 + t1) / 2, t1]) {
+      const px = lx1 + dx * t, py = ly1 + dy * t;
+      depth = Math.max(depth, Math.min(fp.hw - Math.abs(px), fp.hd - Math.abs(py)));
+    }
+  });
+  return depth;
+}
+// min corner distance to the (door-trimmed) walls
+function wsManWallClr(fp, walls) {
+  let best = Infinity;
+  const cs = wsFpCornersOf(fp);
+  (walls || []).forEach(w => cs.forEach(v => {
+    best = Math.min(best, wsSegPointDist(v.x, v.y, w.a.x, w.a.y, w.b.x, w.b.y));
+  }));
+  return best;
+}
+
+// One pose against the world: worst clearance in px (negative = overlap depth)
+// and what it was against.
+function wsManPoseCheck(fp, walls, obstacles) {
+  let clr = Infinity, what = null;
+  const wd = wsManWallHit(fp, walls);
+  if (wd > 0) { clr = -wd; what = 'wall'; }
+  else { const c = wsManWallClr(fp, walls); if (c < clr) { clr = c; what = 'wall'; } }
+  (obstacles || []).forEach(ob => {
+    if (wsFpOverlap(fp, ob.fp || ob, 0)) {
+      // overlap depth via the SAT axes: smallest projection overlap
+      const A = wsFpCornersOf(fp), B = (ob.fp || ob).kind === 'circle' ? null : wsFpCornersOf(ob.fp || ob);
+      let d = 4;
+      if (B) {
+        d = Infinity;
+        for (const P of [A, B]) for (let i = 0; i < P.length; i++) {
+          const p = P[i], q = P[(i + 1) % P.length];
+          const nx = q.y - p.y, ny = -(q.x - p.x), nl = Math.hypot(nx, ny) || 1;
+          let a1 = Infinity, a2 = -Infinity, b1 = Infinity, b2 = -Infinity;
+          for (const v of A) { const t = (v.x * nx + v.y * ny) / nl; a1 = Math.min(a1, t); a2 = Math.max(a2, t); }
+          for (const v of B) { const t = (v.x * nx + v.y * ny) / nl; b1 = Math.min(b1, t); b2 = Math.max(b2, t); }
+          d = Math.min(d, Math.min(a2, b2) - Math.max(a1, b1));
+        }
+      }
+      if (-d < clr) { clr = -d; what = (ob.why || 'another item'); }
+    } else {
+      const c = wsFpDist(fp, ob.fp || ob);
+      if (c < clr) { clr = c; what = (ob.why || 'another item'); }
+    }
+  });
+  return { clr, what };
+}
+
+// The full run. env = {walls, obstacles:[{fp, why}]}. mover = {hwPx, hdPx}.
+// Returns per-pose results, hit intervals (bin and operator separately), the
+// tightest point, and the envelope corner traces for drawing/DXF.
+function wsManRun(env, mover, waypts, beh, opts) {
+  const o = opts || {};
+  const { poses, clamped } = wsManPoses(waypts, beh, { stepPx: o.stepPx, rPx: (beh.rM || 0) / (o.mpp || 1) });
+  if (!poses.length) return null;
+  const bufPx = (o.operatorM || 0) / (o.mpp || 1);
+  const per = poses.map(p => {
+    const fp = wsManFpAt(p.x, p.y, p.hdg, mover.hwPx, mover.hdPx);
+    const r = wsManPoseCheck(fp, env.walls, env.obstacles);
+    let op = null;
+    if (bufPx > 0) {
+      const ofp = wsManOperatorFp(p.x, p.y, p.hdg, mover.hwPx, mover.hdPx, bufPx);
+      op = wsManPoseCheck(ofp, env.walls, env.obstacles);
+    }
+    return { pose: p, fp, clr: r.clr, what: r.what, opClr: op ? op.clr : Infinity };
+  });
+  const hits = [], opHits = [];
+  const collect = (arr, key) => {
+    let cur = null;
+    per.forEach(s => {
+      if (s[key] <= 0) {
+        if (!cur) { cur = { x: s.pose.x, y: s.pose.y, depth: -s[key], what: s.what }; arr.push(cur); }
+        else { cur.depth = Math.max(cur.depth, -s[key]); cur.x2 = s.pose.x; cur.y2 = s.pose.y; }
+      } else cur = null;
+    });
+  };
+  collect(hits, 'clr');
+  collect(opHits, 'opClr');
+  let worst = per[0];
+  per.forEach(s => { if (s.clr < worst.clr) worst = s; });
+  const traces = [[], [], [], []];
+  per.forEach(s => wsFpCornersOf(s.fp).forEach((c, i) => traces[i].push(c)));
+  return { poses, per, hits, opHits, worst, clamped, traces,
+           ok: !hits.length, okOperator: !opHits.length };
+}
+
+// Spin-in-place: how far can this footprint rotate about its centre before it
+// touches something? Searched both ways in 5° steps; 360 means a free spin.
+function wsManSpin(fp, walls, obstacles) {
+  const test = deg => {
+    const f = { ...fp, rot: (fp.rot || 0) + deg };
+    return wsManPoseCheck(f, walls, obstacles).clr > 0;
+  };
+  let cw = 0, ccw = 0;
+  while (cw < 360 && test(cw + 5)) cw += 5;
+  while (ccw < 360 && test(-(ccw + 5))) ccw += 5;
+  return { cw, ccw, free: Math.min(360, cw + ccw), full: cw >= 355 || ccw >= 355 || cw + ccw >= 355 };
+}
+
+// Which bins can be reached WITHOUT moving others first? A bin is directly
+// takeable when it can slide straight out along one of its own four axes by
+// its own diagonal plus a hand's-width, hitting nothing. Peeling repeats the
+// test with each round's takeable bins removed — round 1 is easy to reach,
+// round 2 needs one round of clearing first, and so on. Rounds count rounds
+// of clearing, not the exact number of bins someone must shift.
+function wsManAccess(items, walls, opts) {
+  const o = opts || {};
+  const margin = o.marginPx || 8;
+  const left = items.map((it, i) => ({ ...it, _i: i }));
+  const tiers = {};
+  let round = 1;
+  while (left.length && round <= 6) {
+    const takeable = [];
+    left.forEach(it => {
+      const L = Math.hypot(it.fp.hw, it.fp.hd) * 2 + margin;
+      const a = (it.fp.rot || 0) * Math.PI / 180;
+      const dirs = [[Math.sin(a), -Math.cos(a)], [-Math.sin(a), Math.cos(a)],
+                    [Math.cos(a), Math.sin(a)], [-Math.cos(a), -Math.sin(a)]];
+      const others = left.filter(x => x._i !== it._i).map(x => x.fp).concat(o.fixed || []);
+      const free = dirs.some(([dx, dy]) => {
+        const n = Math.ceil(L / Math.max(4, Math.min(it.fp.hw, it.fp.hd)));
+        for (let k = 1; k <= n; k++) {
+          const f = { ...it.fp, x: it.fp.x + dx * L * k / n, y: it.fp.y + dy * L * k / n };
+          if (wsManWallHit(f, walls) > 0) return false;
+          if (others.some(ob => wsFpOverlap(f, ob, 0))) return false;
+        }
+        return true;
+      });
+      if (free) takeable.push(it);
+    });
+    if (!takeable.length) break;                       // the rest are mutually locked
+    takeable.forEach(it => { tiers[it._i] = round; });
+    takeable.forEach(it => left.splice(left.indexOf(it), 1));
+    round++;
+  }
+  left.forEach(it => { tiers[it._i] = 99; });          // boxed in past round 6
+  return items.map((it, i) => ({ ...it, tier: tiers[i] }));
+}
+
+// Do two runs' swept envelopes touch? If they do, the changeover cannot happen
+// as one fluid movement — full bin out first, then the empty one in.
+function wsManConflict(runA, runB) {
+  if (!runA || !runB) return { overlap: false };
+  const stride = a => Math.max(1, Math.floor(a.per.length / 120));
+  const sa = stride(runA), sb = stride(runB);
+  for (let i = 0; i < runA.per.length; i += sa)
+    for (let j = 0; j < runB.per.length; j += sb)
+      if (wsFpOverlap(runA.per[i].fp, runB.per[j].fp, 0))
+        return { overlap: true, x: runA.per[i].pose.x, y: runA.per[i].pose.y };
+  return { overlap: false };
+}
+
+/* ── Manoeuvrability UI — friendly on the surface, numbers underneath ────────
+   Building managers and cleaners will see this, so the canvas wording stays
+   plain (green = fits, red = stuck); the engineering values live in the
+   "Numbers for the report" expander, the PNG snapshot and the DXF layer. */
+const WS_MAN = { pend: null, kind: null, res: null, resB: null, conflict: null,
+  mover: null, moverB: null, access: null, spin: null, idx: 0, playing: null, show: false };
+
+function wsManBufferM() { return parseFloat(document.getElementById('ws-man-buffer')?.value || '0.6') || 0; }
+
+// Environment for a run: door-trimmed walls + everything solid that is not a
+// mover. Aisles, zones and doors are walkable; fixtures, chutes and the other
+// bins are not. excludeNearPt drops the chute-bin position being swapped at.
+function wsManEnvBuild(slot, mpp, excludeIds, excludeNearPt) {
+  const ex = excludeIds || [];
+  const doors = slot.equip.filter(e => e.door || WS_DOOR_KINDS[e.code])
+    .map(e => ({ x: e.x, y: e.y, wPx: (e.w || 0.9) / mpp }));
+  const walls = wsManWalls(slot.rooms, doors, mpp);
+  const obstacles = [];
+  slot.bins.forEach(b => {
+    if (ex.indexOf(b.id) >= 0) return;
+    const fp = wsBinFp(b, mpp);
+    if (fp) obstacles.push({ fp, why: (wsBinType(b.type) || {}).label || 'a bin' });
+  });
+  slot.equip.forEach(e => {
+    if (e.door || WS_DOOR_KINDS[e.code] || e.aisle || wsIsZone(e) || wsIsHardWasteZone(e)) return;
+    if (ex.indexOf(e.id) >= 0) return;
+    obstacles.push({ fp: e.round ? wsFpCircle(e.x, e.y, Math.max(e.w, e.d) / 2 / mpp)
+                                 : wsFpRect(e.x, e.y, e.w / 2 / mpp, e.d / 2 / mpp, e.rot || 0),
+                     why: e.label || 'equipment' });
+  });
+  slot.chutes.forEach(ch => {
+    const cs = WS_CHUTE_SPECS[ch.type] || WS_CHUTE_SPECS.SINGLE;
+    obstacles.push({ fp: wsFpRect(ch.x, ch.y, cs.w / 2 / mpp, cs.d / 2 / mpp, ch.rot || 0), why: 'the chute' });
+    (ch.openings || []).forEach(o => {
+      if (o.rx == null) return;
+      if (excludeNearPt && Math.hypot(o.rx - excludeNearPt.x, o.ry - excludeNearPt.y) < 2) return;
+      const dm = wsRecvDims(o.recv, o.fpM2);
+      if (dm.spec.render === 'none') return;
+      obstacles.push({ fp: wsFpRect(o.rx, o.ry, dm.w / 2 / mpp, dm.d / 2 / mpp, ch.rot || 0), why: 'the chute bin position' });
+    });
+  });
+  return { walls, obstacles };
+}
+
+function wsManHitMovableEquip(x, y, mpp) {
+  const e = wsLayoutHitEquip(x, y, mpp);
+  if (!e || e.door || WS_DOOR_KINDS[e.code] || e.aisle || wsIsZone(e) || wsIsHardWasteZone(e) || e.fixture) return null;
+  return e;
+}
+function wsManMoverOf(hit, mpp) {
+  if (!hit) return null;
+  if (hit.type) {
+    const bt = wsBinType(hit.type); if (!bt) return null;
+    return { id: hit.id, kind: 'bin', label: bt.label, stream: hit.stream || null,
+             hwPx: bt.w / 2 / mpp, hdPx: bt.d / 2 / mpp, x: hit.x, y: hit.y,
+             beh: wsManBehaviour({ kind: 'bin', type: hit.type }, null) };
+  }
+  const lib = ((typeof WS_EQUIP_DB !== 'undefined' && WS_EQUIP_DB) || []).find(r => r.id === hit.equipmentId) || null;
+  return { id: hit.id, kind: 'equip', label: hit.label || 'equipment',
+           hwPx: (hit.w || 0.6) / 2 / mpp, hdPx: (hit.d || 0.6) / 2 / mpp, x: hit.x, y: hit.y,
+           beh: wsManBehaviour({ kind: 'equip', w: hit.w, d: hit.d }, lib) };
+}
+
+// ── the three flows ──
+function wsManTravelStart() {
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  wsManStop();
+  WS_MAN.pend = { kind: 'travel', stage: 'pick', pts: [] };
+  WS._mode = 'layoutman';
+  document.getElementById('ws-canvas-area').style.cursor = 'crosshair';
+  document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
+  wsLayoutStatus('Click the bin (or equipment) you want to move.');
+}
+function wsManChangeoverStart() {
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  const slot = wsLayoutSlot();
+  const recv = [];
+  slot.chutes.forEach(ch => (ch.openings || []).forEach(o => { if (o.rx != null) recv.push({ x: o.rx, y: o.ry }); }));
+  if (!recv.length) { wsLayoutStatus('No chute bin position on this plan yet — place a chute first, or use ▶ Watch a bin move.'); return; }
+  wsManStop();
+  WS_MAN.pend = { kind: 'swap', stage: 'pickOut', pts: [], recvs: recv };
+  WS._mode = 'layoutman';
+  document.getElementById('ws-canvas-area').style.cursor = 'crosshair';
+  document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
+  wsLayoutStatus('Chute bin swap — first, click the FULL bin that sits under the chute.');
+}
+function wsManClick(x, y) {
+  const p = WS_MAN.pend; if (!p) return;
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  if (p.stage === 'pick' || p.stage === 'pickOut' || p.stage === 'pickIn') {
+    const hit = wsLayoutHit(x, y, mpp) || wsManHitMovableEquip(x, y, mpp);
+    const mover = hit && wsManMoverOf(hit, mpp);
+    if (!mover) { wsLayoutStatus('That spot is empty — click a bin.'); return; }
+    if (p.stage === 'pick') {
+      p.mover = mover; p.stage = 'path'; p.pts = [{ x: mover.x, y: mover.y }];
+      wsLayoutStatus(mover.label + ' — now click its route, corner by corner. Double-click (or Enter) where it should end.');
+    } else if (p.stage === 'pickOut') {
+      p.moverOut = mover;
+      p.recv = p.recvs.reduce((a, r) => (!a || Math.hypot(r.x - mover.x, r.y - mover.y) < Math.hypot(a.x - mover.x, a.y - mover.y)) ? r : a, null);
+      p.stage = 'outPath'; p.pts = [{ x: mover.x, y: mover.y }];
+      wsLayoutStatus('Now click the route the full bin takes OUT of the way — double-click where it ends up.');
+    } else {
+      if (mover.id === p.moverOut.id) { wsLayoutStatus('That is the full bin — click the EMPTY bin that will replace it.'); return; }
+      p.moverIn = mover; p.stage = 'inPath'; p.pts = [{ x: mover.x, y: mover.y }];
+      wsLayoutStatus('Click the empty bin’s route toward the chute — double-click (or Enter) and it will finish under the chute.');
+    }
+    wsRenderLayoutLayer(); return;
+  }
+  p.pts.push({ x, y });
+  wsRenderLayoutLayer();
+}
+function wsManFinish() {
+  const p = WS_MAN.pend; if (!p) return;
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  if (p.stage === 'path') {
+    if (p.pts.length < 2) { wsLayoutStatus('Click at least one more point — where should the bin end up?'); return; }
+    wsManRunTravel(p, mpp);
+  } else if (p.stage === 'outPath') {
+    if (p.pts.length < 2) { wsLayoutStatus('Click at least one more point — where does the full bin end up?'); return; }
+    p.outPts = p.pts.slice(); p.stage = 'pickIn'; p.pts = [];
+    wsLayoutStatus('Good. Now click the EMPTY bin that will take its place.');
+    wsRenderLayoutLayer();
+  } else if (p.stage === 'inPath') {
+    p.pts.push({ x: p.recv.x, y: p.recv.y });
+    wsManRunSwap(p, mpp);
+  }
+}
+function wsManRunTravel(p, mpp) {
+  const slot = wsLayoutSlot();
+  const env = wsManEnvBuild(slot, mpp, [p.mover.id], null);
+  const res = wsManRun(env, p.mover, p.pts, p.mover.beh,
+    { mpp, operatorM: wsManBufferM(), stepPx: Math.max(3, 0.08 / mpp) });
+  WS_MAN.kind = 'travel'; WS_MAN.res = res; WS_MAN.resB = null; WS_MAN.conflict = null;
+  WS_MAN.mover = p.mover; WS_MAN.moverB = null; WS_MAN.idx = 0; WS_MAN.show = true;
+  WS_MAN.access = null; WS_MAN.spin = null;
+  wsLayoutEndMode();
+  wsManBanner();
+}
+function wsManRunSwap(p, mpp) {
+  const slot = wsLayoutSlot();
+  const exclude = [p.moverOut.id, p.moverIn.id];
+  const envOut = wsManEnvBuild(slot, mpp, exclude, p.recv);
+  const opts = { mpp, operatorM: wsManBufferM(), stepPx: Math.max(3, 0.08 / mpp) };
+  const resOut = wsManRun(envOut, p.moverOut, p.outPts, p.moverOut.beh, opts);
+  const resIn = wsManRun(envOut, p.moverIn, p.pts, p.moverIn.beh, opts);
+  WS_MAN.kind = 'swap'; WS_MAN.res = resOut; WS_MAN.resB = resIn;
+  WS_MAN.mover = p.moverOut; WS_MAN.moverB = p.moverIn;
+  WS_MAN.conflict = wsManConflict(resOut, resIn);
+  WS_MAN.idx = 0; WS_MAN.show = true; WS_MAN.access = null; WS_MAN.spin = null;
+  wsLayoutEndMode();
+  wsManBanner();
+}
+function wsManAccessRun() {
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  wsManStop();
+  const slot = wsLayoutSlot();
+  if (!slot.bins.length) { wsLayoutStatus('No bins on the plan yet.'); return; }
+  const env = wsManEnvBuild(slot, mpp, slot.bins.map(b => b.id), null);
+  const items = slot.bins.map(b => ({ id: b.id, fp: wsBinFp(b, mpp),
+    label: (wsBinType(b.type) || {}).label || 'bin', stream: b.stream })).filter(it => it.fp);
+  WS_MAN.access = wsManAccess(items, env.walls, { fixed: env.obstacles.map(o => o.fp), marginPx: 0.1 / mpp });
+  WS_MAN.kind = 'access'; WS_MAN.res = null; WS_MAN.resB = null; WS_MAN.show = true; WS_MAN.spin = null;
+  wsManBanner();
+  wsRenderLayoutLayer();
+}
+function wsManSpinRun() {
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  const slot = wsLayoutSlot();
+  const b = slot.bins.find(x => x.id === WS_LAYOUT.sel) ||
+            slot.equip.find(x => x.id === WS_LAYOUT.sel && !x.door && !WS_DOOR_KINDS[x.code] && !x.aisle && !wsIsZone(x));
+  if (!b) { wsLayoutStatus('Click a bin to select it first, then hit 🔃 Spin test.'); return; }
+  wsManStop();
+  const fp = b.type ? wsBinFp(b, mpp) : wsFpRect(b.x, b.y, b.w / 2 / mpp, b.d / 2 / mpp, b.rot || 0);
+  const env = wsManEnvBuild(slot, mpp, [b.id], null);
+  WS_MAN.spin = { ...wsManSpin(fp, env.walls, env.obstacles), x: b.x, y: b.y,
+    rPx: Math.hypot(fp.hw, fp.hd), label: b.type ? (wsBinType(b.type) || {}).label : (b.label || 'equipment') };
+  WS_MAN.kind = 'spin'; WS_MAN.res = null; WS_MAN.resB = null; WS_MAN.access = null; WS_MAN.show = true;
+  wsManBanner();
+  wsRenderLayoutLayer();
+}
+function wsManStop() {
+  if (WS_MAN.playing) { clearInterval(WS_MAN.playing); WS_MAN.playing = null; }
+}
+function wsManClear() {
+  wsManStop();
+  WS_MAN.pend = null; WS_MAN.res = null; WS_MAN.resB = null; WS_MAN.access = null;
+  WS_MAN.spin = null; WS_MAN.conflict = null; WS_MAN.show = false; WS_MAN.idx = 0;
+  const el = document.getElementById('ws-man-result'); if (el) el.innerHTML = '';
+  if (WS._mode === 'layoutman') wsLayoutEndMode(); else wsRenderLayoutLayer();
+}
+
+// ── playback ──
+function wsManFrames() { return (WS_MAN.res ? WS_MAN.res.per.length : 0) + (WS_MAN.resB ? WS_MAN.resB.per.length : 0); }
+function wsManPlay() {
+  const b = document.getElementById('ws-man-play');
+  if (WS_MAN.playing) { wsManStop(); if (b) b.textContent = '▶'; return; }
+  if (!wsManFrames()) return;
+  if (b) b.textContent = '⏸';
+  WS_MAN.playing = setInterval(() => {
+    WS_MAN.idx = WS_MAN.idx >= wsManFrames() - 1 ? 0 : WS_MAN.idx + 1;
+    const sl = document.getElementById('ws-man-scrub'); if (sl) sl.value = WS_MAN.idx;
+    wsRenderLayoutLayer();
+  }, 30);
+}
+function wsManScrub(v) { wsManStop(); const b = document.getElementById('ws-man-play'); if (b) b.textContent = '▶'; WS_MAN.idx = +v; wsRenderLayoutLayer(); }
+
+// ── the friendly banner + report numbers ──
+function wsManBanner() {
+  const el = document.getElementById('ws-man-result'); if (!el) return;
+  const mpp = wsLayoutMpp();
+  const mm = px => Math.round(px * (mpp || 0.05) * 1000 / 5) * 5;
+  const card = (col, bg, html) =>
+    `<div style="border:1px solid ${col};border-radius:8px;background:${bg};padding:8px 10px;font-size:11px;line-height:1.55;color:rgba(255,255,255,0.9);">${html}</div>`;
+  const controls = wsManFrames() ? `
+    <div style="display:flex;gap:6px;align-items:center;margin-top:6px;">
+      <button class="wsl-btn" id="ws-man-play" onclick="wsManPlay()" style="padding:3px 10px;">▶</button>
+      <input type="range" id="ws-man-scrub" min="0" max="${wsManFrames() - 1}" value="0" style="flex:1;" oninput="wsManScrub(this.value)">
+      <button class="wsl-btn" onclick="wsManSnapshot()" title="Save a picture of the tightest point for the report">📷</button>
+    </div>` : '';
+  const assumed = (m) => m && m.beh.assumed
+    ? `<div style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:3px;">Turning behaviour is a standard assumption for this size (${m.beh.turn === 'wide' ? 'wide turns, ' + m.beh.rM.toFixed(1) + ' m circle' : 'turns on the spot'}) — set it per item in the equipment library if a model differs.</div>` : '';
+  if (WS_MAN.kind === 'travel' && WS_MAN.res) {
+    const r = WS_MAN.res;
+    const worstMM = mm(r.worst.clr);
+    let head, col = '#4BED12', bg = '#14231a';
+    if (!r.ok) { col = '#ED1C24'; bg = '#231414'; head = `❌ <b>It gets stuck.</b> The red patch shows where — about <b>${mm(r.hits[0].depth)} mm</b> too tight (against ${r.hits[0].what}).`; }
+    else if (!r.okOperator) { col = '#FFB74D'; bg = '#231d12'; head = `🟡 <b>The bin fits, but it’s a squeeze for the person pushing it</b> — see the orange patch.`; }
+    else head = `✅ <b>It fits the whole way.</b> Tightest squeeze leaves about <b>${worstMM} mm</b> to spare.`;
+    if (r.clamped.length) head += `<div style="margin-top:4px;">↪ One corner is sharper than this bin can turn in one go — expect a bit of back-and-forth there.</div>`;
+    el.innerHTML = card(col, bg, head + controls +
+      `<details style="margin-top:5px;"><summary style="cursor:pointer;font-size:10px;color:rgba(255,255,255,0.5);">Numbers for the report</summary>
+       <div style="font-size:10.5px;color:rgba(255,255,255,0.65);margin-top:4px;">
+         ${WS_MAN.mover.label}: minimum clearance ${worstMM} mm along the route · operator allowance ${Math.round(wsManBufferM() * 1000)} mm
+         ${r.hits.map(h => `<br>· collision, ${mm(h.depth)} mm interference (${h.what})`).join('')}
+         ${r.opHits.length ? `<br>· operator zone obstructed at ${r.opHits.length} point${r.opHits.length === 1 ? '' : 's'}` : ''}
+       </div>${assumed(WS_MAN.mover)}</details>`);
+  } else if (WS_MAN.kind === 'swap' && WS_MAN.res && WS_MAN.resB) {
+    const both = WS_MAN.res.ok && WS_MAN.resB.ok;
+    const conflict = WS_MAN.conflict && WS_MAN.conflict.overlap;
+    let head, col = '#4BED12', bg = '#14231a';
+    if (!both) { col = '#ED1C24'; bg = '#231414'; head = `❌ <b>${!WS_MAN.res.ok ? 'The full bin gets stuck on its way out.' : 'The empty bin gets stuck on its way in.'}</b> See the red patch.`; }
+    else if (conflict) { col = '#FFB74D'; bg = '#231d12'; head = `🟡 <b>Both routes work — but one at a time.</b> The two bins would meet where the paths cross, so wheel the full bin out first, then bring the empty one in.`; }
+    else head = `✅ <b>The swap works in one go.</b> The two routes stay clear of each other.`;
+    el.innerHTML = card(col, bg, head + controls +
+      `<details style="margin-top:5px;"><summary style="cursor:pointer;font-size:10px;color:rgba(255,255,255,0.5);">Numbers for the report</summary>
+       <div style="font-size:10.5px;color:rgba(255,255,255,0.65);margin-top:4px;">
+         Out (${WS_MAN.mover.label}): min clearance ${mm(WS_MAN.res.worst.clr)} mm · In (${WS_MAN.moverB.label}): min clearance ${mm(WS_MAN.resB.worst.clr)} mm
+         <br>Swept paths ${conflict ? 'OVERLAP — sequence the moves' : 'do not overlap — may run concurrently'} · operator allowance ${Math.round(wsManBufferM() * 1000)} mm
+       </div>${assumed(WS_MAN.mover)}${assumed(WS_MAN.moverB)}</details>`);
+  } else if (WS_MAN.kind === 'access' && WS_MAN.access) {
+    const t1 = WS_MAN.access.filter(a => a.tier === 1).length;
+    const t2 = WS_MAN.access.filter(a => a.tier === 2).length;
+    const t3 = WS_MAN.access.filter(a => a.tier > 2).length;
+    const col = t3 ? '#ED1C24' : t2 ? '#FFB74D' : '#4BED12';
+    const bg = t3 ? '#231414' : t2 ? '#231d12' : '#14231a';
+    el.innerHTML = card(col, bg,
+      `<b>${t1} bin${t1 === 1 ? '' : 's'} easy to grab</b>${t2 ? ` · 🟡 ${t2} need${t2 === 1 ? 's' : ''} another bin moved first` : ''}${t3 ? ` · 🔴 ${t3} boxed in` : ''}.
+       <div style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:3px;">The number on each bin shows how many rounds of clearing it takes to reach it. ①  = grab it straight away.</div>`);
+  } else if (WS_MAN.kind === 'spin' && WS_MAN.spin) {
+    const s = WS_MAN.spin;
+    const head = s.full ? `✅ <b>${s.label} can spin right around on the spot.</b>`
+      : s.free >= 90 ? `🟡 <b>${s.label} can turn about ${s.free}°</b> before touching something — fine for a shuffle, tight for a full turn.`
+      : `🔴 <b>${s.label} can barely turn here</b> — only about ${s.free}° of free swing.`;
+    el.innerHTML = card(s.full ? '#4BED12' : s.free >= 90 ? '#FFB74D' : '#ED1C24',
+      s.full ? '#14231a' : s.free >= 90 ? '#231d12' : '#231414', head);
+  } else el.innerHTML = '';
+}
+
+// ── overlay rendering, called from wsRenderLayoutLayer's tail ──
+function wsManOverlayRender(mk, gW, mpp, slot) {
+  if (!gW || !mpp) return;
+  if (!WS_MAN.show && !WS_MAN.pend) return;
+  const g = mk('g', { id: 'ws-man-overlay' }, gW);
+  const p = WS_MAN.pend;
+  if (p && p.pts && p.pts.length) {
+    mk('polyline', { points: p.pts.map(q => q.x + ',' + q.y).join(' '), fill: 'none',
+      stroke: '#FFFFFF', 'stroke-width': 2, 'stroke-dasharray': '7 5', opacity: 0.8 }, g);
+    p.pts.forEach(q => mk('circle', { cx: q.x, cy: q.y, r: 4, fill: '#FFFFFF', opacity: 0.85 }, g));
+  }
+  const drawRun = (res, mover, tint) => {
+    if (!res) return;
+    const stride = Math.max(1, Math.floor(res.per.length / 70));
+    for (let i = 0; i < res.per.length; i += stride) {
+      const s = res.per[i];
+      const cs = wsFpCornersOf(s.fp);
+      mk('polygon', { points: cs.map(c => c.x.toFixed(1) + ',' + c.y.toFixed(1)).join(' '),
+        fill: tint, stroke: 'none', opacity: 0.10 }, g);
+    }
+    res.hits.forEach(h => {
+      mk('circle', { cx: h.x, cy: h.y, r: 14, fill: 'rgba(237,28,36,0.25)', stroke: '#ED1C24', 'stroke-width': 2.5 }, g);
+      const t = mk('text', { x: h.x, y: h.y - 20, fill: '#ED1C24', 'font-size': 12, 'font-weight': 700, 'text-anchor': 'middle' }, g);
+      t.textContent = 'stuck here';
+    });
+    res.opHits.forEach(h => {
+      mk('circle', { cx: h.x, cy: h.y, r: 11, fill: 'rgba(255,183,77,0.2)', stroke: '#FFB74D', 'stroke-width': 2 }, g);
+      const t = mk('text', { x: h.x, y: h.y - 16, fill: '#FFB74D', 'font-size': 10.5, 'font-weight': 700, 'text-anchor': 'middle' }, g);
+      t.textContent = 'tight for the pusher';
+    });
+  };
+  drawRun(WS_MAN.res, WS_MAN.mover, WS_MAN.kind === 'swap' ? 'rgba(255,255,255,0.9)' : '#00B3B3');
+  drawRun(WS_MAN.resB, WS_MAN.moverB, '#00B3B3');
+  // the moving ghost at the current frame (swap plays out-then-in)
+  let frame = null, mover = null;
+  if (WS_MAN.res && WS_MAN.idx < WS_MAN.res.per.length) { frame = WS_MAN.res.per[WS_MAN.idx]; mover = WS_MAN.mover; }
+  else if (WS_MAN.resB) { frame = WS_MAN.resB.per[WS_MAN.idx - (WS_MAN.res ? WS_MAN.res.per.length : 0)]; mover = WS_MAN.moverB; }
+  if (frame && mover) {
+    const stCol = (WS_STREAMS.find(s => s.id === mover.stream) || {}).col || '#90A4AE';
+    const cs = wsFpCornersOf(frame.fp);
+    const bad = frame.clr <= 0;
+    mk('polygon', { points: cs.map(c => c.x.toFixed(1) + ',' + c.y.toFixed(1)).join(' '),
+      fill: stCol, 'fill-opacity': 0.55, stroke: bad ? '#ED1C24' : '#FFFFFF', 'stroke-width': bad ? 3 : 2 }, g);
+    if (wsManBufferM() > 0) {
+      const ofp = wsManOperatorFp(frame.pose.x, frame.pose.y, frame.pose.hdg, frame.fp.hw, frame.fp.hd, wsManBufferM() / mpp);
+      mk('polygon', { points: wsFpCornersOf(ofp).map(c => c.x.toFixed(1) + ',' + c.y.toFixed(1)).join(' '),
+        fill: 'rgba(100,181,246,0.25)', stroke: '#64B5F6', 'stroke-width': 1.2, 'stroke-dasharray': '4 3' }, g);
+    }
+  }
+  if (WS_MAN.conflict && WS_MAN.conflict.overlap) {
+    mk('circle', { cx: WS_MAN.conflict.x, cy: WS_MAN.conflict.y, r: 16, fill: 'none', stroke: '#FFB74D', 'stroke-width': 2.5, 'stroke-dasharray': '5 4' }, g);
+    const t = mk('text', { x: WS_MAN.conflict.x, y: WS_MAN.conflict.y - 22, fill: '#FFB74D', 'font-size': 11.5, 'font-weight': 700, 'text-anchor': 'middle' }, g);
+    t.textContent = 'the two bins would meet here';
+  }
+  if (WS_MAN.access) WS_MAN.access.forEach(a => {
+    const col = a.tier === 1 ? '#4BED12' : a.tier === 2 ? '#FFB74D' : '#ED1C24';
+    mk('circle', { cx: a.fp.x, cy: a.fp.y, r: 11, fill: '#141c1c', stroke: col, 'stroke-width': 2.5 }, g);
+    const t = mk('text', { x: a.fp.x, y: a.fp.y + 4, fill: col, 'font-size': 11, 'font-weight': 700, 'text-anchor': 'middle' }, g);
+    t.textContent = a.tier === 1 ? '✓' : a.tier > 6 ? '✕' : String(a.tier);
+  });
+  if (WS_MAN.spin) {
+    const s = WS_MAN.spin;
+    mk('circle', { cx: s.x, cy: s.y, r: s.rPx, fill: 'none', stroke: s.full ? '#4BED12' : s.free >= 90 ? '#FFB74D' : '#ED1C24',
+      'stroke-width': 2, 'stroke-dasharray': s.full ? 'none' : '6 5' }, g);
+  }
+}
+
+// ── worst-point snapshot for the report ──
+async function wsManSnapshot() {
+  const res = WS_MAN.res; if (!res) return;
+  const mpp = wsLayoutMpp(); if (!mpp) return;
+  wsManStop();
+  // park the ghost at the tightest point so the picture shows the moment that matters
+  const wi = res.per.indexOf(res.worst);
+  WS_MAN.idx = wi >= 0 ? wi : 0;
+  wsRenderLayoutLayer();
+  const cnvP = document.getElementById('ws-pdf-canvas');
+  const svg = document.getElementById('ws-overlay-svg');
+  const ser = new XMLSerializer().serializeToString(svg);
+  const img = new Image();
+  await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad;
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(ser); });
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  res.traces.forEach(tr => tr.forEach(c => { x1 = Math.min(x1, c.x); y1 = Math.min(y1, c.y); x2 = Math.max(x2, c.x); y2 = Math.max(y2, c.y); }));
+  const pad = 1.5 / mpp;
+  x1 = Math.max(0, x1 - pad); y1 = Math.max(0, y1 - pad);
+  x2 = Math.min(cnvP.width, x2 + pad); y2 = Math.min(cnvP.height, y2 + pad);
+  const w = x2 - x1, h = y2 - y1, k = Math.min(2, 1600 / w);
+  const HDR = 84;
+  const out = document.createElement('canvas');
+  out.width = Math.round(w * k); out.height = Math.round(h * k) + HDR;
+  const cx = out.getContext('2d');
+  cx.fillStyle = '#101717'; cx.fillRect(0, 0, out.width, out.height);
+  cx.drawImage(cnvP, x1, y1, w, h, 0, HDR, out.width, out.height - HDR);
+  cx.drawImage(img, x1, y1, w, h, 0, HDR, out.width, out.height - HDR);
+  const mm = px => Math.round(px * mpp * 1000 / 5) * 5;
+  cx.fillStyle = '#fff'; cx.font = '700 20px sans-serif';
+  cx.fillText('Bin manoeuvre check — ' + (WS_MAN.mover ? WS_MAN.mover.label : ''), 16, 30);
+  cx.font = '14px sans-serif';
+  cx.fillStyle = res.ok ? '#4BED12' : '#ED1C24';
+  cx.fillText(res.ok ? 'Fits — minimum clearance ' + mm(res.worst.clr) + ' mm (shown at the tightest point)'
+                     : 'Does not fit — ' + mm(res.hits[0].depth) + ' mm interference at the marked point', 16, 54);
+  cx.fillStyle = 'rgba(255,255,255,0.6)';
+  cx.fillText('Operator allowance ' + Math.round(wsManBufferM() * 1000) + ' mm · ' + new Date().toISOString().slice(0, 10), 16, 74);
+  const a = document.createElement('a');
+  a.href = out.toDataURL('image/png'); a.download = 'bin-manoeuvre-check.png'; a.click();
+}
 // ── ROTATION HANDLE ──────────────────────────────────────────────────────────
 // A grab point floating off the item's local top edge; it rotates with the item
 // so the affordance always reads "twist me". Any angle; Shift snaps to 15°.
@@ -18322,7 +19034,7 @@ function wsLayoutBind() {
     wsRoomRemoveCornerAt(room, p.x, p.y, wsHandleHitR());
   });
   area.addEventListener('mousemove', e => {
-    const inMode = WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark';
+    const inMode = WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark' || WS._mode === 'layoutman';
     // a drag started from any tab keeps moving; idle hover tracking stays
     // layout-tab-only (the cursor affordances are the layout tab's language)
     if (!WS_LAYOUT.drag && !WS_LAYOUT.tabActive && !inMode) return;
@@ -18645,7 +19357,7 @@ function wsLayoutBind() {
     if (e.ctrlKey || e.metaKey) return;   // don't hijack browser shortcuts (Ctrl+R etc.)
     if (e.key === 'Escape') {
       if (WS._mode === 'layoutmark') { wsMarkExit(); return; }   // restores the parked tool
-      if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture') wsLayoutEndMode();
+      if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutman') wsLayoutEndMode();
     }
     else if (e.key === 'r' || e.key === 'R') { wsLayoutDo('rotate'); }
     else if (e.key === 'l' || e.key === 'L') { wsLayoutDo('lock'); }
@@ -19118,6 +19830,8 @@ function wsRenderLayoutLayer() {
     drawBin({ x: WS_LAYOUT.hover.x, y: WS_LAYOUT.hover.y, rot: 0,
       type: wsLayoutCurBin().id, stream: wsLayoutCurStream().id, id: '_ghost' }, true);
   }
+  // manoeuvrability overlay — editing chrome: the sheet export clone strips it
+  if (typeof wsManOverlayRender === 'function') wsManOverlayRender(mk, gW, mpp, slot);
   wsLayoutUpdateStats(slot, mpp);
   wsUpdateSelPill();
   wsLayoutRenderTargets();
@@ -19400,6 +20114,24 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
     d += `0\nINSERT\n8\n${layer}\n62\n${st.aci}\n2\n${wsDXFBlockName(b.type + '_' + b.stream)}\n10\n${mmx(b.x)}\n20\n${mmy(b.y)}\n30\n0\n50\n${(-(b.rot || 0)).toFixed(1)}\n`;
     d += `0\nTEXT\n8\n${layer}\n62\n${st.aci}\n10\n${mmx(b.x)}\n20\n${mmy(b.y)}\n30\n0\n40\n150\n1\n${bt.label}\n72\n1\n11\n${mmx(b.x)}\n21\n${mmy(b.y)}\n31\n0\n`;
   });
+  // Manoeuvre envelope — written ONLY while a check is live on screen, so an
+  // issued DXF never grows silent extra content. Corner traces + start/end
+  // rectangles, the same convention as the truck swept-path export; ACI 6
+  // (magenta) marks it unmistakably as a check, not design linework.
+  if (typeof WS_MAN !== 'undefined' && WS_MAN.show) {
+    [[WS_MAN.res, WS_MAN.mover], [WS_MAN.resB, WS_MAN.moverB]].forEach(([res, mover]) => {
+      if (!res || !mover || !res.per.length) return;
+      res.traces.forEach(tr => d += poly('A-WASTE-MAN', 6, tr.map(c => [c.x, c.y])));
+      [res.per[0].fp, res.per[res.per.length - 1].fp].forEach(f => {
+        const cs = wsFpCornersOf(f);
+        d += poly('A-WASTE-MAN', 6, cs.concat([cs[0]]).map(c => [c.x, c.y]));
+      });
+      const f0 = res.per[0].fp;
+      d += text('A-WASTE-MAN', 6, f0.x, f0.y - f0.hd - 12, 180,
+        'MANOEUVRE ENVELOPE - ' + mover.label + (res.ok ? '' : ' - DOES NOT FIT'));
+      res.hits.forEach(h => d += circ('A-WASTE-MAN', 1, h.x, h.y, 0.15));
+    });
+  }
   return d;
 }
 // ── CALC → LAYOUT TARGETS (single source of truth: the bin calculator) ──
@@ -20052,6 +20784,7 @@ function wsWireCanvasDrop() {
   area.addEventListener('dblclick', e => {
     if (WS._mode === 'layoutmark' && WS_LAYOUT._mark) { e.preventDefault(); wsMarkFinish(); }
     else if (WS._mode === 'layoutroom' && WS_LAYOUT.roomPts && WS_LAYOUT.roomPts.length >= 3) { e.preventDefault(); wsLayoutRoomFinish(); }
+    else if (WS._mode === 'layoutman') { e.preventDefault(); wsManFinish(); }
   });
 }
 function wsCardDragStart(e, roomId) {
@@ -23795,6 +24528,8 @@ function wsOnCanvasClick(e) {
     wsMarkClick(x, y, e.shiftKey);
   } else if (WS._mode === 'layoutstamp') {
     wsLayoutStampAt(x, y);
+  } else if (WS._mode === 'layoutman') {
+    wsManClick(x, y);
   } else if (layoutIdle) {
     wsLayoutSelectAt(x, y, e.shiftKey);
   } else if (WS._mode === 'swept' && WS_SWEPT.drawing) {
@@ -23840,9 +24575,10 @@ function wsOnCanvasClick(e) {
 }
 
 function wsOnCanvasDblClick(e) {
+  if (WS._mode === 'layoutman') { wsManFinish(); return; }   // COMMIT the manoeuvre route
   if (WS._mode === 'layoutmark' && WS_LAYOUT._mark) { wsMarkFinish(); return; }   // COMMIT the route, don't discard it
   if (WS._mode === 'layoutroom' && WS_LAYOUT.roomPts && WS_LAYOUT.roomPts.length >= 3) { wsLayoutRoomFinish(); return; }
-  if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark') { wsLayoutEndMode(); return; }
+  if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutmark' || WS._mode === 'layoutman') { wsLayoutEndMode(); return; }
   if (WS._mode === 'sweptdrive') { wsSweptDriveFinish(); return; }
   if (WS._mode === 'swept') {
     WS_SWEPT.drawing = false;
@@ -24353,6 +25089,10 @@ function wsSheetOverlayClone(crop) {
     const off = (n === 'dxf') ? (WS_DXF && WS_DXF.on === false) : (WS.layers[n] === false);
     if (off && g.parentNode) g.parentNode.removeChild(g);
   });
+  // the manoeuvrability overlay is editing chrome, never sheet content — the
+  // deliberate exports are its own snapshot and the DXF envelope layer
+  const man = clone.querySelector('#ws-man-overlay');
+  if (man && man.parentNode) man.parentNode.removeChild(man);
   return clone;
 }
 function wsSheetExportSafe() {
