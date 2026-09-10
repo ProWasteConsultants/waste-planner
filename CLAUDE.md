@@ -383,6 +383,39 @@ why:
   `layoutmark`, so Enter/Escape still close a markup started from another tab.
 - The pan guard keys off `#ws-side-stack`, so clicks on either card never pan.
 
+## Ramp section mode
+
+The swept tab's `⛰ Ramp section…` launcher opens `#ws-ramp-modal`: a longitudinal
+grade-clearance check (scrape / ground-out at grade changes), separate from the
+plan-view canvas. The engine is pure and lives at column 0 near `WS_VEH`
+(`tests/ramp-section.test.js` covers it):
+
+- **The model is the segment table** — `{grade %, len m horizontal run}` per
+  segment, travel in +x. The uploaded section drawing is a tracing backdrop
+  only (same contract as the admin shape tracer): calibrate with two points +
+  a metre distance, trace the surface, and `wsRampSegsFromTrace` merges the
+  near-collinear clicks into segments. Nothing from the image is stored;
+  `slot.ramp` persists segments + vehicle + hand-entered heights.
+- **Underside = three flat lines** (the brief's own parameters): front-overhang
+  underside `gcf`, belly `gcm`, rear-overhang `gcr`, heights above ground on
+  the flat, rigid perpendicular to the wheelbase chord. `wsRampScan` walks both
+  wheel contacts along the profile (`wsRampPose` solves the chord = wheelbase)
+  and measures clearance **vertically** — a negative number is mm of
+  interference. On flat ground each feature reads exactly its entered height.
+- **Heights come from the vehicle library** (`contractors.gc_front_m`,
+  `gc_rear_m`, and the pre-existing `ground_clearance_m` for the belly). Null
+  falls back to `WS_RAMP_SEC_DEFAULTS` per category and the result is flagged
+  **assumed** everywhere it appears, snapshot included — a scrape verdict on a
+  guessed sump height is not a verdict.
+- **AS 2890.1 is a labelled light-vehicle REFERENCE, not the truck verdict.**
+  `wsRampTransitionCheck` takes its rule as data (`WS_RAMP_RULES`); the
+  clearance scan is the commercial-vehicle check (the AS 2890.2 template
+  method). A vertex passes when the grade change is within the rule, so the
+  standard's own remedy — a half-grade transition segment — passes naturally.
+- A profile shorter than the wheelbase is reported (`short: true`), never
+  padded with invented ground; overhang tips past the profile ends are judged
+  against the end segment's grade extended.
+
 ## Swept-path refinement
 
 `wsRefinePos` polishes **hand-driven** paths only. Cursor jitter shows up as steering
