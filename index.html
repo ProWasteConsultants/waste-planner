@@ -11333,6 +11333,7 @@ function crxDiffRates(rows, docsById, remote, commTable) {
     const override = (state && councilValue) ? (councilProfiles[state + '|' + councilValue] || {}) : {};
     const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
     const base = {
+      id: r.id || null,   // the source row, so an unmapped use class can be assigned back onto it
       kind: r.requirement_type, council: doc.council_name || '?', state,
       councilValue, guidelineVersion: doc.version ?? null,
       useClass: r.use_class || null, stream: r.stream || null, streamKey,
@@ -11394,7 +11395,15 @@ async function crxExport() {
   let remote = null;
   try { remote = await (await fetch(RATES_URL_PARENT, { cache: 'no-store' })).json(); }
   catch (e) { crqMsg('Could not fetch the live rates JSON — no baseline, no diff. ' + (e.message || e), true); return; }
-  const comm = (typeof COMM !== 'undefined') ? COMM : {};
+  // Commercial use classes come from the com_uses table — the calc iframe's
+  // COMM global never existed in this frame, so matching against it silently
+  // left every commercial rate 'unmapped' since the day this shipped.
+  let comm = {};
+  try {
+    const { data: uses } = await sb.from('com_uses').select('use_code,label');
+    (uses || []).forEach(u => { comm[u.use_code] = { label: u.label }; });
+  } catch (e) {}
+  CRX_USES = Object.keys(comm).map(k => ({ use_code: k, label: comm[k].label }));
   const diff = crxDiffRates(rows, docsById, remote, comm);
   const wrap = document.getElementById('crx-out');
   const counts = {};
@@ -11426,7 +11435,19 @@ async function crxExport() {
         <span>${d.value ?? '—'}${d.unit ? ' ' + cgbEsc(d.unit) : ''}</span>
         <span>${d.current ?? '—'}</span>
         <span>${cgbEsc(d.stream || '—')}</span>
-        <span style="color:var(--muted);">${cgbEsc(d.target || d.why || '')} · ${cgbEsc(d.clauseRef)}${d.why && d.target ? ' · ' + cgbEsc(d.why) : ''}</span>
+        <span style="color:var(--muted);">${cgbEsc(d.target || d.why || '')} · ${cgbEsc(d.clauseRef)}${d.why && d.target ? ' · ' + cgbEsc(d.why) : ''}
+          ${d.status === 'unmapped' && d.kind === 'generation_rate' && d.id && /use class/.test(d.why || '') ? `
+          <span style="white-space:nowrap;">
+            <select id="crx-uc-${i}" style="background:#101717;border:1px solid #4a5a3a;border-radius:5px;padding:2px 4px;font-size:10px;color:#C5E1A5;font-family:inherit;max-width:170px;">
+              <option value="">— set the use class —</option>
+              <optgroup label="Residential (L/week per dwelling)">
+                <option>1 bed apartment</option><option>2 bed apartment</option><option>3 bed apartment</option><option>townhouse</option>
+              </optgroup>
+              ${CRX_USES.length ? `<optgroup label="Commercial use">${CRX_USES.map(u => `<option value="${cgbEsc(u.label)}">${cgbEsc(u.label)}</option>`).join('')}</optgroup>` : ''}
+            </select>
+            <button class="btn" style="padding:1px 7px;font-size:10px;" onclick="crxAssignUse(${i})">Set</button>
+          </span>` : ''}
+        </span>
         ${crxApplyPlan(d).ok ? `<button class="btn" id="crx-apply-${i}" title="Write this value into res_rates as a ${cgbEsc(d.council)} override — you still ⬆ Publish to live below to push it to the calculator" onclick="crxApply(${i})" style="padding:2px 8px;font-size:10px;background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;">→ Rates DB</button>` : '<span></span>'}
       </div>`).join('')}
     </div>`;
@@ -11434,6 +11455,24 @@ async function crxExport() {
   crqMsg(`Diff built — ${diff.length} approved rate rows compared against live data.`);
 }
 let CRX_LAST = null;
+let CRX_USES = [];
+// The manual assignment the 'unmapped' row asks for: write the chosen use
+// class — that ONE field, nothing else — back onto the approved requirement,
+// then rebuild the comparison so the row maps. The queue deliberately only
+// edits proposed rows; this is the narrow, deliberate exception for a field
+// whose only failure mode is "the diff cannot read it", with the value,
+// stream and clause reference untouched and the clause still the audit trail.
+async function crxAssignUse(i) {
+  const d = (CRX_LAST || [])[i];
+  const sel = document.getElementById('crx-uc-' + i);
+  const v = sel && sel.value;
+  if (!d || !d.id) { crqMsg('This row cannot be assigned from here.', true); return; }
+  if (!v) { crqMsg('Pick a use class first.', true); return; }
+  const { error } = await sb.from('council_requirements').update({ use_class: v }).eq('id', d.id);
+  if (error) { crqMsg('Assign failed: ' + error.message, true); return; }
+  crqMsg(`✓ Use class set to "${v}" — rebuilding the comparison…`);
+  crxExport();
+}
 function crxDownload(kind) {
   if (!CRX_LAST) return;
   let blob, name;
