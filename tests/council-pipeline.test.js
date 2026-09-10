@@ -189,6 +189,28 @@ test('C4: the diff engine classifies new/changed/same/conflicting/unmapped and n
   assert.equal(split[0].status, 'new');
 });
 
+test('C4: unmapped rows are assignable — commercial uses are real, and the fix writes one field', () => {
+  // the diff used to match commercial use classes against the calc iframe's
+  // COMM global, which never exists in this frame — every commercial rate was
+  // silently unmappable, and 'assign manually' had no mechanism at all
+  const ex = SOURCE.slice(SOURCE.indexOf('async function crxExport'), SOURCE.indexOf('let CRX_LAST'));
+  assert.ok(ex.includes("from('com_uses').select('use_code,label')"),
+    'commercial use classes come from the com_uses table, not a phantom global');
+  assert.ok(!SOURCE.includes("typeof COMM !== 'undefined'"), 'the phantom COMM read is gone');
+  assert.ok(ex.includes("/use class/.test(d.why || '')") && ex.includes('crx-uc-'),
+    'unmapped rate rows carry the set-the-use-class control the message promises');
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crxAssignUse('), SOURCE.indexOf('function crxDownload('));
+  assert.ok(fn.includes('.update({ use_class: v })'), 'assignment writes the use class');
+  assert.equal((fn.match(/\.update\(/g) || []).length, 1,
+    'and ONLY the use class — value, stream and clause stay untouched');
+  assert.ok(fn.includes('crxExport()'), 'then the comparison rebuilds so the row maps');
+  // the canonical residential labels resolve through the real unit matcher
+  const { loadEngine } = require('./extract.js');
+  const ru = loadEngine({ blocks: [['crxResUnit', /^function crxResUnit\(/]] });
+  assert.deepEqual(['1 bed apartment', '2 bed apartment', '3 bed apartment', 'townhouse'].map(ru.crxResUnit),
+    ['apt_1br', 'apt_2br', 'apt_3br', 'townhouse'], 'every offered option actually maps');
+});
+
 test('C4: export is a diff for the human flow — nothing writes, ever', () => {
   const fn = SOURCE.slice(SOURCE.indexOf('async function crxExport'), SOURCE.indexOf('let CRX_LAST'));
   assert.ok(fn.includes(".eq('status', 'approved')"), 'approved rows only');
