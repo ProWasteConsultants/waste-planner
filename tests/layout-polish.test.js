@@ -720,7 +720,7 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
   // two jobs live in this tab and must not read as one: setup/library first
   // (registry -> documents -> clause review), then the database that publishes
-  const order = ['adm-group adm-setup', 'Council registry', 'Council Guidelines — AI Extraction',
+  const order = ['adm-group adm-setup', 'Council registry', 'Council Guidelines',
                  'adm-group adm-db', 'State &amp; council info', 'Residential rates']
     .map(m => rates.indexOf(m));
   assert.ok(order.every(i => i >= 0), 'every section is present');
@@ -839,7 +839,7 @@ test('storing a guideline document does not depend on AI extraction', () => {
   // nothing, and the checker rightly said "No guidelines stored".
   assert.ok(SOURCE.includes('async function cgStoreDocument()'), 'a save action exists on its own');
   assert.ok(SOURCE.includes('onclick="cgStoreDocument()"') && SOURCE.includes('⇪ Save document'),
-    'and it is a button next to Extract requirements');
+    'and it is the upload row\'s only action — extraction moved to the Library row');
   const fn = SOURCE.slice(SOURCE.indexOf('async function cgStoreDocument()'), SOURCE.indexOf('async function cgSave()'));
   assert.ok(!/aiFetch|api-key|cgExtract|CG\.current/.test(fn), 'it never touches extraction or its state');
   assert.ok(fn.includes("const path = `guidelines/${key}/${Date.now()}_${safe}`;") &&
@@ -859,12 +859,10 @@ test('a saved guideline carries a real PDF, or says it does not', () => {
   // the single-doc form used to record only the FILE NAME, so a guideline
   // saved that way could never produce a thumbnail, a View PDF link or the
   // checker's guideline pane — it looked saved and was half-saved
-  assert.ok(SOURCE.includes('_file: f,') && SOURCE.includes("source_file: null,"),
-    'extraction keeps the File itself, not just its name');
-  assert.ok(SOURCE.includes("const path = `guidelines/${row.council_key}/${Date.now()}_${safe}`;"),
-    'saving uploads the PDF to the same prefix the bulk uploader uses');
-  assert.ok(SOURCE.includes('this document will have no thumbnail, no View PDF and no side-by-side pane'),
-    'a failed upload says exactly what was lost rather than saving silently');
+  // the PDF is stored when the DOCUMENT is saved (cgStoreDocument / bulk
+  // upload); a re-saved review keeps the pointer rather than re-uploading
+  assert.ok(SOURCE.includes('source_file: CG.current.source_file || null,'),
+    'a re-saved review version keeps pointing at the stored PDF');
   // legacy rows carrying a bare filename must never be offered as a link
   assert.ok(SOURCE.includes('function cgStoredPdfPath(row)') &&
             SOURCE.includes("return (typeof p === 'string' && p.indexOf('guidelines/') === 0) ? p : null;"),
@@ -880,9 +878,13 @@ test('admin guidelines section is scoped to one council', () => {
   // library and queue while you type a different name invites approving
   // against the wrong one
   assert.ok(SOURCE.includes("const CG_SCOPE = { name: '' };") && SOURCE.includes('function cgScopeChanged(v)'),
-    'the council field sets the section scope');
-  assert.ok(SOURCE.includes('oninput="cgScopeChanged(this.value)"') && SOURCE.includes('id="cg-name" list="cgb-councils"'),
-    'the council field is a picker wired to the scope');
+    'the guidelines scope state still exists');
+  // the scope is now set by the ONE shared Scope bar (admScopeSync is its
+  // single writer); cg-name survives only as a hidden field for the readers
+  assert.ok(SOURCE.includes('function admScopeSync()') && SOURCE.includes('onchange="admScopeChanged()"'),
+    'the shared Scope bar drives the guidelines scope');
+  assert.ok(SOURCE.includes('<input type="hidden" id="cg-name"'),
+    'the old council field is hidden, not duplicated');
   assert.ok(SOURCE.includes('function cgScopeMatches(name)') && SOURCE.includes('function cgRenderLibrary()'),
     'the library renders through the scope');
   assert.ok(SOURCE.includes('.filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name))'),
@@ -893,9 +895,9 @@ test('admin guidelines section is scoped to one council', () => {
     'rows never re-create a document the scope filtered out');
   // with nothing selected, no council-specific content — but counts, so
   // nothing is hidden silently
-  assert.ok(SOURCE.includes("Choose a council in the field above to see its document and review its rows."),
+  assert.ok(SOURCE.includes("Choose a council in Scope at the top to see its document and review its rows."),
     'unselected library shows a count and a prompt, not another council');
-  assert.ok(SOURCE.includes("'. Choose a council above to review its rows.</div>'"),
+  assert.ok(SOURCE.includes("'. Choose a council in Scope at the top to review its rows.</div>'"),
     'unselected queue shows a count and a prompt, not another council');
   // the selected council's document card is the same renderer the rates panel uses
   assert.ok(SOURCE.includes('async function glCouncilCard(label, mountId, emptyHint)'), 'one card renderer');

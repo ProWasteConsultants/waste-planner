@@ -239,13 +239,17 @@ test('C4: crxApplyPlan applies residential rate rows only and refuses everything
 });
 
 test('C4: applying a row is confirmed, writes the plan into res_rates only, and never publishes', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApply('), SOURCE.indexOf('// ── the review queue'));
+  // the per-row apply is the STAGED path — publishing belongs only to the
+  // one-click crxApplyAllAndPublish, so slice up to that function
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApply('), SOURCE.indexOf('async function crxApplyAllAndPublish('));
   assert.ok(fn.includes('crxApplyPlan(d)'), 'the write is exactly what the pure plan computed');
   assert.ok(fn.includes('if (!confirm('), 'human-confirmed, never silent');
-  assert.ok(fn.includes("from('res_rates')") && fn.includes("onConflict: 'state,council_value,unit_type,stream'"),
-    'same table, same key as the Rates DB editor — one write shape');
-  assert.ok(!fn.includes('publish-rates') && !fn.includes('rdbPublish'),
-    'going live stays the separate explicit ⬆ Publish to live step');
+  const writer = SOURCE.slice(SOURCE.indexOf('async function crxWritePlan('), SOURCE.indexOf('async function crxApply('));
+  assert.ok(fn.includes('await crxWritePlan(') &&
+            writer.includes("from('res_rates')") && writer.includes("onConflict: 'state,council_value,unit_type,stream'"),
+    'one shared writer, same table and key as the Rates DB editor');
+  assert.ok(!fn.includes('publish-rates') && !fn.includes('rdbPublish') && !writer.includes('rdbPublish'),
+    'the staged path never publishes — going live is its own explicit step');
   assert.ok(SOURCE.includes('onclick="crxApply(${i})"'), 'the diff rows actually wire the apply button');
   assert.ok(SOURCE.includes('crxApplyPlan(d).ok ?'), 'the button renders only on rows the plan accepts');
   assert.ok(SOURCE.includes('How a number in a guideline PDF becomes live:'),
@@ -402,11 +406,61 @@ test('wsParseExtractionRows: clean parse, salvage, or an error that names the ca
     /length cap/, 'an unsalvageable capped reply names the cap, not just the parse error');
 });
 
-test('both extraction calls carry the raised cap and report truncation to the admin', () => {
-  assert.equal((SOURCE.match(/max_tokens: 16000,/g) || []).length, 2, 'crqExtract and the guideline extractor both raised');
+test('the one extraction call carries the raised cap and reports truncation to the admin', () => {
+  // cgExtract (the upload-row extractor) is gone — crqExtract on the Library
+  // row is the one extract action on the page, so one call carries the cap
+  assert.equal((SOURCE.match(/max_tokens: 16000,/g) || []).length, 1, 'crqExtract carries the raised cap');
   assert.ok(!SOURCE.includes('max_tokens: 8192'), 'no extraction is left on the old cap');
   assert.ok(SOURCE.includes("wsParseExtractionRows(resp, 'rows')"), 'the queue extraction parses through the salvage path');
-  assert.ok(SOURCE.includes("wsParseExtractionRows(data, 'requirements')"), 'the guideline extraction too');
   const warns = SOURCE.match(/he reply hit the length cap — complete rows were recovered/g) || [];
-  assert.ok(warns.length >= 2, 'truncation is reported on both surfaces, never silent');
+  assert.ok(warns.length >= 1, 'truncation is reported, never silent');
+});
+
+// ── admin page consolidation: one scope, one extract, one-click publish ──
+test('one scope selector drives the whole council & rates page', () => {
+  const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
+  assert.equal(rates.split('id="rdb-council"').length, 2, 'exactly one council selector on the page');
+  assert.equal(rates.split('id="rdb-state"').length, 2, 'exactly one state selector on the page');
+  assert.ok(rates.indexOf('id="rdb-council"') < rates.indexOf('adm-group adm-setup'),
+    'the Scope bar sits above every section');
+  assert.ok(rates.includes('onchange="admScopeChanged()"'), 'changing it re-scopes everything below');
+  const sync = SOURCE.slice(SOURCE.indexOf('function admScopeSync()'), SOURCE.indexOf('async function rdbAddCouncil()'));
+  assert.ok(sync.includes("document.getElementById('cg-name')") && sync.includes('cgScopeChanged(label)'),
+    'the sync is the single writer of the hidden guideline-scope fields');
+});
+
+test('extraction has exactly one entry point, and it requires a saved document', () => {
+  assert.ok(!SOURCE.includes('async function cgExtract()') && !SOURCE.includes('onclick="cgExtract()"'),
+    'the upload-row extractor is gone — Save document is the row\'s only action');
+  assert.ok(!SOURCE.includes('const CG_PROMPT'), 'its prompt went with it');
+  assert.ok(SOURCE.includes("onclick=\"crqExtract('${k}')\""),
+    'Extract to queue on the Library row is the one extract action');
+  assert.ok(SOURCE.includes('function cgRenderReview()') && SOURCE.includes('async function cgEdit('),
+    'the review pane survives for hand-editing stored versions');
+});
+
+test('one-click publish: clean rows only, listed in a confirm, through the shared writer, then live', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApplyAllAndPublish()'), SOURCE.indexOf('// ── the review queue'));
+  assert.ok(fn.includes('if (!plan.ok || plan.unitWarning) return;'),
+    'rows needing human eyes are never touched by the bulk path');
+  assert.ok(fn.includes('if (!confirm('), 'still explicit — the confirm lists every row it will write');
+  assert.ok(fn.includes('await crxWritePlan('), 'writes go through the same helper as the per-row apply — no drift');
+  assert.ok(fn.includes('await rdbPublish()'), 'and publishing is part of the one action');
+  assert.ok(fn.includes('nothing published. Fix and retry'), 'a failed write blocks the publish, never half-ships');
+  // the staged path survives: per-row apply without publishing
+  assert.ok(SOURCE.includes('onclick="crxApply(${i})"'), 'per-row staging is still available');
+  // approving a queue row alone still publishes nothing (pinned above too)
+  const decide = SOURCE.slice(SOURCE.indexOf('async function crqDecide'), SOURCE.indexOf('async function crqBulkApprove'));
+  assert.ok(!decide.includes('rdbPublish') && !decide.includes('crxApply'), 'approval is not publication');
+});
+
+test('onboarding copy moved behind (?) popovers; the dev table browser left the main flow', () => {
+  assert.ok(SOURCE.includes('.adm-help-pop{display:none;'), 'help popovers are hidden until asked');
+  assert.ok(SOURCE.includes('How a number in a guideline PDF becomes live:'),
+    'the pipeline walkthrough survives inside a popover');
+  const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
+  const viewer = rates.indexOf('id="rdb-view-table"');
+  const details = rates.indexOf('Developer tools — read-only table browser');
+  assert.ok(details >= 0 && viewer > details, 'the table browser lives inside the collapsed Developer tools section');
+  assert.ok(rates.indexOf('adm-group adm-db') < details, 'after the admin flow, not inline with it');
 });
