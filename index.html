@@ -478,6 +478,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
    (the numbers that publish to live) is amber-edged and sits below it. */
 .adm-group{border:1px solid var(--border);border-radius:12px;background:#141b1b;margin-bottom:22px;overflow:hidden;}
 .adm-group-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px;padding:12px 16px;font-size:12.5px;font-weight:700;color:var(--text);border-bottom:1px solid var(--border);background:#182121;}
+/* (?) help popovers — onboarding copy lives here, not permanently on screen */
+.adm-help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid var(--border);color:var(--muted);font-size:10px;font-weight:700;cursor:help;position:relative;margin-left:6px;vertical-align:middle;flex:0 0 auto;}
+.adm-help-pop{display:none;position:absolute;top:20px;left:-8px;z-index:60;width:min(420px,80vw);background:#141c1c;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:11px;line-height:1.65;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;text-align:left;box-shadow:0 10px 28px rgba(0,0,0,0.55);white-space:normal;}
+.adm-help:hover .adm-help-pop,.adm-help:focus .adm-help-pop,.adm-help:focus-within .adm-help-pop{display:block;}
 .adm-group-sub{font-size:11px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;}
 .adm-group-body{padding:16px;}
 .adm-group.adm-setup{border-left:3px solid var(--teal);}
@@ -961,21 +965,24 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
         <!-- RATES & COUNCILS TAB -->
         <div class="admin-screen-panel" id="stab-rates" style="padding:20px;display:none;">
 
+          <!-- ONE scope for the whole page. Every section below — registry,
+               guideline upload, library, review queue, rates, info — reads
+               this pair; there are deliberately no other scope selectors. -->
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;border:1px solid var(--teal);border-radius:9px;background:#12201f;">
+            <span style="font-size:10px;font-weight:700;color:#7FD8D8;text-transform:uppercase;letter-spacing:.5px;">Scope</span>
+            <select id="rdb-state" onchange="rdbLoad()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
+              <option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
+            </select>
+            <select id="rdb-council" onchange="admScopeChanged()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:220px;">
+              <option value="">State defaults</option>
+            </select>
+            <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Everything on this page follows this one selection: the registry list, which council a saved guideline belongs to, what the library and review queue show, and whose rates are edited below. "State defaults" scopes the rates to the state-wide baseline that councils inherit from.</span></span>
+          </div>
+
           <div class="adm-group adm-setup">
             <div class="adm-group-head">🗂 Council registry, documents &amp; review<span class="adm-group-sub">who exists, which guideline PDFs are on file, and the clauses awaiting approval</span></div>
             <div class="adm-group-body">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-            <div class="dc-title" style="margin-top:20px;">Council registry <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">councils in this state, across the whole platform</span></div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">State</span>
-              <select id="rdb-state" onchange="rdbLoad()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
-                <option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
-              </select>
-            </div>
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;max-width:760px;">
-            The one list every council picker reads — project setup, the compliance checker, the guideline uploader above and the rate overrides here. Add a council once and it appears in all of them; removing one hides it everywhere (its rates and guidelines are kept).
-          </div>
+          <div class="dc-title" style="margin-top:20px;">Council registry <span class="adm-help" tabindex="0">?<span class="adm-help-pop">The one list every council picker reads — project setup, the compliance checker, the guideline uploader and the rate overrides. Add a council once and it appears in all of them; removing one hides it everywhere (its rates and guidelines are kept).</span></span></div>
           <div id="rdb-councils-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <input id="rdb-new-council-label" type="text" placeholder="Council label, e.g. City of Camden" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
@@ -984,12 +991,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
             <div class="adm-rule"></div>
 
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Council Guidelines — AI Extraction</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Council Guidelines
+              <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Upload a council's waste guideline or DCP chapter (PDF). <b>Save document</b> stores it against the scoped council straight away — the compliance checker then shows it beside the WMP for every user, on any device. Extracting clauses happens afterwards, from the Library row: 🧾 <b>Extract to queue</b> — a document must be saved before it can be extracted, and only approved clauses are ever cited.</span></span>
+            </div>
             <div id="cg-status" style="font-size:11px;color:var(--muted);"></div>
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
-            Upload a council's waste guideline or DCP chapter (PDF). <b>Save document</b> stores it against the council straight away — the compliance checker then shows it beside the WMP for every user, on any device. <b>Extract requirements</b> is the separate, optional step that pulls enforceable clauses out for review; only approved clauses are ever cited.
           </div>
 
           <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND.
@@ -1010,16 +1016,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <span style="font-size:10.5px;color:var(--muted);">Each upload becomes a NEW version of that council's guideline — the previous version is superseded, and its structured requirements stop being served until a new extraction is approved.</span>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-            <input type="text" id="cg-name" list="cgb-councils" placeholder="Council — pick or type" oninput="cgScopeChanged(this.value)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
-            <select id="cg-state" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:12px;color:var(--text);font-family:inherit;">
-              <option value="">State…</option><option>NSW</option><option>VIC</option><option>QLD</option><option>SA</option><option>WA</option><option>TAS</option><option>ACT</option><option>NT</option>
-            </select>
+            <!-- council + state come from the shared Scope bar; these hidden
+                 inputs keep the many readers (cgStoreDocument, cgSave, the
+                 rates bridge) on their existing element contract -->
+            <input type="hidden" id="cg-name" value="">
+            <input type="hidden" id="cg-state" value="">
+            <span id="cg-scope-echo" style="font-size:11px;color:#7FD8D8;border:1px solid #2c4a4a;border-radius:7px;padding:5px 10px;">pick a council in Scope above</span>
             <input type="text" id="cg-version" placeholder="Doc label, e.g. 2023 DCP" title="Free-text label from the document — the integer version number is sequenced automatically" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;width:130px;">
             <input type="date" id="cg-effective" title="Effective date, if the document states one" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;">
             <input type="url" id="cg-source-url" placeholder="Source URL (optional)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:200px;">
             <input type="file" id="cg-file" accept=".pdf,application/pdf" style="font-size:11px;color:var(--text);max-width:240px;">
-            <button class="btn btn-primary" style="background:var(--teal);color:#fff;font-weight:700;" title="Store this PDF against the council now. The checker shows it side by side immediately; extracting clauses is a separate, optional step." onclick="cgStoreDocument()">⇪ Save document</button>
-            <button class="btn" title="AI-extract enforceable requirements into the review queue. Optional — the document is stored either way." onclick="cgExtract()">🤖 Extract requirements</button>
+            <button class="btn btn-primary" style="background:var(--teal);color:#fff;font-weight:700;" title="Store this PDF against the scoped council now. The checker shows it side by side immediately; extract clauses afterwards with 🧾 Extract to queue on its Library row." onclick="cgStoreDocument()">⇪ Save document</button>
           </div>
           <div id="cg-review"></div>
           <div id="cg-council-card" style="margin:14px 0 0;"></div>
@@ -1027,25 +1034,18 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
           <div id="cg-library" style="display:flex;flex-direction:column;gap:6px;"></div>
 
           <!-- C3: structured requirements review queue -->
-          <div style="display:flex;align-items:center;gap:10px;margin:22px 0 6px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Requirements review queue <span id="crq-scope-label" style="font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);"></span></div>
+          <div style="display:flex;align-items:center;gap:10px;margin:22px 0 8px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Requirements review queue <span id="crq-scope-label" style="font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);"></span>
+              <span class="adm-help" tabindex="0">?<span class="adm-help-pop">AI-proposed rows from guideline documents, each pinned to a document version and a clause reference. Verify each value against the cited clause, edit if needed, then approve — <b>nothing is consumed by any tool until it is approved</b>. Extraction confidence is not approval.<br><br>
+                <b style="color:var(--text);">How a number in a guideline PDF becomes live:</b>
+                <b>1</b> ⇪ Save the PDF (it appears in the Library) →
+                <b>2</b> 🧾 Extract to queue on its Library row →
+                <b>3</b> verify each row against its clause, ✓ approve →
+                <b>4</b> two destinations, both explicit: <b>⇧ Serve approved</b> feeds the compliance checker &amp; WMP · <b>⬆ Publish approved rates</b> reviews the rate rows against live data, writes the clean ones to the Rates DB and publishes — feeding the bin calculator.</span></span>
+            </div>
             <div id="crq-status" style="font-size:11px;color:var(--muted);"></div>
             <span style="flex:1"></span>
-            <button class="btn" title="Diff approved generation_rate / stream_split rows against the live rates data. Residential rows can then be applied straight into the Rates DB below (→ Rates DB); commercial and split rows export as CSV for hand entry. The diff itself publishes nothing." onclick="crxExport()">⇩ Export approved rates</button>
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;">
-            AI-proposed rows from guideline documents, each pinned to a document version and a clause reference. Verify each value against the cited clause, edit if needed, then approve — <b>nothing is consumed by any tool until it is approved</b>. Extraction confidence is not approval.
-          </div>
-          <!-- The pipeline in one line. Two groups apart, four buttons deep —
-               without this map "how do I extract the rates" is a fair question. -->
-          <div style="font-size:10.5px;color:var(--muted);border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 12px;margin-bottom:10px;line-height:1.8;">
-            <b style="color:var(--text);">How a number in a guideline PDF becomes live:</b>
-            <b>1</b> ⇪ upload the PDF to the Library above &nbsp;→&nbsp;
-            <b>2</b> 🧾 Extract to queue on that document &nbsp;→&nbsp;
-            <b>3</b> pick the council, verify each row against its clause, ✓ approve &nbsp;→&nbsp;
-            <b>4</b> two destinations, both explicit:
-            <b>⇧ Serve approved</b> feeds the <b>compliance checker &amp; WMP</b> ·
-            rate rows go <b>⇩ Export approved rates → → Rates DB → ⬆ Publish to live</b> (Council &amp; state database below) to feed the <b>bin calculator</b>.
+            <button class="btn" style="border-color:var(--green);color:var(--green);" title="Review approved rate rows against the live data, then publish: clean residential rows write to the Rates DB and go live in one click; anything needing eyes (odd units, conflicts, commercial bases) is held for per-row review or CSV." onclick="crxExport()">⬆ Publish approved rates…</button>
           </div>
           <div id="crq-wrap" style="display:flex;flex-direction:column;gap:10px;"></div>
           <div id="crx-out"></div>
@@ -1056,11 +1056,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <div class="adm-group-head">🗄 Council &amp; state database<span class="adm-group-sub">the numbers the calculator, the WMP and the checker read — published to live</span></div>
             <div class="adm-group-body">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Rates for the selected state / council</div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Rates for the selected scope
+              <span class="adm-help" tabindex="0">?<span class="adm-help-pop">These are the numbers the calculator, the WMP and the checker read, for the state/council chosen in Scope at the top. Blank council cells inherit the state defaults. Saving stores edits; <b>⬆ Publish to live</b> regenerates <code>waste_rates.json</code> on R2 so the calculator and the Excel generator pick up changes immediately — nothing is live until you publish.</span></span>
+            </div>
             <div style="display:flex;gap:8px;align-items:center;">
-              <select id="rdb-council" onchange="rdbLoadRates()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:180px;">
-                <option value="">State defaults</option>
-              </select>
               <button class="btn" onclick="rdbLoad()">↻ Load</button>
               <button class="btn btn-primary" onclick="rdbPublish()" style="background:var(--green);color:var(--dark);font-weight:700;">⬆ Publish to live</button>
             </div>
@@ -1103,23 +1102,25 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
             <button class="btn" onclick="rdbSaveCom()">💾 Save commercial rates</button>
           </div>
 
-          <div class="dc-title" style="margin-top:22px;">Database viewer <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">read-only browse of any table</span></div>
-          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-            <select id="rdb-view-table" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
-              <option>res_rates</option><option>com_rates</option><option>com_uses</option><option>councils</option><option>waste_meta</option><option>equipment</option><option>wmp_content</option><option>review_requests</option><option>profiles</option>
-            </select>
-            <button class="btn" onclick="rdbViewTable()">Browse</button>
-            <span id="rdb-view-count" style="font-size:11px;color:var(--muted);"></span>
-          </div>
-          <div id="rdb-view-wrap" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;display:none;"></div>
-
-          <div style="margin-top:20px;font-size:11px;color:var(--muted);line-height:1.7;">
-            Commercial rates and WMP content are edited the same way — this panel covers the two datasets that change most.
-            Publishing regenerates <code style="background:#182121;padding:1px 5px;border-radius:4px;">waste_rates.json</code> on R2 so the calculator and your Excel generator pick up changes immediately.
-          </div>
             </div>
           </div>
 
+          <!-- Developer tools live apart from the admin flow: a raw table
+               browser has a different audience and risk profile than the
+               publish buttons above, so it is collapsed and last. -->
+          <details style="margin-top:14px;border:1px solid var(--border);border-radius:9px;background:#141c1c;">
+            <summary style="padding:10px 14px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;">🛠 Developer tools — read-only table browser</summary>
+            <div style="padding:4px 14px 14px;">
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
+                <select id="rdb-view-table" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;">
+                  <option>res_rates</option><option>com_rates</option><option>com_uses</option><option>councils</option><option>waste_meta</option><option>equipment</option><option>wmp_content</option><option>review_requests</option><option>profiles</option>
+                </select>
+                <button class="btn" onclick="rdbViewTable()">Browse</button>
+                <span id="rdb-view-count" style="font-size:11px;color:var(--muted);"></span>
+              </div>
+              <div id="rdb-view-wrap" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;display:none;"></div>
+            </div>
+          </details>
 
         </div>
 
@@ -10138,6 +10139,7 @@ async function rdbLoad() {
     document.getElementById('rdb-councils-list').innerHTML = RDB.councils.length
       ? RDB.councils.map(c => `<div style="display:flex;align-items:center;gap:10px;font-size:12px;"><span style="flex:0 0 260px;">${c.label}</span><code style="background:#182121;padding:1px 6px;border-radius:4px;font-size:10px;color:var(--muted);">${c.value}</code><button class="btn" style="padding:2px 8px;font-size:10px;color:#EF8080;" onclick="rdbDeleteCouncil('${c.id}')">remove</button></div>`).join('')
       : '<div style="font-size:12px;color:var(--muted);">No councils yet for this state.</div>';
+    admScopeSync();
     await rdbLoadRates();
   } catch(err) { rdbMsg('Load failed: ' + (err.message || err) + ' — have you run the schema SQL?', false); }
 }
@@ -10265,6 +10267,26 @@ async function rdbSaveRes() {
     return true;
   } catch(err) { rdbMsg('Save failed: ' + (err.message || err), false); return false; }
 }
+
+// ── the ONE scope for the whole council & rates page ────────────────────────
+// The Scope bar's state + council pair is the only selector; everything else
+// reads it. The old cg-name / cg-state inputs survive as HIDDEN fields so the
+// many existing readers (cgStoreDocument, cgSave, the rates bridge) keep their
+// element contract — this sync is the single writer.
+function admScopeSync() {
+  const sel = document.getElementById('rdb-council');
+  const label = sel && sel.value ? (sel.options[sel.selectedIndex]?.text || '') : '';
+  const nm = document.getElementById('cg-name'); if (nm) nm.value = label;
+  const stEl = document.getElementById('cg-state');
+  if (stEl) stEl.value = document.getElementById('rdb-state')?.value || '';
+  const echo = document.getElementById('cg-scope-echo');
+  if (echo) {
+    echo.textContent = label ? 'for: ' + label : 'pick a council in Scope above';
+    echo.style.color = label ? '#7FD8D8' : 'var(--flag)';
+  }
+  if (typeof cgScopeChanged === 'function') cgScopeChanged(label);
+}
+function admScopeChanged() { admScopeSync(); rdbLoadRates(); }
 
 async function rdbAddCouncil() {
   const st = document.getElementById('rdb-state').value;
@@ -10579,45 +10601,12 @@ async function ctlSave() {
   } catch(err){ eqlMsg('Contractor save failed: '+(err.message||err), false); }
 }
 
-// ── ADMIN: Council guidelines extraction ────────────────────────────────────
-// PDF → aiProxy → structured requirements → human review → shared Supabase
-// library. The compliance checker then cites these by clause number.
+// ── ADMIN: Council guidelines review pane ───────────────────────────────────
+// Extraction happens per Library row (🧾 Extract to queue → crqExtract) — the
+// ONE extract action on the page, and it requires a saved document. This pane
+// remains for hand-editing a stored version's served requirements
+// (cgEdit → cgSave) and the → Rates bridge.
 const CG = { current: null };
-const CG_PROMPT = `You extract enforceable waste management requirements from Australian council guidelines, DCP chapters, and waste planning policies, for use in an automated WMP compliance checker.
-
-Respond with ONLY a JSON object, no markdown fences:
-{
-  "council_name": string,
-  "state": "NSW"|"VIC"|"QLD"|"SA"|"WA"|"TAS"|"ACT"|"NT"|null,
-  "document_title": string|null,
-  "version": string|null,             // year or version label from the document
-  "requirements": [
-    {
-      "clause": string|null,          // e.g. "4.2.3" or "C1.7" — exactly as printed
-      "page": integer|null,
-      "category": "generation_rates"|"storage"|"bins"|"collection"|"vehicle_access"|"chutes"|"amenity"|"signage"|"recycling"|"other",
-      "applies_to": "residential"|"commercial"|"mixed"|"all",
-      "requirement": string,          // one enforceable requirement, imperative, max ~40 words
-      "quantitative": { "parameter": string, "value": number, "unit": string } | null,
-      "field": string|null,           // canonical field if it maps to one (see list below), else null
-      "op": ">="|"<="|"="|">"|"<"|null // direction of the test; ">=" for minima, "<=" for maxima
-    }
-  ]
-}
-
-Rules:
-- Extract only ENFORCEABLE requirements (must/shall/minimum/required) — not background, objectives, or advisory notes.
-- One requirement per entry. Split compound clauses.
-- Preserve exact numbers and units. quantitative is for the single key figure where one exists (e.g. parameter "waste generation rate", value 80, unit "L/unit/week").
-- Maximum 60 requirements — prioritise quantitative and frequently-assessed ones (generation rates, storage sizing, vehicle access, bin quantities, chute rules).
-- clause exactly as printed in the document; null if unnumbered.
-- Set "field" ONLY when the requirement maps cleanly to one of these, else null:
-  res_rate_gw, res_rate_rec, res_rate_org, res_rate_gls (L/dwelling/week),
-  bulky_area_m2, storage_area_m2, aisle_width_mm, travel_path_m,
-  route_clearance_m, loading_clearance_m, collection_frequency_wk,
-  bin_size_max_l, vehicle_turning_radius_m, dwellings_total.
-- Set "op" to match the wording: "at least"/"minimum" → ">=", "no more than"/"maximum" → "<=".
-- A wrong field binding is worse than none — leave both null when unsure.`;
 
 function cgMsg(t, warn) { const el = document.getElementById('cg-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
 function cgSlug(name) { return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60); }
@@ -10677,7 +10666,7 @@ function cgRenderLibrary() {
   if (!CG_SCOPE.name) {
     wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
       Object.keys(byKey).length + ' council' + (Object.keys(byKey).length === 1 ? '' : 's') +
-      ' on file. Choose a council in the field above to see its document and review its rows.</div>';
+      ' on file. Choose a council in Scope at the top to see its document and review its rows.</div>';
     return;
   }
   if (!keys.length) {
@@ -10700,53 +10689,6 @@ function cgRenderLibrary() {
   }).join('');
 }
 
-async function cgExtract() {
-  const f = document.getElementById('cg-file').files[0];
-  if (!f) { cgMsg('Choose a guideline PDF first.', true); return; }
-  if (f.size > 15 * 1024 * 1024) { cgMsg('PDF too large (15 MB max) — export the waste chapter only and retry.', true); return; }
-  cgMsg('Reading PDF…');
-  let b64;
-  try {
-    b64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result.split(',')[1]);
-      r.onerror = () => rej(new Error('Could not read file'));
-      r.readAsDataURL(f);
-    });
-  } catch (e) { cgMsg('File read failed: ' + e.message, true); return; }
-
-  cgMsg('Extracting requirements — big documents can take a minute…');
-  try {
-    const data = await aiProxy({
-      // same cap story as crqExtract: 8192 truncated large guidelines mid-JSON
-      max_tokens: 16000,
-      system: CG_PROMPT,
-      messages: [{ role: 'user', content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
-        { type: 'text', text: 'Extract the enforceable waste requirements. JSON only — start your response with {' },
-      ]}],
-    });
-    const { rows: reqRows, truncated, parsed } = wsParseExtractionRows(data, 'requirements');
-    CG.current = {
-      council_name: document.getElementById('cg-name').value.trim() || parsed?.council_name || f.name.replace(/\.pdf$/i, ''),
-      state: document.getElementById('cg-state').value || parsed?.state || null,
-      version: document.getElementById('cg-version').value.trim() || parsed?.version || String(new Date().getFullYear()),
-      // the FILE, not just its name: cgSave uploads it so the document has a
-      // real object in storage. A row carrying a bare filename can never
-      // produce a thumbnail, a View PDF link, or the checker's guideline pane.
-      _file: f,
-      source_file: null,
-      requirements: reqRows,
-    };
-    if (!CG.current.requirements.length) { cgMsg('No enforceable requirements found in that PDF.', true); return; }
-    document.getElementById('cg-name').value = CG.current.council_name;
-    if (CG.current.state) document.getElementById('cg-state').value = CG.current.state;
-    document.getElementById('cg-version').value = CG.current.version;
-    cgMsg(`Extracted ${CG.current.requirements.length} requirements — review, edit, then save.` +
-      (truncated ? ' ⚠ The reply hit the length cap — complete rows were recovered but the tail was cut off; requirements late in the document may be missing.' : ''));
-    cgRenderReview();
-  } catch (err) { cgMsg('Extraction failed: ' + (err.message || err), true); }
-}
 
 function cgRenderReview() {
   const wrap = document.getElementById('cg-review');
@@ -11458,6 +11400,9 @@ async function crxExport() {
   const counts = {};
   diff.forEach(d => { counts[d.status] = (counts[d.status] || 0) + 1; });
   const chip = s => ({ new: '#3DD68C', changed: '#EFB080', conflicting: '#EF8080', unmapped: '#B39DDB', same: '#78909C' })[s] || '#78909C';
+  // "clean" = the pure plan accepts it AND the unit needs no human conversion —
+  // exactly the rows the one-click publish may touch
+  const cleanN = diff.filter(d => { const p = crxApplyPlan(d); return p.ok && !p.unitWarning; }).length;
   wrap.innerHTML = `
     <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;margin-top:8px;">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
@@ -11467,8 +11412,9 @@ async function crxExport() {
         <span style="flex:1"></span>
         <button class="btn" onclick="crxDownload('csv')">⇩ CSV for the spreadsheet</button>
         <button class="btn" onclick="crxDownload('json')">⇩ JSON</button>
+        ${cleanN ? `<button class="btn" style="background:var(--green);color:var(--dark);font-weight:700;" title="One click for the normal case: writes every CLEAN residential row into the Rates DB, then publishes to live. Rows with odd units, conflicts or commercial bases are held for per-row review — nothing is written without appearing in this list first." onclick="crxApplyAllAndPublish()">⬆ Apply ${cleanN} clean row${cleanN === 1 ? '' : 's'} &amp; publish</button>` : ''}
       </div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;"><b>→ Rates DB</b> writes that residential row into the Rates DB below (confirmed, one at a time) — then <b>⬆ Publish to live</b> pushes it to the calculator. Commercial and split rows: download the CSV and enter them against the use's own row — their per-day / per-100m² bases don't map mechanically. The diff itself publishes nothing; 'same' rows confirm the live data.</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;"><b>⬆ Apply &amp; publish</b> handles the clean residential rows in one go. <b>→ Rates DB</b> stages a single row without publishing (use ⬆ Publish to live below when ready). Rows needing eyes — odd units, conflicting approvals, commercial per-day/per-100m² bases — stay manual: CSV them and enter against the use's own row. 'same' rows confirm the live data.</div>
       <div style="display:grid;grid-template-columns:110px 1fr 90px 70px 70px 90px 1fr 92px;gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">
         <span>Status</span><span>Council</span><span>Kind</span><span>Approved</span><span>Current</span><span>Stream</span><span>Target / clause</span><span></span>
       </div>
@@ -11535,17 +11481,31 @@ function crxApplyPlan(d) {
 // after a confirm that shows exactly what will be written. Going live stays a
 // separate step: ⬆ Publish to live in the Rates DB section, same as a
 // hand-typed rate.
+// Resolve the council key (creating the registry row when the live list
+// doesn't know it — never writing a council rate onto state defaults) and
+// perform the one res_rates upsert a plan describes. Shared by the per-row
+// apply and the one-click publish so the write can never drift between them.
+function crxPlanCouncil(plan, d) {
+  if (plan.rec.council_value) return { cv: plan.rec.council_value, mkCouncil: null };
+  const label = String(d.council || '').trim();
+  const cv = cgSlug(label.replace(/^city of /i, '').replace(/\s*(city|shire)?\s*council$/i, ''));
+  return cv ? { cv, mkCouncil: { state: plan.rec.state, value: cv, label } } : { cv: null, mkCouncil: null };
+}
+async function crxWritePlan(plan, cv, mkCouncil) {
+  if (mkCouncil) {
+    const { error: cErr } = await sb.from('councils').insert(mkCouncil);
+    if (cErr && !/duplicate|unique/i.test(cErr.message)) throw cErr;
+  }
+  const { error } = await sb.from('res_rates')
+    .upsert({ ...plan.rec, council_value: cv }, { onConflict: 'state,council_value,unit_type,stream' });
+  if (error) throw error;
+}
 async function crxApply(i) {
   const d = (CRX_LAST || [])[i];
   const plan = crxApplyPlan(d);
   if (!plan.ok) { crqMsg('This row cannot be applied from here — ' + plan.why + '.', true); return; }
-  let cv = plan.rec.council_value, mkCouncil = null;
-  if (!cv) {
-    const label = String(d.council || '').trim();
-    cv = cgSlug(label.replace(/^city of /i, '').replace(/\s*(city|shire)?\s*council$/i, ''));
-    if (!cv) { crqMsg('No council name on this row to key the override to.', true); return; }
-    mkCouncil = { state: plan.rec.state, value: cv, label };
-  }
+  const { cv, mkCouncil } = crxPlanCouncil(plan, d);
+  if (!cv) { crqMsg('No council name on this row to key the override to.', true); return; }
   const lines = [
     'Write to the Rates DB (res_rates):',
     `${plan.rec.state} · ${cv} · ${RDB_UNIT_LABELS[plan.rec.unit_type] || plan.rec.unit_type} · ${plan.rec.stream} = ${plan.rec.l_per_week} L/week`,
@@ -11556,17 +11516,48 @@ async function crxApply(i) {
   lines.push('', 'Nothing goes live until you hit ⬆ Publish to live in the Council & state database section.');
   if (!confirm(lines.join('\n'))) return;
   try {
-    if (mkCouncil) {
-      const { error: cErr } = await sb.from('councils').insert(mkCouncil);
-      if (cErr && !/duplicate|unique/i.test(cErr.message)) throw cErr;
-    }
-    const { error } = await sb.from('res_rates')
-      .upsert({ ...plan.rec, council_value: cv }, { onConflict: 'state,council_value,unit_type,stream' });
-    if (error) throw error;
+    await crxWritePlan(plan, cv, mkCouncil);
     const btn = document.getElementById('crx-apply-' + i);
     if (btn) btn.outerHTML = '<span style="font-size:10px;color:#3DD68C;">✓ in Rates DB</span>';
     crqMsg(`✓ ${RDB_UNIT_LABELS[plan.rec.unit_type] || plan.rec.unit_type} · ${plan.rec.stream} = ${plan.rec.l_per_week} L/week saved as a ${cv} override — ⬆ Publish to live (Council & state database) pushes it to the calculator.`);
   } catch (err) { crqMsg('Apply failed: ' + (err.message || err), true); }
+}
+// The one-click path for the normal workflow: every CLEAN row (the pure plan
+// accepts it AND its unit needs no human conversion) is written to the Rates
+// DB, then the live rates JSON is regenerated — approve → publish in one
+// action. Still explicit and still listed: the confirm names every row, and
+// rows needing eyes (odd units, conflicts, commercial bases) are never
+// touched here. Approving a queue row on its own continues to publish
+// NOTHING — this button is the deliberate act.
+async function crxApplyAllAndPublish() {
+  const diff = CRX_LAST || [];
+  const jobs = [];
+  diff.forEach((d, i) => {
+    const plan = crxApplyPlan(d);
+    if (!plan.ok || plan.unitWarning) return;
+    const { cv, mkCouncil } = crxPlanCouncil(plan, d);
+    if (cv) jobs.push({ d, i, plan, cv, mkCouncil });
+  });
+  if (!jobs.length) { crqMsg('No clean rows to apply — review the flagged ones per-row.', true); return; }
+  const lines = ['Write ' + jobs.length + ' approved rate' + (jobs.length === 1 ? '' : 's') + ' to the Rates DB, then publish to live:', ''];
+  jobs.forEach(j => lines.push(`· ${j.plan.rec.state} · ${j.cv} · ${RDB_UNIT_LABELS[j.plan.rec.unit_type] || j.plan.rec.unit_type} · ${j.plan.rec.stream} = ${j.plan.rec.l_per_week} L/week (${j.d.clauseRef || 'no clause'})`));
+  const mk = jobs.filter(j => j.mkCouncil).map(j => j.mkCouncil.label);
+  if (mk.length) lines.push('', 'New council row' + (mk.length === 1 ? '' : 's') + ' will be created: ' + [...new Set(mk)].join(', '));
+  lines.push('', 'Publishing regenerates the live waste_rates.json — the calculator picks this up immediately.');
+  if (!confirm(lines.join('\n'))) return;
+  let ok = 0, fail = 0;
+  for (const j of jobs) {
+    try {
+      await crxWritePlan(j.plan, j.cv, j.mkCouncil);
+      ok++;
+      const btn = document.getElementById('crx-apply-' + j.i);
+      if (btn) btn.outerHTML = '<span style="font-size:10px;color:#3DD68C;">✓ published</span>';
+    } catch (e) { fail++; console.warn('crxApplyAllAndPublish:', e?.message || e); }
+  }
+  if (fail) { crqMsg(`${ok} written, ${fail} FAILED — nothing published. Fix and retry.`, true); return; }
+  crqMsg(`✓ ${ok} rate${ok === 1 ? '' : 's'} written — publishing to live…`);
+  await rdbPublish();
+  crqMsg(`✓ ${ok} approved rate${ok === 1 ? '' : 's'} written and published to live.`);
 }
 
 // ── the review queue ────────────────────────────────────────────────────────
@@ -11606,7 +11597,7 @@ function crqRender() {
     wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
       proposedAll + ' proposed row' + (proposedAll === 1 ? '' : 's') + ' awaiting review across ' +
       gidsEvery.length + ' document' + (gidsEvery.length === 1 ? '' : 's') +
-      '. Choose a council above to review its rows.</div>';
+      '. Choose a council in Scope at the top to review its rows.</div>';
     return;
   }
   const gidsAll = gidsEvery.filter(g => cgScopeMatches((CRQ_Q.docs[g] || {}).council_name));
@@ -11778,21 +11769,8 @@ async function cgSave() {
     updated_at: new Date().toISOString(),
   };
   cgMsg('Saving…');
-  // Store the PDF alongside the row, same prefix and naming the bulk uploader
-  // uses, so both paths produce a document the checker can actually open.
-  if (CG.current._file && currentUser) {
-    try {
-      const safe = CG.current._file.name.replace(/[^A-Za-z0-9._-]+/g, '_');
-      const path = `guidelines/${row.council_key}/${Date.now()}_${safe}`;
-      const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
-        .upload(path, CG.current._file, { contentType: 'application/pdf' });
-      if (upErr) throw upErr;
-      row.source_file = path;
-    } catch (e) {
-      // Saving the requirements still has value; say plainly what was lost.
-      cgMsg('Note: the PDF could not be stored (' + (e.message || e) + ') — requirements will save, but this document will have no thumbnail, no View PDF and no side-by-side pane in the checker.', true);
-    }
-  }
+  // The PDF was stored when the document was saved (cgStoreDocument / bulk
+  // upload); a re-saved review keeps pointing at it via source_file above.
   try {
     const ins = await cgInsertVersion(row);
     _glBridgeAll = null;         // the serving row changed

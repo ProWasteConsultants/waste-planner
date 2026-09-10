@@ -16,9 +16,17 @@ const SOURCE = fs.readFileSync(INDEX_PATH, 'utf8');
 const LINES = SOURCE.split(/\r?\n/);
 
 // ── bracket scanner ──
-// Walks a line updating bracket depth, skipping string literals and comments so
-// that braces inside them don't unbalance the count. `st` persists across lines.
+// Walks a line updating bracket depth, skipping string literals, comments AND
+// regex literals so their contents don't unbalance the count. `st` persists
+// across lines. Regex-awareness matters: a pattern like /^```json\s*/ carries
+// backticks and an unpaired paren — without it the scanner drifts into a bogus
+// template-string state and a block "ends" wherever the confusion happens to
+// re-sync, silently extracting hundreds of extra lines (or, worse, cutting a
+// function mid-body). A `/` opens a regex when the previous significant
+// character could not end an expression (after `(,=:[!&|?{};>` or at the
+// start of a statement); anywhere else it is division.
 function scanLine(line, st) {
+  let prev = st.lastSig || '';
   for (let i = 0; i < line.length; i++) {
     const c = line[i], n = line[i + 1];
     if (st.inBlockComment) {
@@ -30,12 +38,26 @@ function scanLine(line, st) {
       if (c === st.quote) st.inString = false;
       continue;
     }
-    if (c === '/' && n === '/') return st;                       // line comment
+    if (c === '/' && n === '/') { st.lastSig = prev; return st; } // line comment
     if (c === '/' && n === '*') { st.inBlockComment = true; i++; continue; }
-    if (c === '"' || c === "'" || c === '`') { st.inString = true; st.quote = c; continue; }
+    if (c === '/' && (prev === '' || '(,=:[!&|?{};>'.includes(prev))) {
+      // regex literal — skip to its unescaped closing slash (classes included)
+      let cls = false;
+      for (i++; i < line.length; i++) {
+        if (line[i] === '\\') { i++; continue; }
+        if (line[i] === '[') cls = true;
+        else if (line[i] === ']') cls = false;
+        else if (line[i] === '/' && !cls) break;
+      }
+      prev = '/';
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { st.inString = true; st.quote = c; prev = c; continue; }
     if (c === '(' || c === '[' || c === '{') st.depth++;
     else if (c === ')' || c === ']' || c === '}') st.depth--;
+    if (!/\s/.test(c)) prev = c;
   }
+  st.lastSig = prev;
   return st;
 }
 
