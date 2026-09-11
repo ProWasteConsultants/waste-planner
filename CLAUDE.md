@@ -450,6 +450,39 @@ it builds on (`tests/manoeuvre.test.js`):
   ONLY while a check is live on screen — an issued DXF never grows silent
   extra content.
 
+## Collection Point (kerbside presentation)
+
+Its own tool tab (Layout → **Collection Point** → Swept Paths): does the kerb
+frontage physically fit every bin on collection day? Engine is pure, column 0,
+after the manoeuvrability engine (`tests/collection-point.test.js`):
+
+- **The kerb is a traced polyline parameterised by arc length** (`slot.collect
+  .kerbs`, each `kind: 'line'`). Obstructions project onto it as exclusion
+  intervals (default width per street-furniture fixture + a working clearance
+  each side — both flagged assumptions, both editable); sight-**splay** zones
+  (a `WS_ZONE_TYPES` entry — drawn polygons, they scale with the frontage) cut
+  the stretch they cover. Bins pack first-fit into the clear stretches,
+  spilling across segments so corner lots split bins across frontages.
+- **The design case is the busiest collection week**, never the sum of every
+  stream: `wsCollectScenarios` resolves the cycle pattern (garbage weekly,
+  recycling/FOGO alternating — the flagged default; every stream's cycle is
+  editable, weekly/A/B/off, so odd councils are manual entry, and glass joins
+  whichever week it lands in). Identical weeks collapse to "Every week".
+- **The verdict is metres, not pass/fail**: required vs clear, shortfall
+  stated; a frontage too short even when *empty* reads as a **site
+  constraint**; enough total length in too-short stretches reads as
+  **fragmented**. Plain words on screen, clause-grade numbers in the export.
+- **One assembler (`wsCollectCompute`) feeds the panel, the canvas and the
+  DXF** — they can never disagree. Kerb content is real placed drawing content
+  (renders in the waste layer, prints on the sheet, exports to `A-KERB` /
+  `A-KERB-EXCL` / `A-KERB-BINS` with a DESIGN CASE header naming the scenario
+  and the metres) — unlike the manoeuvrability overlay, which is chrome.
+- Street furniture (`POLE/TREE/XOVER/PIT/HYDRANT/SIGN`) lives in the shared
+  `WS_FIXTURES` library with an `excl` default, usable on any canvas.
+- Future **area mode**: holding bays and presentation areas pack a polygon,
+  not a line — new kerb entries carry `kind` so they are never forced through
+  the line logic.
+
 ## Swept-path refinement
 
 `wsRefinePos` polishes **hand-driven** paths only. Cursor jitter shows up as steering

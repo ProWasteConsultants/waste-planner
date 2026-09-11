@@ -102,8 +102,11 @@ test('wsProvisionReconcile: only items in THIS room count', () => {
 test('the zone types are the agreed set, each with a footprint default', () => {
   // EWASTE and TEXTILE joined the set when zones became the way area
   // allowances (ALLOW_EWASTE / ALLOW_TEXTILE) are satisfied on the plan.
+  // SPLAY joined with the Collection Point tool — a corner sight splay is a
+  // drawn shape (it scales with the frontage), and the kerbside check cuts
+  // the stretch of kerb it covers.
   assert.deepEqual(Object.keys(ws.WS_ZONE_TYPES).sort(),
-    ['BALE', 'CUSTOM', 'EWASTE', 'HARDWASTE', 'TEXTILE', 'UCO']);
+    ['BALE', 'CUSTOM', 'EWASTE', 'HARDWASTE', 'SPLAY', 'TEXTILE', 'UCO']);
   for (const k of Object.keys(ws.WS_ZONE_TYPES)) {
     const t = ws.WS_ZONE_TYPES[k];
     assert.ok(t.w > 0 && t.d > 0, k + ' needs a default size to place');
