@@ -86,7 +86,11 @@ test('the anonymous mode is gone — no guest entry point, no lite caps', () => 
 test('fresh visitors see Create Account with the free-plan value line', () => {
   assert.ok(SOURCE.includes('Your first project is free.'), 'the value line leads');
   assert.ok(SOURCE.includes('All tools, exports included. No card needed.'));
-  assert.ok(SOURCE.includes('Your bin calculation is ready to save.'), 'calc-handoff variant exists');
+  assert.ok(SOURCE.includes('Your bin calculation is ready.'), 'calc-handoff variant exists');
+  assert.ok(SOURCE.includes('Create a free account to lay out your bin room'),
+    'the gate names the thing they clicked, not a generic wall');
+  assert.ok(SOURCE.includes('Sign in and we’ll attach it to your account.'),
+    'existing customers are offered login, and told their data attaches');
   assert.ok(SOURCE.includes('Already have an account?'), 'sign-in escape hatch under signup');
   assert.ok(!SOURCE.includes('or sign in for full access'), 'old divider copy removed');
   // default tab: signup unless this browser has signed in before
@@ -108,13 +112,94 @@ test('the calculator handoff parses, validates, persists and applies once', () =
     apply.includes("wpProjectCapReached()) { showPaywall('project_cap'); return; }"),
     'a capped account gets the paywall, not a silent drop');
   assert.ok(apply.includes("logEvent('calc_prefill_applied'"));
-  assert.ok(apply.includes("type: 'ws-calc-fill'"), 'drives the calculator through the existing fill message');
   assert.ok(SOURCE.includes("if (typeof applyCalcPrefill === 'function') applyCalcPrefill();"),
     'showApp hooks the prefill after sign-in');
   // the calc iframe seeds a commercial room from the handoff, but never
   // double-seeds a project that already carries its own com room
   assert.ok(SOURCE.includes("if(Array.isArray(d.com)&amp;&amp;d.com.length&amp;&amp;!ROOMS.some(r=&gt;r.kind==='com')){"));
   assert.ok(SOURCE.includes('days:Number(c.days)&gt;0?Number(c.days):COMM[c.use].defaultDays'));
+});
+
+// ── §3a: payload normalisation, extracted and run for real ──
+function loadNormalise() {
+  const code = extractBlock(/^function wpNormaliseCalcPayload\(p\)/).text;
+  return new Function(code + ';return wpNormaliseCalcPayload;')();
+}
+
+test('payload normalisation: clamps, filters, and the nothing-usable refusal', () => {
+  const norm = loadNormalise();
+  assert.equal(norm(null), null);
+  assert.equal(norm('str'), null);
+  assert.equal(norm({}), null, 'an empty payload is not a prefill');
+  assert.equal(norm({ state: 'ZZ', council: 'x', mix: {}, com: [] }), null,
+    'unknown state + council alone is nothing usable');
+  assert.ok(norm({ state: 'NSW' }), 'a state alone is usable — council defaults matter');
+  const r = norm({ state: 'VIC', council: 'melbourne',
+    mix: { apt_1br: '4', apt_2br: -2, apt_3br: 'x', townhouse: 3.9 }, com: null });
+  assert.deepEqual(r.mix, { apt_1br: 4, apt_2br: 0, apt_3br: 0, townhouse: 3 },
+    'counts parse as non-negative integers');
+  assert.equal(r.state, 'VIC');
+  assert.deepEqual(r.com, []);
+  // commercial rows: typed uses with positive values only, capped at 20
+  const com = Array.from({ length: 25 }, (_, i) => ({ use: 'cafe', value: 10 + i, days: 0 }));
+  com.push({ use: 42, value: 5 }, { use: 'shop', value: 0 }, null);
+  const rc = norm({ com });
+  assert.equal(rc.com.length, 20, 'tenancies cap at 20');
+  assert.ok(rc.com.every(c => typeof c.use === 'string' && c.value > 0));
+  assert.equal(rc.com[0].days, 0, 'no trading days stays 0 — the calc applies its own default');
+});
+
+// ── §3b: the durable half — calc_leads record, claimed on first sign-in ──
+test('the lead survives the tab: token parked, created server-side, claimed after sign-in', () => {
+  assert.ok(SOURCE.includes("localStorage.setItem('wp_calc_lead'"), 'token parked in localStorage (sessionStorage dies with the tab)');
+  assert.ok(SOURCE.includes("sb.rpc('create_calc_lead'"), 'durable copy created server-side');
+  assert.ok(SOURCE.includes("q.get('lead')"), '?lead= handoff for capture points that created the lead themselves (QR flow)');
+  const apply = extractBlock(/^async function applyCalcPrefill\(\)/).text;
+  assert.ok(apply.includes("sb.rpc('claim_calc_lead'"), 'claimed after sign-in');
+  assert.ok(apply.includes("localStorage.removeItem('wp_calc_lead')"), 'one-shot: token cleared with the payload');
+  assert.ok(apply.includes('wpNormaliseCalcPayload(data)'), 'claimed content is re-normalised, never trusted');
+  assert.ok(apply.includes("wpNormaliseCalcPayload(JSON.parse(sessionStorage.getItem('wp_calc_prefill')")
+    , 'the in-tab payload stays the fast path and wins over the claim');
+});
+
+test('the calc_leads migration is RPC-only, expiring, and un-enumerable', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-09-11-calc-leads.sql'), 'utf8');
+  assert.ok(sql.includes('create table if not exists public.calc_leads'));
+  assert.ok(sql.includes("interval '48 hours'"), 'expiry inside the briefed 24-48h band');
+  assert.ok(sql.includes('enable row level security'));
+  assert.ok(!/create policy/i.test(sql), 'no policies — the token is the secret, a SELECT policy would allow enumeration');
+  assert.ok(!/grant\s+(select|insert|update|delete|all)[\s\S]{0,60}on\s+(table\s+)?public\.calc_leads/i.test(sql),
+    'no table grants either — the two SECURITY DEFINER functions are the whole surface');
+  assert.ok((sql.match(/security definer/g) || []).length >= 2, 'both RPCs run as definer');
+  assert.ok(sql.includes('on conflict (token) do nothing'), 'a guessed token can never clobber a lead');
+  assert.ok(sql.includes('auth.uid() is null'), 'claiming requires a session');
+  assert.ok(sql.includes('claimed_by is null or claimed_by = auth.uid()'),
+    'first claimant wins; same-account re-claim is an idempotent retry');
+  assert.ok(sql.includes("grant execute on function public.create_calc_lead(text, jsonb, text) to anon, authenticated"));
+  assert.ok(sql.includes("grant execute on function public.claim_calc_lead(text) to authenticated"));
+  assert.ok(!/to\s+anon[\s\S]{0,40}claim_calc_lead/.test(sql), 'anon can create, never claim');
+  assert.ok(sql.includes("notify pgrst, 'reload schema'"));
+  assert.ok(sql.includes('ROLLBACK'));
+});
+
+// ── §3c: post-signup landing is the Design tab, not a calculator re-entry ──
+test('after sign-in the user lands in Design with the schedule, never re-entering numbers', () => {
+  const apply = extractBlock(/^async function applyCalcPrefill\(\)/).text;
+  assert.ok(apply.includes('wsOpenProject(project)'), 'opens the workspace on the project just created');
+  assert.ok(apply.includes("wsShowTab") && apply.includes("'layout'"),
+    'Layout tab up: bin-room cards, with the canvas asking for the floor plan');
+  // the schedule reaches the embedded calculator via the summary push,
+  // tenancies included — the fill runs the calc and posts the schedule back
+  const push = extractBlock(/^function wsPushSummaryToCalc\(\)/).text;
+  assert.ok(push.includes('com: (Array.isArray(s.com) && s.com.length) ? s.com : undefined'),
+    'commercial tenancies ride the summary push into the Design-tab calculator');
+  assert.ok(apply.includes('pre.com.length ? { com: pre.com } : {}'),
+    'the created project summary carries the tenancies for that push');
+  // the old landing survives ONLY as the degraded fallback
+  const primaryFirst = apply.indexOf('wsOpenProject(project)');
+  const calcScreen = apply.indexOf("showScreen('calculator'");
+  assert.ok(primaryFirst > -1 && (calcScreen === -1 || calcScreen > primaryFirst),
+    "showScreen('calculator') may remain only as the fallback branch");
 });
 
 // ── §4: caps wired through the UI, checker and paywall ──

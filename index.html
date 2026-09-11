@@ -13370,51 +13370,123 @@ function logEvent(name, meta) {
   } catch (e) {}
 })();
 
-// ── LANDING-PAGE CALC HANDOFF (?calc=) ─────────────────────────────────────
+// ── LANDING-PAGE CALC HANDOFF (?calc= / ?lead=) ────────────────────────────
 // go.wasteplanner.au links here with a base64url JSON payload of the visitor's
 // calculation. Parse ONCE, park it in sessionStorage so it survives the
-// signup → email-confirm → return round trip, and strip the param. Anything
-// invalid is ignored silently, per the brief. UTM params are untouched —
-// captureAttribution above has already read them by the time this runs.
+// signup round trip, and strip the param. A durable copy is also parked
+// server-side as a calc_leads row (sql/2026-09-11-calc-leads.sql), keyed by a
+// client-generated token held in localStorage: sessionStorage is per-tab, so
+// without it a visitor who signs in from another tab — or comes back
+// tomorrow — lost the calculation at the exact moment they proved intent.
+// ?lead=<token> is the inverse direction: a capture point that already
+// created the lead itself (the future QR signage flow) hands over just the
+// token. Anything invalid is ignored silently, per the brief. UTM params are
+// untouched — captureAttribution above has already read them by then.
+
+// Validate/normalise a raw calc payload (URL or claimed lead — leads created
+// by other capture points are as untrusted as the URL). Null when nothing
+// usable — a payload with no state, no dwellings and no tenancies is not a
+// prefill. Pure; covered by tests/free-tier.test.js.
+function wpNormaliseCalcPayload(p) {
+  if (!p || typeof p !== 'object') return null;
+  const num = v => Math.max(0, parseInt(v, 10) || 0);
+  const mix = p.mix || {};
+  const clean = {
+    state: ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'].includes(p.state) ? p.state : null,
+    council: typeof p.council === 'string' ? p.council : '',
+    mix: { apt_1br: num(mix.apt_1br), apt_2br: num(mix.apt_2br), apt_3br: num(mix.apt_3br), townhouse: num(mix.townhouse) },
+    com: Array.isArray(p.com)
+      ? p.com.filter(c => c && typeof c.use === 'string' && Number(c.value) > 0)
+          .map(c => ({ use: c.use, value: Number(c.value), days: Number(c.days) > 0 ? Number(c.days) : 0 })).slice(0, 20)
+      : [],
+  };
+  if (!clean.state && !Object.values(clean.mix).some(v => v > 0) && !clean.com.length) return null;
+  return clean;
+}
+
+function wpLeadToken() {
+  try {
+    const a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return 'cl_' + Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    return 'cl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+  }
+}
+
 (function captureCalcHandoff() {
   try {
     const q = new URLSearchParams(location.search);
     const raw = q.get('calc');
-    if (!raw) return;
-    q.delete('calc');
+    const lead = q.get('lead');
+    if (!raw && !lead) return;
+    q.delete('calc'); q.delete('lead');
     history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+    // A handed-over token references a lead some other capture point already
+    // created — park it; applyCalcPrefill claims it after the first sign-in.
+    if (lead && /^[A-Za-z0-9_-]{16,80}$/.test(lead)) {
+      try { localStorage.setItem('wp_calc_lead', JSON.stringify({ token: lead, at: Date.now() })); } catch (e) {}
+    }
+    if (!raw) return;
     const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
-    const p = JSON.parse(atob(b64));
-    const num = v => Math.max(0, parseInt(v, 10) || 0);
-    const mix = p.mix || {};
-    const clean = {
-      state: ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'].includes(p.state) ? p.state : null,
-      council: typeof p.council === 'string' ? p.council : '',
-      mix: { apt_1br: num(mix.apt_1br), apt_2br: num(mix.apt_2br), apt_3br: num(mix.apt_3br), townhouse: num(mix.townhouse) },
-      com: Array.isArray(p.com)
-        ? p.com.filter(c => c && typeof c.use === 'string' && Number(c.value) > 0)
-            .map(c => ({ use: c.use, value: Number(c.value), days: Number(c.days) > 0 ? Number(c.days) : 0 })).slice(0, 20)
-        : [],
-    };
-    // a payload with nothing usable in it is not a prefill
-    if (!clean.state && !Object.values(clean.mix).some(v => v > 0) && !clean.com.length) return;
+    const clean = wpNormaliseCalcPayload(JSON.parse(atob(b64)));
+    if (!clean) return;
     sessionStorage.setItem('wp_calc_prefill', JSON.stringify(clean));
+    if (!lead) {
+      // Mint our own lead for the URL payload. Deferred with a retry: sb is
+      // a lexical const in a LATER script block — this IIFE runs at parse
+      // time, and a bare 0ms timer can fire in a parse break BEFORE that
+      // block evaluates, so poke until the client exists (same pattern as
+      // the project-detail poke loop).
+      const token = wpLeadToken();
+      try { localStorage.setItem('wp_calc_lead', JSON.stringify({ token, at: Date.now() })); } catch (e) {}
+      let tries = 0;
+      const send = () => {
+        try {
+          if (typeof sb === 'undefined' || !sb) { if (++tries < 40) setTimeout(send, 250); return; }
+          // fire-and-forget: pre-migration (or offline) the sessionStorage
+          // fast path still carries this tab, so failure costs nothing here
+          sb.rpc('create_calc_lead', { p_token: token, p_payload: clean }).then(() => {}, () => {});
+        } catch (e) {}
+      };
+      setTimeout(send, 0);
+    }
   } catch (e) { /* invalid payload: ignore silently */ }
 })();
 
 // Apply the parked calculation after the FIRST successful sign-in or signup:
-// create the project, open the Bin Calculator tab and push the mix into it
-// (the calculator's own ws-calc-fill listener seeds the room and runs the
-// calc). One shot — the prefill clears before anything can fail halfway and
-// re-apply on the next login.
+// create the project and land straight in the DESIGN TAB with the bin
+// schedule populated — never a calculator re-entry screen; the visitor
+// already entered these numbers once. The in-tab payload wins; when the tab
+// lost it (signed in from another tab, came back a day later, or arrived via
+// ?lead=) the parked token claims the server-side calc_leads copy. One shot —
+// payload and token both clear before anything can fail halfway and re-apply
+// on the next login.
 async function applyCalcPrefill() {
+  if (!currentUser) return;
   let pre = null;
-  try { pre = JSON.parse(sessionStorage.getItem('wp_calc_prefill') || 'null'); } catch (e) {}
-  if (!pre || !currentUser) return;
+  try { pre = wpNormaliseCalcPayload(JSON.parse(sessionStorage.getItem('wp_calc_prefill') || 'null')); } catch (e) {}
+  let leadTok = null;
+  try {
+    const l = JSON.parse(localStorage.getItem('wp_calc_lead') || 'null');
+    if (l && typeof l.token === 'string') leadTok = l.token;
+  } catch (e) {}
+  if (!pre && !leadTok) return;
   sessionStorage.removeItem('wp_calc_prefill');
+  try { localStorage.removeItem('wp_calc_lead'); } catch (e) {}
   // A capped free account can't take the prefill project — say so instead of
   // silently dropping the payload, and don't burn the slot check on retries.
   if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
+  // Claim the server-side lead either way: with an in-tab payload the claim
+  // just marks the conversion (and spends the token); without one, it IS the
+  // payload. Claimed content is as untrusted as the URL — re-normalised.
+  if (leadTok) {
+    try {
+      const { data } = await sb.rpc('claim_calc_lead', { p_token: leadTok });
+      if (!pre) pre = wpNormaliseCalcPayload(data);
+    } catch (e) {}
+  }
+  if (!pre) return;
   let councilLabel = '';
   try {
     const list = (typeof COUNCILS_BY_STATE_P !== 'undefined' && COUNCILS_BY_STATE_P[pre.state]) || [];
@@ -13430,8 +13502,12 @@ async function applyCalcPrefill() {
     devType: pre.com.length ? (dwellings ? 'Mixed Use' : 'Commercial') : 'Residential',
     levels: '',
     status: 'Design',
+    // com rides the summary so wsPushSummaryToCalc can seed the commercial
+    // room in the Design tab's calculator — the calc's own bin_rooms replace
+    // it as the source of truth after the first run.
     summary: { address: '', council: councilLabel, state: pre.state || 'NSW',
-      apt_1br: pre.mix.apt_1br, apt_2br: pre.mix.apt_2br, apt_3br: pre.mix.apt_3br, townhouses: pre.mix.townhouse },
+      apt_1br: pre.mix.apt_1br, apt_2br: pre.mix.apt_2br, apt_3br: pre.mix.apt_3br, townhouses: pre.mix.townhouse,
+      ...(pre.com.length ? { com: pre.com } : {}) },
     complianceRuns: 0,
     created: new Date().toLocaleDateString('en-AU'),
     ts: Date.now(),
@@ -13445,20 +13521,34 @@ async function applyCalcPrefill() {
   if (typeof renderProjects === 'function') renderProjects();
   logEvent('project_created', { project_id: project.id, state: project.state || null, council: pre.council || null, source: 'calc_prefill' });
   logEvent('calc_prefill_applied', { state: pre.state, council: pre.council, dwellings, tenancies: pre.com.length });
-  showScreen('calculator', document.getElementById('nav-calculator'));
-  // the calculator iframe already exists (srcdoc loads with the page); a short
-  // settle beats racing its ws-calc-ready handshake from a cold tab switch
-  setTimeout(() => {
-    const f = document.getElementById('calc-iframe');
-    f?.contentWindow?.postMessage({
-      type: 'ws-calc-fill',
-      state: pre.state || undefined,
-      council: pre.council || councilLabel,
-      res_1br: pre.mix.apt_1br, res_2br: pre.mix.apt_2br, res_3br: pre.mix.apt_3br,
-      res_townhouse: pre.mix.townhouse,
-      com: pre.com,
-    }, '*');
-  }, 900);
+  // Land in the DESIGN TAB for the project just created. wsOpenProject opens
+  // the workspace on it; the embedded calculator initialises, announces
+  // ws-calc-ready, and wsPushSummaryToCalc pushes the summary (unit mix,
+  // council AND tenancies) into it — the calc runs and posts the schedule
+  // back, which renders as bin-room cards on the Layout tab opened below.
+  // The canvas empty state asks for the floor plan: exactly the next step.
+  if (typeof wsOpenProject === 'function') {
+    wsOpenProject(project);
+    const layoutTab = document.querySelector('.ws-tool-tab[onclick*="\'layout\'"]');
+    if (layoutTab && typeof wsShowTab === 'function') wsShowTab('layout', layoutTab);
+    if (typeof wsLayoutStatus === 'function') setTimeout(() =>
+      wsLayoutStatus('Bin schedule ready — upload your floor plan, then drag each bin room card onto it.'), 700);
+  } else {
+    // Degraded fallback (a later script block failed to parse): the old
+    // calculator landing, driven through the existing fill message.
+    showScreen('calculator', document.getElementById('nav-calculator'));
+    setTimeout(() => {
+      const f = document.getElementById('calc-iframe');
+      f?.contentWindow?.postMessage({
+        type: 'ws-calc-fill',
+        state: pre.state || undefined,
+        council: pre.council || councilLabel,
+        res_1br: pre.mix.apt_1br, res_2br: pre.mix.apt_2br, res_3br: pre.mix.apt_3br,
+        res_townhouse: pre.mix.townhouse,
+        com: pre.com,
+      }, '*');
+    }, 900);
+  }
 }
 
 async function stampSignupSource() {
@@ -14065,7 +14155,7 @@ async function handleFreeSignup() {
     try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
     if (isNewAccount && typeof logEvent === 'function') {
       let utm = null; try { utm = JSON.parse(localStorage.getItem('wp_attrib') || 'null'); } catch (e2) {}
-      let hasPrefill = false; try { hasPrefill = !!sessionStorage.getItem('wp_calc_prefill'); } catch (e2) {}
+      let hasPrefill = false; try { hasPrefill = !!(sessionStorage.getItem('wp_calc_prefill') || localStorage.getItem('wp_calc_lead')); } catch (e2) {}
       logEvent('signup', { name, firm: company || null, role: role || null, utm, has_prefill: hasPrefill });
     }
   } catch (err) {
@@ -14109,10 +14199,20 @@ sb.auth.onAuthStateChange(async (event, session) => {
 // before defaults back to Sign In. A parked calc handoff swaps the value line.
 (function initAuthDefaults() {
   try {
-    if (sessionStorage.getItem('wp_calc_prefill')) {
+    // Context on the gate, not a generic wall: in-tab payload, or a lead
+    // token young enough that the server-side copy is still alive (48h).
+    let hasHandoff = !!sessionStorage.getItem('wp_calc_prefill');
+    if (!hasHandoff) {
+      try {
+        const l = JSON.parse(localStorage.getItem('wp_calc_lead') || 'null');
+        hasHandoff = !!(l && l.token && Date.now() - (l.at || 0) < 48 * 3600 * 1000);
+      } catch (e2) {}
+    }
+    if (hasHandoff) {
       const line = document.getElementById('auth-value-line');
-      if (line) line.innerHTML = '<b style="color:var(--text);">Your bin calculation is ready to save.</b> ' +
-        "Create a free account and we'll set up the project with your council and unit mix already filled in.";
+      if (line) line.innerHTML = '<b style="color:var(--text);">Your bin calculation is ready.</b> ' +
+        'Create a free account to lay out your bin room — council, unit mix and bin schedule carry straight in. ' +
+        'Already registered? Sign in and we’ll attach it to your account.';
     }
     if (!localStorage.getItem('wp_known_user')) {
       const tabs = document.querySelectorAll('.auth-tab');
@@ -15779,6 +15879,11 @@ function wsPushSummaryToCalc() {
       res_2br: s.apt_2br || 0,
       res_3br: s.apt_3br || 0,
       bin_rooms: s.bin_rooms || null,
+      // landing-calc handoff tenancies: the calc seeds a commercial room from
+      // these only while the project has none of its own — restored bin_rooms
+      // are the source of truth and are never double-seeded (guard is in the
+      // iframe's ws-calc-fill handler)
+      com: (Array.isArray(s.com) && s.com.length) ? s.com : undefined,
     }, '*');
   }
 }

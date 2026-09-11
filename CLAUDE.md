@@ -76,6 +76,29 @@ Consequences to keep in mind:
   merges over the `WS_VEH` built-in presets. Built-ins are the offline fallback —
   keep them working so the swept tool never hard-fails on a DB outage.
 
+## Landing handoff (anonymous → signed-in)
+
+The landing calculator is account-free by rule; the signup gate sits on the
+click-through, and the calculation must survive it. Two transports, both
+one-shot, both normalised through `wpNormaliseCalcPayload()` (never trust
+either side):
+
+- **`?calc=`** — base64url payload in the URL, parked in sessionStorage. The
+  fast path: same tab, wins when both exist.
+- **`calc_leads`** — a claimable server-side record
+  (`sql/2026-09-11-calc-leads.sql`), token in localStorage, expiring in 48 h.
+  Covers the other-tab / come-back-tomorrow cases, and `?lead=<token>` lets any
+  future capture point (the QR bin-room signage flow) create the lead itself
+  and hand over just the token. **RPC-only by design**: no policies, no table
+  grants — the token is the secret, and a SELECT policy would make leads
+  enumerable. This is the deliberate exception to the "new tables need
+  GRANTs" rule above; the two `security definer` functions are the surface.
+
+After the first sign-in, `applyCalcPrefill()` creates the project and lands in
+the **Design tab** with the schedule as Layout room cards — never a calculator
+re-entry screen (the visitor already typed those numbers once). The paywall on
+a capped account is the billing wall, not this gate — keep them separate.
+
 ## Canvas geometry
 
 - **All geometry is in canvas pixels; `mpp` converts.** `wsSweptMpp()` returns
