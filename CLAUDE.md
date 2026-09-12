@@ -15,6 +15,7 @@ check this list before widening who can use the app.
 | 3 | **No PITR — daily backups only.** | **Real customer data.** | **Confirmed 2026-08-24: point-in-time recovery is NOT enabled.** The project has daily backups, which sets a recovery point objective of **up to 24 hours** — a customer who spends a day on a layout can lose that day, and nothing in the app warns them. A restore has also still never been **rehearsed**, so the retention window and the restore path are both untested. And daily backups cover **Postgres only**: uploaded plan PDFs live in Supabase **Storage** (`PLANS_BUCKET`), which they do not include. A restore that brings back every `projects` row and no plan PDFs is a half-restore — every project would open pointing at a drawing that is gone. Decide the acceptable RPO before real customer data, then enable PITR or accept 24h in writing, back up Storage separately, and rehearse once end to end. |
 | 4 | **`pdf_rev` column** for cross-device plan freshness. | Multi-device use of one project. | Nothing currently tells a second device that the stored plan PDF changed, so it can serve a stale page under a current layout. |
 | 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
+| 9 | **ai-user anonymous allowance.** The `?check=wmp` entry hands the checker an `is_anonymous` session token; the ai-user edge function (not in this repo) must grant such tokens exactly ONE lifetime `compliance` run and refuse every other tool tag. Also: "Allow anonymous sign-ins" must be ON in Supabase Auth (off = graceful signup-first fallback, but the offer stops being "no account needed"). | **Pointing the planner landing page at real traffic.** | Until verified, an anonymous check either fails server-side or draws from an unintended allowance bucket. Client + DB fences are done (`sql/2026-09-12-anon-compliance-entry.sql`); this is the last leg. |
 
 **Closed:** Swept-path title block panel (gate 5). `wsSheetVehPanel` renders the
 bottom-centre card when the swept layer is on and paths exist: the D2 side
@@ -76,6 +77,48 @@ Consequences to keep in mind:
   merges over the `WS_VEH` built-in presets. Built-ins are the offline fallback —
   keep them working so the swept tool never hard-fails on a DB outage.
 
+## Anonymous compliance entry (planner landing page)
+
+"Everything inside WastePlanner requires a free account" has exactly **one
+scoped exception**: the planner landing page's `?check=wmp` entry opens the
+compliance checker in an anonymous session for **one** free WMP check. The
+result shows in full — the result itself is never gated — and *any* further
+action (second check, export, submit, engage, navigating anywhere else)
+raises the signup gate. Do not widen this to any other tool or entry point;
+the rule and its exception are restated at the `ANONYMOUS MODE: ONE SCOPED
+EXCEPTION` section in `index.html`.
+
+How it hangs together (tested by `tests/anon-entry.test.js`):
+
+- **The guest is a real Supabase `is_anonymous` user** (`signInAnonymously`),
+  so the ai-user edge function can enforce a one-run allowance on a
+  verifiable token, and RLS treats it as `authenticated`. The session boot
+  routes `is_anonymous` sessions into the checker and **never** into the app
+  proper. DB fences: `sql/2026-09-12-anon-compliance-entry.sql` (anonymous
+  JWTs cannot write projects or profiles; events stay open for the funnel).
+  Anonymous sign-ins must be ON in Supabase Auth settings — if the call
+  fails, the entry falls back to signup-first instead of breaking.
+- **`showScreen` is the wall**: in anon mode every screen except
+  `compliance` routes to `wpAnonGate()`. The hidden nav rail
+  (`body.wp-anon`) is cosmetics on top, not the enforcement.
+- **One check per device** is `wp_anon_check_used` in localStorage plus the
+  persisted anon session; the server allowance is the real meter. Clearing
+  storage leaks a fresh check — accepted, this is lead gen, not metering.
+- **Claim-on-signup is ONE shared mechanism** (`wpClaimPark` / `wpClaimApply`
+  in `index.html`), parameterised by kind: the bin-calc handoff parks
+  `calc`, the checker parks `compliance` (result JSON in the claim store,
+  WMP bytes under the temp IDB key `doc:anon:check`). A future entry point
+  adds a kind and an applier — never a parallel bespoke store. Applying the
+  compliance claim creates the project with `complianceRuns: 1` (the
+  anonymous run **is** the project's first check, so every free path tops
+  out at the same two checks) and re-renders the exact stored result via the
+  checker's `restoreScan()` — nothing re-runs, nothing double-counts
+  (`state.restoring` suppresses the `wp-scan-done` report).
+- **Attribution**: the landing page carries its own `utm_*` params; the
+  existing first-touch capture and `signup_source` stamping cover it. The
+  funnel events are `anon_check_entry`, `anon_check_run`, `anon_gate_shown`,
+  `anon_banner_signup`, `compliance_claim_applied`.
+
 ## Canvas geometry
 
 - **All geometry is in canvas pixels; `mpp` converts.** `wsSweptMpp()` returns
@@ -128,6 +171,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/reconcile-equipment.test.js` | Compaction maths, invariants, snapshot, WMP obligations |
 | `tests/provision-zones.test.js` | Provision streams, zone types, and their four UI surfaces |
 | `tests/vehicle-profile.test.js` | D2 side-elevation module: axle positions, defaults, SVG output; D3 panel gating |
+| `tests/anon-entry.test.js` | Anonymous compliance entry, shared claim store, signup gate |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`

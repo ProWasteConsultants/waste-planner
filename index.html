@@ -734,6 +734,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* guest-mode chips inject themselves into the projects action row with
    margin-left:auto — pin the lockup hard left whatever lands beside it */
 .topbar-actions .wp-lockup{order:-1;margin-right:auto;}
+/* ── ANONYMOUS COMPLIANCE ENTRY ──────────────────────────────────────────────
+   The one signed-out surface (see the scoped-exception note at the anon-mode
+   script section): the checker fills the viewport and the rest of the app is
+   simply not there — no nav rail to wander off, no project pill pointing at a
+   projects home a guest cannot open. showScreen() is the belt to this CSS's
+   braces: it gates every non-compliance screen while the mode is active. */
+body.wp-anon .side-nav{display:none;}
+body.wp-anon .ws-top-chip{display:none;}
+#wp-anon-banner{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:11400;display:flex;align-items:center;gap:12px;background:#101D1C;border:1px solid #2C3838;border-radius:12px;padding:9px 10px 9px 16px;box-shadow:0 8px 28px rgba(0,0,0,0.45);font-size:12.5px;color:#C7D4D4;white-space:nowrap;}
+#wp-anon-banner b{color:#F0F8FA;font-weight:700;}
+#wp-anon-banner button{background:var(--teal);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}
 </style>
 <script src="https://js.stripe.com/v3/"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -7087,10 +7098,13 @@ let state = {
   glReqId: 0,
   checkedDoc: null,          // guidelineSourceInfo() snapshot taken at scan time
   wmpFileName: &#x27;&#x27;,
+  wmpBuf: null,         // raw WMP bytes, kept for the anonymous claim handoff
   council: &#x27;&#x27;,
   scanComplete: false,
   runsCap: null,        // free-plan per-project cap from the platform; null = uncapped
   runsRemaining: null,  // checks left on the open project; null = uncapped
+  anonMode: false,      // landing-page guest session: exports gate to signup, the scan result is parked for claim-on-signup
+  restoring: false,     // restoreScan() is re-rendering an already-counted check — never report it as a new run
   hl: { wmp: {}, guide: {} },  // pane -&gt; page -&gt; [{id,result,snippet,rects:[{x,y,w,h}]}]
 };
 
@@ -7942,7 +7956,7 @@ function handleWMPDrop(e) {
 }
 function handleWMPFile(e) { const f = e.target.files[0]; if (f) loadWMPFile(f); }
 function clearWMP() {
-  state.pdfDoc = null; state.pdfPages = []; state.pdfTextContent = []; state.wmpFileName = &#x27;&#x27;;
+  state.pdfDoc = null; state.pdfPages = []; state.pdfTextContent = []; state.wmpFileName = &#x27;&#x27;; state.wmpBuf = null;
   document.getElementById(&#x27;wmp-file-pill&#x27;).style.display = &#x27;none&#x27;;
   document.getElementById(&#x27;wmp-drop-zone&#x27;).classList.remove(&#x27;has-file&#x27;);
   document.getElementById(&#x27;wmp-file-input&#x27;).value = &#x27;&#x27;;
@@ -7962,6 +7976,9 @@ async function loadWMPFile(file) {
   document.getElementById(&#x27;wmp-drop-zone&#x27;).classList.add(&#x27;has-file&#x27;);
 
   const ab = await file.arrayBuffer();
+  // pdf.js may transfer the buffer to its worker — keep an intact copy for the
+  // anonymous claim handoff (same slice(0) trick the Design tab uses).
+  state.wmpBuf = ab.slice(0);
   state.pdfDoc = await pdfjsLib.getDocument({data:ab}).promise;
   const n = state.pdfDoc.numPages;
   document.getElementById(&#x27;wmp-file-pages&#x27;).textContent = `Analysing ${n} pages…`;
@@ -8023,7 +8040,13 @@ function updateRunsBadge() {
   // wp-set-runs); paid and staff accounts send null and the label stays hidden.
   const el = document.getElementById(&#x27;runs-left-label&#x27;);
   if (!el) return;
-  if (typeof state.runsRemaining === &#x27;number&#x27; &amp;&amp; state.runsCap) {
+  if (state.anonMode) {
+    // Guest session: one check, no project to count against.
+    el.style.display = &#x27;inline&#x27;;
+    el.textContent = state.runsRemaining === 0
+      ? &#x27;Free check used — create a free account for your next one&#x27;
+      : &#x27;Free compliance check — no account needed&#x27;;
+  } else if (typeof state.runsRemaining === &#x27;number&#x27; &amp;&amp; state.runsCap) {
     el.style.display = &#x27;inline&#x27;;
     el.textContent = state.runsRemaining === 0
       ? &#x27;No free checks left on this project&#x27;
@@ -8352,12 +8375,67 @@ function renderResults(data) {
   // Report the completed run to the platform: it owns the per-project counter
   // (project row + database), logs the event, and pushes back the remaining
   // count. Decrement locally too so the badge is honest before the round trip.
-  if (window.parent &amp;&amp; window.parent !== window)
+  // A restoreScan() re-render is an ALREADY-COUNTED check coming back after
+  // claim-on-signup — reporting it again would double-bill the run.
+  if (!state.restoring &amp;&amp; window.parent &amp;&amp; window.parent !== window) {
     window.parent.postMessage({ type: &#x27;wp-scan-done&#x27;, fails: fail, flags: flag, score }, &#x27;*&#x27;);
-  if (typeof state.runsRemaining === &#x27;number&#x27;) {
+    if (state.anonMode) {
+      // Park the whole result with the platform so signup can attach it to the
+      // new account instead of discarding it. The WMP bytes are TRANSFERRED
+      // (not copied) — the guest cannot re-scan anyway, the gate holds.
+      const csel = document.getElementById(&#x27;council-select&#x27;);
+      const buf = state.wmpBuf; state.wmpBuf = null;
+      const msg = {
+        type: &#x27;wp-anon-result&#x27;,
+        data, score,
+        council: state.council,
+        councilName: csel?.options[csel.selectedIndex]?.text || &#x27;&#x27;,
+        address: document.getElementById(&#x27;dev-address&#x27;)?.value || &#x27;&#x27;,
+        ref: document.getElementById(&#x27;proj-ref&#x27;)?.value || &#x27;&#x27;,
+        fileName: state.wmpFileName || &#x27;&#x27;,
+        checkedDoc: state.checkedDoc || null,
+        checkedAgainst: state.checkedAgainst || null,
+        wmpBuf: buf || null,
+      };
+      try { window.parent.postMessage(msg, &#x27;*&#x27;, buf ? [buf] : []); }
+      catch (err) { try { window.parent.postMessage({ ...msg, wmpBuf: null }, &#x27;*&#x27;); } catch (e2) {} }
+    }
+  }
+  if (!state.restoring &amp;&amp; typeof state.runsRemaining === &#x27;number&#x27;) {
     state.runsRemaining = Math.max(0, state.runsRemaining - 1);
     updateRunsBadge();
   }
+}
+
+// ── RESTORE (claim-on-signup) ─────────────────────────────────────────────
+// Re-renders a check that already ran in an anonymous session, exactly as the
+// AI returned it — nothing re-runs and nothing is re-counted (state.restoring
+// suppresses the wp-scan-done report and the local decrement). Called by the
+// platform after signup, usually right after loadWMPFile() with the parked
+// PDF so the panes and highlights come back too.
+function restoreScan(payload) {
+  if (!payload || !payload.data) return;
+  state.restoring = true;
+  try {
+    const fill = (id, v) =&gt; { const el = document.getElementById(id); if (el &amp;&amp; v &amp;&amp; !el.value) el.value = v; };
+    fill(&#x27;dev-address&#x27;, payload.address);
+    fill(&#x27;proj-ref&#x27;, payload.ref);
+    if (payload.council) {
+      state.council = payload.council;
+      const sel = document.getElementById(&#x27;council-select&#x27;);
+      if (sel) {
+        for (const opt of sel.options) if (opt.value === payload.council) { sel.value = payload.council; break; }
+        if (typeof updateGuidelineStatus === &#x27;function&#x27;) { try { updateGuidelineStatus(); } catch (e) {} }
+      }
+    }
+    if (payload.checkedDoc) state.checkedDoc = payload.checkedDoc;
+    state.checkedAgainst = payload.checkedAgainst || state.checkedAgainst;
+    if (payload.address) document.getElementById(&#x27;checker-title&#x27;).textContent = payload.address + (payload.ref ? &#x27; — &#x27; + payload.ref : &#x27;&#x27;);
+    if (state.checkedDoc?.short) document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;Checked against: &#x27; + state.checkedDoc.short;
+    switchTab(&#x27;summary&#x27;, document.getElementById(&#x27;tab-summary-btn&#x27;));
+    document.getElementById(&#x27;scan-loading-panel&#x27;).style.display = &#x27;none&#x27;;
+    renderResults(payload.data);
+  } finally { state.restoring = false; }
 }
 
 // ── COMMENTS LIST ─────────────────────────────────────────────────────────
@@ -8549,6 +8627,13 @@ function addCommentToBank(id) {
 
 // ── SUBMISSION ────────────────────────────────────────────────────────────
 function submitToCouncil() {
+  // Guest session: the delivered result stays fully visible, but everything
+  // past viewing it routes to the signup gate (the platform owns the modal).
+  if (state.anonMode) {
+    if (window.parent &amp;&amp; window.parent !== window)
+      window.parent.postMessage({ type: &#x27;wp-anon-gate&#x27;, trigger: &#x27;submit&#x27; }, &#x27;*&#x27;);
+    return;
+  }
   const g = GUIDELINE_DB[state.council];
   const councilName = document.getElementById(&#x27;council-select&#x27;).options[document.getElementById(&#x27;council-select&#x27;).selectedIndex]?.text || &#x27;the council&#x27;;
   if (g &amp;&amp; g.loaded) {
@@ -8560,6 +8645,12 @@ function submitToCouncil() {
 
 // ── EXPORT REPORT ─────────────────────────────────────────────────────────
 function exportReport() {
+  // Guest session: seeing the result is free, taking it away is the signup.
+  if (state.anonMode) {
+    if (window.parent &amp;&amp; window.parent !== window)
+      window.parent.postMessage({ type: &#x27;wp-anon-gate&#x27;, trigger: &#x27;export&#x27; }, &#x27;*&#x27;);
+    return;
+  }
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;Unknown&#x27;;
   const ref  = document.getElementById(&#x27;proj-ref&#x27;).value || &#x27;—&#x27;;
   const councilName = document.getElementById(&#x27;council-select&#x27;).options[document.getElementById(&#x27;council-select&#x27;).selectedIndex]?.text || &#x27;—&#x27;;
@@ -8694,6 +8785,7 @@ window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
     state.aiIncluded = !!e.data.aiIncluded;
     state.aiToken = e.data.aiToken || null;
     state.aiUrl = e.data.aiUrl || null;
+    state.anonMode = !!e.data.anonMode;
     state.runsCap = (typeof e.data.runsCap === &#x27;number&#x27;) ? e.data.runsCap : null;
     state.runsRemaining = (typeof e.data.runsRemaining === &#x27;number&#x27;) ? e.data.runsRemaining : null;
     updateRunsBadge();
@@ -8916,6 +9008,15 @@ const SCREEN_LABELS = {
 let currentProjectId = null;
 
 function showScreen(name, navEl) {
+  // Anonymous compliance entry: the checker is the ONLY screen a guest session
+  // can open — every other navigation is "anything else in the app" from the
+  // brief, and routes to the signup gate instead. Everything navigates through
+  // showScreen, so this one intercept is the whole wall (the hidden nav rail
+  // is just cosmetics on top).
+  if (typeof wpAnonActive === 'function' && wpAnonActive() && name !== 'compliance') {
+    if (typeof wpAnonGate === 'function') wpAnonGate('navigate');
+    return;
+  }
   // Usage telemetry for the screens that answer "which tools drive value"
   if (['workspace','compliance','costcheck'].includes(name) && typeof logEvent === 'function') logEvent('screen_view', { screen: name });
   // Update nav
@@ -8982,9 +9083,12 @@ function showScreen(name, navEl) {
         || (typeof currentOrg !== 'undefined' && currentOrg?.kind === 'council');
       // Included AI: hand the iframe a session token so it can call the
       // ai-user Edge Function instead of needing a pasted key. srcdoc iframes
-      // share our origin, so this stays first-party.
+      // share our origin, so this stays first-party. An anonymous checker
+      // session holds a REAL (is_anonymous) Supabase session, so the same
+      // token handoff works — the edge function owns its one-run allowance.
+      const anonMode = (typeof wpAnonActive === 'function') && wpAnonActive();
       let aiToken = null;
-      if (aiEntitled()) {
+      if (aiEntitled() || anonMode) {
         try { const { data: { session } } = await sb.auth.getSession(); aiToken = session?.access_token || null; } catch {}
       }
       // The checker's council list is the platform registry, not a hard-coded
@@ -9017,10 +9121,15 @@ function showScreen(name, navEl) {
         aiIncluded: !!aiToken,
         aiToken,
         aiUrl: AI_PROXY_BASE + '/ai-user',
+        // Anonymous entry: exactly ONE check, tracked per device (and enforced
+        // for real by the ai-user function's lifetime allowance) — the signup
+        // gate takes over from there.
+        anonMode,
         // Free plan: the per-project checker cap rides with the role handshake.
         // null = uncapped (paid tier, staff, or no open project).
-        runsCap: (typeof wpFreeRunsCap === 'function') ? wpFreeRunsCap() : null,
-        runsRemaining: (typeof wpFreeRunsRemaining === 'function') ? wpFreeRunsRemaining(proj) : null,
+        runsCap: anonMode ? 1 : ((typeof wpFreeRunsCap === 'function') ? wpFreeRunsCap() : null),
+        runsRemaining: anonMode ? (wpAnonCheckUsed() ? 0 : 1)
+          : ((typeof wpFreeRunsRemaining === 'function') ? wpFreeRunsRemaining(proj) : null),
       }, '*');
       // Pre-fill project fields from the open project, if any
       if (proj) {
@@ -9830,15 +9939,49 @@ window.addEventListener('message', async (e) => {
 // remaining count back so the checker's badge can never drift from it.
 window.addEventListener('message', async (e) => {
   if (!e.data) return;
+  const anon = (typeof wpAnonActive === 'function') && wpAnonActive();
   if (e.data.type === 'wp-paywall') {
+    // A guest's "cap" is the one free check — that wall is the signup gate,
+    // never the upgrade paywall (there is no account to upgrade yet).
+    if (anon) { wpAnonGate('second_check'); return; }
     if (typeof showPaywall === 'function') showPaywall(e.data.reason || 'compliance_cap');
     return;
   }
   if (e.data.type === 'wp-engage') {
+    // The engagement form files against an account + project; a guest gets
+    // the gate first and the form after signup, like everything else.
+    if (anon) { wpAnonGate('engage'); return; }
     if (typeof wpEngageOpen === 'function') wpEngageOpen(e.data.source || 'compliance');
     return;
   }
+  if (e.data.type === 'wp-anon-gate') {
+    if (anon) wpAnonGate(e.data.trigger || 'export');
+    return;
+  }
+  if (e.data.type === 'wp-anon-result') {
+    // The completed guest check, parked for claim-on-signup: result JSON in
+    // the shared claim store, WMP bytes under a temp IndexedDB key. Nothing
+    // is re-run after signup — this exact payload is what gets attached.
+    if (!anon) return;
+    const clean = (typeof wpComplianceClaimClean === 'function') ? wpComplianceClaimClean(e.data) : null;
+    if (!clean) return;
+    wpClaimPark('compliance', clean);
+    if (e.data.wmpBuf && e.data.wmpBuf.byteLength) {
+      try { await idbPutPdf('doc:anon:check', e.data.wmpBuf, clean.fileName || 'wmp.pdf'); } catch (err) {}
+    }
+    return;
+  }
   if (e.data.type !== 'wp-scan-done') return;
+  if (anon) {
+    // Guest run: no project row to count against. Mark the device's one free
+    // check spent (the ai-user function holds the real allowance), log it,
+    // and flip the checker's badge to the used state.
+    try { localStorage.setItem('wp_anon_check_used', '1'); } catch (err) {}
+    logEvent('anon_check_run', { fails: e.data.fails ?? null, score: e.data.score ?? null });
+    document.getElementById('compliance-iframe')?.contentWindow?.postMessage(
+      { type: 'wp-set-runs', runsCap: 1, runsRemaining: 0 }, '*');
+    return;
+  }
   const projects = getProjects();
   const proj = currentProjectId ? projects.find(p => p.id === currentProjectId) : null;
   if (proj) {
@@ -13343,11 +13486,16 @@ function incrementAICalls() {
 // ── USAGE EVENTS ──────────────────────────────────────────────────────────
 // Fire-and-forget telemetry into the events table (analytics_migration.sql).
 // Silent on every failure — including before the migration exists — because
-// analytics must never break a user-facing action. Signed-in users only.
+// analytics must never break a user-facing action. Signed-in users only —
+// plus the anonymous compliance session, which holds a real (is_anonymous)
+// Supabase user, so its funnel events insert under that id and satisfy the
+// same RLS as everyone else's.
 function logEvent(name, meta) {
   try {
-    if (!currentUser || !sb) return;
-    sb.from('events').insert({ user_id: currentUser.id, event: name, meta: meta || {} })
+    const uid = currentUser?.id
+      || ((typeof WP_ANON !== 'undefined' && WP_ANON?.user?.id) || null);
+    if (!uid || !sb) return;
+    sb.from('events').insert({ user_id: uid, event: name, meta: meta || {} })
       .then(() => {}, () => {});
   } catch (e) {}
 }
@@ -13370,9 +13518,77 @@ function logEvent(name, meta) {
   } catch (e) {}
 })();
 
+// ── ANONYMOUS HANDOFF CLAIMS ───────────────────────────────────────────────
+// ONE mechanism for every "did something outside an account → signed up →
+// the work comes with them" path: the bin-calculator handoff parks a 'calc'
+// claim, the anonymous compliance check parks a 'compliance' claim, and any
+// future entry point (QR lead capture etc.) adds a kind here plus an applier
+// in wpClaimApply — never a bespoke parallel store. One claim at a time: the
+// newest park wins, which matches how a visitor actually arrives (one landing
+// page, one artefact worth keeping).
+//
+// localStorage, not sessionStorage: the email-confirm link and a "come back
+// tomorrow and sign up" both open fresh tabs, where sessionStorage is empty
+// and the parked work would silently vanish. The age cap keeps a claim from
+// ambushing a signup weeks later.
+const WP_CLAIM_KEY = 'wp_pending_claim';
+const WP_CLAIM_KINDS = { calc: true, compliance: true };
+const WP_CLAIM_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+
+function wpClaimNormalise(kind, payload, at) {
+  // Pure: shape-check a claim before it is parked. Unknown kinds and
+  // non-object payloads return null — junk never reaches the store.
+  if (!kind || WP_CLAIM_KINDS[kind] !== true) return null;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const t = Number(at);
+  return { kind, payload, at: Number.isFinite(t) ? t : Date.now() };
+}
+
+function wpClaimFresh(rec, now) {
+  // Pure: is a stored claim still worth applying? A record with a broken
+  // shape or a stamp older than the age cap is dead; a stamp slightly in the
+  // future (clock adjusted between visits) still counts as fresh.
+  if (!rec || WP_CLAIM_KINDS[rec.kind] !== true) return false;
+  if (!rec.payload || typeof rec.payload !== 'object' || Array.isArray(rec.payload)) return false;
+  const t = Number(rec.at);
+  if (!Number.isFinite(t)) return false;
+  const n = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+  return (n - t) <= WP_CLAIM_MAX_AGE_MS;
+}
+
+function wpClaimPark(kind, payload) {
+  const rec = wpClaimNormalise(kind, payload);
+  if (!rec) return false;
+  try { localStorage.setItem(WP_CLAIM_KEY, JSON.stringify(rec)); return true; } catch (e) { return false; }
+}
+function wpClaimPeek() {
+  try {
+    const rec = JSON.parse(localStorage.getItem(WP_CLAIM_KEY) || 'null');
+    return wpClaimFresh(rec) ? rec : null;
+  } catch (e) { return null; }
+}
+function wpClaimTake() {
+  // One shot: the claim clears BEFORE anything can fail halfway and re-apply
+  // on the next login — same doctrine the calc prefill always had.
+  const rec = wpClaimPeek();
+  try { localStorage.removeItem(WP_CLAIM_KEY); } catch (e) {}
+  return rec;
+}
+
+// Dispatch after the FIRST successful sign-in or signup (showApp hooks this).
+// Returns the kind it applied, so callers can tell whether the landing-page
+// entry still needs a plain navigation.
+async function wpClaimApply() {
+  const rec = wpClaimTake();
+  if (!rec || !currentUser) return null;
+  if (rec.kind === 'calc') { await applyCalcPrefill(rec.payload); return 'calc'; }
+  if (rec.kind === 'compliance') { await applyComplianceClaim(rec.payload); return 'compliance'; }
+  return null;
+}
+
 // ── LANDING-PAGE CALC HANDOFF (?calc=) ─────────────────────────────────────
 // go.wasteplanner.au links here with a base64url JSON payload of the visitor's
-// calculation. Parse ONCE, park it in sessionStorage so it survives the
+// calculation. Parse ONCE, park it as a 'calc' claim so it survives the
 // signup → email-confirm → return round trip, and strip the param. Anything
 // invalid is ignored silently, per the brief. UTM params are untouched —
 // captureAttribution above has already read them by the time this runs.
@@ -13398,20 +13614,34 @@ function logEvent(name, meta) {
     };
     // a payload with nothing usable in it is not a prefill
     if (!clean.state && !Object.values(clean.mix).some(v => v > 0) && !clean.com.length) return;
-    sessionStorage.setItem('wp_calc_prefill', JSON.stringify(clean));
+    wpClaimPark('calc', clean);
   } catch (e) { /* invalid payload: ignore silently */ }
 })();
 
-// Apply the parked calculation after the FIRST successful sign-in or signup:
-// create the project, open the Bin Calculator tab and push the mix into it
-// (the calculator's own ws-calc-fill listener seeds the room and runs the
-// calc). One shot — the prefill clears before anything can fail halfway and
-// re-apply on the next login.
-async function applyCalcPrefill() {
-  let pre = null;
-  try { pre = JSON.parse(sessionStorage.getItem('wp_calc_prefill') || 'null'); } catch (e) {}
+// ── LANDING-PAGE COMPLIANCE ENTRY (?check=wmp) ─────────────────────────────
+// The planner landing page links here with ?check=wmp (its own UTM params
+// ride alongside and are captured above like any other campaign's). The flag
+// parks in sessionStorage — unlike a claim it carries no work product, it
+// only tells THIS tab's boot sequence to open an anonymous checker session
+// instead of the auth screen. A returning guest doesn't need it: their
+// persisted is_anonymous Supabase session re-enters the checker on its own.
+(function captureCheckEntry() {
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('check') !== 'wmp') return;
+    q.delete('check');
+    history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+    sessionStorage.setItem('wp_anon_entry', 'compliance');
+  } catch (e) {}
+})();
+
+// Apply a parked calculation claim: create the project, open the Bin
+// Calculator tab and push the mix into it (the calculator's own ws-calc-fill
+// listener seeds the room and runs the calc). The claim store already cleared
+// the record — wpClaimTake in wpClaimApply — so nothing re-applies on the
+// next login.
+async function applyCalcPrefill(pre) {
   if (!pre || !currentUser) return;
-  sessionStorage.removeItem('wp_calc_prefill');
   // A capped free account can't take the prefill project — say so instead of
   // silently dropping the payload, and don't burn the slot check on retries.
   if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
@@ -13459,6 +13689,97 @@ async function applyCalcPrefill() {
       com: pre.com,
     }, '*');
   }, 900);
+}
+
+function wpComplianceClaimClean(p) {
+  // Pure: sanitise the checker's parked result before it becomes a claim.
+  // The comments array IS the result — a payload without one is not a check
+  // worth carrying through, so it returns null and nothing parks.
+  if (!p || typeof p !== 'object') return null;
+  const data = (p.data && typeof p.data === 'object' && !Array.isArray(p.data)) ? p.data : null;
+  const comments = Array.isArray(data?.comments) ? data.comments.filter(c => c && typeof c === 'object').slice(0, 200) : [];
+  if (!comments.length) return null;
+  const str = (v, n) => typeof v === 'string' ? v.slice(0, n) : '';
+  return {
+    data: {
+      comments,
+      readiness_score: Number.isFinite(Number(data.readiness_score)) ? Number(data.readiness_score) : null,
+      overall_summary: str(data.overall_summary, 4000),
+      council_risk_note: str(data.council_risk_note, 2000),
+    },
+    score: Number.isFinite(Number(p.score)) ? Number(p.score) : null,
+    council: str(p.council, 120),
+    councilName: str(p.councilName, 160),
+    address: str(p.address, 200),
+    ref: str(p.ref, 100),
+    fileName: str(p.fileName, 160),
+    checkedDoc: (p.checkedDoc && typeof p.checkedDoc === 'object') ? { short: str(p.checkedDoc.short, 200), pdf: false } : null,
+    checkedAgainst: (p.checkedAgainst && typeof p.checkedAgainst === 'object' && !Array.isArray(p.checkedAgainst)) ? p.checkedAgainst : null,
+  };
+}
+
+// Apply a parked compliance claim: create the project the anonymous check
+// belongs to, file the WMP PDF as its document, and reopen the checker
+// showing the EXACT result the guest already saw — nothing re-runs and no AI
+// allowance is spent. complianceRuns starts at 1 because the anonymous run IS
+// this project's first check: every free path lands on the same two checks
+// total, so the landing page can never be a way to bank a third.
+async function applyComplianceClaim(pre) {
+  if (!pre || !currentUser) return;
+  if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
+  const project = {
+    id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+    name: 'WMP check — ' + (pre.address || pre.fileName || pre.councilName || 'new project'),
+    address: pre.address || '',
+    state: '',
+    council: pre.councilName || '',
+    devType: '',
+    levels: '',
+    status: 'Pre-Lodgement',
+    summary: { address: pre.address || '', council: pre.councilName || '' },
+    complianceRuns: 1,
+    check: pre,   // the carried result — restoreScan re-renders it, app_data persists it
+    created: new Date().toLocaleDateString('en-AU'),
+    ts: Date.now(),
+  };
+  const projects = getProjects();
+  projects.unshift(project);
+  saveProjects(projects);
+  currentProjectId = project.id;
+  if (typeof saveProjectToDB === 'function') saveProjectToDB(project);
+  if (typeof currentProfile !== 'undefined' && currentProfile) currentProfile.projects_created = (Number(currentProfile.projects_created) || 0) + 1;
+  if (typeof renderProjects === 'function') renderProjects();
+  logEvent('project_created', { project_id: project.id, council: pre.council || null, source: 'compliance_claim' });
+  logEvent('compliance_claim_applied', { council: pre.council || null, score: pre.score ?? null });
+  // The WMP bytes were parked under a temp IDB key by the anonymous run —
+  // file them as a real project document, then clear the temp slot.
+  let rec = null;
+  try { rec = await idbGetPdf('doc:anon:check'); } catch (e) {}
+  if (rec?.buf) {
+    try { await docStore(project.id, rec.buf, rec.name || pre.fileName || 'wmp.pdf', 'WMP'); } catch (e) {}
+    try { await idbDeletePdf('doc:anon:check'); } catch (e) {}
+  }
+  showScreen('compliance', document.getElementById('nav-compliance'));
+  // Same poke pattern as docOpenInCompliance: the iframe loads with the page,
+  // but its functions may not be evaluated yet on a cold start.
+  const file = rec?.buf ? new File([rec.buf], rec.name || pre.fileName || 'wmp.pdf', { type: 'application/pdf' }) : null;
+  let tries = 0;
+  const poke = () => {
+    const w = document.getElementById('compliance-iframe')?.contentWindow;
+    if (w && typeof w.restoreScan === 'function') {
+      try {
+        // Result first (instant), PDF behind it — restoreScan is idempotent,
+        // so the second call after the load just adds panes and highlights.
+        w.restoreScan(pre);
+        if (file && typeof w.loadWMPFile === 'function') {
+          w.loadWMPFile(file).then(() => { try { w.restoreScan(pre); } catch (e) {} }, () => {});
+        }
+        return;
+      } catch (e) {}
+    }
+    if (++tries < 40) setTimeout(poke, 250);
+  };
+  setTimeout(poke, 400);
 }
 
 async function stampSignupSource() {
@@ -14065,8 +14386,8 @@ async function handleFreeSignup() {
     try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
     if (isNewAccount && typeof logEvent === 'function') {
       let utm = null; try { utm = JSON.parse(localStorage.getItem('wp_attrib') || 'null'); } catch (e2) {}
-      let hasPrefill = false; try { hasPrefill = !!sessionStorage.getItem('wp_calc_prefill'); } catch (e2) {}
-      logEvent('signup', { name, firm: company || null, role: role || null, utm, has_prefill: hasPrefill });
+      let claimKind = null; try { claimKind = (typeof wpClaimPeek === 'function') ? (wpClaimPeek()?.kind || null) : null; } catch (e2) {}
+      logEvent('signup', { name, firm: company || null, role: role || null, utm, has_prefill: claimKind === 'calc', claim: claimKind });
     }
   } catch (err) {
     console.error('Free signup error:', err);
@@ -14096,6 +14417,10 @@ sb.auth.onAuthStateChange(async (event, session) => {
   // Only handle SIGNED_OUT here — login is handled directly in handleLogin
   if (event === 'SIGNED_OUT') {
     currentUser = null; currentProfile = null;
+    // A guest who abandoned a sign-in halfway (e.g. cancelled 2FA) signs out
+    // of a session that already replaced the anonymous one — drop the anon
+    // chrome too, or the banner floats over the auth screen.
+    if (typeof wpAnonActive === 'function' && wpAnonActive()) wpAnonExit();
     if (typeof resetOrgState === 'function') resetOrgState();
     document.getElementById('auth-screen').style.display = 'flex';
     document.getElementById('app-content').style.display = 'none';
@@ -14106,13 +14431,18 @@ sb.auth.onAuthStateChange(async (event, session) => {
 
 // ── AUTH SCREEN DEFAULTS ────────────────────────────────────────────────────
 // Fresh visitors land on Create Account; anyone this browser has signed in
-// before defaults back to Sign In. A parked calc handoff swaps the value line.
+// before defaults back to Sign In. A parked claim swaps the value line for
+// copy naming the work the signup keeps — never a generic wall.
 (function initAuthDefaults() {
   try {
-    if (sessionStorage.getItem('wp_calc_prefill')) {
-      const line = document.getElementById('auth-value-line');
-      if (line) line.innerHTML = '<b style="color:var(--text);">Your bin calculation is ready to save.</b> ' +
+    const claim = (typeof wpClaimPeek === 'function') ? wpClaimPeek() : null;
+    const line = document.getElementById('auth-value-line');
+    if (line && claim?.kind === 'calc') {
+      line.innerHTML = '<b style="color:var(--text);">Your bin calculation is ready to save.</b> ' +
         "Create a free account and we'll set up the project with your council and unit mix already filled in.";
+    } else if (line && claim?.kind === 'compliance') {
+      line.innerHTML = '<b style="color:var(--text);">Your compliance result is ready to keep.</b> ' +
+        'Create a free account and it attaches to your first project — nothing re-runs.';
     }
     if (!localStorage.getItem('wp_known_user')) {
       const tabs = document.querySelectorAll('.auth-tab');
@@ -14125,6 +14455,13 @@ sb.auth.onAuthStateChange(async (event, session) => {
 (async () => {
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (session?.user?.is_anonymous) {
+      // A persisted anonymous session (the landing-page compliance entry)
+      // NEVER enters the app proper — it re-enters the checker, with its
+      // one-check-used state intact, however many times the guest returns.
+      wpAnonEnter(session.user);
+      return;
+    }
     if (session?.user) {
       // A session can persist at AAL1 with 2FA enabled — must verify before
       // entering the app, or refreshing the page becomes a 2FA bypass.
@@ -14133,7 +14470,13 @@ sb.auth.onAuthStateChange(async (event, session) => {
       try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
       await loadProfile();
       showApp();
+      return;
     }
+    // No session at all: a fresh landing-page arrival opens the anonymous
+    // checker; everyone else gets the auth screen as always.
+    let entry = null;
+    try { entry = sessionStorage.getItem('wp_anon_entry'); } catch (e) {}
+    if (entry === 'compliance') await wpAnonStart();
   } catch(e) { console.log('No existing session'); }
 })();
 
@@ -14346,15 +14689,26 @@ function updateProfileUI() {
 }
 
 function showApp() {
+  // Entering the app proper always ends the anonymous checker mode — the
+  // guest just became (or signed back in as) a real account.
+  if (typeof wpAnonActive === 'function' && wpAnonActive()) wpAnonExit();
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app-content').style.display = 'flex';
   loadProjectsFromDB();
   // Orgs load in the background: accepts pending invites, restores the saved
   // workspace context, and re-fetches projects if that context is an org.
   if (typeof loadOrgs === 'function') loadOrgs();
-  // Calculator handoff (?calc=…) applies once the app is visible; the function
-  // self-clears its sessionStorage payload, so repeated showApp calls are safe.
-  setTimeout(() => { if (typeof applyCalcPrefill === 'function') applyCalcPrefill(); }, 400);
+  // Parked claims (calc handoff, anonymous compliance check) apply once the
+  // app is visible; wpClaimApply self-clears the store, so repeated showApp
+  // calls are safe. A landing-page arrival who signed in WITHOUT running the
+  // free check still lands on the checker they came for.
+  setTimeout(async () => {
+    const applied = (typeof wpClaimApply === 'function') ? await wpClaimApply() : null;
+    let entry = null;
+    try { entry = sessionStorage.getItem('wp_anon_entry'); sessionStorage.removeItem('wp_anon_entry'); } catch (e) {}
+    if (entry === 'compliance' && applied !== 'compliance')
+      showScreen('compliance', document.getElementById('nav-compliance'));
+  }, 400);
 }
 
 // ── PROJECTS — SUPABASE ───────────────────────────────────────────────────
@@ -14387,6 +14741,7 @@ async function loadProjectsFromDB() {
         summary: ad.summary || prev.summary,
         volumes: ad.volumes || prev.volumes,
         pdf_name: ad.pdf_name || prev.pdf_name,
+        check: ad.check || prev.check || null,
       };
       if (ad.ws) {
         try {
@@ -14423,6 +14778,7 @@ async function saveProjectToDB(project) {
       summary: (typeof getProjectSummary === 'function' ? getProjectSummary(project) : {}) || {},
       volumes: project.volumes || null,
       pdf_name: project.pdf_name || null,
+      check: project.check || null,   // compliance result carried through signup (anonymous entry)
       ws: (() => { try { return JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) { return null; } })(),
     },
     updated_at: new Date().toISOString(),
@@ -14617,10 +14973,151 @@ window.loadProfile = async function() {
   applyRoleAccess();
 };
 
-// ── ANONYMOUS MODE: REMOVED ───────────────────────────────────────────────
-// There is no guest path and no monthly cap. Every tool requires a signed-in
-// account; the free plan is one project with everything unlocked (see
-// wpIsFreePlan and the paywall). Do not reintroduce a signed-out mode.
+// ── ANONYMOUS MODE: ONE SCOPED EXCEPTION ──────────────────────────────────
+// The rule stands: every tool requires a signed-in account; the free plan is
+// one project with everything unlocked (see wpIsFreePlan and the paywall).
+// The ONE exception is the planner landing page's compliance entry
+// (?check=wmp): one anonymous WMP check, result shown in full, then the
+// signup gate on ANY further action — a second check, an export, a submit,
+// an engage, or navigating anywhere else in the app. It is not a guest mode:
+// the session is a real Supabase is_anonymous user (so the ai-user function
+// can enforce its one-run allowance server-side), the checker is the only
+// reachable screen (showScreen intercepts the rest), and the delivered
+// result is parked as a claim that attaches to the account created at the
+// gate. Do not widen this to any other tool or entry point.
+let WP_ANON = null;
+
+function wpAnonActive() { return !!WP_ANON; }
+
+function wpAnonCheckUsed() {
+  // Per-device memory that the one free check is spent — it must survive a
+  // "come back tomorrow" (the anon session persists alongside it). Clearing
+  // browser storage resets both; that leakage is accepted: this is lead
+  // generation, and the ai-user allowance still caps each anon USER at one
+  // run — a determined re-checker costs a signup prompt, not the AI budget.
+  try { return localStorage.getItem('wp_anon_check_used') === '1'; } catch (e) { return false; }
+}
+
+function wpAnonGateCopy(trigger) {
+  // Pure: the gate names the value just delivered, per the brief — never a
+  // generic wall. 'navigate' is the only trigger that can fire BEFORE a run
+  // (the guest wandering off), so it alone must not presume a result exists.
+  const t = {
+    second_check: { title: 'That was your free check',
+      body: 'Your first WMP check is done and the result stays right here on screen. Create a free account to check your next WMP — this result comes with you, nothing re-runs.' },
+    export: { title: 'Your report is ready to keep',
+      body: 'The full result is on screen now. Create a free account to export the report — the check you just ran attaches to your first project.' },
+    submit: { title: 'Create an account to submit',
+      body: 'Submitting to council runs through your account so the council can trace who lodged it. Your completed check comes with you — nothing re-runs.' },
+    engage: { title: 'Create an account to engage Pro Waste',
+      body: 'A consultant works from your project, so engaging starts with a free account. The check you just ran comes with you.' },
+    navigate: { title: 'The rest of WastePlanner needs a free account',
+      body: 'This free check is the one tool open without an account. Everything else — bin calculators, layouts, swept paths — is included in a free account, one project, no card needed.' },
+  };
+  return t[trigger] || t.navigate;
+}
+
+async function wpAnonStart() {
+  // Fresh landing-page arrival: mint the anonymous Supabase session the
+  // checker runs under. If anonymous sign-ins are off (or the network is
+  // down) the entry still lands somewhere sane: the normal auth screen with
+  // signup-first copy — the flag survives, so signup still opens the checker.
+  try {
+    const { data, error } = await sb.auth.signInAnonymously();
+    if (error || !data?.session?.user) throw (error || new Error('no session'));
+    wpAnonEnter(data.session.user);
+  } catch (e) {
+    console.warn('Anonymous entry unavailable, falling back to signup:', e?.message || e);
+    const line = document.getElementById('auth-value-line');
+    if (line) line.innerHTML = '<b style="color:var(--text);">Create a free account to run your WMP compliance check.</b> One project, every tool, no card needed.';
+    const tabs = document.querySelectorAll('.auth-tab');
+    if (tabs[1]) switchAuthTab('signup', tabs[1]);
+  }
+}
+
+function wpAnonEnter(user) {
+  WP_ANON = { user };
+  try { sessionStorage.removeItem('wp_anon_entry'); } catch (e) {}
+  document.body.classList.add('wp-anon');
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app-content').style.display = 'flex';
+  wpAnonBanner();
+  logEvent('anon_check_entry', { used: wpAnonCheckUsed() });
+  showScreen('compliance', document.getElementById('nav-compliance'));
+}
+
+function wpAnonExit() {
+  WP_ANON = null;
+  document.body.classList.remove('wp-anon');
+  document.getElementById('wp-anon-banner')?.remove();
+  const gate = document.getElementById('wp-anon-gate-modal');
+  if (gate) gate.style.display = 'none';
+}
+
+function wpAnonBanner() {
+  if (document.getElementById('wp-anon-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'wp-anon-banner';
+  b.innerHTML = '<span><b>Free WMP compliance check</b> — no account needed.</span>' +
+    '<button onclick="logEvent(\'anon_banner_signup\');wpAnonToAuth(\'signup\')">Create free account</button>';
+  document.body.appendChild(b);
+}
+
+// The signup gate. Same visual pattern as the paywall, entirely different
+// job: there is no plan to upgrade — the ask is the free account, and the
+// copy references what the guest just got. "Not now" keeps the result on
+// screen: the first check's result itself is never gated.
+function wpAnonGate(trigger) {
+  logEvent('anon_gate_shown', { trigger: trigger || null });
+  const copy = wpAnonGateCopy(trigger);
+  let m = document.getElementById('wp-anon-gate-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'wp-anon-gate-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11500;align-items:center;justify-content:center;';
+    m.innerHTML = `
+      <div style="background:var(--white);border-radius:16px;width:440px;max-width:94vw;padding:28px 30px;">
+        <div id="wp-anon-gate-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:10px;"></div>
+        <div id="wp-anon-gate-body" style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:20px;"></div>
+        <button onclick="closeAnonGate();wpAnonToAuth('signup')" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Create a free account</button>
+        <button onclick="closeAnonGate();wpAnonToAuth('login')" style="display:block;width:100%;margin-top:10px;padding:11px;border-radius:9px;font-size:13px;font-weight:600;border:1.5px solid var(--teal);color:var(--teal);background:none;cursor:pointer;font-family:inherit;">I already have an account — sign in</button>
+        <button onclick="closeAnonGate()" style="display:block;margin:14px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Not now — keep viewing this result</button>
+      </div>`;
+    m.addEventListener('click', ev => { if (ev.target === m) closeAnonGate(); });
+    document.body.appendChild(m);
+  }
+  m.querySelector('#wp-anon-gate-title').textContent = copy.title;
+  m.querySelector('#wp-anon-gate-body').textContent = copy.body;
+  m.style.display = 'flex';
+}
+function closeAnonGate() {
+  const m = document.getElementById('wp-anon-gate-modal');
+  if (m) m.style.display = 'none';
+}
+
+// Hand the guest to the normal account flow — free account or paid, no
+// special path. The parked result (if any) swaps the value line, and a back
+// link returns to the still-live result rather than trapping them mid-form.
+function wpAnonToAuth(tab) {
+  const claim = (typeof wpClaimPeek === 'function') ? wpClaimPeek() : null;
+  const line = document.getElementById('auth-value-line');
+  if (line) {
+    line.innerHTML = (claim?.kind === 'compliance'
+      ? '<b style="color:var(--text);">Your compliance result is ready to keep.</b> Create a free account and it attaches to your first project — nothing re-runs.'
+      : '<b style="color:var(--text);">Your first project is free.</b> All tools, exports included. No card needed.') +
+      (wpAnonActive() ? ' <a href="#" onclick="wpAnonBackToResult();return false;" style="color:var(--teal);text-decoration:none;white-space:nowrap;">← Back to your check</a>' : '');
+  }
+  document.getElementById('app-content').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+  const tabs = document.querySelectorAll('.auth-tab');
+  if (tab === 'login' && tabs[0]) switchAuthTab('login', tabs[0]);
+  else if (tabs[1]) switchAuthTab('signup', tabs[1]);
+}
+function wpAnonBackToResult() {
+  if (!wpAnonActive()) return;
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app-content').style.display = 'flex';
+}
 
 // Show council note when council role selected at signup
 document.getElementById('signup-role')?.addEventListener('change', function() {
