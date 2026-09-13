@@ -89,11 +89,26 @@ function extractBlock(pattern) { return extractBlockFrom(LINES, pattern, 'index.
 const _srcdocCache = {};
 function decodeSrcdoc(iframeId) {
   if (_srcdocCache[iframeId]) return _srcdocCache[iframeId];
-  const re = new RegExp('<iframe class="tool-iframe" id="' + iframeId + '" srcdoc="([\\s\\S]*?)"(?:\\s+sandbox=[^>]*)?>');
-  const m = SOURCE.match(re);
-  if (!m) throw new Error(`extract: no srcdoc iframe with id ${iframeId}`);
-  const html = m[1].replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  return (_srcdocCache[iframeId] = { html, lines: html.split(/\r?\n/) });
+  const tag = '<iframe class="tool-iframe" id="' + iframeId + '" srcdoc="';
+  const s = SOURCE.indexOf(tag);
+  if (s < 0) throw new Error(`extract: no srcdoc iframe with id ${iframeId}`);
+  const a = s + tag.length;
+  // The attribute ends at the FIRST raw double-quote — exactly as the
+  // browser reads it. A raw quote anywhere inside the embedded document
+  // (a comment, a string) silently truncates the whole tool in the browser,
+  // so it must be a hard failure here, not a shorter extraction.
+  const q = SOURCE.indexOf('"', a);
+  const after = SOURCE.slice(q + 1, q + 16);
+  if (!/^(\s*>|\s+[a-z-]+=)/i.test(after)) {
+    const line = SOURCE.slice(0, q).split(/\r?\n/).length;
+    throw new Error(`extract: the ${iframeId} srcdoc attribute closes early at index.html:${line} — a raw double-quote inside the embedded document truncates the tool in the browser (write &quot;)`);
+  }
+  const html = SOURCE.slice(a, q).replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return (_srcdocCache[iframeId] = { html, lines: html.split(/\r?\n/), startLine: SOURCE.slice(0, a).split(/\r?\n/).length });
+}
+// Every embedded tool's iframe id, for sweeps.
+function srcdocIframeIds() {
+  return [...SOURCE.matchAll(/<iframe class="tool-iframe" id="([^"]+)" srcdoc="/g)].map(m => m[1]);
 }
 function extractSrcdocBlock(iframeId, pattern) {
   return extractBlockFrom(decodeSrcdoc(iframeId).lines, pattern, iframeId + ' srcdoc');
@@ -364,4 +379,4 @@ function loadSheet(opts = {}) {
   return loadEngine({ ...opts, blocks: SHEET_BLOCKS });
 }
 
-module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, extractBlockFrom, decodeSrcdoc, extractSrcdocBlock, buildSource, loadEngine, loadLayout, loadSheet, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS, SHEET_BLOCKS };
+module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, extractBlockFrom, decodeSrcdoc, extractSrcdocBlock, srcdocIframeIds, buildSource, loadEngine, loadLayout, loadSheet, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS, SHEET_BLOCKS };

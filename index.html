@@ -2519,7 +2519,7 @@ function methodOf(roomId,sec){
 // Pushed by the parent from approved council_requirements rows; the calculator
 // only matches the selected council against them. The normaliser here MUST
 // stay identical to glBridgeNorm in the platform — the parent keys the list
-// with that one, and a drift means "no schedule found" for every council.
+// with that one, and a drift means no schedule found for every council.
 let COUNCIL_SCHEDULES=[];
 function councilKey(s){return String(s||'').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g,'').replace(/[^a-z0-9]+/g,'');}
 function activeCouncilLabel(){
@@ -3828,7 +3828,7 @@ function unitOpts(rr,sec,s){
   const cur=defSize(rr.id,sec,s);
   const bs=binSizesFor(rr.id,sec,s);
   const opt=e=&gt;`&lt;option value=&quot;B${e.sizeL}&quot;${!sel&amp;&amp;e.sizeL===cur?' selected':''}&gt;${e.sizeL}L${e.source==='council'?' (council)':''}&lt;/option&gt;`;
-  // Common sizes lead; the rest of the library sits under "More sizes" —
+  // Common sizes lead; the rest of the library sits under More sizes —
   // selectable, never in the way. A council schedule IS the list.
   const common=bs.list.filter(e=&gt;e.common),more=bs.list.filter(e=&gt;!e.common);
   let h='&lt;optgroup label=&quot;'+(bs.councilSizes.length?'Council schedule':'Bins')+'&quot;&gt;'+(common.length?common:bs.list).map(opt).join('')+'&lt;/optgroup&gt;';

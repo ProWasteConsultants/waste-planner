@@ -10,7 +10,31 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { scriptBlocks, buildSource, extractBlock, BLOCKS, LAYOUT_BLOCKS, SOURCE } = require('./extract.js');
+const { scriptBlocks, buildSource, extractBlock, BLOCKS, LAYOUT_BLOCKS, SOURCE, decodeSrcdoc, srcdocIframeIds } = require('./extract.js');
+
+// ── embedded tools (srcdoc iframes) ──
+// The bin calculator, swept tool, cost check and compliance checker are whole
+// HTML documents inside an attribute. Two things kill one of them with no
+// error outside the console: a raw double-quote anywhere in the attribute
+// (the browser ends the attribute there and the tool is truncated) and a
+// syntax error in one of its own script blocks. Both are checked here, on
+// the document exactly as the browser would decode it.
+test('every srcdoc tool survives attribute decoding and its scripts parse', () => {
+  const ids = srcdocIframeIds();
+  assert.ok(ids.includes('calc-iframe') && ids.includes('compliance-iframe'), 'the embedded tools are found: ' + ids.join(', '));
+  for (const id of ids) {
+    const { html, startLine } = decodeSrcdoc(id);   // throws on an early-closing attribute
+    // a document cut short mid-script has more <script> openers than closers
+    const opens = (html.match(/<script\b/gi) || []).length, closes = (html.match(/<\/script>/gi) || []).length;
+    assert.equal(opens, closes, `${id}: <script> tags balance — an unclosed one means the document was cut short`);
+    const blocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(m => m[1]).filter(b => b.trim());
+    assert.ok(blocks.length > 0, `${id}: has script blocks`);
+    blocks.forEach((b, i) => {
+      try { new Function(b); }
+      catch (e) { assert.fail(`${id} script block ${i + 1} (srcdoc starts at index.html:${startLine}) does not parse: ${e.message}`); }
+    });
+  }
+});
 
 const ALL = scriptBlocks();
 const INLINE = ALL.filter(b => !b.src && (b.type === '' || b.type === 'text/javascript' || b.type === 'module'));
