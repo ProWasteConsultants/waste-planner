@@ -2380,6 +2380,8 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
 .wsr-roommeta{font-size:9.5px;color:rgba(255,255,255,0.4);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .wsr-sub{font-size:11.5px;font-weight:700;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:.6px;margin:12px 0 4px;}
 .wsr-method{font-size:11px;color:rgba(255,255,255,0.6);margin:0 0 5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.wsr-rates{font-size:11px;color:rgba(255,255,255,0.6);margin:0 0 10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.wsr-rates-reload{background:none;border:1px solid #3a4747;border-radius:5px;color:rgba(255,255,255,0.7);padding:1px 7px;font-size:10.5px;font-family:inherit;cursor:pointer;}
 .wsr-methodsel{background:#1e1e1e;color:rgba(255,255,255,0.85);border:1px solid #3a4747;border-radius:5px;padding:2px 6px;font-size:11px;font-family:inherit;}
 .wsr-roomtotal{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#0d3333;border:1px solid #008080;border-radius:7px;padding:9px 12px;margin-top:10px;font-size:13.5px;font-weight:700;color:#fff;}
 .wsr-roomtotal small{font-weight:600;font-size:11px;color:rgba(255,255,255,0.65);}
@@ -2534,10 +2536,42 @@ function activeSchedule(){
   return hit?hit.schedule:null;
 }
 function scheduleFor(sec,stream){
-  // kerbside schedule for one calculator stream: {sizesL,maxL,perWeek,cites}
+  // kerbside schedule for one calculator stream, for THIS section — a
+  // non-residential clause never shapes a residential row: {sizesL,maxL,perWeek,cites}
   const sch=activeSchedule();if(!sch||!sch.kerbside)return null;
-  const canon=Object.keys(LIB_STREAM_KEY).find(k=&gt;LIB_STREAM_KEY[k]===stream&amp;&amp;sch.kerbside[k]);
-  return canon?sch.kerbside[canon]:null;
+  const map=sch.kerbside[sec==='c'?'com':'res'];if(!map)return null;
+  const canon=Object.keys(LIB_STREAM_KEY).find(k=&gt;LIB_STREAM_KEY[k]===stream&amp;&amp;map[k]);
+  return canon?map[canon]:null;
+}
+// ── RATES PROVENANCE ────────────────────────────────────────────────────────
+// Which numbers the volumes are actually built on. The JSON is fetched once
+// when the tool loads, so a publish made while the page is open is invisible
+// until ↻ — saying so on screen beats a silent stale calculation.
+function ratesSourceInfo(){
+  const st=g('state').value,co=g('council').value;
+  const label=activeCouncilLabel();
+  const remote=!!RATES_REMOTE;
+  const ov=co?((RATES_REMOTE?.COUNCIL_PROFILES?.[`${st}|${co}`])||COUNCIL_PROFILES[`${st}|${co}`]||null):null;
+  const ovRes=!!(ov&amp;&amp;ov.resRates&amp;&amp;Object.keys(ov.resRates).length);
+  const ovCom=!!(ov&amp;&amp;ov.comRates&amp;&amp;Object.keys(ov.comRates).length);
+  const when=RATES_REMOTE&amp;&amp;(RATES_REMOTE.published_at||RATES_REMOTE.generated_at||(RATES_REMOTE.meta&amp;&amp;RATES_REMOTE.meta.published_at))||null;
+  return {remote,label,value:co,ov:!!ov,ovRes,ovCom,when};
+}
+function ratesNoteHtml(){
+  const i=ratesSourceInfo();
+  let src;
+  if(!i.remote)src='built-in state defaults — the published rates file could not be loaded';
+  else if(!i.value)src=`${g('state').value} state defaults (published rates)`;
+  else if(i.ov)src=`&lt;b&gt;${escAttr(i.label)}&lt;/b&gt; override (published rates${i.ovRes?'':'; residential inherits the state defaults'}${i.ovCom?'':'; commercial inherits the state defaults'})`;
+  else src=`${g('state').value} state defaults — &lt;b style=&quot;color:#EFB080&quot;&gt;no published override for ${escAttr(i.label)}&lt;/b&gt; (value ${escAttr(i.value)}). Save its rates and ⬆ Publish to live, then ↻`;
+  return `&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Generation rates&lt;/span&gt; ${src}`+
+    (i.when?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· published ${escAttr(new Date(i.when).toLocaleString('en-AU'))}&lt;/span&gt;`:'')+
+    ` &lt;button class=&quot;wsr-rates-reload&quot; onclick=&quot;reloadRates()&quot; title=&quot;Re-fetch the published rates file and recalculate&quot;&gt;↻ reload rates&lt;/button&gt;&lt;/div&gt;`;
+}
+async function reloadRates(){
+  RATES_REMOTE=await loadRemoteRatesIfConfigured();
+  refreshCouncils();
+  wsCalcTrigger();
 }
 // ── ALLOWANCE STREAMS ────────────────────────────────────────────────────────
 // Hard waste, e-waste and textiles have no litres-per-dwelling rate anywhere,
@@ -4064,7 +4098,7 @@ function renderAllRooms(){
   if(!_stored)return;
   const {streams,rooms}=_stored;
   const solo=rooms.length===1;
-  g('roomResults').innerHTML=rooms.map(rr=&gt;roomBlockHtml(rr,streams,solo)).join('');
+  g('roomResults').innerHTML=ratesNoteHtml()+rooms.map(rr=&gt;roomBlockHtml(rr,streams,solo)).join('');
   refreshDerived();
 }
 function refreshDerived(){
@@ -10627,7 +10661,47 @@ async function glCouncilCard(label, mountId, emptyHint) {
       (file || when ? '<div style="font-size:11px;color:var(--muted);">' + cgbEsc([file, when].filter(Boolean).join(' · ')) + '</div>' : '') +
       (stored ? '' : '<div style="font-size:11px;color:var(--flag);">PDF not stored for this version — re-upload it above to get the thumbnail, View PDF and the checker\'s side-by-side pane.</div>') +
       (url ? '<a href="' + url + '" target="_blank" rel="noopener" class="btn" style="display:inline-block;margin-top:6px;padding:3px 10px;font-size:10.5px;text-decoration:none;">View PDF</a>' : '') +
-    '</div></div>';
+    '</div></div>' +
+    '<div id="' + mountId + '-reqs"></div>';
+  glCouncilReqs(row, mountId + '-reqs');
+}
+
+// The clauses on file for a council, under its card: every APPROVED
+// requirement pinned to the serving document, grouped by type, with the
+// stream, the figure, the use class and the clause reference — what the
+// checker cites and what the calculator's council schedule is built from.
+// Read-only here; editing stays in the review queue.
+async function glCouncilReqs(row, mountId) {
+  const wrap = document.getElementById(mountId);
+  if (!wrap || !row || !row.id) return;
+  let rows = [];
+  try {
+    const { data } = await sb.from('council_requirements').select('*')
+      .eq('council_guideline_id', row.id).eq('status', 'approved').order('requirement_type').order('clause_ref');
+    rows = data || [];
+  } catch (e) { rows = []; }
+  if (!rows.length) { wrap.innerHTML = ''; return; }
+  const TYPE_LABEL = { generation_rate: 'Generation rates', room_dimension: 'Room dimensions', aisle_width: 'Aisle widths',
+    chute_spec: 'Chutes', collection_limit: 'Collection service', equipment_rule: 'Equipment', stream_split: 'Stream splits', other: 'Other' };
+  const byType = {};
+  rows.forEach(r => (byType[r.requirement_type] = byType[r.requirement_type] || []).push(r));
+  const fig = r => (r.value_num === 0 || r.value_num) ? ('<b>' + cgbEsc(String(r.value_num)) + '</b>' + (r.unit ? ' ' + cgbEsc(r.unit) : '')) : '';
+  const scope = r => { const s = wpUseClassScope(r.use_class); return s === 'all' ? '' : s; };
+  wrap.innerHTML = '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:11px;color:var(--muted);">' +
+      rows.length + ' approved clause' + (rows.length === 1 ? '' : 's') + ' on file — ' +
+      Object.keys(byType).map(t => (TYPE_LABEL[t] || t) + ' ' + byType[t].length).join(' · ') + '</summary>' +
+    '<div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 10px;margin-top:6px;max-height:340px;overflow:auto;">' +
+    Object.keys(byType).map(t =>
+      '<div style="font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:6px 0 3px;">' + cgbEsc(TYPE_LABEL[t] || t) + '</div>' +
+      '<div style="display:grid;grid-template-columns:78px 110px 88px 1fr 120px;gap:4px 8px;font-size:10.5px;align-items:baseline;">' +
+      byType[t].map(r =>
+        '<span style="color:#7FD8D8;">' + cgbEsc(r.stream || '—') + '</span>' +
+        '<span>' + (fig(r) || '<span style="color:var(--muted);">—</span>') + '</span>' +
+        '<span style="color:var(--muted);">' + cgbEsc(scope(r) || (r.use_class ? String(r.use_class) : 'all')) + '</span>' +
+        '<span style="color:rgba(255,255,255,0.75);">' + cgbEsc(r.value_text || '') + '</span>' +
+        '<span style="color:var(--muted);">' + cgbEsc(r.clause_ref || '') + '</span>').join('') +
+      '</div>').join('') +
+    '</div></details>';
 }
 async function rdbGuidelineCard() {
   const sel = document.getElementById('rdb-council');
@@ -11721,13 +11795,7 @@ function crqToLegacy(rows) {
   const cat = { generation_rate: 'generation_rates', room_dimension: 'storage',
     aisle_width: 'storage', chute_spec: 'chutes', collection_limit: 'collection',
     equipment_rule: 'other', stream_split: 'generation_rates', other: 'other' };
-  const applies = u => {
-    const s = String(u || '').toLowerCase();
-    if (/res/.test(s)) return 'residential';
-    if (/com|retail|office/.test(s)) return 'commercial';
-    if (/mix|mud/.test(s)) return 'mixed';
-    return 'all';
-  };
+  const applies = wpUseClassScope;   // one classifier for the checker and the calculator
   return (rows || []).filter(r => r && r.status === 'approved' && r.clause_ref).map(r => {
     const pg = /p\.?\s*(\d+)/i.exec(r.clause_ref || '');
     return {
@@ -17285,26 +17353,46 @@ function wsPushEquipToCalc() {
 // can be checked against the PDF. Pure projection first, one fetch second.
 let WP_COUNCIL_SCHEDULES = null;   // null = not loaded; [] = loaded, none
 
+// Which development class a requirement row applies to. One function for the
+// checker's serving format (crqToLegacy) and the calculator's schedule, so a
+// row can never read as commercial in one tool and residential in another.
+function wpUseClassScope(u) {
+  const s = String(u || '').toLowerCase();
+  if (/non[\s-]?res/.test(s)) return 'commercial';   // "non-residential" is commercial, not residential
+  if (/res/.test(s)) return 'residential';
+  if (/com|retail|office/.test(s)) return 'commercial';
+  if (/mix|mud/.test(s)) return 'mixed';
+  return 'all';
+}
+
 function wpCouncilScheduleFromRows(rows) {
   // Rows in, one schedule out:
-  //   kerbside[stream] = { sizesL: [...], perWeek: n|null, cites: [...] }
+  //   kerbside.res[stream] / kerbside.com[stream] = { sizesL, maxL, perWeek, cites }
   //   bulk = { maxL: n|null, maxPerWeek: n|null, cites: [...] }
   // A row is BULK when its wording names the bulk service (bulk / front-lift /
-  // rear-lift / skip / hooklift), else it is the kerbside service. Litres set
-  // a bin size (a "maximum" wording caps instead), per-week / per-fortnight
-  // set frequency (fortnightly = 0.5 collections per week). Anything that
-  // resolves to nothing is dropped — never guessed.
-  const out = { kerbside: {}, bulk: { maxL: null, maxPerWeek: null, cites: [] }, count: 0 };
+  // rear-lift / skip / hooklift), else it is the kerbside service, scoped by
+  // use_class: residential rows feed .res, commercial (incl. non-residential)
+  // rows feed .com, mixed / unscoped rows feed both.
+  //
+  // A bin SIZE is a bare litre unit — "L", "litres" — and nothing else. A
+  // unit with a divisor or cadence ("L/week", "L/dwelling/week", "L/100m2",
+  // "L/day") is a generation RATE, whatever the row was typed as, and never
+  // becomes a bin. Per-week / per-fortnight set frequency (fortnightly =
+  // 0.5 collections a week); a "maximum" wording caps instead of listing.
+  // Anything that resolves to nothing is dropped — never guessed.
+  const out = { kerbside: { res: {}, com: {} }, bulk: { maxL: null, maxPerWeek: null, cites: [] }, count: 0 };
   (rows || []).forEach(r => {
     if (!r || r.status !== 'approved' || r.requirement_type !== 'collection_limit') return;
     const text = String(r.value_text || '');
-    const unit = String(r.unit || '').toLowerCase();
+    const unit = String(r.unit || '').toLowerCase().trim();
     const num = (r.value_num === 0 || r.value_num) ? Number(r.value_num) : NaN;
     const isBulk = /\b(bulk|front[\s-]?lift|rear[\s-]?lift|skip|hook[\s-]?lift)\b/i.test(text);
     const isMax = /\b(max(imum)?|no (larger|more) than|not exceed)/i.test(text);
-    const litres = /^l\b|litre|liter/.test(unit) || /\bl\b/.test(unit);
-    const perWeek = /week/.test(unit) ? (/fortnight|2 ?week|two ?week/.test(unit) ? 0.5 : 1)
-                  : /fortnight/.test(unit) ? 0.5 : null;
+    const litres = /^(l|lt|ltr|litres?|liters?)$/.test(unit);
+    const isRate = /\/|\bper\b|dwelling|100 ?m|\bm2\b|m²|\bday\b/.test(unit) && !/^(per|\/)?\s*(week|fortnight)$/.test(unit.replace(/\s+/g, ' '));
+    const perWeek = isRate ? null
+                  : /fortnight|2 ?week|two ?week/.test(unit) ? 0.5
+                  : /week/.test(unit) ? 1 : null;
     const cite = { stream: r.stream || null, clause: r.clause_ref || null, text: text.slice(0, 160) };
     if (isBulk) {
       if (litres && Number.isFinite(num) && num > 0) { out.bulk.maxL = out.bulk.maxL ? Math.min(out.bulk.maxL, num) : num; out.bulk.cites.push(cite); out.count++; }
@@ -17314,18 +17402,23 @@ function wpCouncilScheduleFromRows(rows) {
     if (!r.stream) return;   // a kerbside rule is always about one stream
     const sized = litres && Number.isFinite(num) && num > 0;
     if (!sized && perWeek == null) return;   // nothing usable — no entry, so the UI never claims a schedule it lacks
-    const k = out.kerbside[r.stream] = out.kerbside[r.stream] || { sizesL: [], maxL: null, perWeek: null, cites: [] };
-    if (sized) {
-      if (isMax) k.maxL = k.maxL ? Math.min(k.maxL, num) : num;
-      else if (k.sizesL.indexOf(num) < 0) k.sizesL.push(num);
-    } else {
-      // "1 per week", "per fortnight", "2 per week" — the value multiplies the
-      // unit's own cadence; a bare cadence with no number is one collection.
-      k.perWeek = Number.isFinite(num) && num > 0 ? num * perWeek : perWeek;
-    }
-    k.cites.push(cite); out.count++;
+    const scope = wpUseClassScope(r.use_class);
+    const sections = scope === 'residential' ? ['res'] : scope === 'commercial' ? ['com'] : ['res', 'com'];
+    sections.forEach(sec => {
+      const k = out.kerbside[sec][r.stream] = out.kerbside[sec][r.stream] || { sizesL: [], maxL: null, perWeek: null, cites: [] };
+      if (sized) {
+        if (isMax) k.maxL = k.maxL ? Math.min(k.maxL, num) : num;
+        else if (k.sizesL.indexOf(num) < 0) k.sizesL.push(num);
+      } else {
+        // "1 per week", "per fortnight", "2 per week" — the value multiplies
+        // the unit's own cadence; a bare cadence with no number is one.
+        k.perWeek = Number.isFinite(num) && num > 0 ? num * perWeek : perWeek;
+      }
+      k.cites.push(cite);
+    });
+    out.count++;
   });
-  Object.values(out.kerbside).forEach(k => k.sizesL.sort((a, b) => a - b));
+  ['res', 'com'].forEach(sec => Object.values(out.kerbside[sec]).forEach(k => k.sizesL.sort((a, b) => a - b)));
   return out.count ? out : null;
 }
 

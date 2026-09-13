@@ -17,11 +17,22 @@ const { SOURCE, extractBlock, extractSrcdocBlock, decodeSrcdoc, loadEngine } = r
 // ── §1: platform side ──
 function loadPlatform() {
   const code = [
-    /^const WP_COLLECT_METHOD_IDS = /, /^function wpParseMethods\(/,
+    /^const WP_COLLECT_METHOD_IDS = /, /^function wpParseMethods\(/, /^function wpUseClassScope\(/,
     /^function wpCouncilScheduleFromRows\(/, /^function glBridgeNorm\(/,
   ].map(p => extractBlock(p).text).join('\n\n');
-  return new Function(code + '\n;return { WP_COLLECT_METHOD_IDS, wpParseMethods, wpCouncilScheduleFromRows, glBridgeNorm };')();
+  return new Function(code + '\n;return { WP_COLLECT_METHOD_IDS, wpParseMethods, wpUseClassScope, wpCouncilScheduleFromRows, glBridgeNorm };')();
 }
+
+test('wpUseClassScope: non-residential is commercial, and the checker shares the classifier', () => {
+  const { wpUseClassScope } = loadPlatform();
+  assert.equal(wpUseClassScope('Non-Residential Developments'), 'commercial', '"non-residential" must never read as residential');
+  assert.equal(wpUseClassScope('residential'), 'residential');
+  assert.equal(wpUseClassScope('MUD'), 'mixed', 'the checker’s existing reading of MUD is kept');
+  assert.equal(wpUseClassScope('retail / office'), 'commercial');
+  assert.equal(wpUseClassScope('mixed use'), 'mixed');
+  assert.equal(wpUseClassScope(null), 'all');
+  assert.ok(extractBlock(/^function crqToLegacy\(/).text.includes('const applies = wpUseClassScope;'), 'crqToLegacy uses the same classifier');
+});
 
 test('wpParseMethods: comma lists and synonyms collapse onto the four ids; junk is dropped', () => {
   const { wpParseMethods, WP_COLLECT_METHOD_IDS } = loadPlatform();
@@ -49,19 +60,42 @@ test('wpCouncilScheduleFromRows: approved collection_limit rows become a kerbsid
     row({ stream: null, value_num: 120, unit: 'L', value_text: '120L', clause_ref: 'y' }),
     row({ stream: 'paper', value_num: null, unit: null, value_text: 'as directed', clause_ref: 'z' }),
   ]);
-  assert.deepStrictEqual(s.kerbside.garbage.sizesL, [140]);
-  assert.equal(s.kerbside.garbage.perWeek, 1);
-  assert.deepStrictEqual(s.kerbside.garbage.cites.map(c => c.clause), ['cl 3.1, p.4', 'cl 3.2, p.4'], 'every number carries its clause');
-  assert.equal(s.kerbside.recycling.perWeek, 0.5, 'fortnightly is half a collection per week');
-  assert.equal(s.kerbside.fogo.maxL, 240, 'a "maximum" wording caps instead of listing');
-  assert.deepStrictEqual(s.kerbside.fogo.sizesL, []);
+  const res = s.kerbside.res;
+  assert.deepStrictEqual(res.garbage.sizesL, [140]);
+  assert.equal(res.garbage.perWeek, 1);
+  assert.deepStrictEqual(res.garbage.cites.map(c => c.clause), ['cl 3.1, p.4', 'cl 3.2, p.4'], 'every number carries its clause');
+  assert.equal(res.recycling.perWeek, 0.5, 'fortnightly is half a collection per week');
+  assert.equal(res.fogo.maxL, 240, 'a "maximum" wording caps instead of listing');
+  assert.deepStrictEqual(res.fogo.sizesL, []);
+  assert.deepStrictEqual(s.kerbside.com.garbage.sizesL, [140], 'an unscoped row applies to both sections');
   assert.equal(s.bulk.maxL, 1100, 'bulk wording routes to the bulk cap');
   assert.equal(s.bulk.maxPerWeek, 3);
-  assert.ok(!s.kerbside.glass, 'a proposed row is never consumed');
-  assert.ok(!('null' in s.kerbside), 'a streamless kerbside row is dropped, not guessed');
-  assert.ok(!s.kerbside.paper, 'a row with no usable number resolves to nothing');
+  assert.ok(!res.glass, 'a proposed row is never consumed');
+  assert.ok(!('null' in res), 'a streamless kerbside row is dropped, not guessed');
+  assert.ok(!res.paper, 'a row with no usable number resolves to nothing');
   assert.equal(wpCouncilScheduleFromRows([]), null, 'no rows, no schedule — the calculator says so instead of assuming');
   assert.equal(wpCouncilScheduleFromRows([row({ stream: 'garbage', value_num: 3, unit: 'bins', value_text: '3 bins', clause_ref: 'q' })]), null);
+});
+
+test('a generation rate never becomes a bin size, and use_class scopes the section', () => {
+  const { wpCouncilScheduleFromRows } = loadPlatform();
+  const row = (o) => ({ status: 'approved', requirement_type: 'collection_limit', ...o });
+  // the live case: a non-residential 50 L/week organics rate approved as collection_limit
+  for (const unit of ['L/week', 'L/dwelling/week', 'L/day/100m2', 'L per 100m²', 'litres per day'])
+    assert.equal(wpCouncilScheduleFromRows([row({ stream: 'fogo', value_num: 50, unit, value_text: '50', clause_ref: 'p.55', use_class: 'Non-Residential Developments' })]), null,
+      `unit "${unit}" is a rate — no schedule, no 50L bin`);
+  const s = wpCouncilScheduleFromRows([
+    row({ stream: 'fogo', value_num: 50, unit: 'L', value_text: '50L food organics bin', clause_ref: 'p.55', use_class: 'Non-Residential Developments' }),
+    row({ stream: 'garbage', value_num: 140, unit: 'L', value_text: '140L', clause_ref: 'p.4', use_class: 'residential' }),
+    row({ stream: 'recycling', value_num: 240, unit: 'L', value_text: '240L', clause_ref: 'p.5', use_class: 'mixed use' }),
+  ]);
+  assert.ok(!s.kerbside.res.fogo, 'a non-residential bin never shapes a residential room');
+  assert.deepStrictEqual(s.kerbside.com.fogo.sizesL, [50], 'it shapes the commercial section');
+  assert.ok(s.kerbside.res.garbage && !s.kerbside.com.garbage, 'a residential row stays residential');
+  assert.ok(s.kerbside.res.recycling && s.kerbside.com.recycling, 'mixed use feeds both');
+  // cadence units still read as cadence, with or without a leading "per"
+  for (const [unit, pw] of [['per week', 1], ['/week', 1], ['weekly', 1], ['per fortnight', 0.5], ['fortnightly', 0.5]])
+    assert.equal(wpCouncilScheduleFromRows([row({ stream: 'garbage', value_num: null, unit, value_text: 'x', clause_ref: 'c' })]).kerbside.res.garbage.perWeek, pw, unit);
 });
 
 test('the council-name normaliser is one function on both sides of the iframe boundary', () => {
@@ -174,10 +208,13 @@ test('council schedule: kerbside sizes and cadence come from the guidelines libr
   const c = loadCalc({ rooms: [room('R1', { townhouse: 6 }), room('R2', { apt_2br: 20 })], councilLabel: 'Central Coast Council', councilValue: 'central_coast' });
   c.setLib(LIB);
   c.setSchedules([{ key: 'centralcoast', name: 'Central Coast Council', schedule: {
-    kerbside: { garbage: { sizesL: [140], maxL: null, perWeek: 1, cites: [{ clause: 'cl 3.1' }] },
-                recycling: { sizesL: [240, 360], maxL: null, perWeek: 0.5, cites: [] },
-                fogo: { sizesL: [], maxL: 120, perWeek: null, cites: [] } },
-    bulk: { maxL: 660, maxPerWeek: 2, cites: [] }, count: 5 } }]);
+    kerbside: { res: { garbage: { sizesL: [140], maxL: null, perWeek: 1, cites: [{ clause: 'cl 3.1' }] },
+                       recycling: { sizesL: [240, 360], maxL: null, perWeek: 0.5, cites: [] },
+                       fogo: { sizesL: [], maxL: 120, perWeek: null, cites: [] } },
+                com: { fogo: { sizesL: [50], maxL: null, perWeek: null, cites: [] } } },
+    bulk: { maxL: 660, maxPerWeek: 2, cites: [] }, count: 6 } }]);
+  assert.ok(!c.binSizesFor('R1', 'r', 'ORG').list.some(e => e.sizeL === 50), 'the commercial 50L never reaches a residential row');
+  assert.deepStrictEqual(c.scheduleFor('c', 'ORG').sizesL, [50], 'but it is the commercial section’s schedule');
   assert.ok(c.activeSchedule(), 'the selected council matches its schedule by normalised name');
   const gw = c.binSizesFor('R1', 'r', 'GW');
   assert.deepStrictEqual(gw.list.map(e => e.sizeL), [140], 'the council’s size IS the kerbside list');
@@ -195,7 +232,7 @@ test('council schedule: kerbside sizes and cadence come from the guidelines libr
   assert.equal(c.defSize('R2', 'r', 'GW'), 660, 'the 1100L default snaps under the council bulk cap');
   assert.equal(c.defCw('R2', 'r', 'GW'), 2, 'kerbside cadence never leaks into a bulk row');
   // a council size the library does not carry yet is still offered, labelled as the council's
-  c.setSchedules([{ key: 'centralcoast', name: 'Central Coast Council', schedule: { kerbside: { garbage: { sizesL: [80], maxL: null, perWeek: 1, cites: [] } }, bulk: {}, count: 1 } }]);
+  c.setSchedules([{ key: 'centralcoast', name: 'Central Coast Council', schedule: { kerbside: { res: { garbage: { sizesL: [80], maxL: null, perWeek: 1, cites: [] } }, com: {} }, bulk: {}, count: 1 } }]);
   const g80 = c.binSizesFor('R1', 'r', 'GW');
   assert.deepStrictEqual(g80.list.map(e => [e.sizeL, e.source]), [[80, 'council']]);
   // no schedule for the council → the normal method-filtered list, and the UI says so
@@ -271,6 +308,15 @@ test('the equipment library reaches the calculator as `bins`, with the two selec
   assert.ok(calc.includes('min="0.5" step="0.5"'), 'fortnightly collection is enterable');
   assert.ok(!/sizeOpts\(|ALLOWED_SIZES\[s\]\.map/.test(calc.replace(/function sizeOpts[^\n]*\n/, '')), 'no dropdown reads the constant directly any more');
   assert.ok(calc.includes('differs from the council schedule'), 'departing from the council schedule is stated, never silent');
+  // generation-rate provenance: which rates the volumes are built on is on screen, with a reload
+  assert.ok(calc.includes("g('roomResults').innerHTML=ratesNoteHtml()+"), 'the results open with the rates source');
+  assert.ok(calc.includes('no published override for ${escAttr(i.label)}'), 'a council with no published override is named, not silently defaulted');
+  assert.ok(calc.includes('onclick="reloadRates()"'), 'a publish made while the page is open can be pulled in without a reload');
+  // the council card lists the approved clauses on file
+  const reqs = extractBlock(/^async function glCouncilReqs\(row, mountId\)/).text;
+  assert.ok(reqs.includes(".eq('council_guideline_id', row.id).eq('status', 'approved')"), 'approved rows of the serving document only');
+  assert.ok(reqs.includes('approved clause') && reqs.includes('clause_ref'), 'each clause shows its reference');
+  assert.ok(extractBlock(/^async function glCouncilCard\(/).text.includes("glCouncilReqs(row, mountId + '-reqs')"), 'both council cards get the list');
   assert.ok(calc.includes('is not offered for ${bs.M.label}'), 'a snapped pick is stated');
   // admin table + migration + extraction hint
   assert.ok(SOURCE.includes("['is_common','Common size',52,'bool'], ['collection_methods','Collection methods',150,'text']"));
