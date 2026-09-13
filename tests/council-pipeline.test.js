@@ -309,7 +309,7 @@ test('C5: soft only — approved rows, no blocking, no canvas overlay', () => {
 
 test('crqToLegacy: approved-only, clause-required, faithful field mapping', () => {
   const { loadEngine } = require('./extract.js');
-  const ws2 = loadEngine({ blocks: [['crqToLegacy', /^function crqToLegacy\(/]] });
+  const ws2 = loadEngine({ blocks: [['wpUseClassScope', /^function wpUseClassScope\(/], ['crqToLegacy', /^function crqToLegacy\(/]] });
   const rows = [
     { status: 'approved', clause_ref: 'cl 4.2.1, p.12', requirement_type: 'generation_rate',
       use_class: 'Residential flats', stream: 'garbage', value_num: 80, unit: 'L/dwelling/week', value_text: '80L per dwelling per week' },
