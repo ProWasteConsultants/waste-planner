@@ -212,26 +212,47 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    containers**; a record tagged `collection_methods` (e.g. a front-lift bin
    tagged `bulk`) is never offered elsewhere. Only kerbside methods are
    `kerb: true` — the Collection Point presents those bins and nothing else.
-3. **The council's schedule specialises.** Approved `council_requirements` rows
-   of type `collection_limit` on the live guideline version are projected by
-   `wpCouncilScheduleFromRows` (pure, parent side) into kerbside sizes /
-   cadence per stream and bulk caps, and pushed as `council_schedules`. Under a
-   kerbside method the council's sizes **are** the list and the default (largest
-   listed), its cadence the default frequency (`0.5` = fortnightly); under bulk
-   its caps trim. Every number carries its `clause_ref` onto the row; departing
-   from the schedule is allowed and **stated**. No schedule → the method list
-   with a visible "no schedule in the guidelines library" note.
+3. **The council's kerbside service specialises.** It is **structured data
+   typed in by someone who knows it** — Admin › Council & state database ›
+   *Kerbside collection service*, stored as one JSON `waste_meta` row
+   (`field_key = 'kerbside_schedule'`, parsed by `wpKerbScheduleParse`, pure):
+   per stream `{ sizeL, altL[], cycle }` with cycle `W` weekly · `A`/`B`
+   fortnightly on that week · `F` fortnightly (week not stated) · `M` monthly ·
+   `OFF` not collected at the kerb, plus `bulk { maxL, maxPerWeek }` caps. A
+   state row (no council value) is the default for councils without their own.
+   **Never infer it from guideline clauses** — a non-residential generation
+   rate approved under the wrong type once became a 50L residential bin. The
+   approved clauses are listed on the council card as the *reference* for
+   whoever types the service in. Under a kerbside method the council default
+   is the default, its alternatives lead the dropdown, every other
+   kerbside-legal size stays under "Other sizes" (a default, not a lock), and
+   its cycle sets the frequency (`0.5` fortnightly, `0.25` monthly). Under bulk
+   only the caps apply. Departing from the service is allowed and **stated**;
+   no service on record is a visible note naming where to add one.
 
-Matching is by normalised council name — `glBridgeNorm` (parent) and
-`councilKey` (calculator) must stay identical; a test compares them.
+Matching is by registry value first, then normalised council name —
+`glBridgeNorm` (parent) and `councilKey` (calculator) must stay identical; a
+test compares them.
 
-**Downstream:** the results payload carries `method` and `cycle` (`W`/`F`) per
-target and a `presentation` block naming the cadence's source. The Collection
-Point derives its scenarios from those (`wsCollectCyclesFromTargets` →
-`wsCollectSchedule(streams, saved, calc)`: panel edit → calculator → default
-pattern), filters to kerbside-method targets, and resolves bin types against
-the **live** bin list (`wsCollectBins(targets, streams, types)`) — library ids
-used to miss the built-in lookup and silently empty the kerb.
+**Downstream:** the results payload carries `method` and `cycle` per target —
+the council's own week letter (`A`/`B`) when the row still runs on the council
+cadence, else `W`/`F`/`M` from the frequency — and a `presentation` block
+naming the cadence's source. The Collection Point:
+
+- **Kerbside methods** → the kerb line. Scenarios come from the cycles
+  (`wsCollectCyclesFromTargets` → `wsCollectSchedule(streams, saved, calc)`:
+  panel edit → calculator → default pattern): weekly and monthly streams in
+  every week, A/B alternating, OFF never — the busiest week is the design case,
+  so the kerb shows the weekly bins plus the larger of the two alternating
+  fortnights (plus monthly), never every stream at once.
+- **Bulk / self-haul methods** → a drawn **Collection point area** (zone type
+  `COLLECT`, drawn through the zone polygon tool from the tab's own button).
+  `wsCollectBulk` packs **every** bulk-method bin, all streams at once — a
+  bulk service does not alternate weeks — first-fit across the areas via
+  `wsPackBins`; the verdict counts what does not fit. DXF: `A-COLLECT-BINS`.
+- Bin types resolve against the **live** bin list
+  (`wsCollectBins(targets, streams, types)`) — library ids used to miss the
+  built-in lookup and silently empty the kerb.
 
 Not built (its own brief): equipment **categories** with distinct calculation
 branches — balers, transpackers, organics processors. Today anything with a

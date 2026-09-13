@@ -106,7 +106,7 @@ test('the zone types are the agreed set, each with a footprint default', () => {
   // drawn shape (it scales with the frontage), and the kerbside check cuts
   // the stretch of kerb it covers.
   assert.deepEqual(Object.keys(ws.WS_ZONE_TYPES).sort(),
-    ['BALE', 'CUSTOM', 'EWASTE', 'HARDWASTE', 'SPLAY', 'TEXTILE', 'UCO']);
+    ['BALE', 'COLLECT', 'CUSTOM', 'EWASTE', 'HARDWASTE', 'SPLAY', 'TEXTILE', 'UCO']);
   for (const k of Object.keys(ws.WS_ZONE_TYPES)) {
     const t = ws.WS_ZONE_TYPES[k];
     assert.ok(t.w > 0 && t.d > 0, k + ' needs a default size to place');

@@ -2127,6 +2127,10 @@ body.wp-anon .ws-top-chip{display:none;}
             <div class="wsl-group">
               <div class="wsl-group-hd">4 · Does it fit?</div>
               <div id="ws-collect-verdict"></div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                <button class="wsl-btn" onclick="wsCollectAreaMode()" title="Draw the bulk collection point / presentation area (front-lift or private contractor). Every bin on a bulk or self-haul method is packed into it — all streams at once, since a bulk service does not alternate weeks.">▱ Draw collection point area</button>
+              </div>
+              <div id="ws-collect-bulk" style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;"></div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:6px;font-size:10px;color:rgba(255,255,255,0.5);">
                 <label>Space beside obstacles mm<input type="number" id="ws-collect-clr" min="0" step="50" class="wsl-sel" style="width:100%;margin-top:2px;" onchange="wsCollectSettingChanged()"></label>
                 <label>Gap between bins mm<input type="number" id="ws-collect-gap" min="0" step="10" class="wsl-sel" style="width:100%;margin-top:2px;" onchange="wsCollectSettingChanged()"></label>
@@ -2517,11 +2521,13 @@ function methodOf(roomId,sec){
   const m=room?normMethod(room.method):{r:null,c:null};
   return m[sec==='c'?'c':'r']||defaultMethod(room,sec);
 }
-// ── COUNCIL COLLECTION SCHEDULES (guidelines library) ───────────────────────
-// Pushed by the parent from approved council_requirements rows; the calculator
-// only matches the selected council against them. The normaliser here MUST
-// stay identical to glBridgeNorm in the platform — the parent keys the list
-// with that one, and a drift means no schedule found for every council.
+// ── COUNCIL KERBSIDE SCHEDULES (council database) ───────────────────────────
+// Pushed by the parent from waste_meta 'kerbside_schedule' rows, entered per
+// council in Admin › Council &amp; state database. Matched by the council's
+// registry VALUE (the same value this select carries), then by normalised
+// name, then the state-level row. The normaliser here MUST stay identical
+// to glBridgeNorm in the platform.
+// Per stream: {sizeL, altL:[…], cycle: W|A|B|F|M|OFF}; plus bulk {maxL, maxPerWeek}.
 let COUNCIL_SCHEDULES=[];
 function councilKey(s){return String(s||'').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g,'').replace(/[^a-z0-9]+/g,'');}
 function activeCouncilLabel(){
@@ -2529,20 +2535,24 @@ function activeCouncilLabel(){
   const t=sel.options[sel.selectedIndex]?.text||'';
   return /use state defaults/.test(t)?'':t;
 }
-function activeSchedule(){
+function activeScheduleEntry(){
+  const st=g('state').value,co=g('council').value;
+  if(!co)return null;
   const k=councilKey(activeCouncilLabel());
-  if(!k)return null;
-  const hit=COUNCIL_SCHEDULES.find(c=&gt;c.key===k||(c.key&amp;&amp;(c.key.indexOf(k)&gt;=0||k.indexOf(c.key)&gt;=0)));
-  return hit?hit.schedule:null;
+  return COUNCIL_SCHEDULES.find(c=&gt;c.value&amp;&amp;c.value===co&amp;&amp;(!c.state||c.state===st))
+    ||COUNCIL_SCHEDULES.find(c=&gt;c.key&amp;&amp;k&amp;&amp;c.key===k)
+    ||COUNCIL_SCHEDULES.find(c=&gt;!c.value&amp;&amp;c.state===st)
+    ||null;
 }
+function activeSchedule(){const e=activeScheduleEntry();return e?e.schedule:null;}
 function scheduleFor(sec,stream){
-  // kerbside schedule for one calculator stream, for THIS section — a
-  // non-residential clause never shapes a residential row: {sizesL,maxL,perWeek,cites}
-  const sch=activeSchedule();if(!sch||!sch.kerbside)return null;
-  const map=sch.kerbside[sec==='c'?'com':'res'];if(!map)return null;
-  const canon=Object.keys(LIB_STREAM_KEY).find(k=&gt;LIB_STREAM_KEY[k]===stream&amp;&amp;map[k]);
-  return canon?map[canon]:null;
+  // the council's kerbside service for one stream — the same for every room
+  // section; whether it applies at all is the room's collection method
+  const sch=activeSchedule();
+  return (sch&amp;&amp;sch[stream])?sch[stream]:null;
 }
+// collections per week implied by a council cycle
+function cycleCw(cycle){return cycle==='W'?1:(cycle==='A'||cycle==='B'||cycle==='F')?0.5:cycle==='M'?0.25:null;}
 // ── RATES PROVENANCE ────────────────────────────────────────────────────────
 // Which numbers the volumes are actually built on. The JSON is fetched once
 // when the tool loads, so a publish made while the page is open is invisible
@@ -2916,13 +2926,14 @@ function binSizesFor(room,sec,stream){
   });
   const sch=scheduleFor(sec,stream),bulk=activeSchedule()?.bulk||null;
   let councilSizes=[];
-  if(M.kerb&amp;&amp;sch){
-    if(sch.sizesL.length){
-      councilSizes=sch.sizesL.slice();
-      // the council's own sizes, whether or not the library carries them yet
-      list=councilSizes.map(sz=&gt;{const hit=list.find(e=&gt;e.sizeL===sz)||binSizesRaw(stream).find(e=&gt;e.sizeL===sz);return {sizeL:sz,common:true,methods:[],source:hit?hit.source:'council'};});
-    }
-    if(sch.maxL)list=list.filter(e=&gt;e.sizeL&lt;=sch.maxL);
+  if(M.kerb&amp;&amp;sch&amp;&amp;sch.sizeL){
+    // The council's default and its alternatives lead, flagged as the
+    // council's — whether or not the library carries them yet. Every other
+    // kerbside-legal size stays reachable under Other sizes: the schedule
+    // is the default, not a lock.
+    councilSizes=[sch.sizeL].concat(sch.altL||[]);
+    const rest=list.filter(e=&gt;councilSizes.indexOf(e.sizeL)&lt;0).map(e=&gt;({...e,common:false}));
+    list=councilSizes.map(sz=&gt;{const hit=binSizesRaw(stream).find(e=&gt;e.sizeL===sz);return {sizeL:sz,common:true,methods:[],source:hit?hit.source:'council'};}).concat(rest);
   }else if(!M.kerb&amp;&amp;bulk&amp;&amp;bulk.maxL){
     list=list.filter(e=&gt;e.sizeL&lt;=bulk.maxL);
   }
@@ -3738,25 +3749,36 @@ function defSize(room,sec,stream){
   const k=ovKey(room,sec,stream);
   const bs=binSizesFor(room,sec,stream),sizes=bs.list.map(e=&gt;e.sizeL);
   if(_szOv[k]!=null&amp;&amp;(sizes.indexOf(_szOv[k])&gt;=0||!sizes.length))return _szOv[k];
-  if(bs.councilSizes.length)return bs.councilSizes[bs.councilSizes.length-1];
+  if(bs.councilSizes.length)return bs.councilSizes[0];   // the council's default bin
   const want=DEFAULT_BINSIZES[sec][stream]||240;
   if(!sizes.length||sizes.indexOf(want)&gt;=0)return want;
   const below=sizes.filter(s=&gt;s&lt;=want);
   return below.length?below[below.length-1]:sizes[0];
 }
 // Default frequency: the user's pick, else the council's kerbside cadence
-// (0.5 = fortnightly), else the generic default.
+// (0.5 = fortnightly, 0.25 = monthly), else the generic default.
 function defCw(room,sec,stream){
   const k=ovKey(room,sec,stream);
   if(_cwOv[k]!=null)return _cwOv[k];
   const sch=COLLECT_METHODS[methodOf(room,sec)]?.kerb?scheduleFor(sec,stream):null;
-  if(sch&amp;&amp;sch.perWeek&gt;0)return sch.perWeek;
+  const cc=sch?cycleCw(sch.cycle):null;
+  if(cc)return cc;
   return DEFAULT_COLWK[sec][stream]||1;
 }
-// Fortnightly collection reads 0.5/week: the capacity maths (size × ratio ×
-// collections per week) is exact for it, and the Collection Point tab keys
-// its alternating-week scenarios off it.
-function cwLabel(cw){return cw===0.5?'fortnightly':cw===1?'weekly':cw+'×/week';}
+// Fortnightly collection reads 0.5/week and monthly 0.25: the capacity maths
+// (size × ratio × collections per week) is exact for them, and the
+// Collection Point tab keys its presentation scenarios off the cycle.
+function cwLabel(cw){return cw===0.25?'monthly':cw===0.5?'fortnightly':cw===1?'weekly':cw+'×/week';}
+// The presentation cycle a row carries downstream: the council's own week
+// letter when the row still runs on the council cadence, else derived from
+// the frequency (F = fortnightly, week not stated — the Collection Point
+// assigns it).
+function cycleFor(room,sec,stream,cw){
+  if(cw&gt;=1)return 'W';
+  const sch=COLLECT_METHODS[methodOf(room,sec)]?.kerb?scheduleFor(sec,stream):null;
+  if(sch&amp;&amp;sch.cycle&amp;&amp;cycleCw(sch.cycle)===cw)return sch.cycle;
+  return cw===0.25?'M':'F';
+}
 function curSize(room,sec,stream){
   const el=document.querySelector(`.pwStreamSel[data-room=&quot;${room}&quot;][data-sec=&quot;${sec}&quot;][data-stream=&quot;${stream}&quot;]`);
   if(!el)return defSize(room,sec,stream);
@@ -3766,8 +3788,8 @@ function curSize(room,sec,stream){
   return n&gt;0?n:defSize(room,sec,stream);
 }
 function curCw(room,sec,stream){const el=document.querySelector(`.pwStreamCw[data-room=&quot;${room}&quot;][data-sec=&quot;${sec}&quot;][data-stream=&quot;${stream}&quot;]`);return el?normCw(el.value,defCw(room,sec,stream)):defCw(room,sec,stream);}
-// collections per week: whole numbers, or exactly 0.5 for fortnightly
-function normCw(v,fallback){const n=Number(v);if(!(n&gt;0))return fallback||1;return n&lt;1?0.5:Math.round(n);}
+// collections per week: whole numbers, 0.5 for fortnightly, 0.25 for monthly
+function normCw(v,fallback){const n=Number(v);if(!(n&gt;0))return fallback||1;return n&lt;0.375?0.25:n&lt;1?0.5:Math.round(n);}
 function getCurSizes(room,sec,streams){const sz={};streams.forEach(s=&gt;{sz[s]=curSize(room,sec,s);});return sz;}
 function getCurCw(room,sec,streams){const cw={};streams.forEach(s=&gt;{cw[s]=curCw(room,sec,s);});return cw;}
 function storedRoom(id){return _stored?_stored.rooms.find(r=&gt;r.id===id):null;}
@@ -3893,24 +3915,23 @@ function eqRowHtml(rr,sec,s,p){
   // stream is collected in, with the clause, and whether the row departs
   // from it. A departure is allowed — it is just never silent.
   const bs=binSizesFor(rr.id,sec,s);
-  if(bs.schedule&amp;&amp;(bs.schedule.sizesL.length||bs.schedule.perWeek)){
+  if(bs.schedule&amp;&amp;(bs.schedule.sizeL||bs.schedule.cycle)){
     const sch=bs.schedule;
     const parts=[];
-    if(sch.sizesL.length)parts.push(sch.sizesL.map(x=&gt;x+'L').join(' / '));
-    if(sch.perWeek)parts.push(cwLabel(sch.perWeek));
-    const cites=sch.cites.map(c=&gt;c.clause).filter(Boolean).filter((c,i,a)=&gt;a.indexOf(c)===i);
+    if(sch.sizeL)parts.push(sch.sizeL+'L'+(sch.altL&amp;&amp;sch.altL.length?' (or '+sch.altL.map(x=&gt;x+'L').join(' / ')+')':''));
+    const cyc={W:'weekly',A:'fortnightly — week A',B:'fortnightly — week B',F:'fortnightly',M:'monthly',OFF:'not collected at the kerb'}[sch.cycle];
+    if(cyc)parts.push(cyc);
     const off=[];
-    if(sch.sizesL.length&amp;&amp;sch.sizesL.indexOf(p.sz)&lt;0&amp;&amp;!p.container)off.push('size');
-    if(sch.perWeek&amp;&amp;sch.perWeek!==p.cw)off.push('frequency');
-    bits.push({icon:'🏛',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Council schedule&lt;/span&gt; ${parts.join(' · ')}`+
-      (cites.length?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;(${escAttr(cites.join('; '))})&lt;/span&gt;`:'')+
-      (off.length?` &lt;b style=&quot;color:#EFB080&quot;&gt;· differs from the council schedule (${off.join(', ')})&lt;/b&gt;`:'')});
+    if(sch.sizeL&amp;&amp;bs.councilSizes.indexOf(p.sz)&lt;0&amp;&amp;!p.container)off.push('size');
+    if(cycleCw(sch.cycle)&amp;&amp;cycleCw(sch.cycle)!==p.cw)off.push('frequency');
+    bits.push({icon:'🏛',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Council kerbside service&lt;/span&gt; ${parts.join(' · ')}`+
+      (sch.cycle==='OFF'?' &lt;b style=&quot;color:#EFB080&quot;&gt;· this council does not collect this stream at the kerb — private collection or self-haul&lt;/b&gt;':'')+
+      (off.length?` &lt;b style=&quot;color:#EFB080&quot;&gt;· differs from the council service (${off.join(', ')})&lt;/b&gt;`:'')});
   }else if(bs.bulkCap&amp;&amp;(bs.bulkCap.maxL||bs.bulkCap.maxPerWeek)){
     const b=bs.bulkCap,parts=[];
     if(b.maxL)parts.push('max '+b.maxL+'L');
     if(b.maxPerWeek)parts.push('max '+cwLabel(b.maxPerWeek));
-    const cites=b.cites.map(c=&gt;c.clause).filter(Boolean).filter((c,i,a)=&gt;a.indexOf(c)===i);
-    bits.push({icon:'🏛',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Council bulk limit&lt;/span&gt; ${parts.join(' · ')}`+(cites.length?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;(${escAttr(cites.join('; '))})&lt;/span&gt;`:'')+
+    bits.push({icon:'🏛',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Council bulk limit&lt;/span&gt; ${parts.join(' · ')}`+
       (b.maxPerWeek&amp;&amp;p.cw&gt;b.maxPerWeek?' &lt;b style=&quot;color:#EFB080&quot;&gt;· exceeds the council limit&lt;/b&gt;':'')});
   }
   // The compaction control is always on screen for a stream that can be
@@ -4001,7 +4022,7 @@ function roomTableHtml(rr,sec,streams){
       `&lt;td&gt;${streamCell(rr,sec,s)}&lt;/td&gt;`+
       `&lt;td style=&quot;font-family:monospace;font-size:12.5px;font-weight:600;&quot;&gt;${p.vol&gt;0?unitHtml(fmtVol(p.vol)):'—'}&lt;/td&gt;`+
       `&lt;td&gt;&lt;select class=&quot;pwStreamSel&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot;${p.viaCompactor?' disabled':''}&gt;${unitOpts(rr,sec,s)}&lt;/select&gt;&lt;/td&gt;`+
-      `&lt;td&gt;&lt;input class=&quot;pwStreamCw&quot; type=&quot;number&quot; min=&quot;0.5&quot; step=&quot;0.5&quot; max=&quot;14&quot; value=&quot;${p.cw}&quot; title=&quot;Collections per week — 0.5 is fortnightly&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;decimal&quot;&gt;&lt;/td&gt;`+
+      `&lt;td&gt;&lt;input class=&quot;pwStreamCw&quot; type=&quot;number&quot; min=&quot;0.25&quot; step=&quot;0.25&quot; max=&quot;14&quot; value=&quot;${p.cw}&quot; title=&quot;Collections per week — 0.5 is fortnightly, 0.25 monthly&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;decimal&quot;&gt;&lt;/td&gt;`+
       `&lt;td&gt;&lt;input class=&quot;pwBinInput&quot; type=&quot;number&quot; min=&quot;0&quot; max=&quot;999&quot; value=&quot;${p.n}&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;numeric&quot; oninput=&quot;onBinInput(this)&quot;&gt;&lt;div class=&quot;pwBinProv&quot;&gt;${chip}&lt;/div&gt;&lt;/td&gt;`+
       `&lt;td class=&quot;pwCapProvided&quot;&gt;&lt;span class=&quot;${capClass}&quot;&gt;${unitHtml(fmtVol(p.cap))}&lt;/span&gt;&lt;/td&gt;`+
       `&lt;td class=&quot;pwFootprint&quot;&gt;${p.fp==null?'—':fmtM2(p.fp)}&lt;/td&gt;&lt;/tr&gt;`;
@@ -4024,10 +4045,12 @@ function methodLineHtml(rr,sec){
   const explicit=!!(room&amp;&amp;normMethod(room.method)[sec==='c'?'c':'r']);
   const opts=Object.keys(COLLECT_METHODS).map(id=&gt;`&lt;option value=&quot;${id}&quot;${id===method?' selected':''}&gt;${COLLECT_METHODS[id].label}&lt;/option&gt;`).join('');
   const council=activeCouncilLabel();
-  const sch=activeSchedule();
+  const ent=activeScheduleEntry(),sch=ent?ent.schedule:null;
+  const hasKerb=!!(sch&amp;&amp;Object.keys(sch).some(k=&gt;k!=='bulk'));
   let src;
-  if(COLLECT_METHODS[method].kerb&amp;&amp;sch&amp;&amp;Object.keys(sch.kerbside||{}).length)src=`sizes and frequency from &lt;b&gt;${escAttr(council)}&lt;/b&gt;’s collection schedule (guidelines library)`;
-  else if(council&amp;&amp;!sch)src=`no collection schedule for ${escAttr(council)} in the guidelines library — common sizes shown`;
+  if(COLLECT_METHODS[method].kerb&amp;&amp;hasKerb)src=`bin sizes and frequency from &lt;b&gt;${escAttr(ent.name||council||(g('state').value+' state'))}&lt;/b&gt;’s kerbside service (council database) — change a size or frequency if this development differs`;
+  else if(COLLECT_METHODS[method].kerb&amp;&amp;council&amp;&amp;!hasKerb)src=`no kerbside service recorded for ${escAttr(council)} in the council database (Admin › Council &amp;amp; state database › Kerbside collection service) — library sizes shown`;
+  else if(!COLLECT_METHODS[method].kerb)src='any size and frequency — bulk and private collection are not tied to the council’s kerbside service'+(BIN_LIB.length?'':' (built-in sizes: equipment library not reached)');
   else if(BIN_LIB.length)src='sizes from the equipment library';
   else src='built-in sizes (equipment library not reached)';
   return `&lt;div class=&quot;wsr-method&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Collection&lt;/span&gt; `+
@@ -4174,7 +4197,7 @@ function rebuildRoomCards(){
         if(sec==='r')anyRes=true;else anyCom=true;
         fp+=n*binFP(sz);
         const key=s+'_'+sz;
-        bins[key]=bins[key]||{stream:s,count:0,size:sz,vol:0,cw:cw,method:methodOf(rr.id,sec)};
+        bins[key]=bins[key]||{stream:s,count:0,size:sz,vol:0,cw:cw,method:methodOf(rr.id,sec),cycle:cycleFor(rr.id,sec,s,cw)};
         bins[key].count+=n;
         // weekly litres and collections/week ride along so the layout side can
         // apply compaction ratios with the SAME maths, not a count approximation
@@ -4501,7 +4524,7 @@ window.addEventListener('message', function(e) {
       EQUIP_DB = d.equipment; rebuildEquipLib(); rebuildRecvLib();
       // the bin library and the council schedules ride the equipment push
       if (Array.isArray(d.bins)) rebuildBinLib(d.bins);
-      if (Array.isArray(d.council_schedules)) COUNCIL_SCHEDULES = d.council_schedules.filter(c =&gt; c &amp;&amp; c.key &amp;&amp; c.schedule);
+      if (Array.isArray(d.council_schedules)) COUNCIL_SCHEDULES = d.council_schedules.filter(c =&gt; c &amp;&amp; c.schedule &amp;&amp; (c.value || c.key || c.state));
       if (typeof _stored !== 'undefined' &amp;&amp; _stored) { renderAllRooms(); renderRooms(); }
       if (d.bin_rooms === undefined &amp;&amp; d.res_1br === undefined &amp;&amp; d.state === undefined) return;
     }
@@ -4594,7 +4617,7 @@ function wsUpdateVolumes() {
           // Point tab needs: which bins reach the kerb, and on which cadence
           if (n &gt; 0) schedule.push({ room: rr.id, roomName: rr.name, component: rr.component, sec: sec, stream: s,
             sizeL: sz, qty: n, colWk: cw,
-            method: methodOf(rr.id, sec), cycle: cw &lt; 1 ? 'F' : 'W',
+            method: methodOf(rr.id, sec), cycle: cycleFor(rr.id, sec, s, cw),
             manual: _binOv[ovKey(rr.id, sec, s)] != null,
             manualWhy: _binOvWhy[ovKey(rr.id, sec, s)] || null,
             calcQty: provision(rr, sec, s, _stored.streams).nCalc });
@@ -4615,14 +4638,14 @@ function wsUpdateVolumes() {
         fpM2: r.fpM2, areaM2: r.areaM2, chute: r.chute || null, units: r.units || [],
         bins: Object.values(r.bins).map(b =&gt; ({ stream: b.stream, sizeL: b.size, qty: b.count,
                                                 weeklyVolL: b.vol || 0, perWeek: b.cw || 1,
-                                                method: b.method || null, cycle: (b.cw || 1) &lt; 1 ? 'F' : 'W' })),
+                                                method: b.method || null, cycle: b.cycle || ((b.cw || 1) &lt; 1 ? 'F' : 'W') })),
       }));
       // Where the cadence came from — the Collection Point names its source
       // instead of calling a council schedule an assumption.
-      const sch = activeSchedule();
+      const ent = activeScheduleEntry();
       const presentation = {
-        council: activeCouncilLabel() || null,
-        source: sch ? 'council' : 'manual',
+        council: (ent &amp;&amp; ent.name) || activeCouncilLabel() || null,
+        source: ent ? 'council' : 'manual',
         kerbside: schedule.some(it =&gt; COLLECT_METHODS[it.method]?.kerb),
       };
       window.parent.postMessage({ type: 'ws-calc-results', volumes: vols, schedule: schedule, rooms: roomsOut, summary: summary, presentation: presentation }, '*');
@@ -10673,14 +10696,32 @@ async function glCouncilCard(label, mountId, emptyHint) {
 // Read-only here; editing stays in the review queue.
 async function glCouncilReqs(row, mountId) {
   const wrap = document.getElementById(mountId);
-  if (!wrap || !row || !row.id) return;
-  let rows = [];
+  if (!wrap || !row) return;
+  // Approved rows are pinned to the document VERSION they were extracted
+  // from, which is not always the version serving the checker — so every
+  // version of this council's guideline is read, and each clause names its
+  // version. Matching by normalised council name, the same as the bridge.
+  let rows = [], docs = [];
   try {
-    const { data } = await sb.from('council_requirements').select('*')
-      .eq('council_guideline_id', row.id).eq('status', 'approved').order('requirement_type').order('clause_ref');
-    rows = data || [];
+    const t = glBridgeNorm(row.council_name);
+    const { data: all } = await sb.from('council_guidelines').select('id,version,version_label,council_name,council_key,superseded_at');
+    docs = (all || []).filter(d => {
+      if (row.council_key && d.council_key) return d.council_key === row.council_key;
+      const n = glBridgeNorm(d.council_name); return n && (n === t || n.includes(t) || t.includes(n));
+    });
+    const ids = docs.map(d => d.id).filter(Boolean);
+    if (ids.length) {
+      const { data } = await sb.from('council_requirements').select('*')
+        .in('council_guideline_id', ids).eq('status', 'approved').order('requirement_type').order('clause_ref');
+      rows = data || [];
+    }
   } catch (e) { rows = []; }
-  if (!rows.length) { wrap.innerHTML = ''; return; }
+  if (!rows.length) {
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);margin-top:6px;">No approved clauses on file for this council yet — 🧾 Extract to queue on the document, then approve the rows in the review queue.</div>';
+    return;
+  }
+  const docLabel = {};
+  docs.forEach(d => { docLabel[d.id] = 'v' + (d.version ?? '?') + (d.version_label ? ' ' + d.version_label : '') + (d.superseded_at ? ' (superseded)' : ''); });
   const TYPE_LABEL = { generation_rate: 'Generation rates', room_dimension: 'Room dimensions', aisle_width: 'Aisle widths',
     chute_spec: 'Chutes', collection_limit: 'Collection service', equipment_rule: 'Equipment', stream_split: 'Stream splits', other: 'Other' };
   const byType = {};
@@ -10699,7 +10740,7 @@ async function glCouncilReqs(row, mountId) {
         '<span>' + (fig(r) || '<span style="color:var(--muted);">—</span>') + '</span>' +
         '<span style="color:var(--muted);">' + cgbEsc(scope(r) || (r.use_class ? String(r.use_class) : 'all')) + '</span>' +
         '<span style="color:rgba(255,255,255,0.75);">' + cgbEsc(r.value_text || '') + '</span>' +
-        '<span style="color:var(--muted);">' + cgbEsc(r.clause_ref || '') + '</span>').join('') +
+        '<span style="color:var(--muted);">' + cgbEsc(r.clause_ref || '') + (docs.length > 1 ? ' · ' + cgbEsc(docLabel[r.council_guideline_id] || '') : '') + '</span>').join('') +
       '</div>').join('') +
     '</div></details>';
 }
@@ -10892,7 +10933,7 @@ function rdbRenderMeta(loadFailed) {
     return;
   }
   const inp = 'background:#182121;border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;width:100%;';
-  grid.innerHTML = RDB_META_FIELDS.map(([k, label]) => {
+  grid.innerHTML = rdbKerbGridHtml(inp) + RDB_META_FIELDS.map(([k, label]) => {
     const v = (RDB.meta[k] || '').replace(/"/g, '&quot;');
     const field = RDB_META_LONG.has(k)
       ? `<textarea data-k="${k}" rows="2" style="${inp}resize:vertical;" oninput="RDB.dirtyMeta=true">${RDB.meta[k] || ''}</textarea>`
@@ -10903,6 +10944,48 @@ function rdbRenderMeta(loadFailed) {
   }).join('');
 }
 
+// The structured kerbside service grid — what the calculator (kerbside
+// methods) and the Collection Point read. The free-text bin-size /
+// frequency lines further down stay for the WMP's wording; this grid is the
+// data. Stored as one JSON string under waste_meta 'kerbside_schedule'.
+const RDB_KERB_LABELS = { GW: 'General waste', REC: 'Recycling', ORG: 'Organics / FOGO', GLS: 'Glass' };
+const RDB_KERB_CYCLES = [['', '— not set —'], ['W', 'Weekly'], ['A', 'Fortnightly — week A'], ['B', 'Fortnightly — week B'],
+  ['F', 'Fortnightly (week not stated)'], ['M', 'Monthly'], ['OFF', 'Not collected at the kerb']];
+function rdbKerbGridHtml(inp) {
+  const sch = wpKerbScheduleParse(RDB.meta.kerbside_schedule) || { bulk: {} };
+  const cell = (k, v, extra) => `<input data-kerb="${k}" type="text" value="${String(v == null ? '' : v).replace(/"/g, '&quot;')}" style="${inp}" oninput="RDB.dirtyMeta=true" ${extra || ''}>`;
+  const rows = WP_KERB_STREAMS.map(s => {
+    const e = sch[s] || {};
+    return `<div style="display:contents;">
+      <span style="font-size:11px;color:var(--text);padding-top:7px;">${RDB_KERB_LABELS[s]}</span>
+      ${cell(s + '.sizeL', e.sizeL, 'inputmode="numeric" placeholder="e.g. 140"')}
+      ${cell(s + '.altL', (e.altL || []).join(', '), 'placeholder="e.g. 240, 360"')}
+      <select data-kerb="${s}.cycle" style="${inp}" onchange="RDB.dirtyMeta=true">${RDB_KERB_CYCLES.map(([v, l]) => `<option value="${v}" ${(e.cycle || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    </div>`;
+  }).join('');
+  return `<div class="rdb-meta-wide" style="margin-bottom:6px;">
+    <label style="font-size:11px;color:var(--muted);padding-top:7px;">Kerbside collection service <span class="adm-help" tabindex="0">?<span class="adm-help-pop">What this council actually supplies and collects at the kerb, per stream. The Bin Calculator defaults every kerbside room to these sizes and frequencies (editable per project — the alternatives are offered first), and the Collection Point tab builds its busiest-week check from the cycle letters. Bulk collection points and private contracts are not tied to this. Leave a stream blank if the council has no kerbside service for it.</span></span></label>
+    <div>
+      <div style="display:grid;grid-template-columns:130px 110px 150px 1fr;gap:4px 8px;align-items:center;">
+        <span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Stream</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Default bin (L)</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Also offered (L)</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Collection</span>
+        ${rows}
+        <span style="font-size:11px;color:var(--text);padding-top:7px;">Bulk collection point</span>
+        ${cell('bulk.maxL', sch.bulk && sch.bulk.maxL, 'inputmode="numeric" placeholder="max bin L"')}
+        ${cell('bulk.maxPerWeek', sch.bulk && sch.bulk.maxPerWeek, 'inputmode="decimal" placeholder="max services / week"')}
+        <span style="font-size:10px;color:var(--muted);">caps only — bulk bins may be any library size and frequency within them</span>
+      </div>
+    </div></div>`;
+}
+function rdbKerbGridCollect() {
+  const o = { bulk: {} };
+  document.querySelectorAll('#rdb-meta-grid [data-kerb]').forEach(el => {
+    const [s, f] = el.dataset.kerb.split('.');
+    (o[s] = o[s] || {})[f] = el.value;
+  });
+  const sch = wpKerbScheduleParse(o);
+  return sch ? JSON.stringify(sch) : '';
+}
+
 async function rdbSaveMeta() {
   const st = document.getElementById('rdb-state').value;
   const cv = document.getElementById('rdb-council').value || null;
@@ -10910,6 +10993,7 @@ async function rdbSaveMeta() {
   document.querySelectorAll('#rdb-meta-grid [data-k]').forEach(el => {
     rows.push({ state: st, council_value: cv, field_key: el.dataset.k, value: el.value });
   });
+  rows.push({ state: st, council_value: cv, field_key: 'kerbside_schedule', value: rdbKerbGridCollect() });
   rdbMsg('Saving info…');
   try {
     const { error } = await sb.from('waste_meta').upsert(rows, { onConflict: 'state,council_value,field_key' });
@@ -17339,8 +17423,8 @@ function wsPushEquipToCalc() {
                    collection_methods: x.collectionMethods,
                    footprint_m2: x.footprintM2,
                    width_mm: x.w > 0 ? x.w * 1000 : null, depth_mm: x.d > 0 ? x.d * 1000 : null })),
-    // Council kerbside schedules + bulk limits from the guidelines library,
-    // keyed by normalised council name (wpCouncilScheduleFromRows).
+    // Council kerbside schedules + bulk caps from the council database
+    // (waste_meta 'kerbside_schedule', parsed by wpKerbScheduleParse).
     council_schedules: WP_COUNCIL_SCHEDULES || [],
   }, '*');
 }
@@ -17365,82 +17449,63 @@ function wpUseClassScope(u) {
   return 'all';
 }
 
-function wpCouncilScheduleFromRows(rows) {
-  // Rows in, one schedule out:
-  //   kerbside.res[stream] / kerbside.com[stream] = { sizesL, maxL, perWeek, cites }
-  //   bulk = { maxL: n|null, maxPerWeek: n|null, cites: [...] }
-  // A row is BULK when its wording names the bulk service (bulk / front-lift /
-  // rear-lift / skip / hooklift), else it is the kerbside service, scoped by
-  // use_class: residential rows feed .res, commercial (incl. non-residential)
-  // rows feed .com, mixed / unscoped rows feed both.
-  //
-  // A bin SIZE is a bare litre unit — "L", "litres" — and nothing else. A
-  // unit with a divisor or cadence ("L/week", "L/dwelling/week", "L/100m2",
-  // "L/day") is a generation RATE, whatever the row was typed as, and never
-  // becomes a bin. Per-week / per-fortnight set frequency (fortnightly =
-  // 0.5 collections a week); a "maximum" wording caps instead of listing.
-  // Anything that resolves to nothing is dropped — never guessed.
-  const out = { kerbside: { res: {}, com: {} }, bulk: { maxL: null, maxPerWeek: null, cites: [] }, count: 0 };
-  (rows || []).forEach(r => {
-    if (!r || r.status !== 'approved' || r.requirement_type !== 'collection_limit') return;
-    const text = String(r.value_text || '');
-    const unit = String(r.unit || '').toLowerCase().trim();
-    const num = (r.value_num === 0 || r.value_num) ? Number(r.value_num) : NaN;
-    const isBulk = /\b(bulk|front[\s-]?lift|rear[\s-]?lift|skip|hook[\s-]?lift)\b/i.test(text);
-    const isMax = /\b(max(imum)?|no (larger|more) than|not exceed)/i.test(text);
-    const litres = /^(l|lt|ltr|litres?|liters?)$/.test(unit);
-    const isRate = /\/|\bper\b|dwelling|100 ?m|\bm2\b|m²|\bday\b/.test(unit) && !/^(per|\/)?\s*(week|fortnight)$/.test(unit.replace(/\s+/g, ' '));
-    const perWeek = isRate ? null
-                  : /fortnight|2 ?week|two ?week/.test(unit) ? 0.5
-                  : /week/.test(unit) ? 1 : null;
-    const cite = { stream: r.stream || null, clause: r.clause_ref || null, text: text.slice(0, 160) };
-    if (isBulk) {
-      if (litres && Number.isFinite(num) && num > 0) { out.bulk.maxL = out.bulk.maxL ? Math.min(out.bulk.maxL, num) : num; out.bulk.cites.push(cite); out.count++; }
-      else if (perWeek != null) { const f = Number.isFinite(num) && num > 0 ? num * perWeek : perWeek; out.bulk.maxPerWeek = out.bulk.maxPerWeek ? Math.min(out.bulk.maxPerWeek, f) : f; out.bulk.cites.push(cite); out.count++; }
-      return;
-    }
-    if (!r.stream) return;   // a kerbside rule is always about one stream
-    const sized = litres && Number.isFinite(num) && num > 0;
-    if (!sized && perWeek == null) return;   // nothing usable — no entry, so the UI never claims a schedule it lacks
-    const scope = wpUseClassScope(r.use_class);
-    const sections = scope === 'residential' ? ['res'] : scope === 'commercial' ? ['com'] : ['res', 'com'];
-    sections.forEach(sec => {
-      const k = out.kerbside[sec][r.stream] = out.kerbside[sec][r.stream] || { sizesL: [], maxL: null, perWeek: null, cites: [] };
-      if (sized) {
-        if (isMax) k.maxL = k.maxL ? Math.min(k.maxL, num) : num;
-        else if (k.sizesL.indexOf(num) < 0) k.sizesL.push(num);
-      } else {
-        // "1 per week", "per fortnight", "2 per week" — the value multiplies
-        // the unit's own cadence; a bare cadence with no number is one.
-        k.perWeek = Number.isFinite(num) && num > 0 ? num * perWeek : perWeek;
-      }
-      k.cites.push(cite);
-    });
-    out.count++;
+// The kerbside schedule is STRUCTURED DATA entered per council in the admin
+// page (waste_meta, field_key 'kerbside_schedule', a JSON string) — never
+// inferred from guideline clauses: a generation rate approved under the
+// wrong type once became a 50L bin, and a council's service is a fact the
+// person who knows it types in, with the clauses on file beside it as the
+// reference. Per stream (calculator keys GW/REC/ORG/GLS):
+//   { sizeL: default kerbside bin, altL: [other sizes the council offers],
+//     cycle: W weekly · A/B fortnightly on that week · F fortnightly (week
+//            not stated) · M monthly · OFF not collected at the kerb }
+// plus bulk: { maxL, maxPerWeek } caps for bulk collection points. A state
+// row (council_value null) is the default for councils without their own.
+const WP_KERB_STREAMS = ['GW', 'REC', 'ORG', 'GLS'];
+const WP_KERB_CYCLES = ['W', 'A', 'B', 'F', 'M', 'OFF'];
+function wpKerbScheduleParse(raw) {
+  // Pure: JSON string or object in, a normalised schedule out — null when
+  // nothing usable was entered (so the UI never claims a schedule it lacks).
+  let o = raw;
+  if (typeof raw === 'string') { try { o = JSON.parse(raw); } catch (e) { return null; } }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  const num = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.round(n) : null; };
+  const out = { bulk: { maxL: null, maxPerWeek: null } };
+  let any = false;
+  WP_KERB_STREAMS.forEach(s => {
+    const e = o[s];
+    if (!e || typeof e !== 'object') return;
+    const sizeL = num(e.sizeL);
+    const altRaw = Array.isArray(e.altL) ? e.altL : String(e.altL || '').split(/[,\s/;]+/);
+    const altL = altRaw.map(num).filter(v => v && v !== sizeL).filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b);
+    const cycle = WP_KERB_CYCLES.indexOf(e.cycle) >= 0 ? e.cycle : null;
+    if (!sizeL && !altL.length && !cycle) return;
+    out[s] = { sizeL, altL, cycle: cycle || (sizeL ? 'W' : null) };
+    any = true;
   });
-  ['res', 'com'].forEach(sec => Object.values(out.kerbside[sec]).forEach(k => k.sizesL.sort((a, b) => a - b)));
-  return out.count ? out : null;
+  if (o.bulk && typeof o.bulk === 'object') {
+    out.bulk.maxL = num(o.bulk.maxL);
+    const f = Number(o.bulk.maxPerWeek);
+    out.bulk.maxPerWeek = Number.isFinite(f) && f > 0 ? f : null;
+    if (out.bulk.maxL || out.bulk.maxPerWeek) any = true;
+  }
+  return any ? out : null;
 }
 
 async function wpLoadCouncilSchedules() {
   if (typeof sb === 'undefined' || !sb) { WP_COUNCIL_SCHEDULES = []; return; }
-  // Embed the guideline so the version is filtered server-side: only rows
-  // pinned to the council's live (non-superseded) document count.
-  const { data, error } = await sb.from('council_requirements')
-    .select('requirement_type,stream,value_num,unit,value_text,clause_ref,status,use_class,council_guidelines!inner(council_name,state,superseded_at)')
-    .eq('status', 'approved').eq('requirement_type', 'collection_limit')
-    .is('council_guidelines.superseded_at', null);
+  const [{ data: metas, error }, { data: councils }] = await Promise.all([
+    sb.from('waste_meta').select('state,council_value,value').eq('field_key', 'kerbside_schedule'),
+    sb.from('councils').select('value,label,state'),
+  ]);
   if (error) throw error;
-  const byCouncil = {};
-  (data || []).forEach(r => {
-    const g = r.council_guidelines || {};
-    const key = glBridgeNorm(g.council_name);
-    if (!key) return;
-    (byCouncil[key] = byCouncil[key] || { key, name: g.council_name, state: g.state || null, rows: [] }).rows.push(r);
-  });
-  WP_COUNCIL_SCHEDULES = Object.values(byCouncil)
-    .map(c => ({ key: c.key, name: c.name, state: c.state, schedule: wpCouncilScheduleFromRows(c.rows) }))
-    .filter(c => c.schedule);
+  const labelOf = (st, cv) => ((councils || []).find(c => c.value === cv && (!st || !c.state || c.state === st)) || {}).label || cv;
+  WP_COUNCIL_SCHEDULES = (metas || []).map(r => {
+    const schedule = wpKerbScheduleParse(r.value);
+    if (!schedule) return null;
+    const label = r.council_value ? labelOf(r.state, r.council_value) : null;
+    return { state: r.state || null, value: r.council_value || null, name: label,
+             key: label ? glBridgeNorm(label) : null, schedule };
+  }).filter(Boolean);
 }
 function wsLayoutBinList() {
   const db = (WS_EQUIP_DB || []).filter(x => x.kind === 'bin' && x.placeable !== false);
@@ -17956,6 +18021,10 @@ const WS_ZONE_TYPES = {
   // frontage geometry. The Collection Point check cuts the stretch of kerb
   // this covers out of the presentable length.
   SPLAY:     { id: 'SPLAY',     label: 'Sight splay (keep clear)', col: '#5C6BC0', provision: null, allow: null,           w: 3.0, d: 3.0 },
+  // Bulk collection point / presentation area — where a front-lift or
+  // private contractor services the bins. The Collection Point tab packs
+  // EVERY bulk-method bin into it (bulk services do not alternate weeks).
+  COLLECT:   { id: 'COLLECT',   label: 'Collection point area', col: '#C58B2A', provision: null, allow: null,           w: 4.0, d: 3.0 },
 };
 // The colour a placed zone draws in: its own override, else its type default.
 function wsZoneColour(zone) {
@@ -19197,27 +19266,29 @@ const WS_COLLECT_DEFAULTS = {
 };
 function wsCollectSchedule(streams, saved, calc) {
   // Precedence per stream: what the user set in this panel → what the
-  // calculator carried (W weekly, F fortnightly — a fortnightly stream takes
-  // its A/B week from the default pattern, since a council schedule says
-  // "fortnightly", not which fortnight) → the default pattern.
+  // calculator carried (W weekly · A/B the council's own fortnight · M
+  // monthly · OFF · F fortnightly with the week not stated, which takes its
+  // A/B week from the default pattern) → the default pattern.
   const out = {};
   (streams || []).forEach(s => {
     const c = calc && calc[s];
-    const fromCalc = c === 'W' ? 'W' : c === 'F' ? (WS_COLLECT_DEFAULTS.cycles[s] === 'B' ? 'B' : 'A') : c === 'OFF' ? 'OFF' : null;
+    const fromCalc = (c === 'W' || c === 'A' || c === 'B' || c === 'M' || c === 'OFF') ? c
+                   : c === 'F' ? (WS_COLLECT_DEFAULTS.cycles[s] === 'B' ? 'B' : 'A') : null;
     out[s] = (saved && saved[s]) || fromCalc || WS_COLLECT_DEFAULTS.cycles[s] || 'W';
   });
   return out;
 }
-// Per-stream cadence from the calculator's targets: W when any target of the
-// stream is weekly-or-more, F when every one is fortnightly. Streams without
-// a cycle (pre-method payloads, placed bins) are absent — the caller's
-// fallback applies.
+// Per-stream cadence from the calculator's targets. A stream collected
+// weekly anywhere presents every week; otherwise the council's week letter
+// wins over an unassigned fortnight, which wins over monthly, which wins
+// over "not collected". Streams without a cycle (pre-method payloads,
+// placed bins) are absent — the caller's fallback applies.
 function wsCollectCyclesFromTargets(targets) {
+  const rank = { W: 5, A: 4, B: 4, F: 3, M: 2, OFF: 1 };
   const out = {};
   (targets || []).forEach(t => {
-    if (!t || !t.stream || !t.cycle) return;
-    if (t.cycle === 'W' || out[t.stream] === 'W') out[t.stream] = 'W';
-    else if (t.cycle === 'F') out[t.stream] = 'F';
+    if (!t || !t.stream || !rank[t.cycle]) return;
+    if (!out[t.stream] || rank[t.cycle] > rank[out[t.stream]]) out[t.stream] = t.cycle;
   });
   return out;
 }
@@ -19225,10 +19296,13 @@ function wsCollectCyclesFromTargets(targets) {
 // in every scenario; A/B fortnights alternate; OFF streams never present.
 // Identical weeks collapse to one "Every week" scenario.
 function wsCollectScenarios(schedule) {
+  // Weekly streams sit in every week; A/B alternate; a MONTHLY stream is
+  // counted in every week too — the busiest day is the one it lands on,
+  // and the frontage has to fit that day. OFF never presents.
   const wk = [], a = [], b = [];
   Object.keys(schedule || {}).forEach(s => {
     const c = schedule[s];
-    if (c === 'W') wk.push(s);
+    if (c === 'W' || c === 'M') wk.push(s);
     else if (c === 'A') a.push(s);
     else if (c === 'B') b.push(s);
   });
@@ -19457,7 +19531,10 @@ function wsCollectTargets() {
     // target and keeps presenting everything, as it always did.
     const typed = WS_CALC_TARGETS.some(t => t.method);
     const kerb = typed ? WS_CALC_TARGETS.filter(t => /^kerbside/.test(String(t.method || ''))) : WS_CALC_TARGETS;
-    return { src: 'the bin calculator', targets: kerb, bulkOnly: typed && !kerb.length,
+    // bulk-method bins go to a collection point AREA — all of them, every
+    // stream, no alternation (a front-lift service empties the lot)
+    const bulk = typed ? WS_CALC_TARGETS.filter(t => t.method && !/^kerbside/.test(String(t.method))) : [];
+    return { src: 'the bin calculator', targets: kerb, bulk, bulkOnly: typed && !kerb.length,
              cycles: wsCollectCyclesFromTargets(kerb), present: (typeof WS_CALC_PRESENT !== 'undefined') ? WS_CALC_PRESENT : null };
   }
   const slot = wsLayoutSlot();
@@ -19491,14 +19568,50 @@ function wsCollectSplays(slot, mpp) {
 }
 // One assembler feeds the panel, the canvas AND the DXF — they can never
 // disagree about what the busiest week needs.
+// Bulk collection point: pack EVERY bulk-method bin into the drawn
+// collection-point areas, first-fit area by area (a site can have more than
+// one). No scenarios — a bulk service empties every stream on its visit, so
+// the whole schedule stands there at once. Pure: targets and polygons in,
+// placements out.
+function wsCollectBulk(targets, areas, mpp, gapM, types) {
+  const streams = [...new Set((targets || []).map(t => t.stream))];
+  const bins = wsCollectBins(targets, streams, types);
+  const items = {};
+  bins.forEach(b => {
+    const k = b.typeId + '|' + b.stream;
+    items[k] = items[k] || { kind: 'bin', typeId: b.typeId, stream: b.stream, w: b.wM, d: b.dM, n: 0, label: b.label };
+    items[k].n++;
+  });
+  let remaining = Object.values(items);
+  const out = { bins, areas: [], left: bins.length, empty: !bins.length, ok: false };
+  (areas || []).forEach(a => {
+    const res = wsPackBins(a.pts, remaining, mpp, gapM);
+    const used = {};
+    res.placed.forEach(p => { const k = p.it.typeId + '|' + p.it.stream; used[k] = (used[k] || 0) + 1; });
+    remaining = remaining.map(i => ({ ...i, n: i.n - (used[i.typeId + '|' + i.stream] || 0) })).filter(i => i.n > 0);
+    out.areas.push({ id: a.id, label: a.label || 'Collection point', pts: a.pts, m2: wsPolyArea(a.pts, mpp), placed: res.placed });
+  });
+  out.left = remaining.reduce((s, i) => s + i.n, 0);
+  out.ok = bins.length > 0 && out.areas.length > 0 && out.left === 0;
+  return out;
+}
+function wsCollectAreas(slot, mpp) {
+  return slot.equip.filter(e => e.zoneType === 'COLLECT').map(e => ({
+    id: e.id, label: e.label,
+    pts: (e.pts && e.pts.length >= 3) ? e.pts : wsOBBCorners(e.x, e.y, (e.w || 4) / 2 / mpp, (e.d || 3) / 2 / mpp, e.rot || 0),
+  }));
+}
 function wsCollectCompute(slot, mpp) {
   const c = slot.collect;
-  if (!c || !c.kerbs || !c.kerbs.length || !mpp) return null;
-  const clearanceM = c.clearanceM != null ? c.clearanceM : WS_COLLECT_DEFAULTS.clearanceM;
-  const gapM = c.gapM != null ? c.gapM : WS_COLLECT_DEFAULTS.gapM;
+  if (!mpp) return null;
+  const areas = wsCollectAreas(slot, mpp);
+  if (!c || !c.kerbs) { if (!areas.length) return null; }
+  else if (!c.kerbs.length && !areas.length) return null;
+  const clearanceM = c && c.clearanceM != null ? c.clearanceM : WS_COLLECT_DEFAULTS.clearanceM;
+  const gapM = c && c.gapM != null ? c.gapM : WS_COLLECT_DEFAULTS.gapM;
   const obs = wsCollectObsList(slot, mpp);
   const splays = wsCollectSplays(slot, mpp);
-  const kerbs = c.kerbs.map(k => {
+  const kerbs = ((c && c.kerbs) || []).map(k => {
     const excl = wsCollectExclusions(k.pts, obs, splays, mpp, { clearanceM });
     const L = wsKerbLen(k.pts);
     return { k, L, excl, free: wsIntervalsFree(L, excl) };
@@ -19513,9 +19626,18 @@ function wsCollectCompute(slot, mpp) {
   });
   let worst = scenarios[0];
   scenarios.forEach(sc => { if (sc.assess.reqM > worst.assess.reqM) worst = sc; });
-  const activeId = (c.scenario && scenarios.some(s => s.id === c.scenario)) ? c.scenario : worst.id;
+  const activeId = (c && c.scenario && scenarios.some(s => s.id === c.scenario)) ? c.scenario : worst.id;
+  const bulk = wsCollectBulk(tg.bulk || [], areas, mpp, gapM, types);
   return { kerbs, obs, splays, tg, streams, schedule, scenarios, worst, activeId,
-           active: scenarios.find(s => s.id === activeId), clearanceM, gapM };
+           active: scenarios.find(s => s.id === activeId), clearanceM, gapM, areas, bulk };
+}
+// The Collection Point tab's own way in to drawing the area: the COLLECT zone
+// through the Layout tab's polygon draw, so it edits, exports and tags like
+// every other zone.
+function wsCollectAreaMode() {
+  WS_LAYOUT._zoneType = 'COLLECT';
+  wsZoneDrawMode();
+  wsCollectMsg('Click the corners of the collection point area — Enter or double-click to close. Every bulk-method bin is packed into it.');
 }
 
 // ── panel ──
@@ -19536,19 +19658,35 @@ function wsCollectPanelRefresh() {
   if (gapEl && document.activeElement !== gapEl) gapEl.value = Math.round((c.gapM != null ? c.gapM : WS_COLLECT_DEFAULTS.gapM) * 1000);
   if (!mpp) { wrap.innerHTML = '<div>Set the drawing scale first — kerb lengths are real metres.</div>'; return; }
   const cp = wsCollectCompute(slot, mpp);
+  const bulkEl = document.getElementById('ws-collect-bulk');
   if (!cp) {
     wrap.innerHTML = 'No kerb traced yet.';
     const v = document.getElementById('ws-collect-verdict'); if (v) v.innerHTML = '';
     const sc = document.getElementById('ws-collect-scen'); if (sc) sc.innerHTML = '';
     const sh = document.getElementById('ws-collect-sched'); if (sh) sh.innerHTML = '';
+    if (bulkEl) {
+      const tg = wsCollectTargets();
+      const nb = (tg.bulk || []).reduce((s, t) => s + (t.qty || 0), 0);
+      bulkEl.innerHTML = nb ? `${nb} bin${nb === 1 ? '' : 's'} on a bulk / private collection method — draw the collection point area to check they fit.` : '';
+    }
     return;
   }
+  // bulk collection point — every bulk-method bin, all streams at once
+  if (bulkEl) {
+    const b = cp.bulk;
+    if (b.empty) bulkEl.innerHTML = cp.areas.length ? 'Collection point area drawn — no bins on a bulk / private method in the calculator yet.' : '';
+    else if (!cp.areas.length) bulkEl.innerHTML = `${b.bins.length} bin${b.bins.length === 1 ? '' : 's'} on a bulk / private collection method (${[...new Set(b.bins.map(x => x.stream))].join(', ')}) — draw the collection point area to check they fit.`;
+    else bulkEl.innerHTML = `<div style="border:1px solid ${b.ok ? '#4BED12' : '#ED1C24'};border-radius:8px;background:${b.ok ? '#14231a' : '#231414'};padding:7px 9px;line-height:1.5;color:rgba(255,255,255,0.9);">` +
+      (b.ok ? `✅ <b>All ${b.bins.length} bins fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${cp.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Every stream is shown at once — a bulk service does not alternate weeks.`
+            : `❌ <b>${b.left} of ${b.bins.length} bins do not fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${cp.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Enlarge the area, draw another, or reduce the bulk schedule in the calculator.`) +
+      `</div>`;
+  }
   const nameOf = i => 'Kerb ' + String.fromCharCode(65 + i);
-  wrap.innerHTML = cp.kerbs.map((ki, i) =>
+  wrap.innerHTML = cp.kerbs.length ? cp.kerbs.map((ki, i) =>
     `<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
       <span style="flex:1;">${nameOf(i)} — ${(ki.L * mpp).toFixed(1)} m${ki.excl.length ? ` <span style="color:rgba(255,255,255,0.4);">(${((ki.L - ki.free.reduce((a, g) => a + (g.s1 - g.s0), 0)) * mpp).toFixed(1)} m blocked)</span>` : ''}</span>
       <button class="wsl-btn" style="padding:1px 6px;font-size:10px;color:#ED1C24;" onclick="wsCollectKerbDelete(${i})">✕</button>
-    </div>`).join('');
+    </div>`).join('') : 'No kerb traced yet.';
   // obstructions near a kerb, with editable blocked-width
   const obsEl = document.getElementById('ws-collect-obs');
   if (obsEl) {
@@ -19572,7 +19710,7 @@ function wsCollectPanelRefresh() {
       <span style="width:9px;height:9px;border-radius:50%;background:${stc.col || '#888'};flex:0 0 auto;"></span>
       <span style="flex:1;color:rgba(255,255,255,0.7);">${stc.label || s}</span>
       <select class="wsl-sel" style="width:110px;" onchange="wsCollectCycleChanged('${s}', this.value)">
-        ${opt('W', 'every week')}${opt('A', 'week A')}${opt('B', 'week B')}${opt('OFF', 'not collected')}
+        ${opt('W', 'every week')}${opt('A', 'week A')}${opt('B', 'week B')}${opt('M', 'monthly')}${opt('OFF', 'not collected')}
       </select>
     </div>`;
   }).join('') : '<div style="font-size:11px;color:rgba(255,255,255,0.5);">No bin schedule yet — run the Bin Calculator (or place bins on the plan).</div>';
@@ -19602,8 +19740,9 @@ function wsCollectPanelRefresh() {
     const a = cp.worst.assess;
     let col = '#4BED12', bg = '#14231a', head;
     if (a.empty) { col = '#3a4747'; bg = '#141c1c'; head = cp.tg.bulkOnly
-      ? 'Nothing presents at the kerb — every stream is collected from a bulk collection point or self-hauled (set in the Bin Calculator).'
+      ? 'Nothing presents at the kerb — every stream is collected from a bulk collection point or self-hauled (set in the Bin Calculator). See the collection point area below.'
       : 'No bins to present yet — the check runs once the calculator (or the plan) has bins.'; }
+    else if (!cp.kerbs.length) { col = '#FFB74D'; bg = '#231d12'; head = `${cp.worst.bins.length} bin${cp.worst.bins.length === 1 ? '' : 's'} present at the kerb on the busiest week (${cp.worst.label}) — trace the kerb to check the frontage fits them.`; }
     else if (a.ok) head = `✅ <b>It fits.</b> On your busiest collection week (${cp.worst.label}) you need <b>${a.reqM.toFixed(1)} m</b> of kerb and have <b>${a.netM.toFixed(1)} m</b> clear — <b>${(a.netM - a.reqM).toFixed(1)} m</b> to spare.`;
     else if (a.siteConstraint) { col = '#ED1C24'; bg = '#231414'; head = `❌ <b>The frontage itself is too short.</b> Even with nothing in the way, ${cp.worst.label} needs <b>${a.reqM.toFixed(1)} m</b> and the whole kerb is <b>${a.grossM.toFixed(1)} m</b>. That is a site constraint — fewer/larger bins, more frequent collection, or on-site collection.`; }
     else if (a.fragmented) { col = '#FFB74D'; bg = '#231d12'; head = `🟡 <b>Enough kerb, but broken up.</b> You have ${a.netM.toFixed(1)} m clear in total against ${a.reqM.toFixed(1)} m needed, but the clear stretches are too short — ${a.unplaced.length} bin${a.unplaced.length === 1 ? '' : 's'} won’t fit anywhere.`; }
@@ -19680,6 +19819,15 @@ function wsCollectRender(mk, gW, mpp, slot) {
       }
     });
   });
+  // bulk collection point: every bulk-method bin, packed into the drawn area
+  (cp.bulk ? cp.bulk.areas : []).forEach(ar => {
+    ar.placed.forEach(pl => {
+      const stc = WS_STREAMS.find(x => x.id === pl.it.stream) || {};
+      const cs = wsOBBCorners(pl.x, pl.y, pl.it.w / 2 / mpp, pl.it.d / 2 / mpp, 0);
+      mk('polygon', { points: cs.map(q => q.x.toFixed(1) + ',' + q.y.toFixed(1)).join(' '),
+        fill: stc.col || '#888', 'fill-opacity': 0.75, stroke: '#fff', 'stroke-width': 1 }, gW);
+    });
+  });
   // the active scenario's bins, snapped along the clear stretches
   const sc = cp.active;
   if (sc && sc.assess) {
@@ -19695,7 +19843,7 @@ function wsCollectRender(mk, gW, mpp, slot) {
       mk('polygon', { points: cs.map(q => q.x.toFixed(1) + ',' + q.y.toFixed(1)).join(' '),
         fill: stc.col || '#888', 'fill-opacity': 0.75, stroke: '#fff', 'stroke-width': 1 }, gW);
     });
-    if (sc.assess.unplaced.length) {
+    if (sc.assess.unplaced.length && cp.kerbs.length) {
       const ki = cp.kerbs[cp.kerbs.length - 1];
       const pe = wsKerbAt(ki.k.pts, ki.L);
       if (pe) {
@@ -21716,9 +21864,22 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
   // whenever a kerb is traced. The design-case (busiest week) bins are drawn
   // and the header names the scenario and the metres, so a reviewer sees WHY
   // the check passed or failed, not just that it did.
-  if (slot.collect && slot.collect.kerbs && slot.collect.kerbs.length && typeof wsCollectCompute === 'function') {
+  const anyCollect = (slot.collect && slot.collect.kerbs && slot.collect.kerbs.length)
+    || (slot.equip || []).some(e => e.zoneType === 'COLLECT');
+  if (anyCollect && typeof wsCollectCompute === 'function') {
     const cp = wsCollectCompute(slot, mpp);
-    if (cp) {
+    if (cp && cp.bulk && cp.bulk.areas.length && !cp.bulk.empty) {
+      // bulk collection point — every bulk-method bin, all streams at once
+      cp.bulk.areas.forEach(ar => ar.placed.forEach(pl => {
+        const stc = WS_STREAMS.find(x => x.id === pl.it.stream) || { aci: 8 };
+        d += rect('A-COLLECT-BINS', stc.aci, pl.x, pl.y, pl.it.w, pl.it.d, 0);
+      }));
+      const a0 = cp.bulk.areas[0];
+      d += text('A-COLLECT-BINS', cp.bulk.ok ? 3 : 1, a0.pts[0].x, a0.pts[0].y - 14, 220,
+        'COLLECTION POINT - ALL STREAMS - ' + cp.bulk.bins.length + ' BINS - ' +
+        (cp.bulk.ok ? 'FITS' : cp.bulk.left + ' DO NOT FIT'));
+    }
+    if (cp && cp.kerbs.length) {
       cp.kerbs.forEach((ki, i) => {
         d += poly('A-KERB', 8, ki.k.pts.map(p => [p.x, p.y]));
         d += text('A-KERB', 8, ki.k.pts[0].x, ki.k.pts[0].y - 14, 200,

@@ -18,9 +18,9 @@ const { SOURCE, extractBlock, extractSrcdocBlock, decodeSrcdoc, loadEngine } = r
 function loadPlatform() {
   const code = [
     /^const WP_COLLECT_METHOD_IDS = /, /^function wpParseMethods\(/, /^function wpUseClassScope\(/,
-    /^function wpCouncilScheduleFromRows\(/, /^function glBridgeNorm\(/,
+    /^const WP_KERB_STREAMS = /, /^const WP_KERB_CYCLES = /, /^function wpKerbScheduleParse\(/, /^function glBridgeNorm\(/,
   ].map(p => extractBlock(p).text).join('\n\n');
-  return new Function(code + '\n;return { WP_COLLECT_METHOD_IDS, wpParseMethods, wpUseClassScope, wpCouncilScheduleFromRows, glBridgeNorm };')();
+  return new Function(code + '\n;return { WP_COLLECT_METHOD_IDS, wpParseMethods, wpUseClassScope, wpKerbScheduleParse, glBridgeNorm };')();
 }
 
 test('wpUseClassScope: non-residential is commercial, and the checker shares the classifier', () => {
@@ -45,57 +45,35 @@ test('wpParseMethods: comma lists and synonyms collapse onto the four ids; junk 
   assert.deepStrictEqual(wpParseMethods(null), []);
 });
 
-test('wpCouncilScheduleFromRows: approved collection_limit rows become a kerbside schedule + bulk caps', () => {
-  const { wpCouncilScheduleFromRows } = loadPlatform();
-  const row = (o) => ({ status: 'approved', requirement_type: 'collection_limit', ...o });
-  const s = wpCouncilScheduleFromRows([
-    row({ stream: 'garbage', value_num: 140, unit: 'L', value_text: '140L garbage bin', clause_ref: 'cl 3.1, p.4' }),
-    row({ stream: 'garbage', value_num: 1, unit: 'per week', value_text: 'collected weekly', clause_ref: 'cl 3.2, p.4' }),
-    row({ stream: 'recycling', value_num: 240, unit: 'L', value_text: '240L recycling', clause_ref: 'cl 3.3' }),
-    row({ stream: 'recycling', value_num: null, unit: 'per fortnight', value_text: 'fortnightly', clause_ref: 'cl 3.3' }),
-    row({ stream: 'fogo', value_num: 240, unit: 'litres', value_text: 'maximum 240L', clause_ref: 'cl 3.4' }),
-    row({ stream: null, value_num: 1100, unit: 'L', value_text: 'bulk bins no larger than 1100L', clause_ref: 'cl 5.1' }),
-    row({ stream: null, value_num: 3, unit: 'per week', value_text: 'front-lift service at most three times a week', clause_ref: 'cl 5.2' }),
-    row({ stream: 'glass', value_num: 120, unit: 'L', value_text: 'pending', clause_ref: 'x', status: 'proposed' }),
-    row({ stream: null, value_num: 120, unit: 'L', value_text: '120L', clause_ref: 'y' }),
-    row({ stream: 'paper', value_num: null, unit: null, value_text: 'as directed', clause_ref: 'z' }),
-  ]);
-  const res = s.kerbside.res;
-  assert.deepStrictEqual(res.garbage.sizesL, [140]);
-  assert.equal(res.garbage.perWeek, 1);
-  assert.deepStrictEqual(res.garbage.cites.map(c => c.clause), ['cl 3.1, p.4', 'cl 3.2, p.4'], 'every number carries its clause');
-  assert.equal(res.recycling.perWeek, 0.5, 'fortnightly is half a collection per week');
-  assert.equal(res.fogo.maxL, 240, 'a "maximum" wording caps instead of listing');
-  assert.deepStrictEqual(res.fogo.sizesL, []);
-  assert.deepStrictEqual(s.kerbside.com.garbage.sizesL, [140], 'an unscoped row applies to both sections');
-  assert.equal(s.bulk.maxL, 1100, 'bulk wording routes to the bulk cap');
-  assert.equal(s.bulk.maxPerWeek, 3);
-  assert.ok(!res.glass, 'a proposed row is never consumed');
-  assert.ok(!('null' in res), 'a streamless kerbside row is dropped, not guessed');
-  assert.ok(!res.paper, 'a row with no usable number resolves to nothing');
-  assert.equal(wpCouncilScheduleFromRows([]), null, 'no rows, no schedule — the calculator says so instead of assuming');
-  assert.equal(wpCouncilScheduleFromRows([row({ stream: 'garbage', value_num: 3, unit: 'bins', value_text: '3 bins', clause_ref: 'q' })]), null);
-});
-
-test('a generation rate never becomes a bin size, and use_class scopes the section', () => {
-  const { wpCouncilScheduleFromRows } = loadPlatform();
-  const row = (o) => ({ status: 'approved', requirement_type: 'collection_limit', ...o });
-  // the live case: a non-residential 50 L/week organics rate approved as collection_limit
-  for (const unit of ['L/week', 'L/dwelling/week', 'L/day/100m2', 'L per 100m²', 'litres per day'])
-    assert.equal(wpCouncilScheduleFromRows([row({ stream: 'fogo', value_num: 50, unit, value_text: '50', clause_ref: 'p.55', use_class: 'Non-Residential Developments' })]), null,
-      `unit "${unit}" is a rate — no schedule, no 50L bin`);
-  const s = wpCouncilScheduleFromRows([
-    row({ stream: 'fogo', value_num: 50, unit: 'L', value_text: '50L food organics bin', clause_ref: 'p.55', use_class: 'Non-Residential Developments' }),
-    row({ stream: 'garbage', value_num: 140, unit: 'L', value_text: '140L', clause_ref: 'p.4', use_class: 'residential' }),
-    row({ stream: 'recycling', value_num: 240, unit: 'L', value_text: '240L', clause_ref: 'p.5', use_class: 'mixed use' }),
-  ]);
-  assert.ok(!s.kerbside.res.fogo, 'a non-residential bin never shapes a residential room');
-  assert.deepStrictEqual(s.kerbside.com.fogo.sizesL, [50], 'it shapes the commercial section');
-  assert.ok(s.kerbside.res.garbage && !s.kerbside.com.garbage, 'a residential row stays residential');
-  assert.ok(s.kerbside.res.recycling && s.kerbside.com.recycling, 'mixed use feeds both');
-  // cadence units still read as cadence, with or without a leading "per"
-  for (const [unit, pw] of [['per week', 1], ['/week', 1], ['weekly', 1], ['per fortnight', 0.5], ['fortnightly', 0.5]])
-    assert.equal(wpCouncilScheduleFromRows([row({ stream: 'garbage', value_num: null, unit, value_text: 'x', clause_ref: 'c' })]).kerbside.res.garbage.perWeek, pw, unit);
+test('wpKerbScheduleParse: the council database row becomes a normalised kerbside service; junk never does', () => {
+  const { wpKerbScheduleParse } = loadPlatform();
+  // Camden, as briefed: 140L garbage weekly (240L offered), 240L recycling and FOGO alternating fortnights
+  const s = wpKerbScheduleParse(JSON.stringify({
+    GW: { sizeL: '140', altL: '240', cycle: 'W' },
+    REC: { sizeL: 240, altL: [], cycle: 'A' },
+    ORG: { sizeL: 240, altL: '', cycle: 'B' },
+    GLS: { sizeL: '', altL: '', cycle: '' },
+    bulk: { maxL: '1100', maxPerWeek: '3' },
+  }));
+  assert.deepStrictEqual(s.GW, { sizeL: 140, altL: [240], cycle: 'W' });
+  assert.deepStrictEqual(s.REC, { sizeL: 240, altL: [], cycle: 'A' });
+  assert.deepStrictEqual(s.ORG, { sizeL: 240, altL: [], cycle: 'B' });
+  assert.ok(!s.GLS, 'a blank stream is absent — no kerbside service, not a zero');
+  assert.deepStrictEqual(s.bulk, { maxL: 1100, maxPerWeek: 3 });
+  // alternatives dedupe, drop the default and sort; a size with no cycle reads weekly
+  assert.deepStrictEqual(wpKerbScheduleParse({ GW: { sizeL: 140, altL: '240, 140; 80 240' } }).GW, { sizeL: 140, altL: [80, 240], cycle: 'W' });
+  // a cycle can stand alone (size left to the library); an unknown cycle is dropped
+  assert.deepStrictEqual(wpKerbScheduleParse({ REC: { cycle: 'M' } }).REC, { sizeL: null, altL: [], cycle: 'M' });
+  assert.equal(wpKerbScheduleParse({ REC: { cycle: 'weekly' } }), null);
+  // nothing usable → null, so the UI never claims a schedule it lacks
+  assert.equal(wpKerbScheduleParse(''), null);
+  assert.equal(wpKerbScheduleParse('not json'), null);
+  assert.equal(wpKerbScheduleParse('{"GW":{"sizeL":"","altL":"","cycle":""},"bulk":{}}'), null);
+  assert.equal(wpKerbScheduleParse([1, 2]), null);
+  // the admin grid round-trips through the same parser
+  assert.ok(extractBlock(/^function rdbKerbGridCollect\(\)/).text.includes('wpKerbScheduleParse(o)'), 'the grid saves what the parser accepts');
+  assert.ok(SOURCE.includes("field_key: 'kerbside_schedule', value: rdbKerbGridCollect()"), 'stored as one waste_meta row');
+  assert.ok(!SOURCE.includes('wpCouncilScheduleFromRows'), 'the clause-inference path is gone — a service is typed in, never guessed from clauses');
 });
 
 test('the council-name normaliser is one function on both sides of the iframe boundary', () => {
@@ -110,26 +88,26 @@ test('the council-name normaliser is one function on both sides of the iframe bo
 });
 
 // ── §2: the calculator's selection logic, run for real ──
-function loadCalc({ rooms = [], councilLabel = '', councilValue = '' } = {}) {
+function loadCalc({ rooms = [], councilLabel = '', councilValue = '', state = 'NSW' } = {}) {
   const blocks = [
     /^const ALLOWED_SIZES=/, /^const LIB_STREAM_KEY=/, /^let BIN_LIB=/,
     /^const COLLECT_METHODS=\{/, /^const DEFAULT_METHOD=/, /^function normMethod\(/,
     /^function defaultMethod\(/, /^function methodOf\(/,
     /^let COUNCIL_SCHEDULES=/, /^function councilKey\(/, /^function activeCouncilLabel\(/,
-    /^function activeSchedule\(/, /^function scheduleFor\(/,
+    /^function activeScheduleEntry\(/, /^function activeSchedule\(/, /^function scheduleFor\(/, /^function cycleCw\(/,
     /^const BIN_EQUIPMENT=/, /^function binFP\(/, /^function rebuildBinLib\(/,
     /^function binSizesRaw\(/, /^function binSizesFor\(/,
     /^let _szOv=\{\},_cwOv=\{\};/, /^function ovKey\(/, /^const DEFAULT_BINSIZES=/, /^const DEFAULT_COLWK=/,
-    /^function defSize\(/, /^function defCw\(/, /^function normCw\(/, /^function cwLabel\(/,
+    /^function defSize\(/, /^function defCw\(/, /^function normCw\(/, /^function cwLabel\(/, /^function cycleFor\(/,
     /^function roomById\(/,
   ];
   const code = blocks.map(p => extractSrcdocBlock('calc-iframe', p).text).join('\n\n');
   const g = id => id === 'council'
     ? { value: councilValue, selectedIndex: 0, options: [{ text: councilLabel }] }
-    : { value: '' };
+    : id === 'state' ? { value: state } : { value: '' };
   const factory = new Function('ROOMS', 'g', code + `
     ;return { COLLECT_METHODS, normMethod, defaultMethod, methodOf, rebuildBinLib, binSizesRaw, binSizesFor, binFP,
-              defSize, defCw, normCw, cwLabel, activeSchedule, scheduleFor, ALLOWED_SIZES,
+              defSize, defCw, normCw, cwLabel, cycleFor, activeSchedule, scheduleFor, ALLOWED_SIZES,
               setLib: rows => rebuildBinLib(rows), setSchedules: s => { COUNCIL_SCHEDULES = s; },
               setSz: (k, v) => { _szOv[k] = v; }, setCw: (k, v) => { _cwOv[k] = v; }, lib: () => BIN_LIB };`);
   return factory(rooms, g);
@@ -198,72 +176,122 @@ test('defaults snap onto what is offered, and say so through the pick they keep'
   assert.equal(c.defSize('R2', 'r', 'GW'), 140, '…but a non-common library size is, wherever it is offered');
   assert.equal(c.defCw('R2', 'r', 'GW'), 2, 'generic frequency default');
   assert.equal(c.normCw('0.5'), 0.5, 'fortnightly');
-  assert.equal(c.normCw('0.3'), 0.5, 'anything under weekly reads as fortnightly');
+  assert.equal(c.normCw('0.3'), 0.25, 'under fortnightly reads as monthly');
+  assert.equal(c.normCw('0.7'), 0.5, 'between reads as fortnightly');
   assert.equal(c.normCw('2.7'), 3, 'whole collections otherwise');
   assert.equal(c.normCw('', 2), 2, 'blank keeps the fallback');
   assert.equal(c.cwLabel(0.5), 'fortnightly');
+  assert.equal(c.cwLabel(0.25), 'monthly');
 });
 
-test('council schedule: kerbside sizes and cadence come from the guidelines library and default the row', () => {
-  const c = loadCalc({ rooms: [room('R1', { townhouse: 6 }), room('R2', { apt_2br: 20 })], councilLabel: 'Central Coast Council', councilValue: 'central_coast' });
+test('council kerbside service: the council database defaults size and cadence; alternatives and every legal size stay reachable', () => {
+  const CAMDEN = { GW: { sizeL: 140, altL: [240], cycle: 'W' }, REC: { sizeL: 240, altL: [], cycle: 'A' }, ORG: { sizeL: 240, altL: [], cycle: 'B' },
+                   bulk: { maxL: 660, maxPerWeek: 2 } };
+  const c = loadCalc({ rooms: [room('R1', { townhouse: 6 }), room('R2', { apt_2br: 20 })], councilLabel: 'Camden Council', councilValue: 'camden', state: 'NSW' });
   c.setLib(LIB);
-  c.setSchedules([{ key: 'centralcoast', name: 'Central Coast Council', schedule: {
-    kerbside: { res: { garbage: { sizesL: [140], maxL: null, perWeek: 1, cites: [{ clause: 'cl 3.1' }] },
-                       recycling: { sizesL: [240, 360], maxL: null, perWeek: 0.5, cites: [] },
-                       fogo: { sizesL: [], maxL: 120, perWeek: null, cites: [] } },
-                com: { fogo: { sizesL: [50], maxL: null, perWeek: null, cites: [] } } },
-    bulk: { maxL: 660, maxPerWeek: 2, cites: [] }, count: 6 } }]);
-  assert.ok(!c.binSizesFor('R1', 'r', 'ORG').list.some(e => e.sizeL === 50), 'the commercial 50L never reaches a residential row');
-  assert.deepStrictEqual(c.scheduleFor('c', 'ORG').sizesL, [50], 'but it is the commercial section’s schedule');
-  assert.ok(c.activeSchedule(), 'the selected council matches its schedule by normalised name');
+  c.setSchedules([{ state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', schedule: CAMDEN }]);
+  assert.ok(c.activeSchedule(), 'the selected council matches by registry value');
   const gw = c.binSizesFor('R1', 'r', 'GW');
-  assert.deepStrictEqual(gw.list.map(e => e.sizeL), [140], 'the council’s size IS the kerbside list');
-  assert.deepStrictEqual(gw.councilSizes, [140]);
-  assert.equal(c.defSize('R1', 'r', 'GW'), 140, 'and it is the default — no hunting through a general list');
+  assert.deepStrictEqual(gw.councilSizes, [140, 240], 'the council default and its alternative');
+  assert.deepStrictEqual(gw.list.slice(0, 2).map(e => [e.sizeL, e.common]), [[140, true], [240, true]], 'council sizes lead the dropdown');
+  assert.deepStrictEqual(gw.list.slice(2).map(e => e.sizeL), [120], 'every other kerbside-legal size stays under Other sizes — the schedule is a default, not a lock');
+  assert.ok(!gw.list.some(e => e.sizeL > 360), 'still no 660/1100 at the kerb');
+  assert.equal(c.defSize('R1', 'r', 'GW'), 140, 'the council DEFAULT is the default, not the largest');
   assert.equal(c.defCw('R1', 'r', 'GW'), 1);
-  assert.equal(c.defSize('R1', 'r', 'REC'), 360, 'several council sizes → the largest defaults');
+  assert.equal(c.defSize('R1', 'r', 'REC'), 240);
   assert.equal(c.defCw('R1', 'r', 'REC'), 0.5, 'fortnightly recycling arrives as 0.5/week');
-  const org = c.binSizesFor('R1', 'r', 'ORG');
-  assert.deepStrictEqual(org.list.map(e => e.sizeL), [120], 'a council maximum trims the library list without replacing it');
-  assert.ok(gw.list[0].source === 'library', 'the 140L comes from the library record when one exists');
-  // bulk methods are capped by the council's bulk limit, never by its kerbside sizes
+  assert.equal(c.cycleFor('R1', 'r', 'REC', 0.5), 'A', 'and carries the council’s own week letter downstream');
+  assert.equal(c.cycleFor('R1', 'r', 'ORG', 0.5), 'B');
+  assert.equal(c.cycleFor('R1', 'r', 'GW', 1), 'W');
+  assert.equal(c.cycleFor('R1', 'r', 'REC', 1), 'W', 'a row switched to weekly is weekly, whatever the council does');
+  assert.equal(c.cycleFor('R2', 'r', 'REC', 0.5), 'F', 'a bulk row at 0.5 is an unassigned fortnight — the Collection Point assigns the week');
+  assert.equal(c.cycleFor('R2', 'r', 'REC', 0.25), 'M');
+  assert.ok(!c.scheduleFor('r', 'GLS'), 'a stream the council does not collect has no service entry');
+  // bulk methods: any size within the council's bulk cap, any frequency — the kerbside service never applies
   const bulk = c.binSizesFor('R2', 'r', 'GW');
   assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [120, 140, 240, 660]);
   assert.equal(c.defSize('R2', 'r', 'GW'), 660, 'the 1100L default snaps under the council bulk cap');
   assert.equal(c.defCw('R2', 'r', 'GW'), 2, 'kerbside cadence never leaks into a bulk row');
   // a council size the library does not carry yet is still offered, labelled as the council's
-  c.setSchedules([{ key: 'centralcoast', name: 'Central Coast Council', schedule: { kerbside: { res: { garbage: { sizesL: [80], maxL: null, perWeek: 1, cites: [] } }, com: {} }, bulk: {}, count: 1 } }]);
-  const g80 = c.binSizesFor('R1', 'r', 'GW');
-  assert.deepStrictEqual(g80.list.map(e => [e.sizeL, e.source]), [[80, 'council']]);
-  // no schedule for the council → the normal method-filtered list, and the UI says so
+  c.setSchedules([{ state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', schedule: { GW: { sizeL: 80, altL: [], cycle: 'W' }, bulk: {} } }]);
+  assert.deepStrictEqual(c.binSizesFor('R1', 'r', 'GW').list[0], { sizeL: 80, common: true, methods: [], source: 'council' });
+  // a state-level row (no council value) is the default for councils without their own
+  c.setSchedules([{ state: 'NSW', value: null, name: null, key: null, schedule: { GW: { sizeL: 120, altL: [], cycle: 'W' }, bulk: {} } }]);
+  assert.equal(c.defSize('R1', 'r', 'GW'), 120, 'state default applies');
+  // no schedule for the council → the method-filtered library list, and the UI says where to add one
   const none = loadCalc({ rooms: [room('R1', { townhouse: 6 })], councilLabel: 'Nowhere Shire', councilValue: 'nowhere' });
   none.setLib(LIB);
   assert.equal(none.activeSchedule(), null);
   assert.deepStrictEqual(none.binSizesFor('R1', 'r', 'GW').list.map(e => e.sizeL), [120, 140, 240]);
-  assert.ok(decodeSrcdoc('calc-iframe').html.includes('in the guidelines library — common sizes shown'), 'the fallback is flagged, not silent');
+  assert.ok(decodeSrcdoc('calc-iframe').html.includes('no kerbside service recorded for'), 'the fallback is flagged, and names where to record one');
 });
 
 // ── §3: Collection Point ──
 const ws = loadEngine({ blocks: [
   ['WS_BIN_TYPES', /^const WS_BIN_TYPES = \[/],
+  ['wsPolyArea', /^function wsPolyArea\(/],
+  ['wsPolyBBox', /^function wsPolyBBox\(/],
+  ['wsPointInPoly', /^function wsPointInPoly\(/],
+  ['wsPackBins', /^function wsPackBins\(/],
   ['WS_COLLECT_DEFAULTS', /^const WS_COLLECT_DEFAULTS = \{/],
   ['wsCollectSchedule', /^function wsCollectSchedule\(/],
+  ['wsCollectScenarios', /^function wsCollectScenarios\(/],
   ['wsCollectCyclesFromTargets', /^function wsCollectCyclesFromTargets\(/],
   ['wsCollectBins', /^function wsCollectBins\(/],
+  ['wsCollectBulk', /^function wsCollectBulk\(/],
 ] });
 
-test('the calculator’s cadence feeds the scenarios: W stays weekly, F takes the default A/B week, panel edits still win', () => {
+test('the calculator’s cadence feeds the scenarios: the council’s week letters pass through, F takes the default week, panel edits win', () => {
   const cyc = ws.wsCollectCyclesFromTargets([
-    { stream: 'garbage', cycle: 'W' }, { stream: 'recycling', cycle: 'F' }, { stream: 'fogo', cycle: 'F' },
-    { stream: 'fogo', cycle: 'W' }, { stream: 'glass', cycle: null }, { stream: 'paper' },
+    { stream: 'garbage', cycle: 'W' }, { stream: 'recycling', cycle: 'A' }, { stream: 'fogo', cycle: 'B' },
+    { stream: 'fogo', cycle: 'W' }, { stream: 'glass', cycle: 'M' }, { stream: 'paper', cycle: 'F' }, { stream: 'soft', cycle: null }, { stream: 'x' },
   ]);
-  assert.deepStrictEqual(cyc, { garbage: 'W', recycling: 'F', fogo: 'W' }, 'any weekly target makes the stream weekly; no cycle = absent');
-  const s = ws.wsCollectSchedule(['garbage', 'recycling', 'fogo', 'glass'], null, cyc);
-  assert.deepStrictEqual(s, { garbage: 'W', recycling: 'A', fogo: 'W', glass: 'A' }, 'F → default week; unknown → default pattern');
+  assert.deepStrictEqual(cyc, { garbage: 'W', recycling: 'A', fogo: 'W', glass: 'M', paper: 'F' }, 'weekly anywhere wins; council letters pass through; no cycle = absent');
+  const s = ws.wsCollectSchedule(['garbage', 'recycling', 'fogo', 'glass', 'paper', 'soft'], null, cyc);
+  assert.deepStrictEqual(s, { garbage: 'W', recycling: 'A', fogo: 'W', glass: 'M', paper: 'A', soft: 'B' }, 'F → default week; monthly kept; unknown → default pattern');
   assert.deepStrictEqual(ws.wsCollectSchedule(['fogo'], { fogo: 'B' }, { fogo: 'W' }), { fogo: 'B' }, 'a panel edit outranks the calculator');
   assert.deepStrictEqual(ws.wsCollectSchedule(['soft'], null, { soft: 'F' }), { soft: 'B' }, 'a stream whose default week is B keeps B');
   assert.deepStrictEqual(ws.wsCollectSchedule(['garbage'], null, { garbage: 'OFF' }), { garbage: 'OFF' });
   assert.deepStrictEqual(ws.wsCollectSchedule(['garbage', 'recycling'], null), { garbage: 'W', recycling: 'A' }, 'two-argument callers are unchanged');
+  // Camden: garbage weekly, recycling week A, FOGO week B, glass monthly → two weeks, glass in both
+  const sc = ws.wsCollectScenarios({ garbage: 'W', recycling: 'A', fogo: 'B', glass: 'M', paper: 'OFF' });
+  assert.equal(sc.length, 2);
+  assert.deepStrictEqual(sc[0].streams, ['garbage', 'glass', 'recycling'], 'weekly + monthly + week A');
+  assert.deepStrictEqual(sc[1].streams, ['garbage', 'glass', 'fogo'], 'weekly + monthly + week B — the busiest of the two is the design case');
+  assert.ok(!sc.some(x => x.streams.includes('paper')), 'OFF never presents');
+});
+
+test('bulk collection point: every bulk-method bin packs into the drawn area, all streams at once', () => {
+  const mpp = 0.02;   // 2 cm per px → a 6 m × 4 m area is 300 × 200 px
+  const area = { id: 'z1', label: 'Collection point area', pts: [{ x: 0, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 200 }, { x: 0, y: 200 }] };
+  const targets = [
+    { stream: 'garbage', typeId: 'b1100', sizeL: 1100, qty: 3, method: 'bulk', cycle: 'W' },
+    { stream: 'recycling', typeId: 'b1100', sizeL: 1100, qty: 2, method: 'bulk', cycle: 'A' },
+    { stream: 'fogo', typeId: 'b240', sizeL: 240, qty: 2, method: 'bulk', cycle: 'B' },
+  ];
+  const b = ws.wsCollectBulk(targets, [area], mpp, 0.15, ws.WS_BIN_TYPES);
+  assert.equal(b.bins.length, 7, 'no scenarios — A and B streams stand there together');
+  assert.equal(b.left, 0);
+  assert.ok(b.ok);
+  assert.equal(b.areas[0].placed.length, 7);
+  assert.equal(+b.areas[0].m2.toFixed(1), 24.0);
+  // too small: the shortfall is counted, never silently dropped
+  const tiny = { ...area, pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 80 }, { x: 0, y: 80 }] };
+  const t = ws.wsCollectBulk(targets, [tiny], mpp, 0.15, ws.WS_BIN_TYPES);
+  assert.ok(t.left > 0 && !t.ok);
+  assert.equal(t.left + t.areas[0].placed.length, 7);
+  // two areas: the second takes what the first could not
+  const both = ws.wsCollectBulk(targets, [tiny, area], mpp, 0.15, ws.WS_BIN_TYPES);
+  assert.equal(both.left, 0);
+  assert.equal(both.areas[0].placed.length + both.areas[1].placed.length, 7);
+  // nothing on a bulk method → empty, and no area is still not "fits"
+  assert.ok(ws.wsCollectBulk([], [area], mpp, 0.15).empty);
+  assert.ok(!ws.wsCollectBulk(targets, [], mpp, 0.15, ws.WS_BIN_TYPES).ok);
+  // wiring: the COLLECT zone is drawn through the zone polygon tool, and the DXF carries the packed bins
+  assert.ok(SOURCE.includes("COLLECT:   { id: 'COLLECT',   label: 'Collection point area'"), 'a real zone type — edits, tags and exports like every other zone');
+  assert.ok(extractBlock(/^function wsCollectAreaMode\(\)/).text.includes("WS_LAYOUT._zoneType = 'COLLECT'"));
+  assert.ok(SOURCE.includes("rect('A-COLLECT-BINS', stc.aci, pl.x, pl.y, pl.it.w, pl.it.d, 0)"), 'DXF layer for the collection point bins');
+  assert.ok(SOURCE.includes("'COLLECTION POINT - ALL STREAMS - '"), 'the DXF header says every stream is shown at once');
 });
 
 test('kerb bins resolve library ids, and an unknown type falls back to the nearest built-in by capacity', () => {
@@ -303,18 +331,19 @@ test('the equipment library reaches the calculator as `bins`, with the two selec
   assert.ok(calc.includes("if (Array.isArray(d.council_schedules)) COUNCIL_SCHEDULES ="), 'and its council schedules');
   assert.ok(calc.includes('optgroup label="More sizes"'), 'non-common sizes stay selectable under their own group');
   assert.ok(calc.includes('class="wsr-methodsel"'), 'the collection method is a visible select per room section');
-  assert.ok(calc.includes("method: methodOf(rr.id, sec), cycle: cw < 1 ? 'F' : 'W'"), 'the schedule payload carries method + cycle');
-  assert.ok(calc.includes("source: sch ? 'council' : 'manual'"), 'the presentation block names its source');
-  assert.ok(calc.includes('min="0.5" step="0.5"'), 'fortnightly collection is enterable');
+  assert.ok(calc.includes("method: methodOf(rr.id, sec), cycle: cycleFor(rr.id, sec, s, cw)"), 'the schedule payload carries method + the council’s cycle letter');
+  assert.ok(calc.includes("source: ent ? 'council' : 'manual'"), 'the presentation block names its source');
+  assert.ok(calc.includes('min="0.25" step="0.25"'), 'fortnightly and monthly collection are enterable');
   assert.ok(!/sizeOpts\(|ALLOWED_SIZES\[s\]\.map/.test(calc.replace(/function sizeOpts[^\n]*\n/, '')), 'no dropdown reads the constant directly any more');
-  assert.ok(calc.includes('differs from the council schedule'), 'departing from the council schedule is stated, never silent');
+  assert.ok(calc.includes('differs from the council service'), 'departing from the council service is stated, never silent');
   // generation-rate provenance: which rates the volumes are built on is on screen, with a reload
   assert.ok(calc.includes("g('roomResults').innerHTML=ratesNoteHtml()+"), 'the results open with the rates source');
   assert.ok(calc.includes('no published override for ${escAttr(i.label)}'), 'a council with no published override is named, not silently defaulted');
   assert.ok(calc.includes('onclick="reloadRates()"'), 'a publish made while the page is open can be pulled in without a reload');
   // the council card lists the approved clauses on file
   const reqs = extractBlock(/^async function glCouncilReqs\(row, mountId\)/).text;
-  assert.ok(reqs.includes(".eq('council_guideline_id', row.id).eq('status', 'approved')"), 'approved rows of the serving document only');
+  assert.ok(reqs.includes(".in('council_guideline_id', ids).eq('status', 'approved')"), 'approved rows across every version of the council’s document');
+  assert.ok(reqs.includes('(superseded)'), 'a clause from an older version says so');
   assert.ok(reqs.includes('approved clause') && reqs.includes('clause_ref'), 'each clause shows its reference');
   assert.ok(extractBlock(/^async function glCouncilCard\(/).text.includes("glCouncilReqs(row, mountId + '-reqs')"), 'both council cards get the list');
   assert.ok(calc.includes('is not offered for ${bs.M.label}'), 'a snapped pick is stated');
