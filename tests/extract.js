@@ -63,21 +63,40 @@ function scanLine(line, st) {
 
 // Extract one top-level declaration: from the (unique) line matching `pattern`
 // through to the line where bracket depth returns to zero.
-function extractBlock(pattern) {
+function extractBlockFrom(lines, pattern, where) {
   const hits = [];
-  for (let i = 0; i < LINES.length; i++) if (pattern.test(LINES[i])) hits.push(i);
-  if (hits.length === 0) throw new Error(`extract: no line in index.html matches ${pattern} — has it been renamed?`);
-  if (hits.length > 1) throw new Error(`extract: ${pattern} matched ${hits.length} lines (${hits.map(i => i + 1).join(', ')}) — anchor is ambiguous`);
+  for (let i = 0; i < lines.length; i++) if (pattern.test(lines[i])) hits.push(i);
+  if (hits.length === 0) throw new Error(`extract: no line in ${where} matches ${pattern} — has it been renamed?`);
+  if (hits.length > 1) throw new Error(`extract: ${pattern} matched ${hits.length} lines (${hits.map(i => i + 1).join(', ')}) in ${where} — anchor is ambiguous`);
 
   const start = hits[0];
   const st = { depth: 0, inString: false, inBlockComment: false, quote: null };
-  for (let i = start; i < LINES.length; i++) {
-    scanLine(LINES[i], st);
+  for (let i = start; i < lines.length; i++) {
+    scanLine(lines[i], st);
     if (st.depth === 0 && !st.inString && !st.inBlockComment) {
-      return { text: LINES.slice(start, i + 1).join('\n'), startLine: start + 1, endLine: i + 1 };
+      return { text: lines.slice(start, i + 1).join('\n'), startLine: start + 1, endLine: i + 1 };
     }
   }
-  throw new Error(`extract: unterminated block starting at index.html:${start + 1}`);
+  throw new Error(`extract: unterminated block starting at ${where}:${start + 1}`);
+}
+function extractBlock(pattern) { return extractBlockFrom(LINES, pattern, 'index.html'); }
+
+// ── embedded tools (srcdoc iframes) ──
+// The bin calculator and compliance checker live inside HTML-escaped srcdoc
+// attributes, invisible to the line scanner above. decodeSrcdoc lifts one
+// out and unescapes it, so its column-0 declarations can be extracted with
+// the same anchor discipline — never copied into a test.
+const _srcdocCache = {};
+function decodeSrcdoc(iframeId) {
+  if (_srcdocCache[iframeId]) return _srcdocCache[iframeId];
+  const re = new RegExp('<iframe class="tool-iframe" id="' + iframeId + '" srcdoc="([\\s\\S]*?)"(?:\\s+sandbox=[^>]*)?>');
+  const m = SOURCE.match(re);
+  if (!m) throw new Error(`extract: no srcdoc iframe with id ${iframeId}`);
+  const html = m[1].replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return (_srcdocCache[iframeId] = { html, lines: html.split(/\r?\n/) });
+}
+function extractSrcdocBlock(iframeId, pattern) {
+  return extractBlockFrom(decodeSrcdoc(iframeId).lines, pattern, iframeId + ' srcdoc');
 }
 
 // The layout engine's pure room/schedule core. Kept separate from the swept-path
@@ -345,4 +364,4 @@ function loadSheet(opts = {}) {
   return loadEngine({ ...opts, blocks: SHEET_BLOCKS });
 }
 
-module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, buildSource, loadEngine, loadLayout, loadSheet, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS, SHEET_BLOCKS };
+module.exports = { INDEX_PATH, SOURCE, LINES, extractBlock, extractBlockFrom, decodeSrcdoc, extractSrcdocBlock, buildSource, loadEngine, loadLayout, loadSheet, createDom, scriptBlocks, BLOCKS, LAYOUT_BLOCKS, SHEET_BLOCKS };

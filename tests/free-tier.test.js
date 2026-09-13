@@ -71,13 +71,19 @@ test('compliance runs: 2 per project on free, null (uncapped) everywhere else', 
   assert.equal(paid.wpFreeRunsRemaining({ complianceRuns: 99 }), null);
 });
 
-// ── §1: no anonymous path remains ──
-test('the anonymous mode is gone — no guest entry point, no lite caps', () => {
+// ── §1: no general anonymous path remains ──
+// The compliance landing-page entry (tests/anon-entry.test.js) is the ONE
+// scoped exception, and it must not resurrect any of the old guest-mode
+// machinery — no lite caps, no guest tier, no per-tool monthly meters.
+test('the old anonymous mode stays gone — no guest entry point, no lite caps', () => {
   for (const token of ['continueAsGuest', 'LITE_CAPS', 'liteCapRemaining', 'incrementLiteCap',
     'getLiteCap', 'showCapUpgrade', 'applyGuestAccess', 'addLiteCapBanner', 'lite-cap-banner',
     "tier: 'lite'", "'lite'"])
     assert.ok(!SOURCE.includes(token), token + ' must not survive the §1 removal');
-  assert.ok(SOURCE.includes('// ── ANONYMOUS MODE: REMOVED'), 'the tombstone comment explains the absence');
+  assert.ok(SOURCE.includes('// ── ANONYMOUS MODE: ONE SCOPED EXCEPTION'),
+    'the tombstone comment records the rule AND its single exception');
+  assert.ok(SOURCE.includes('Do not widen this to any other tool or entry point.'),
+    'the exception is explicitly scoped');
   assert.ok(SOURCE.includes("if (!currentUser) { promptFreeSignup(); return; }"),
     'plan extraction routes signed-out users to signup, not a guest cap');
 });
@@ -97,20 +103,22 @@ test('fresh visitors see Create Account with the free-plan value line', () => {
     'auth screen links the standalone legal pages');
 });
 
-// ── §3: ?calc= handoff ──
+// ── §3: ?calc= handoff (now riding the shared claim store) ──
 test('the calculator handoff parses, validates, persists and applies once', () => {
   assert.ok(SOURCE.includes("params.get('calc')") || SOURCE.includes("get('calc')"), 'reads ?calc=');
-  assert.ok(SOURCE.includes("sessionStorage.setItem('wp_calc_prefill'"), 'parks the payload');
+  assert.ok(SOURCE.includes("wpClaimPark('calc', clean)"), 'parks the payload as a claim');
   assert.ok(SOURCE.includes('history.replaceState'), 'strips the parameter from the URL');
-  const apply = extractBlock(/^async function applyCalcPrefill\(\)/).text;
-  assert.ok(apply.includes("sessionStorage.removeItem('wp_calc_prefill')"), 'one-shot: cleared before use');
+  const dispatch = extractBlock(/^async function wpClaimApply\(\)/).text;
+  assert.ok(dispatch.includes('wpClaimTake()'), 'one-shot: the claim clears before the applier can fail halfway');
+  const apply = extractBlock(/^async function applyCalcPrefill\(pre\)/).text;
+  assert.ok(!apply.includes('sessionStorage'), 'the applier takes the payload as an argument — no second store');
   assert.ok(apply.includes("wpProjectCapReached() ) { showPaywall('project_cap'); return; }") ||
     apply.includes("wpProjectCapReached()) { showPaywall('project_cap'); return; }"),
     'a capped account gets the paywall, not a silent drop');
   assert.ok(apply.includes("logEvent('calc_prefill_applied'"));
   assert.ok(apply.includes("type: 'ws-calc-fill'"), 'drives the calculator through the existing fill message');
-  assert.ok(SOURCE.includes("if (typeof applyCalcPrefill === 'function') applyCalcPrefill();"),
-    'showApp hooks the prefill after sign-in');
+  assert.ok(SOURCE.includes("(typeof wpClaimApply === 'function') ? await wpClaimApply() : null"),
+    'showApp hooks the claim dispatch after sign-in');
   // the calc iframe seeds a commercial room from the handoff, but never
   // double-seeds a project that already carries its own com room
   assert.ok(SOURCE.includes("if(Array.isArray(d.com)&amp;&amp;d.com.length&amp;&amp;!ROOMS.some(r=&gt;r.kind==='com')){"));

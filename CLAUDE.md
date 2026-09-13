@@ -15,6 +15,7 @@ check this list before widening who can use the app.
 | 3 | **No PITR — daily backups only.** | **Real customer data.** | **Confirmed 2026-08-24: point-in-time recovery is NOT enabled.** The project has daily backups, which sets a recovery point objective of **up to 24 hours** — a customer who spends a day on a layout can lose that day, and nothing in the app warns them. A restore has also still never been **rehearsed**, so the retention window and the restore path are both untested. And daily backups cover **Postgres only**: uploaded plan PDFs live in Supabase **Storage** (`PLANS_BUCKET`), which they do not include. A restore that brings back every `projects` row and no plan PDFs is a half-restore — every project would open pointing at a drawing that is gone. Decide the acceptable RPO before real customer data, then enable PITR or accept 24h in writing, back up Storage separately, and rehearse once end to end. |
 | 4 | **`pdf_rev` column** for cross-device plan freshness. | Multi-device use of one project. | Nothing currently tells a second device that the stored plan PDF changed, so it can serve a stale page under a current layout. |
 | 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
+| 9 | **ai-user anonymous allowance.** The `?check=wmp` entry hands the checker an `is_anonymous` session token; the ai-user edge function (not in this repo) must grant such tokens exactly ONE lifetime `compliance` run and refuse every other tool tag. Also: "Allow anonymous sign-ins" must be ON in Supabase Auth (off = graceful signup-first fallback, but the offer stops being "no account needed"). | **Pointing the planner landing page at real traffic.** | Until verified, an anonymous check either fails server-side or draws from an unintended allowance bucket. Client + DB fences are done (`sql/2026-09-12-anon-compliance-entry.sql`); this is the last leg. |
 
 **Closed:** Swept-path title block panel (gate 5). `wsSheetVehPanel` renders the
 bottom-centre card when the swept layer is on and paths exist: the D2 side
@@ -34,9 +35,13 @@ edits it, and placement assigns from it. `inferStreams()` in the calculator is n
 a fallback for rows that predate the column — not the live path. Do not reintroduce
 inference anywhere: stream association decides bin counts on issued drawings.
 
-**Bin types are a closed list by design.** There is no custom-bin path and none
-is planned: a bin schedule is only defensible if every container maps to a real
-collectable product. Custom *equipment* is gate 6; custom *bins* are a no.
+**Bin types are a curated list by design — the equipment library is that list.**
+A bin schedule is only defensible if every container maps to a real collectable
+product, so there is no free-text custom-bin path in any tool and none is
+planned. What changed (2026-09-13): the list is no longer a constant compiled
+into the calculator; it is the library's `item_kind = 'Bin'` records, curated in
+the admin table (see "Bin calculator" below). Adding a size means adding a
+library record. Custom *equipment* is gate 6.
 
 Unknown branding fields (`abn`, `address`, `phone`, `email`) are intentionally
 **blank**, and the title block omits blank lines rather than printing them. An ABN
@@ -75,6 +80,48 @@ Consequences to keep in mind:
 - The vehicle library reads the `contractors` table (`include_in_swept = true`) and
   merges over the `WS_VEH` built-in presets. Built-ins are the offline fallback —
   keep them working so the swept tool never hard-fails on a DB outage.
+
+## Anonymous compliance entry (planner landing page)
+
+"Everything inside WastePlanner requires a free account" has exactly **one
+scoped exception**: the planner landing page's `?check=wmp` entry opens the
+compliance checker in an anonymous session for **one** free WMP check. The
+result shows in full — the result itself is never gated — and *any* further
+action (second check, export, submit, engage, navigating anywhere else)
+raises the signup gate. Do not widen this to any other tool or entry point;
+the rule and its exception are restated at the `ANONYMOUS MODE: ONE SCOPED
+EXCEPTION` section in `index.html`.
+
+How it hangs together (tested by `tests/anon-entry.test.js`):
+
+- **The guest is a real Supabase `is_anonymous` user** (`signInAnonymously`),
+  so the ai-user edge function can enforce a one-run allowance on a
+  verifiable token, and RLS treats it as `authenticated`. The session boot
+  routes `is_anonymous` sessions into the checker and **never** into the app
+  proper. DB fences: `sql/2026-09-12-anon-compliance-entry.sql` (anonymous
+  JWTs cannot write projects or profiles; events stay open for the funnel).
+  Anonymous sign-ins must be ON in Supabase Auth settings — if the call
+  fails, the entry falls back to signup-first instead of breaking.
+- **`showScreen` is the wall**: in anon mode every screen except
+  `compliance` routes to `wpAnonGate()`. The hidden nav rail
+  (`body.wp-anon`) is cosmetics on top, not the enforcement.
+- **One check per device** is `wp_anon_check_used` in localStorage plus the
+  persisted anon session; the server allowance is the real meter. Clearing
+  storage leaks a fresh check — accepted, this is lead gen, not metering.
+- **Claim-on-signup is ONE shared mechanism** (`wpClaimPark` / `wpClaimApply`
+  in `index.html`), parameterised by kind: the bin-calc handoff parks
+  `calc`, the checker parks `compliance` (result JSON in the claim store,
+  WMP bytes under the temp IDB key `doc:anon:check`). A future entry point
+  adds a kind and an applier — never a parallel bespoke store. Applying the
+  compliance claim creates the project with `complianceRuns: 1` (the
+  anonymous run **is** the project's first check, so every free path tops
+  out at the same two checks) and re-renders the exact stored result via the
+  checker's `restoreScan()` — nothing re-runs, nothing double-counts
+  (`state.restoring` suppresses the `wp-scan-done` report).
+- **Attribution**: the landing page carries its own `utm_*` params; the
+  existing first-touch capture and `signup_source` stamping cover it. The
+  funnel events are `anon_check_entry`, `anon_check_run`, `anon_gate_shown`,
+  `anon_banner_signup`, `compliance_claim_applied`.
 
 ## Canvas geometry
 
@@ -128,6 +175,8 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/reconcile-equipment.test.js` | Compaction maths, invariants, snapshot, WMP obligations |
 | `tests/provision-zones.test.js` | Provision streams, zone types, and their four UI surfaces |
 | `tests/vehicle-profile.test.js` | D2 side-elevation module: axle positions, defaults, SVG output; D3 panel gating |
+| `tests/anon-entry.test.js` | Anonymous compliance entry, shared claim store, signup gate |
+| `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -141,6 +190,53 @@ are matched against whole lines and must resolve to exactly one line — extract
 throws on zero or multiple matches, so a rename fails loudly rather than silently
 testing stale code. This means top-level declarations should stay at column 0 with
 their opening brace on the declaration line.
+
+## Bin calculator: library-driven sizes, collection method, council schedule
+
+Three layered constraints decide what a bin-size dropdown offers, in this order
+(`binSizesFor` in the calculator srcdoc; `tests/bin-library.test.js` runs it):
+
+1. **The library is the list.** The parent pushes every active `Bin` record
+   with a capacity as `bins` on `ws-calc-fill`; `ALLOWED_SIZES` is the
+   **offline fallback only** (the `WS_VEH` contract — never edit it to add a
+   size). `equipment.is_common` is the short default group ("Bins"); the rest
+   sits under "More sizes", still selectable. Sizes dedupe per litre: common if
+   any record says so, method-restricted only if every record is. A record's
+   `streams` narrows which streams it serves; empty = unrestricted. Footprint
+   comes from the record's dimensions first, the built-in table second, and a
+   size known to neither flags the room area incomplete.
+2. **The collection method constrains.** Per room section (`room.method.r/c`,
+   persisted in `bin_rooms`), defaulting from the mix — townhouse-only →
+   kerbside individual, anything else → bulk. `COLLECT_METHODS` is data:
+   kerbside methods top out at **360L** and offer **no compaction plant or
+   containers**; a record tagged `collection_methods` (e.g. a front-lift bin
+   tagged `bulk`) is never offered elsewhere. Only kerbside methods are
+   `kerb: true` — the Collection Point presents those bins and nothing else.
+3. **The council's schedule specialises.** Approved `council_requirements` rows
+   of type `collection_limit` on the live guideline version are projected by
+   `wpCouncilScheduleFromRows` (pure, parent side) into kerbside sizes /
+   cadence per stream and bulk caps, and pushed as `council_schedules`. Under a
+   kerbside method the council's sizes **are** the list and the default (largest
+   listed), its cadence the default frequency (`0.5` = fortnightly); under bulk
+   its caps trim. Every number carries its `clause_ref` onto the row; departing
+   from the schedule is allowed and **stated**. No schedule → the method list
+   with a visible "no schedule in the guidelines library" note.
+
+Matching is by normalised council name — `glBridgeNorm` (parent) and
+`councilKey` (calculator) must stay identical; a test compares them.
+
+**Downstream:** the results payload carries `method` and `cycle` (`W`/`F`) per
+target and a `presentation` block naming the cadence's source. The Collection
+Point derives its scenarios from those (`wsCollectCyclesFromTargets` →
+`wsCollectSchedule(streams, saved, calc)`: panel edit → calculator → default
+pattern), filters to kerbside-method targets, and resolves bin types against
+the **live** bin list (`wsCollectBins(targets, streams, types)`) — library ids
+used to miss the built-in lookup and silently empty the kerb.
+
+Not built (its own brief): equipment **categories** with distinct calculation
+branches — balers, transpackers, organics processors. Today anything with a
+compaction ratio is "compaction equipment", collectable or plant; see the
+Equipment section.
 
 ## Layout: rooms, schedules and bins
 

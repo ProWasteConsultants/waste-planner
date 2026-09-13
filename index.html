@@ -734,6 +734,17 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* guest-mode chips inject themselves into the projects action row with
    margin-left:auto — pin the lockup hard left whatever lands beside it */
 .topbar-actions .wp-lockup{order:-1;margin-right:auto;}
+/* ── ANONYMOUS COMPLIANCE ENTRY ──────────────────────────────────────────────
+   The one signed-out surface (see the scoped-exception note at the anon-mode
+   script section): the checker fills the viewport and the rest of the app is
+   simply not there — no nav rail to wander off, no project pill pointing at a
+   projects home a guest cannot open. showScreen() is the belt to this CSS's
+   braces: it gates every non-compliance screen while the mode is active. */
+body.wp-anon .side-nav{display:none;}
+body.wp-anon .ws-top-chip{display:none;}
+#wp-anon-banner{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:11400;display:flex;align-items:center;gap:12px;background:#101D1C;border:1px solid #2C3838;border-radius:12px;padding:9px 10px 9px 16px;box-shadow:0 8px 28px rgba(0,0,0,0.45);font-size:12.5px;color:#C7D4D4;white-space:nowrap;}
+#wp-anon-banner b{color:#F0F8FA;font-weight:700;}
+#wp-anon-banner button{background:var(--teal);color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}
 </style>
 <script src="https://js.stripe.com/v3/"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -2309,6 +2320,7 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
 .wsr-eq-chute td{color:#7FD8D8;}
 .wsr-eq-warn td{color:#FF8A50;}
 .wsr-eq-plant td{color:#CFD8DC;}
+.wsr-eq-council td{color:#B8D4D4;}
 .wsr-eq-meta{opacity:.75;}
 .wsr-plantsel{background:#2a2a2a;border:1px solid #444;color:#e2e8e8;border-radius:4px;padding:1px 4px;font-size:9.5px;font-family:inherit;}
 .ws-splitrow{display:grid;grid-template-columns:44px auto 1fr auto 1fr 20px;gap:3px;align-items:center;margin-top:4px;}
@@ -2367,6 +2379,8 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
 .wsr-roomname{font-size:11.5px;font-weight:700;color:#7FD8D8;}
 .wsr-roommeta{font-size:9.5px;color:rgba(255,255,255,0.4);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .wsr-sub{font-size:11.5px;font-weight:700;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:.6px;margin:12px 0 4px;}
+.wsr-method{font-size:11px;color:rgba(255,255,255,0.6);margin:0 0 5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.wsr-methodsel{background:#1e1e1e;color:rgba(255,255,255,0.85);border:1px solid #3a4747;border-radius:5px;padding:2px 6px;font-size:11px;font-family:inherit;}
 .wsr-roomtotal{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#0d3333;border:1px solid #008080;border-radius:7px;padding:9px 12px;margin-top:10px;font-size:13.5px;font-weight:700;color:#fff;}
 .wsr-roomtotal small{font-weight:600;font-size:11px;color:rgba(255,255,255,0.65);}
 .wsr-devtot{border:1px solid #008080;border-radius:6px;background:#0d2626;padding:6px 8px;margin-top:2px;}
@@ -2457,7 +2471,74 @@ async function loadRemoteRatesIfConfigured(){if(!RATES_URL)return null;try{const
 const COMPACTION_THRESHOLD_GW_L_PER_WEEK=8000,COMPACTION_THRESHOLD_GW_BINS=6;
 const STREAM_META={GW:{label:&quot;General Waste&quot;,short:&quot;Gen&quot;,color:&quot;#b91c1c&quot;,bg:&quot;rgba(185,28,28,.08)&quot;},REC:{label:&quot;Recycling&quot;,short:&quot;Rec&quot;,color:&quot;#f5b400&quot;,bg:&quot;rgba(245,180,0,.10)&quot;},ORG:{label:&quot;Organics&quot;,short:&quot;Org&quot;,color:&quot;#22c55e&quot;,bg:&quot;rgba(34,197,94,.10)&quot;},GLS:{label:&quot;Glass&quot;,short:&quot;Glass&quot;,color:&quot;#8b5cf6&quot;,bg:&quot;rgba(139,92,246,.10)&quot;},CARD:{label:&quot;Paper &amp; Cardboard&quot;,short:&quot;Card&quot;,color:&quot;#2563eb&quot;,bg:&quot;rgba(37,99,235,.10)&quot;},SOFT:{label:&quot;Soft Plastics&quot;,short:&quot;Soft&quot;,color:&quot;#06b6d4&quot;,bg:&quot;rgba(6,182,212,.10)&quot;}};
 const STREAM_TO_LAYOUT={GW:&quot;general&quot;,REC:&quot;recycling&quot;,ORG:&quot;organics&quot;,GLS:&quot;glass&quot;,CARD:&quot;paper&quot;,SOFT:&quot;soft&quot;};
+// ── BIN SIZES: LIBRARY FIRST, THESE AS THE OFFLINE FALLBACK ─────────────────
+// The equipment library (item_kind Bin) is the bin list — the parent pushes it
+// as `bins` on ws-calc-fill and the dropdowns read BIN_LIB. ALLOWED_SIZES is
+// consulted only when no library reached the tool (standalone / offline), the
+// same contract the swept tool has with its built-in vehicles. Adding a size
+// means adding a library record, never editing this table.
 const ALLOWED_SIZES={GW:[60,80,120,240,660,1100],REC:[60,80,120,240,660,1100],ORG:[60,80,120,240],GLS:[240,360,660],CARD:[240,660,1100],SOFT:[240,660,1100]};
+// Library streams are canonical ids; the calculator's keys are its own.
+const LIB_STREAM_KEY={garbage:'GW',recycling:'REC',fogo:'ORG',organics:'ORG',glass:'GLS',paper:'CARD',card:'CARD',soft:'SOFT'};
+let BIN_LIB=[];   // [{code,label,cap,streams:[GW…]|[],common,methods:[…]|[],fp}] from the parent
+// ── COLLECTION METHOD ───────────────────────────────────────────────────────
+// How a room's bins actually get emptied decides what may be offered: a bin
+// wheeled to the kerb is a 240–360L MGB, never an 1100L; compaction plant and
+// transportable containers only make sense where a truck services the room.
+// The rule is data here so the UI never offers a combination no council runs.
+// `kerb` is what the Collection Point tab keys off: only kerbside methods
+// present bins at the frontage.
+const COLLECT_METHODS={
+  kerbside_individual:{label:'Kerbside — individual bins',maxL:360,equipment:false,kerb:true},
+  kerbside_shared:{label:'Kerbside — shared / communal bins',maxL:360,equipment:false,kerb:true},
+  bulk:{label:'Bulk bin collection point (front / rear-lift)',maxL:null,equipment:true,kerb:false},
+  self_haul:{label:'Self-haul / private transfer',maxL:null,equipment:true,kerb:false},
+};
+const DEFAULT_METHOD='bulk';
+function normMethod(m){
+  const src=(m&amp;&amp;typeof m==='object')?m:{};
+  const ok=v=&gt;COLLECT_METHODS[v]?v:null;
+  return {r:ok(src.r),c:ok(src.c)};
+}
+// A townhouse-only room wheels its own bins to the kerb; anything with
+// apartments (or a commercial tenancy) is serviced in the room. A guess, but
+// the visible select on every room makes it a one-click correction.
+function defaultMethod(room,sec){
+  if(!room)return DEFAULT_METHOD;
+  if(sec==='c')return 'bulk';
+  const a=room.alloc||{};
+  const apts=(Number(a.apt_1br)||0)+(Number(a.apt_2br)||0)+(Number(a.apt_3br)||0);
+  return (apts===0&amp;&amp;(Number(a.townhouse)||0)&gt;0)?'kerbside_individual':'bulk';
+}
+function methodOf(roomId,sec){
+  const room=roomById(roomId);
+  const m=room?normMethod(room.method):{r:null,c:null};
+  return m[sec==='c'?'c':'r']||defaultMethod(room,sec);
+}
+// ── COUNCIL COLLECTION SCHEDULES (guidelines library) ───────────────────────
+// Pushed by the parent from approved council_requirements rows; the calculator
+// only matches the selected council against them. The normaliser here MUST
+// stay identical to glBridgeNorm in the platform — the parent keys the list
+// with that one, and a drift means "no schedule found" for every council.
+let COUNCIL_SCHEDULES=[];
+function councilKey(s){return String(s||'').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g,'').replace(/[^a-z0-9]+/g,'');}
+function activeCouncilLabel(){
+  const sel=g('council');if(!sel||!sel.value)return '';
+  const t=sel.options[sel.selectedIndex]?.text||'';
+  return /use state defaults/.test(t)?'':t;
+}
+function activeSchedule(){
+  const k=councilKey(activeCouncilLabel());
+  if(!k)return null;
+  const hit=COUNCIL_SCHEDULES.find(c=&gt;c.key===k||(c.key&amp;&amp;(c.key.indexOf(k)&gt;=0||k.indexOf(c.key)&gt;=0)));
+  return hit?hit.schedule:null;
+}
+function scheduleFor(sec,stream){
+  // kerbside schedule for one calculator stream: {sizesL,maxL,perWeek,cites}
+  const sch=activeSchedule();if(!sch||!sch.kerbside)return null;
+  const canon=Object.keys(LIB_STREAM_KEY).find(k=&gt;LIB_STREAM_KEY[k]===stream&amp;&amp;sch.kerbside[k]);
+  return canon?sch.kerbside[canon]:null;
+}
 // ── ALLOWANCE STREAMS ────────────────────────────────────────────────────────
 // Hard waste, e-waste and textiles have no litres-per-dwelling rate anywhere,
 // because guidelines specify them as AREA: &quot;provide a hard waste storage area
@@ -2744,7 +2825,75 @@ function chuteServed(room){
   return out;
 }
 const BIN_EQUIPMENT={60:{fp:.220668},80:{fp:.224192},120:{fp:.2616},140:{fp:.329025},240:{fp:.42705},360:{fp:.5508},660:{fp:.9828},1100:{fp:1.3268}};
-function binFP(sz){return BIN_EQUIPMENT[sz]?.fp||0;}
+// Footprint per size: the library record's own dimensions first, the measured
+// built-in table second. A size known to neither is 0 — the room area is
+// then flagged incomplete by the size note, never silently smaller.
+function binFP(sz){
+  const lib=BIN_LIB.find(b=&gt;b.cap===Number(sz)&amp;&amp;b.fp&gt;0);
+  if(lib)return lib.fp;
+  return BIN_EQUIPMENT[sz]?.fp||0;
+}
+function rebuildBinLib(rows){
+  BIN_LIB=(Array.isArray(rows)?rows:[]).map(r=&gt;{
+    const cap=Math.round(Number(r&amp;&amp;r.capacity_l)||0);
+    if(!cap)return null;
+    const w=Number(r.width_mm),d=Number(r.depth_mm);
+    const fp=Number(r.footprint_m2)||((w&gt;0&amp;&amp;d&gt;0)?w*d/1e6:0);
+    // library streams are canonical ids in any of three vocabularies; a
+    // value that resolves to nothing is dropped, and an EMPTY list means
+    // unrestricted — the same rule the layout's equipment picker applies
+    const streams=(Array.isArray(r.streams)?r.streams:[]).map(s=&gt;LIB_STREAM_KEY[String(s||'').toLowerCase().replace(/[^a-z]/g,'')]||null).filter(Boolean);
+    return {code:r.code,label:r.label||(cap+'L bin'),cap,fp,streams,common:r.is_common===true,
+            methods:Array.isArray(r.collection_methods)?r.collection_methods.filter(Boolean):[]};
+  }).filter(Boolean);
+}
+// Every size the library (or, with no library, the built-in table) can offer a
+// stream, BEFORE method and council constraints — one entry per litre value,
+// common if any record of that size is flagged common, restricted to a
+// method set only when every record of that size is.
+function binSizesRaw(stream){
+  const lib=BIN_LIB.filter(b=&gt;!b.streams.length||b.streams.indexOf(stream)&gt;=0);
+  if(!lib.length){
+    return (ALLOWED_SIZES[stream]||[]).map(sz=&gt;({sizeL:sz,common:true,methods:[],source:'builtin'}));
+  }
+  const by={};
+  lib.forEach(b=&gt;{
+    const e=by[b.cap]=by[b.cap]||{sizeL:b.cap,common:false,tagged:[],untagged:false};
+    if(b.common)e.common=true;
+    // a size is method-restricted only when EVERY record of it is tagged;
+    // the restriction is then the union of the tags
+    if(b.methods.length)b.methods.forEach(m=&gt;{if(e.tagged.indexOf(m)&lt;0)e.tagged.push(m);});
+    else e.untagged=true;
+  });
+  return Object.values(by).map(e=&gt;({sizeL:e.sizeL,common:e.common,methods:e.untagged?[]:e.tagged,source:'library'})).sort((a,b)=&gt;a.sizeL-b.sizeL);
+}
+// What the dropdown may offer for one room/section/stream: raw sizes,
+// filtered by the collection method (size ceiling + record method tags),
+// then by the council's kerbside schedule when the guidelines library has
+// one — those sizes are THE list for kerbside methods, and a council bulk
+// cap trims bulk methods. Each entry says where it came from so the UI can
+// name the source instead of presenting a constraint as a preference.
+function binSizesFor(room,sec,stream){
+  const method=methodOf(room,sec),M=COLLECT_METHODS[method]||COLLECT_METHODS[DEFAULT_METHOD];
+  let list=binSizesRaw(stream).filter(e=&gt;{
+    if(M.maxL&amp;&amp;e.sizeL&gt;M.maxL)return false;
+    if(e.methods.length&amp;&amp;e.methods.indexOf(method)&lt;0)return false;
+    return true;
+  });
+  const sch=scheduleFor(sec,stream),bulk=activeSchedule()?.bulk||null;
+  let councilSizes=[];
+  if(M.kerb&amp;&amp;sch){
+    if(sch.sizesL.length){
+      councilSizes=sch.sizesL.slice();
+      // the council's own sizes, whether or not the library carries them yet
+      list=councilSizes.map(sz=&gt;{const hit=list.find(e=&gt;e.sizeL===sz)||binSizesRaw(stream).find(e=&gt;e.sizeL===sz);return {sizeL:sz,common:true,methods:[],source:hit?hit.source:'council'};});
+    }
+    if(sch.maxL)list=list.filter(e=&gt;e.sizeL&lt;=sch.maxL);
+  }else if(!M.kerb&amp;&amp;bulk&amp;&amp;bulk.maxL){
+    list=list.filter(e=&gt;e.sizeL&lt;=bulk.maxL);
+  }
+  return {method,M,list,councilSizes,schedule:M.kerb?sch:null,bulkCap:!M.kerb?bulk:null};
+}
 
 // ── COMMERCIAL USE TYPES ─────────────────────────────────────────────────────
 // All uses from the Waste Data spreadsheet, alphabetically sorted.
@@ -3255,7 +3404,8 @@ function mkRoom(name,kind,component){
   const nth=ROOMS.filter(r=&gt;r.kind===k).length+1;
   return{id:'R'+_roomSeq,kind:k,name:name||(k==='com'?('Commercial Room '+nth):('Bin Room '+nth)),
     component:component||DEFAULT_COMPONENT,alloc:{apt_1br:0,apt_2br:0,apt_3br:0,townhouse:0},com:[],
-    chute:{on:false,type:'SINGLE',openings:[{stream:'GW',recv:'BIN_1100'}]},splits:[],allow:normAllow(null)};
+    chute:{on:false,type:'SINGLE',openings:[{stream:'GW',recv:'BIN_1100'}]},splits:[],allow:normAllow(null),
+    method:normMethod(null)};   // null = derive from the room's mix (defaultMethod)
 }
 function kindLabel(k){return k==='com'?'Commercial':'Residential';}
 function roomById(id){return ROOMS.find(r=&gt;r.id===id);}
@@ -3265,7 +3415,7 @@ function devAlloc(){const t={apt_1br:0,apt_2br:0,apt_3br:0,townhouse:0};ROOMS.fo
 function escAttr(s){return String(s==null?'':s).replace(/&amp;/g,'&amp;amp;').replace(/&quot;/g,'&amp;quot;').replace(/&lt;/g,'&amp;lt;').replace(/&gt;/g,'&amp;gt;');}
 function serialiseRooms(){return ROOMS.map(r=&gt;({id:r.id,name:r.name,kind:r.kind||'res',component:r.component||DEFAULT_COMPONENT,
   alloc:{...r.alloc},com:r.com.map(c=&gt;({use:c.use,value:Number(c.value)||0,days:Number(c.days)||7})),
-  chute:normChute(r.chute),splits:normSplits(r.splits),allow:normAllow(r.allow),equip:{..._eqSel}}));}
+  chute:normChute(r.chute),splits:normSplits(r.splits),allow:normAllow(r.allow),method:normMethod(r.method),equip:{..._eqSel}}));}
 function normChute(c){
   const t=CHUTE_SPECS[c&amp;&amp;c.type]?c.type:'SINGLE';
   const n=CHUTE_SPECS[t].openings;
@@ -3304,7 +3454,8 @@ function restoreRooms(arr){
     // kind is explicit in new saves; inferred for older ones
     const kind=(r&amp;&amp;r.kind==='com')?'com':((r&amp;&amp;r.kind==='res')?'res':((!anyD&amp;&amp;com.length)?'com':'res'));
     return{id:(r&amp;&amp;r.id)||('R'+(i+1)),name:(r&amp;&amp;r.name)||('Bin Room '+(i+1)),kind:kind,
-      component:(r&amp;&amp;r.component)||DEFAULT_COMPONENT,alloc:alloc,com:com,chute:normChute(r&amp;&amp;r.chute),splits:normSplits(r&amp;&amp;r.splits),allow:normAllow(r&amp;&amp;r.allow)};
+      component:(r&amp;&amp;r.component)||DEFAULT_COMPONENT,alloc:alloc,com:com,chute:normChute(r&amp;&amp;r.chute),splits:normSplits(r&amp;&amp;r.splits),allow:normAllow(r&amp;&amp;r.allow),
+      method:normMethod(r&amp;&amp;r.method)};
   });
   // A room saved before commercial rooms existed can hold both. Split it, so
   // every room is one kind and can be named and placed in its own right.
@@ -3315,7 +3466,7 @@ function restoreRooms(arr){
       split.push({...r,com:[]});
       _roomSeq++;
       split.push({id:'R'+_roomSeq,kind:'com',name:r.name+' — Commercial',component:r.component,
-        alloc:{apt_1br:0,apt_2br:0,apt_3br:0,townhouse:0},com:r.com,chute:normChute(null),splits:normSplits(r.splits),allow:normAllow(null)});
+        alloc:{apt_1br:0,apt_2br:0,apt_3br:0,townhouse:0},com:r.com,chute:normChute(null),splits:normSplits(r.splits),allow:normAllow(null),method:normMethod(null)});
     }else split.push(r);
   });
   ROOMS=split;
@@ -3544,8 +3695,34 @@ const STREAM_NAMES={GW:'General Waste',REC:'Recycling',ORG:'Organics',GLS:'Glass
 const STREAM_RATE_UNITS={GW:'L/wk',REC:'L/wk',ORG:'L/wk',GLS:'L/wk',CARD:'L/wk',SOFT:'L/wk'};
 let _stored=null;
 
-function defSize(room,sec,stream){const k=ovKey(room,sec,stream);return _szOv[k]!=null?_szOv[k]:(DEFAULT_BINSIZES[sec][stream]||240);}
-function defCw(room,sec,stream){const k=ovKey(room,sec,stream);return _cwOv[k]!=null?_cwOv[k]:(DEFAULT_COLWK[sec][stream]||1);}
+// Default size: the user's pick if it is still offerable, else the council's
+// kerbside size (largest listed — the conservative capacity), else the
+// generic default clamped onto what the method allows (a 1100L default under
+// a kerbside method snaps to the largest kerbside size, never silently past
+// the ceiling). With nothing offerable at all the generic default stands.
+function defSize(room,sec,stream){
+  const k=ovKey(room,sec,stream);
+  const bs=binSizesFor(room,sec,stream),sizes=bs.list.map(e=&gt;e.sizeL);
+  if(_szOv[k]!=null&amp;&amp;(sizes.indexOf(_szOv[k])&gt;=0||!sizes.length))return _szOv[k];
+  if(bs.councilSizes.length)return bs.councilSizes[bs.councilSizes.length-1];
+  const want=DEFAULT_BINSIZES[sec][stream]||240;
+  if(!sizes.length||sizes.indexOf(want)&gt;=0)return want;
+  const below=sizes.filter(s=&gt;s&lt;=want);
+  return below.length?below[below.length-1]:sizes[0];
+}
+// Default frequency: the user's pick, else the council's kerbside cadence
+// (0.5 = fortnightly), else the generic default.
+function defCw(room,sec,stream){
+  const k=ovKey(room,sec,stream);
+  if(_cwOv[k]!=null)return _cwOv[k];
+  const sch=COLLECT_METHODS[methodOf(room,sec)]?.kerb?scheduleFor(sec,stream):null;
+  if(sch&amp;&amp;sch.perWeek&gt;0)return sch.perWeek;
+  return DEFAULT_COLWK[sec][stream]||1;
+}
+// Fortnightly collection reads 0.5/week: the capacity maths (size × ratio ×
+// collections per week) is exact for it, and the Collection Point tab keys
+// its alternating-week scenarios off it.
+function cwLabel(cw){return cw===0.5?'fortnightly':cw===1?'weekly':cw+'×/week';}
 function curSize(room,sec,stream){
   const el=document.querySelector(`.pwStreamSel[data-room=&quot;${room}&quot;][data-sec=&quot;${sec}&quot;][data-stream=&quot;${stream}&quot;]`);
   if(!el)return defSize(room,sec,stream);
@@ -3554,7 +3731,9 @@ function curSize(room,sec,stream){
   const n=Number(v.charAt(0)==='B'?v.slice(1):v);
   return n&gt;0?n:defSize(room,sec,stream);
 }
-function curCw(room,sec,stream){const el=document.querySelector(`.pwStreamCw[data-room=&quot;${room}&quot;][data-sec=&quot;${sec}&quot;][data-stream=&quot;${stream}&quot;]`);return el?Math.max(1,Number(el.value)||1):defCw(room,sec,stream);}
+function curCw(room,sec,stream){const el=document.querySelector(`.pwStreamCw[data-room=&quot;${room}&quot;][data-sec=&quot;${sec}&quot;][data-stream=&quot;${stream}&quot;]`);return el?normCw(el.value,defCw(room,sec,stream)):defCw(room,sec,stream);}
+// collections per week: whole numbers, or exactly 0.5 for fortnightly
+function normCw(v,fallback){const n=Number(v);if(!(n&gt;0))return fallback||1;return n&lt;1?0.5:Math.round(n);}
 function getCurSizes(room,sec,streams){const sz={};streams.forEach(s=&gt;{sz[s]=curSize(room,sec,s);});return sz;}
 function getCurCw(room,sec,streams){const cw={};streams.forEach(s=&gt;{cw[s]=curCw(room,sec,s);});return cw;}
 function storedRoom(id){return _stored?_stored.rooms.find(r=&gt;r.id===id):null;}
@@ -3647,8 +3826,15 @@ function roomStats(rr,streams){
 function unitOpts(rr,sec,s){
   const sel=_eqSel[ovKey(rr.id,sec,s)]||'';
   const cur=defSize(rr.id,sec,s);
-  let h='&lt;optgroup label=&quot;Bins&quot;&gt;'+ALLOWED_SIZES[s].map(sz=&gt;`&lt;option value=&quot;B${sz}&quot;${!sel&amp;&amp;sz===cur?' selected':''}&gt;${sz}L&lt;/option&gt;`).join('')+'&lt;/optgroup&gt;';
-  const cont=containersFor(s);
+  const bs=binSizesFor(rr.id,sec,s);
+  const opt=e=&gt;`&lt;option value=&quot;B${e.sizeL}&quot;${!sel&amp;&amp;e.sizeL===cur?' selected':''}&gt;${e.sizeL}L${e.source==='council'?' (council)':''}&lt;/option&gt;`;
+  // Common sizes lead; the rest of the library sits under "More sizes" —
+  // selectable, never in the way. A council schedule IS the list.
+  const common=bs.list.filter(e=&gt;e.common),more=bs.list.filter(e=&gt;!e.common);
+  let h='&lt;optgroup label=&quot;'+(bs.councilSizes.length?'Council schedule':'Bins')+'&quot;&gt;'+(common.length?common:bs.list).map(opt).join('')+'&lt;/optgroup&gt;';
+  if(common.length&amp;&amp;more.length)h+='&lt;optgroup label=&quot;More sizes&quot;&gt;'+more.map(opt).join('')+'&lt;/optgroup&gt;';
+  // compaction containers replace bins — only where a truck services the room
+  const cont=bs.M.equipment?containersFor(s):[];
   if(cont.length){
     h+='&lt;optgroup label=&quot;Compaction containers (collected)&quot;&gt;'+cont.map(e=&gt;
       `&lt;option value=&quot;E${e.id}&quot;${sel===e.id?' selected':''}&gt;${e.label} — ${e.ratio}:1&lt;/option&gt;`
@@ -3669,10 +3855,36 @@ function eqRowHtml(rr,sec,s,p){
     bits.push({icon:'▣',cls:'wsr-eq-comp',txt:parts.join(' · '),
                m2:c.fp!=null?fmtM2(p.n*c.fp):null});
   }
+  // Council schedule provenance: what the guidelines library says this
+  // stream is collected in, with the clause, and whether the row departs
+  // from it. A departure is allowed — it is just never silent.
+  const bs=binSizesFor(rr.id,sec,s);
+  if(bs.schedule&amp;&amp;(bs.schedule.sizesL.length||bs.schedule.perWeek)){
+    const sch=bs.schedule;
+    const parts=[];
+    if(sch.sizesL.length)parts.push(sch.sizesL.map(x=&gt;x+'L').join(' / '));
+    if(sch.perWeek)parts.push(cwLabel(sch.perWeek));
+    const cites=sch.cites.map(c=&gt;c.clause).filter(Boolean).filter((c,i,a)=&gt;a.indexOf(c)===i);
+    const off=[];
+    if(sch.sizesL.length&amp;&amp;sch.sizesL.indexOf(p.sz)&lt;0&amp;&amp;!p.container)off.push('size');
+    if(sch.perWeek&amp;&amp;sch.perWeek!==p.cw)off.push('frequency');
+    bits.push({icon:'🏛',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Council schedule&lt;/span&gt; ${parts.join(' · ')}`+
+      (cites.length?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;(${escAttr(cites.join('; '))})&lt;/span&gt;`:'')+
+      (off.length?` &lt;b style=&quot;color:#EFB080&quot;&gt;· differs from the council schedule (${off.join(', ')})&lt;/b&gt;`:'')});
+  }else if(bs.bulkCap&amp;&amp;(bs.bulkCap.maxL||bs.bulkCap.maxPerWeek)){
+    const b=bs.bulkCap,parts=[];
+    if(b.maxL)parts.push('max '+b.maxL+'L');
+    if(b.maxPerWeek)parts.push('max '+cwLabel(b.maxPerWeek));
+    const cites=b.cites.map(c=&gt;c.clause).filter(Boolean).filter((c,i,a)=&gt;a.indexOf(c)===i);
+    bits.push({icon:'🏛',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Council bulk limit&lt;/span&gt; ${parts.join(' · ')}`+(cites.length?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;(${escAttr(cites.join('; '))})&lt;/span&gt;`:'')+
+      (b.maxPerWeek&amp;&amp;p.cw&gt;b.maxPerWeek?' &lt;b style=&quot;color:#EFB080&quot;&gt;· exceeds the council limit&lt;/b&gt;':'')});
+  }
   // The compaction control is always on screen for a stream that can be
   // compacted, so it can't look like the feature has gone missing when the
-  // equipment library happens to have nothing selectable.
-  if(COMPACTIBLE[s]){
+  // equipment library happens to have nothing selectable. Under a kerbside
+  // method there is no plant to show at all — bins are wheeled out, not
+  // serviced in the room.
+  if(COMPACTIBLE[s]&amp;&amp;bs.M.equipment){
     const plantOpts=plantFor(s);
     const cur=p.plant?p.plant.id:'';
     let txt='&lt;span class=&quot;wsr-eq-meta&quot;&gt;Compaction plant&lt;/span&gt; ';
@@ -3704,6 +3916,14 @@ function eqRowHtml(rr,sec,s,p){
                m2:p.recv.fp!=null?fmtM2(p.recv.fp):null});
   }
   const w=[];
+  // A size picked earlier that this method (or council) no longer offers is
+  // snapped by defSize — the snap is stated, never silent, and the pick is
+  // kept so switching the method back restores it.
+  const ov=_szOv[ovKey(rr.id,sec,s)];
+  if(ov!=null&amp;&amp;!p.container&amp;&amp;ov!==p.sz)
+    w.push(`${ov}L is not offered for ${bs.M.label}${bs.councilSizes.length?' under the council schedule':''} — using ${p.sz}L.`);
+  if(p.n&gt;0&amp;&amp;p.sz&gt;0&amp;&amp;!p.container&amp;&amp;!(binFP(p.sz)&gt;0))
+    w.push(`${p.sz}L has no footprint in the equipment library — add its dimensions there; the room area is incomplete until then.`);
   if(p.served&amp;&amp;p.recv&amp;&amp;p.recv.lib&amp;&amp;p.recv.fp==null)
     w.push(`${p.recv.label} has no dimensions in the equipment library — the room area is incomplete until they are confirmed.`);
   if(p.chuteOverridden)
@@ -3747,7 +3967,7 @@ function roomTableHtml(rr,sec,streams){
       `&lt;td&gt;${streamCell(rr,sec,s)}&lt;/td&gt;`+
       `&lt;td style=&quot;font-family:monospace;font-size:12.5px;font-weight:600;&quot;&gt;${p.vol&gt;0?unitHtml(fmtVol(p.vol)):'—'}&lt;/td&gt;`+
       `&lt;td&gt;&lt;select class=&quot;pwStreamSel&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot;${p.viaCompactor?' disabled':''}&gt;${unitOpts(rr,sec,s)}&lt;/select&gt;&lt;/td&gt;`+
-      `&lt;td&gt;&lt;input class=&quot;pwStreamCw&quot; type=&quot;number&quot; min=&quot;1&quot; max=&quot;14&quot; value=&quot;${p.cw}&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;numeric&quot;&gt;&lt;/td&gt;`+
+      `&lt;td&gt;&lt;input class=&quot;pwStreamCw&quot; type=&quot;number&quot; min=&quot;0.5&quot; step=&quot;0.5&quot; max=&quot;14&quot; value=&quot;${p.cw}&quot; title=&quot;Collections per week — 0.5 is fortnightly&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;decimal&quot;&gt;&lt;/td&gt;`+
       `&lt;td&gt;&lt;input class=&quot;pwBinInput&quot; type=&quot;number&quot; min=&quot;0&quot; max=&quot;999&quot; value=&quot;${p.n}&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; data-stream=&quot;${s}&quot; inputmode=&quot;numeric&quot; oninput=&quot;onBinInput(this)&quot;&gt;&lt;div class=&quot;pwBinProv&quot;&gt;${chip}&lt;/div&gt;&lt;/td&gt;`+
       `&lt;td class=&quot;pwCapProvided&quot;&gt;&lt;span class=&quot;${capClass}&quot;&gt;${unitHtml(fmtVol(p.cap))}&lt;/span&gt;&lt;/td&gt;`+
       `&lt;td class=&quot;pwFootprint&quot;&gt;${p.fp==null?'—':fmtM2(p.fp)}&lt;/td&gt;&lt;/tr&gt;`;
@@ -3757,8 +3977,43 @@ function roomTableHtml(rr,sec,streams){
   const unitHdr=streams.some(s=&gt;eqOf(rr.id,sec,s))?'Bin / unit':'Bin size';
   void hidden;
   const foot='';
-  return `&lt;table class=&quot;wsr-table&quot;&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Stream&lt;/th&gt;&lt;th&gt;Vol/wk&lt;/th&gt;&lt;th&gt;${unitHdr}&lt;/th&gt;&lt;th&gt;Col/wk&lt;/th&gt;&lt;th&gt;Units&lt;/th&gt;&lt;th&gt;Capacity&lt;/th&gt;&lt;th&gt;m²&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;`+
+  return methodLineHtml(rr,sec)+`&lt;table class=&quot;wsr-table&quot;&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Stream&lt;/th&gt;&lt;th&gt;Vol/wk&lt;/th&gt;&lt;th&gt;${unitHdr}&lt;/th&gt;&lt;th&gt;Col/wk&lt;/th&gt;&lt;th&gt;Units&lt;/th&gt;&lt;th&gt;Capacity&lt;/th&gt;&lt;th&gt;m²&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;`+
     `&lt;tbody&gt;${rows}&lt;/tbody&gt;&lt;tfoot id=&quot;foot_${rr.id}_${sec}&quot;&gt;&lt;/tfoot&gt;&lt;/table&gt;`+foot+warn;
+}
+// The collection method for one room section, and where its sizes come from.
+// The select is the constraint's one control; the note beside it says which
+// source is shaping the dropdowns (council schedule / library / built-ins)
+// so a short list never reads as a missing feature.
+function methodLineHtml(rr,sec){
+  const method=methodOf(rr.id,sec);
+  const room=roomById(rr.id);
+  const explicit=!!(room&amp;&amp;normMethod(room.method)[sec==='c'?'c':'r']);
+  const opts=Object.keys(COLLECT_METHODS).map(id=&gt;`&lt;option value=&quot;${id}&quot;${id===method?' selected':''}&gt;${COLLECT_METHODS[id].label}&lt;/option&gt;`).join('');
+  const council=activeCouncilLabel();
+  const sch=activeSchedule();
+  let src;
+  if(COLLECT_METHODS[method].kerb&amp;&amp;sch&amp;&amp;Object.keys(sch.kerbside||{}).length)src=`sizes and frequency from &lt;b&gt;${escAttr(council)}&lt;/b&gt;’s collection schedule (guidelines library)`;
+  else if(council&amp;&amp;!sch)src=`no collection schedule for ${escAttr(council)} in the guidelines library — common sizes shown`;
+  else if(BIN_LIB.length)src='sizes from the equipment library';
+  else src='built-in sizes (equipment library not reached)';
+  return `&lt;div class=&quot;wsr-method&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Collection&lt;/span&gt; `+
+    `&lt;select class=&quot;wsr-methodsel&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; onchange=&quot;onMethodPick(this)&quot; title=&quot;How this room’s bins are emptied — decides which sizes and equipment are offered&quot;&gt;${opts}&lt;/select&gt;`+
+    `${explicit?'':' &lt;span class=&quot;wsr-eq-meta&quot;&gt;(assumed from the mix)&lt;/span&gt;'}`+
+    ` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· ${src}&lt;/span&gt;&lt;/div&gt;`;
+}
+function onMethodPick(el){
+  const room=roomById(el.dataset.room);if(!room)return;
+  const sec=el.dataset.sec==='c'?'c':'r';
+  room.method=normMethod(room.method);
+  room.method[sec]=COLLECT_METHODS[el.value]?el.value:null;
+  // a method that cannot use plant drops any chosen unit for this section;
+  // sizes the method no longer offers snap through defSize on re-render
+  if(!COLLECT_METHODS[room.method[sec]||defaultMethod(room,sec)].equipment){
+    Object.keys(_eqSel).concat(Object.keys(_plantSel)).forEach(k=&gt;{
+      if(k.indexOf(room.id+'|'+sec+'|')===0){delete _eqSel[k];delete _plantSel[k];}
+    });
+  }
+  wsCalcTrigger();
 }
 function roomBlockHtml(rr,streams,solo){
   let h=`&lt;div class=&quot;wsr-room${solo?' solo':''}&quot; data-room=&quot;${rr.id}&quot;&gt;`;
@@ -3885,7 +4140,7 @@ function rebuildRoomCards(){
         if(sec==='r')anyRes=true;else anyCom=true;
         fp+=n*binFP(sz);
         const key=s+'_'+sz;
-        bins[key]=bins[key]||{stream:s,count:0,size:sz,vol:0,cw:cw};
+        bins[key]=bins[key]||{stream:s,count:0,size:sz,vol:0,cw:cw,method:methodOf(rr.id,sec)};
         bins[key].count+=n;
         // weekly litres and collections/week ride along so the layout side can
         // apply compaction ratios with the SAME maths, not a count approximation
@@ -4112,7 +4367,7 @@ g(&quot;results&quot;).addEventListener(&quot;change&quot;,e=&gt;{const el=e.tar
 g(&quot;results&quot;).addEventListener(&quot;input&quot;,e=&gt;{
   const el=e.target;
   if(!el.classList.contains(&quot;pwStreamCw&quot;))return;
-  _cwOv[ovKey(el.dataset.room,el.dataset.sec,el.dataset.stream)]=Math.max(1,Number(el.value)||1);
+  _cwOv[ovKey(el.dataset.room,el.dataset.sec,el.dataset.stream)]=normCw(el.value,1);
   updateBinCount(el.dataset.room,el.dataset.sec,el.dataset.stream);
   if(typeof wsUpdateVolumes==='function')wsUpdateVolumes();
   if(!_stored)return;
@@ -4210,6 +4465,9 @@ window.addEventListener('message', function(e) {
     const d = e.data;
     if (Array.isArray(d.equipment)) {
       EQUIP_DB = d.equipment; rebuildEquipLib(); rebuildRecvLib();
+      // the bin library and the council schedules ride the equipment push
+      if (Array.isArray(d.bins)) rebuildBinLib(d.bins);
+      if (Array.isArray(d.council_schedules)) COUNCIL_SCHEDULES = d.council_schedules.filter(c =&gt; c &amp;&amp; c.key &amp;&amp; c.schedule);
       if (typeof _stored !== 'undefined' &amp;&amp; _stored) { renderAllRooms(); renderRooms(); }
       if (d.bin_rooms === undefined &amp;&amp; d.res_1br === undefined &amp;&amp; d.state === undefined) return;
     }
@@ -4298,8 +4556,11 @@ function wsUpdateVolumes() {
         _stored.streams.forEach(s =&gt; {
           const sz = curSize(rr.id, sec, s), cw = curCw(rr.id, sec, s);
           const n = getBinCount(rr.id, sec, s, vols[s] || 0, sz, cw);
+          // method + cycle are the presentation structure the Collection
+          // Point tab needs: which bins reach the kerb, and on which cadence
           if (n &gt; 0) schedule.push({ room: rr.id, roomName: rr.name, component: rr.component, sec: sec, stream: s,
             sizeL: sz, qty: n, colWk: cw,
+            method: methodOf(rr.id, sec), cycle: cw &lt; 1 ? 'F' : 'W',
             manual: _binOv[ovKey(rr.id, sec, s)] != null,
             manualWhy: _binOvWhy[ovKey(rr.id, sec, s)] || null,
             calcQty: provision(rr, sec, s, _stored.streams).nCalc });
@@ -4319,9 +4580,18 @@ function wsUpdateVolumes() {
         id: r.id, name: r.name, kind: r.kind, component: r.component,
         fpM2: r.fpM2, areaM2: r.areaM2, chute: r.chute || null, units: r.units || [],
         bins: Object.values(r.bins).map(b =&gt; ({ stream: b.stream, sizeL: b.size, qty: b.count,
-                                                weeklyVolL: b.vol || 0, perWeek: b.cw || 1 })),
+                                                weeklyVolL: b.vol || 0, perWeek: b.cw || 1,
+                                                method: b.method || null, cycle: (b.cw || 1) &lt; 1 ? 'F' : 'W' })),
       }));
-      window.parent.postMessage({ type: 'ws-calc-results', volumes: vols, schedule: schedule, rooms: roomsOut, summary: summary }, '*');
+      // Where the cadence came from — the Collection Point names its source
+      // instead of calling a council schedule an assumption.
+      const sch = activeSchedule();
+      const presentation = {
+        council: activeCouncilLabel() || null,
+        source: sch ? 'council' : 'manual',
+        kerbside: schedule.some(it =&gt; COLLECT_METHODS[it.method]?.kerb),
+      };
+      window.parent.postMessage({ type: 'ws-calc-results', volumes: vols, schedule: schedule, rooms: roomsOut, summary: summary, presentation: presentation }, '*');
     }
   } catch(e) {}
 }
@@ -7087,10 +7357,13 @@ let state = {
   glReqId: 0,
   checkedDoc: null,          // guidelineSourceInfo() snapshot taken at scan time
   wmpFileName: &#x27;&#x27;,
+  wmpBuf: null,         // raw WMP bytes, kept for the anonymous claim handoff
   council: &#x27;&#x27;,
   scanComplete: false,
   runsCap: null,        // free-plan per-project cap from the platform; null = uncapped
   runsRemaining: null,  // checks left on the open project; null = uncapped
+  anonMode: false,      // landing-page guest session: exports gate to signup, the scan result is parked for claim-on-signup
+  restoring: false,     // restoreScan() is re-rendering an already-counted check — never report it as a new run
   hl: { wmp: {}, guide: {} },  // pane -&gt; page -&gt; [{id,result,snippet,rects:[{x,y,w,h}]}]
 };
 
@@ -7942,7 +8215,7 @@ function handleWMPDrop(e) {
 }
 function handleWMPFile(e) { const f = e.target.files[0]; if (f) loadWMPFile(f); }
 function clearWMP() {
-  state.pdfDoc = null; state.pdfPages = []; state.pdfTextContent = []; state.wmpFileName = &#x27;&#x27;;
+  state.pdfDoc = null; state.pdfPages = []; state.pdfTextContent = []; state.wmpFileName = &#x27;&#x27;; state.wmpBuf = null;
   document.getElementById(&#x27;wmp-file-pill&#x27;).style.display = &#x27;none&#x27;;
   document.getElementById(&#x27;wmp-drop-zone&#x27;).classList.remove(&#x27;has-file&#x27;);
   document.getElementById(&#x27;wmp-file-input&#x27;).value = &#x27;&#x27;;
@@ -7962,6 +8235,9 @@ async function loadWMPFile(file) {
   document.getElementById(&#x27;wmp-drop-zone&#x27;).classList.add(&#x27;has-file&#x27;);
 
   const ab = await file.arrayBuffer();
+  // pdf.js may transfer the buffer to its worker — keep an intact copy for the
+  // anonymous claim handoff (same slice(0) trick the Design tab uses).
+  state.wmpBuf = ab.slice(0);
   state.pdfDoc = await pdfjsLib.getDocument({data:ab}).promise;
   const n = state.pdfDoc.numPages;
   document.getElementById(&#x27;wmp-file-pages&#x27;).textContent = `Analysing ${n} pages…`;
@@ -8023,7 +8299,13 @@ function updateRunsBadge() {
   // wp-set-runs); paid and staff accounts send null and the label stays hidden.
   const el = document.getElementById(&#x27;runs-left-label&#x27;);
   if (!el) return;
-  if (typeof state.runsRemaining === &#x27;number&#x27; &amp;&amp; state.runsCap) {
+  if (state.anonMode) {
+    // Guest session: one check, no project to count against.
+    el.style.display = &#x27;inline&#x27;;
+    el.textContent = state.runsRemaining === 0
+      ? &#x27;Free check used — create a free account for your next one&#x27;
+      : &#x27;Free compliance check — no account needed&#x27;;
+  } else if (typeof state.runsRemaining === &#x27;number&#x27; &amp;&amp; state.runsCap) {
     el.style.display = &#x27;inline&#x27;;
     el.textContent = state.runsRemaining === 0
       ? &#x27;No free checks left on this project&#x27;
@@ -8352,12 +8634,67 @@ function renderResults(data) {
   // Report the completed run to the platform: it owns the per-project counter
   // (project row + database), logs the event, and pushes back the remaining
   // count. Decrement locally too so the badge is honest before the round trip.
-  if (window.parent &amp;&amp; window.parent !== window)
+  // A restoreScan() re-render is an ALREADY-COUNTED check coming back after
+  // claim-on-signup — reporting it again would double-bill the run.
+  if (!state.restoring &amp;&amp; window.parent &amp;&amp; window.parent !== window) {
     window.parent.postMessage({ type: &#x27;wp-scan-done&#x27;, fails: fail, flags: flag, score }, &#x27;*&#x27;);
-  if (typeof state.runsRemaining === &#x27;number&#x27;) {
+    if (state.anonMode) {
+      // Park the whole result with the platform so signup can attach it to the
+      // new account instead of discarding it. The WMP bytes are TRANSFERRED
+      // (not copied) — the guest cannot re-scan anyway, the gate holds.
+      const csel = document.getElementById(&#x27;council-select&#x27;);
+      const buf = state.wmpBuf; state.wmpBuf = null;
+      const msg = {
+        type: &#x27;wp-anon-result&#x27;,
+        data, score,
+        council: state.council,
+        councilName: csel?.options[csel.selectedIndex]?.text || &#x27;&#x27;,
+        address: document.getElementById(&#x27;dev-address&#x27;)?.value || &#x27;&#x27;,
+        ref: document.getElementById(&#x27;proj-ref&#x27;)?.value || &#x27;&#x27;,
+        fileName: state.wmpFileName || &#x27;&#x27;,
+        checkedDoc: state.checkedDoc || null,
+        checkedAgainst: state.checkedAgainst || null,
+        wmpBuf: buf || null,
+      };
+      try { window.parent.postMessage(msg, &#x27;*&#x27;, buf ? [buf] : []); }
+      catch (err) { try { window.parent.postMessage({ ...msg, wmpBuf: null }, &#x27;*&#x27;); } catch (e2) {} }
+    }
+  }
+  if (!state.restoring &amp;&amp; typeof state.runsRemaining === &#x27;number&#x27;) {
     state.runsRemaining = Math.max(0, state.runsRemaining - 1);
     updateRunsBadge();
   }
+}
+
+// ── RESTORE (claim-on-signup) ─────────────────────────────────────────────
+// Re-renders a check that already ran in an anonymous session, exactly as the
+// AI returned it — nothing re-runs and nothing is re-counted (state.restoring
+// suppresses the wp-scan-done report and the local decrement). Called by the
+// platform after signup, usually right after loadWMPFile() with the parked
+// PDF so the panes and highlights come back too.
+function restoreScan(payload) {
+  if (!payload || !payload.data) return;
+  state.restoring = true;
+  try {
+    const fill = (id, v) =&gt; { const el = document.getElementById(id); if (el &amp;&amp; v &amp;&amp; !el.value) el.value = v; };
+    fill(&#x27;dev-address&#x27;, payload.address);
+    fill(&#x27;proj-ref&#x27;, payload.ref);
+    if (payload.council) {
+      state.council = payload.council;
+      const sel = document.getElementById(&#x27;council-select&#x27;);
+      if (sel) {
+        for (const opt of sel.options) if (opt.value === payload.council) { sel.value = payload.council; break; }
+        if (typeof updateGuidelineStatus === &#x27;function&#x27;) { try { updateGuidelineStatus(); } catch (e) {} }
+      }
+    }
+    if (payload.checkedDoc) state.checkedDoc = payload.checkedDoc;
+    state.checkedAgainst = payload.checkedAgainst || state.checkedAgainst;
+    if (payload.address) document.getElementById(&#x27;checker-title&#x27;).textContent = payload.address + (payload.ref ? &#x27; — &#x27; + payload.ref : &#x27;&#x27;);
+    if (state.checkedDoc?.short) document.getElementById(&#x27;scan-council-label&#x27;).textContent = &#x27;Checked against: &#x27; + state.checkedDoc.short;
+    switchTab(&#x27;summary&#x27;, document.getElementById(&#x27;tab-summary-btn&#x27;));
+    document.getElementById(&#x27;scan-loading-panel&#x27;).style.display = &#x27;none&#x27;;
+    renderResults(payload.data);
+  } finally { state.restoring = false; }
 }
 
 // ── COMMENTS LIST ─────────────────────────────────────────────────────────
@@ -8549,6 +8886,13 @@ function addCommentToBank(id) {
 
 // ── SUBMISSION ────────────────────────────────────────────────────────────
 function submitToCouncil() {
+  // Guest session: the delivered result stays fully visible, but everything
+  // past viewing it routes to the signup gate (the platform owns the modal).
+  if (state.anonMode) {
+    if (window.parent &amp;&amp; window.parent !== window)
+      window.parent.postMessage({ type: &#x27;wp-anon-gate&#x27;, trigger: &#x27;submit&#x27; }, &#x27;*&#x27;);
+    return;
+  }
   const g = GUIDELINE_DB[state.council];
   const councilName = document.getElementById(&#x27;council-select&#x27;).options[document.getElementById(&#x27;council-select&#x27;).selectedIndex]?.text || &#x27;the council&#x27;;
   if (g &amp;&amp; g.loaded) {
@@ -8560,6 +8904,12 @@ function submitToCouncil() {
 
 // ── EXPORT REPORT ─────────────────────────────────────────────────────────
 function exportReport() {
+  // Guest session: seeing the result is free, taking it away is the signup.
+  if (state.anonMode) {
+    if (window.parent &amp;&amp; window.parent !== window)
+      window.parent.postMessage({ type: &#x27;wp-anon-gate&#x27;, trigger: &#x27;export&#x27; }, &#x27;*&#x27;);
+    return;
+  }
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;Unknown&#x27;;
   const ref  = document.getElementById(&#x27;proj-ref&#x27;).value || &#x27;—&#x27;;
   const councilName = document.getElementById(&#x27;council-select&#x27;).options[document.getElementById(&#x27;council-select&#x27;).selectedIndex]?.text || &#x27;—&#x27;;
@@ -8694,6 +9044,7 @@ window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
     state.aiIncluded = !!e.data.aiIncluded;
     state.aiToken = e.data.aiToken || null;
     state.aiUrl = e.data.aiUrl || null;
+    state.anonMode = !!e.data.anonMode;
     state.runsCap = (typeof e.data.runsCap === &#x27;number&#x27;) ? e.data.runsCap : null;
     state.runsRemaining = (typeof e.data.runsRemaining === &#x27;number&#x27;) ? e.data.runsRemaining : null;
     updateRunsBadge();
@@ -8916,6 +9267,15 @@ const SCREEN_LABELS = {
 let currentProjectId = null;
 
 function showScreen(name, navEl) {
+  // Anonymous compliance entry: the checker is the ONLY screen a guest session
+  // can open — every other navigation is "anything else in the app" from the
+  // brief, and routes to the signup gate instead. Everything navigates through
+  // showScreen, so this one intercept is the whole wall (the hidden nav rail
+  // is just cosmetics on top).
+  if (typeof wpAnonActive === 'function' && wpAnonActive() && name !== 'compliance') {
+    if (typeof wpAnonGate === 'function') wpAnonGate('navigate');
+    return;
+  }
   // Usage telemetry for the screens that answer "which tools drive value"
   if (['workspace','compliance','costcheck'].includes(name) && typeof logEvent === 'function') logEvent('screen_view', { screen: name });
   // Update nav
@@ -8982,9 +9342,12 @@ function showScreen(name, navEl) {
         || (typeof currentOrg !== 'undefined' && currentOrg?.kind === 'council');
       // Included AI: hand the iframe a session token so it can call the
       // ai-user Edge Function instead of needing a pasted key. srcdoc iframes
-      // share our origin, so this stays first-party.
+      // share our origin, so this stays first-party. An anonymous checker
+      // session holds a REAL (is_anonymous) Supabase session, so the same
+      // token handoff works — the edge function owns its one-run allowance.
+      const anonMode = (typeof wpAnonActive === 'function') && wpAnonActive();
       let aiToken = null;
-      if (aiEntitled()) {
+      if (aiEntitled() || anonMode) {
         try { const { data: { session } } = await sb.auth.getSession(); aiToken = session?.access_token || null; } catch {}
       }
       // The checker's council list is the platform registry, not a hard-coded
@@ -9017,10 +9380,15 @@ function showScreen(name, navEl) {
         aiIncluded: !!aiToken,
         aiToken,
         aiUrl: AI_PROXY_BASE + '/ai-user',
+        // Anonymous entry: exactly ONE check, tracked per device (and enforced
+        // for real by the ai-user function's lifetime allowance) — the signup
+        // gate takes over from there.
+        anonMode,
         // Free plan: the per-project checker cap rides with the role handshake.
         // null = uncapped (paid tier, staff, or no open project).
-        runsCap: (typeof wpFreeRunsCap === 'function') ? wpFreeRunsCap() : null,
-        runsRemaining: (typeof wpFreeRunsRemaining === 'function') ? wpFreeRunsRemaining(proj) : null,
+        runsCap: anonMode ? 1 : ((typeof wpFreeRunsCap === 'function') ? wpFreeRunsCap() : null),
+        runsRemaining: anonMode ? (wpAnonCheckUsed() ? 0 : 1)
+          : ((typeof wpFreeRunsRemaining === 'function') ? wpFreeRunsRemaining(proj) : null),
       }, '*');
       // Pre-fill project fields from the open project, if any
       if (proj) {
@@ -9830,15 +10198,49 @@ window.addEventListener('message', async (e) => {
 // remaining count back so the checker's badge can never drift from it.
 window.addEventListener('message', async (e) => {
   if (!e.data) return;
+  const anon = (typeof wpAnonActive === 'function') && wpAnonActive();
   if (e.data.type === 'wp-paywall') {
+    // A guest's "cap" is the one free check — that wall is the signup gate,
+    // never the upgrade paywall (there is no account to upgrade yet).
+    if (anon) { wpAnonGate('second_check'); return; }
     if (typeof showPaywall === 'function') showPaywall(e.data.reason || 'compliance_cap');
     return;
   }
   if (e.data.type === 'wp-engage') {
+    // The engagement form files against an account + project; a guest gets
+    // the gate first and the form after signup, like everything else.
+    if (anon) { wpAnonGate('engage'); return; }
     if (typeof wpEngageOpen === 'function') wpEngageOpen(e.data.source || 'compliance');
     return;
   }
+  if (e.data.type === 'wp-anon-gate') {
+    if (anon) wpAnonGate(e.data.trigger || 'export');
+    return;
+  }
+  if (e.data.type === 'wp-anon-result') {
+    // The completed guest check, parked for claim-on-signup: result JSON in
+    // the shared claim store, WMP bytes under a temp IndexedDB key. Nothing
+    // is re-run after signup — this exact payload is what gets attached.
+    if (!anon) return;
+    const clean = (typeof wpComplianceClaimClean === 'function') ? wpComplianceClaimClean(e.data) : null;
+    if (!clean) return;
+    wpClaimPark('compliance', clean);
+    if (e.data.wmpBuf && e.data.wmpBuf.byteLength) {
+      try { await idbPutPdf('doc:anon:check', e.data.wmpBuf, clean.fileName || 'wmp.pdf'); } catch (err) {}
+    }
+    return;
+  }
   if (e.data.type !== 'wp-scan-done') return;
+  if (anon) {
+    // Guest run: no project row to count against. Mark the device's one free
+    // check spent (the ai-user function holds the real allowance), log it,
+    // and flip the checker's badge to the used state.
+    try { localStorage.setItem('wp_anon_check_used', '1'); } catch (err) {}
+    logEvent('anon_check_run', { fails: e.data.fails ?? null, score: e.data.score ?? null });
+    document.getElementById('compliance-iframe')?.contentWindow?.postMessage(
+      { type: 'wp-set-runs', runsCap: 1, runsRemaining: 0 }, '*');
+    return;
+  }
   const projects = getProjects();
   const proj = currentProjectId ? projects.find(p => p.id === currentProjectId) : null;
   if (proj) {
@@ -10465,12 +10867,36 @@ async function rdbViewTable() {
 }
 
 // ── ADMIN: Equipment & Contractors editors ─────────────────────────────────
+// The collection-method vocabulary shared by the equipment library, the bin
+// calculator (its COLLECT_METHODS table) and the Collection Point tab.
+// Kerbside methods present bins at the kerb; bulk and self-haul do not.
+const WP_COLLECT_METHOD_IDS = ['kerbside_individual', 'kerbside_shared', 'bulk', 'self_haul'];
+function wpParseMethods(v) {
+  // Admin types a comma list; the column stores text[]. Synonyms collapse
+  // onto the four ids, a bare "kerbside" means both kerbside methods, and
+  // anything unrecognised is dropped rather than stored as a silent no-match.
+  const list = Array.isArray(v) ? v : String(v || '').split(/[,;|\n]+/);
+  const out = [];
+  const push = id => { if (WP_COLLECT_METHOD_IDS.indexOf(id) >= 0 && out.indexOf(id) < 0) out.push(id); };
+  list.forEach(x => {
+    const s = String(x || '').toLowerCase().trim().replace(/[-\s]+/g, '_');
+    if (!s) return;
+    if (s === 'kerbside' || s === 'kerb') { push('kerbside_individual'); push('kerbside_shared'); return; }
+    if (s === 'individual') return push('kerbside_individual');
+    if (s === 'shared' || s === 'communal' || s === 'kerbside_communal') return push('kerbside_shared');
+    if (s === 'front_lift' || s === 'rear_lift' || s === 'collection_point' || s === 'bulk_bin') return push('bulk');
+    if (s === 'self' || s === 'selfhaul' || s === 'private') return push('self_haul');
+    push(s);
+  });
+  return out;
+}
 const EQL = { items: [], deletes: [], cols: [
   ['supplier_type','Supplier type',92,'text'], ['label','Bin / equip type',150,'text'], ['category','Category',86,'cat'],
   ['item_kind','Item kind',70,'text'], ['collectable','Collectable',52,'bool'],
   ['height_mm','Height mm',56,'num'], ['width_mm','Width mm',56,'num'], ['depth_mm','Depth mm',56,'num'],
   ['footprint_m2','Footprint m²',58,'num'], ['capacity_l','Capacity (L)',60,'num'], ['compaction_ratio','Compaction',56,'num'], ['streams','Streams',120,'streams'],
   ['inlet_height_mm','Inlet mm',54,'num'], ['bin_size_l','Bin size L',52,'num'], ['bin_count','Bin count',48,'num'], ['active','Active',44,'bool'],
+  ['is_common','Common size',52,'bool'], ['collection_methods','Collection methods',150,'text'],
   ['turn_type','Turn (pivot/wide)',72,'text'], ['turn_radius_mm','Turn R mm',56,'num'],
   ['company','Company',100,'text'], ['website','Website',130,'text'], ['phone','Phone',95,'text'],
   ['include_in_supplier_table','In supplier tbl',52,'bool'] ] };
@@ -10577,6 +11003,10 @@ async function eqlSave() {
       // size-based default in wsManBehaviour), radius used only when wide
       turn_type: (it.turn_type === 'pivot' || it.turn_type === 'wide') ? it.turn_type : null,
       turn_radius_mm: it.turn_radius_mm,
+      // bin-calculator selection: the short default list, and which
+      // collection methods may use the record (typed as a comma list)
+      is_common: it.is_common === true,
+      collection_methods: wpParseMethods(it.collection_methods),
       supplier_type: it.supplier_type, company: it.company, website: it.website, phone: it.phone,
       collectable: it.collectable===true, include_in_supplier_table: it.include_in_supplier_table===true,
       active: it.active !== false }));
@@ -11142,7 +11572,8 @@ Each row:
 - "unit": its unit verbatim ("L/dwelling/week", "mm", "m2", "per week", "%"), else null
 - "value_text": the requirement wording, short but verbatim enough to verify
 - "clause_ref": clause/section AND page as printed, e.g. "cl 4.2.1, p.12". REQUIRED — a row you cannot cite must not be returned.
-Rules: enforceable requirements only (shall / must / minimum / maximum), never advice. Never invent values. generation_rate rows need value_num and unit. stream_split rows are the percentage share of one stream for one use_class.`;
+Rules: enforceable requirements only (shall / must / minimum / maximum), never advice. Never invent values. generation_rate rows need value_num and unit. stream_split rows are the percentage share of one stream for one use_class.
+collection_limit rows describe the council's collection SERVICE, one fact per row: the bin size a stream is supplied or collected in (value_num litres, unit "L"), its collection frequency (value_num with unit "per week" or "per fortnight"), or a cap on the bulk service (say "bulk" / "front-lift" / "rear-lift" in value_text, e.g. maximum bulk bin size in L or maximum services per week). A maximum-size rule must say "maximum" in value_text.`;
 
 function crqMsg(t, warn) { const el = document.getElementById('crq-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
 
@@ -13343,11 +13774,16 @@ function incrementAICalls() {
 // ── USAGE EVENTS ──────────────────────────────────────────────────────────
 // Fire-and-forget telemetry into the events table (analytics_migration.sql).
 // Silent on every failure — including before the migration exists — because
-// analytics must never break a user-facing action. Signed-in users only.
+// analytics must never break a user-facing action. Signed-in users only —
+// plus the anonymous compliance session, which holds a real (is_anonymous)
+// Supabase user, so its funnel events insert under that id and satisfy the
+// same RLS as everyone else's.
 function logEvent(name, meta) {
   try {
-    if (!currentUser || !sb) return;
-    sb.from('events').insert({ user_id: currentUser.id, event: name, meta: meta || {} })
+    const uid = currentUser?.id
+      || ((typeof WP_ANON !== 'undefined' && WP_ANON?.user?.id) || null);
+    if (!uid || !sb) return;
+    sb.from('events').insert({ user_id: uid, event: name, meta: meta || {} })
       .then(() => {}, () => {});
   } catch (e) {}
 }
@@ -13370,9 +13806,77 @@ function logEvent(name, meta) {
   } catch (e) {}
 })();
 
+// ── ANONYMOUS HANDOFF CLAIMS ───────────────────────────────────────────────
+// ONE mechanism for every "did something outside an account → signed up →
+// the work comes with them" path: the bin-calculator handoff parks a 'calc'
+// claim, the anonymous compliance check parks a 'compliance' claim, and any
+// future entry point (QR lead capture etc.) adds a kind here plus an applier
+// in wpClaimApply — never a bespoke parallel store. One claim at a time: the
+// newest park wins, which matches how a visitor actually arrives (one landing
+// page, one artefact worth keeping).
+//
+// localStorage, not sessionStorage: the email-confirm link and a "come back
+// tomorrow and sign up" both open fresh tabs, where sessionStorage is empty
+// and the parked work would silently vanish. The age cap keeps a claim from
+// ambushing a signup weeks later.
+const WP_CLAIM_KEY = 'wp_pending_claim';
+const WP_CLAIM_KINDS = { calc: true, compliance: true };
+const WP_CLAIM_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
+
+function wpClaimNormalise(kind, payload, at) {
+  // Pure: shape-check a claim before it is parked. Unknown kinds and
+  // non-object payloads return null — junk never reaches the store.
+  if (!kind || WP_CLAIM_KINDS[kind] !== true) return null;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const t = Number(at);
+  return { kind, payload, at: Number.isFinite(t) ? t : Date.now() };
+}
+
+function wpClaimFresh(rec, now) {
+  // Pure: is a stored claim still worth applying? A record with a broken
+  // shape or a stamp older than the age cap is dead; a stamp slightly in the
+  // future (clock adjusted between visits) still counts as fresh.
+  if (!rec || WP_CLAIM_KINDS[rec.kind] !== true) return false;
+  if (!rec.payload || typeof rec.payload !== 'object' || Array.isArray(rec.payload)) return false;
+  const t = Number(rec.at);
+  if (!Number.isFinite(t)) return false;
+  const n = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+  return (n - t) <= WP_CLAIM_MAX_AGE_MS;
+}
+
+function wpClaimPark(kind, payload) {
+  const rec = wpClaimNormalise(kind, payload);
+  if (!rec) return false;
+  try { localStorage.setItem(WP_CLAIM_KEY, JSON.stringify(rec)); return true; } catch (e) { return false; }
+}
+function wpClaimPeek() {
+  try {
+    const rec = JSON.parse(localStorage.getItem(WP_CLAIM_KEY) || 'null');
+    return wpClaimFresh(rec) ? rec : null;
+  } catch (e) { return null; }
+}
+function wpClaimTake() {
+  // One shot: the claim clears BEFORE anything can fail halfway and re-apply
+  // on the next login — same doctrine the calc prefill always had.
+  const rec = wpClaimPeek();
+  try { localStorage.removeItem(WP_CLAIM_KEY); } catch (e) {}
+  return rec;
+}
+
+// Dispatch after the FIRST successful sign-in or signup (showApp hooks this).
+// Returns the kind it applied, so callers can tell whether the landing-page
+// entry still needs a plain navigation.
+async function wpClaimApply() {
+  const rec = wpClaimTake();
+  if (!rec || !currentUser) return null;
+  if (rec.kind === 'calc') { await applyCalcPrefill(rec.payload); return 'calc'; }
+  if (rec.kind === 'compliance') { await applyComplianceClaim(rec.payload); return 'compliance'; }
+  return null;
+}
+
 // ── LANDING-PAGE CALC HANDOFF (?calc=) ─────────────────────────────────────
 // go.wasteplanner.au links here with a base64url JSON payload of the visitor's
-// calculation. Parse ONCE, park it in sessionStorage so it survives the
+// calculation. Parse ONCE, park it as a 'calc' claim so it survives the
 // signup → email-confirm → return round trip, and strip the param. Anything
 // invalid is ignored silently, per the brief. UTM params are untouched —
 // captureAttribution above has already read them by the time this runs.
@@ -13398,20 +13902,34 @@ function logEvent(name, meta) {
     };
     // a payload with nothing usable in it is not a prefill
     if (!clean.state && !Object.values(clean.mix).some(v => v > 0) && !clean.com.length) return;
-    sessionStorage.setItem('wp_calc_prefill', JSON.stringify(clean));
+    wpClaimPark('calc', clean);
   } catch (e) { /* invalid payload: ignore silently */ }
 })();
 
-// Apply the parked calculation after the FIRST successful sign-in or signup:
-// create the project, open the Bin Calculator tab and push the mix into it
-// (the calculator's own ws-calc-fill listener seeds the room and runs the
-// calc). One shot — the prefill clears before anything can fail halfway and
-// re-apply on the next login.
-async function applyCalcPrefill() {
-  let pre = null;
-  try { pre = JSON.parse(sessionStorage.getItem('wp_calc_prefill') || 'null'); } catch (e) {}
+// ── LANDING-PAGE COMPLIANCE ENTRY (?check=wmp) ─────────────────────────────
+// The planner landing page links here with ?check=wmp (its own UTM params
+// ride alongside and are captured above like any other campaign's). The flag
+// parks in sessionStorage — unlike a claim it carries no work product, it
+// only tells THIS tab's boot sequence to open an anonymous checker session
+// instead of the auth screen. A returning guest doesn't need it: their
+// persisted is_anonymous Supabase session re-enters the checker on its own.
+(function captureCheckEntry() {
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('check') !== 'wmp') return;
+    q.delete('check');
+    history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+    sessionStorage.setItem('wp_anon_entry', 'compliance');
+  } catch (e) {}
+})();
+
+// Apply a parked calculation claim: create the project, open the Bin
+// Calculator tab and push the mix into it (the calculator's own ws-calc-fill
+// listener seeds the room and runs the calc). The claim store already cleared
+// the record — wpClaimTake in wpClaimApply — so nothing re-applies on the
+// next login.
+async function applyCalcPrefill(pre) {
   if (!pre || !currentUser) return;
-  sessionStorage.removeItem('wp_calc_prefill');
   // A capped free account can't take the prefill project — say so instead of
   // silently dropping the payload, and don't burn the slot check on retries.
   if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
@@ -13459,6 +13977,97 @@ async function applyCalcPrefill() {
       com: pre.com,
     }, '*');
   }, 900);
+}
+
+function wpComplianceClaimClean(p) {
+  // Pure: sanitise the checker's parked result before it becomes a claim.
+  // The comments array IS the result — a payload without one is not a check
+  // worth carrying through, so it returns null and nothing parks.
+  if (!p || typeof p !== 'object') return null;
+  const data = (p.data && typeof p.data === 'object' && !Array.isArray(p.data)) ? p.data : null;
+  const comments = Array.isArray(data?.comments) ? data.comments.filter(c => c && typeof c === 'object').slice(0, 200) : [];
+  if (!comments.length) return null;
+  const str = (v, n) => typeof v === 'string' ? v.slice(0, n) : '';
+  return {
+    data: {
+      comments,
+      readiness_score: Number.isFinite(Number(data.readiness_score)) ? Number(data.readiness_score) : null,
+      overall_summary: str(data.overall_summary, 4000),
+      council_risk_note: str(data.council_risk_note, 2000),
+    },
+    score: Number.isFinite(Number(p.score)) ? Number(p.score) : null,
+    council: str(p.council, 120),
+    councilName: str(p.councilName, 160),
+    address: str(p.address, 200),
+    ref: str(p.ref, 100),
+    fileName: str(p.fileName, 160),
+    checkedDoc: (p.checkedDoc && typeof p.checkedDoc === 'object') ? { short: str(p.checkedDoc.short, 200), pdf: false } : null,
+    checkedAgainst: (p.checkedAgainst && typeof p.checkedAgainst === 'object' && !Array.isArray(p.checkedAgainst)) ? p.checkedAgainst : null,
+  };
+}
+
+// Apply a parked compliance claim: create the project the anonymous check
+// belongs to, file the WMP PDF as its document, and reopen the checker
+// showing the EXACT result the guest already saw — nothing re-runs and no AI
+// allowance is spent. complianceRuns starts at 1 because the anonymous run IS
+// this project's first check: every free path lands on the same two checks
+// total, so the landing page can never be a way to bank a third.
+async function applyComplianceClaim(pre) {
+  if (!pre || !currentUser) return;
+  if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
+  const project = {
+    id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+    name: 'WMP check — ' + (pre.address || pre.fileName || pre.councilName || 'new project'),
+    address: pre.address || '',
+    state: '',
+    council: pre.councilName || '',
+    devType: '',
+    levels: '',
+    status: 'Pre-Lodgement',
+    summary: { address: pre.address || '', council: pre.councilName || '' },
+    complianceRuns: 1,
+    check: pre,   // the carried result — restoreScan re-renders it, app_data persists it
+    created: new Date().toLocaleDateString('en-AU'),
+    ts: Date.now(),
+  };
+  const projects = getProjects();
+  projects.unshift(project);
+  saveProjects(projects);
+  currentProjectId = project.id;
+  if (typeof saveProjectToDB === 'function') saveProjectToDB(project);
+  if (typeof currentProfile !== 'undefined' && currentProfile) currentProfile.projects_created = (Number(currentProfile.projects_created) || 0) + 1;
+  if (typeof renderProjects === 'function') renderProjects();
+  logEvent('project_created', { project_id: project.id, council: pre.council || null, source: 'compliance_claim' });
+  logEvent('compliance_claim_applied', { council: pre.council || null, score: pre.score ?? null });
+  // The WMP bytes were parked under a temp IDB key by the anonymous run —
+  // file them as a real project document, then clear the temp slot.
+  let rec = null;
+  try { rec = await idbGetPdf('doc:anon:check'); } catch (e) {}
+  if (rec?.buf) {
+    try { await docStore(project.id, rec.buf, rec.name || pre.fileName || 'wmp.pdf', 'WMP'); } catch (e) {}
+    try { await idbDeletePdf('doc:anon:check'); } catch (e) {}
+  }
+  showScreen('compliance', document.getElementById('nav-compliance'));
+  // Same poke pattern as docOpenInCompliance: the iframe loads with the page,
+  // but its functions may not be evaluated yet on a cold start.
+  const file = rec?.buf ? new File([rec.buf], rec.name || pre.fileName || 'wmp.pdf', { type: 'application/pdf' }) : null;
+  let tries = 0;
+  const poke = () => {
+    const w = document.getElementById('compliance-iframe')?.contentWindow;
+    if (w && typeof w.restoreScan === 'function') {
+      try {
+        // Result first (instant), PDF behind it — restoreScan is idempotent,
+        // so the second call after the load just adds panes and highlights.
+        w.restoreScan(pre);
+        if (file && typeof w.loadWMPFile === 'function') {
+          w.loadWMPFile(file).then(() => { try { w.restoreScan(pre); } catch (e) {} }, () => {});
+        }
+        return;
+      } catch (e) {}
+    }
+    if (++tries < 40) setTimeout(poke, 250);
+  };
+  setTimeout(poke, 400);
 }
 
 async function stampSignupSource() {
@@ -14065,8 +14674,8 @@ async function handleFreeSignup() {
     try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
     if (isNewAccount && typeof logEvent === 'function') {
       let utm = null; try { utm = JSON.parse(localStorage.getItem('wp_attrib') || 'null'); } catch (e2) {}
-      let hasPrefill = false; try { hasPrefill = !!sessionStorage.getItem('wp_calc_prefill'); } catch (e2) {}
-      logEvent('signup', { name, firm: company || null, role: role || null, utm, has_prefill: hasPrefill });
+      let claimKind = null; try { claimKind = (typeof wpClaimPeek === 'function') ? (wpClaimPeek()?.kind || null) : null; } catch (e2) {}
+      logEvent('signup', { name, firm: company || null, role: role || null, utm, has_prefill: claimKind === 'calc', claim: claimKind });
     }
   } catch (err) {
     console.error('Free signup error:', err);
@@ -14096,6 +14705,10 @@ sb.auth.onAuthStateChange(async (event, session) => {
   // Only handle SIGNED_OUT here — login is handled directly in handleLogin
   if (event === 'SIGNED_OUT') {
     currentUser = null; currentProfile = null;
+    // A guest who abandoned a sign-in halfway (e.g. cancelled 2FA) signs out
+    // of a session that already replaced the anonymous one — drop the anon
+    // chrome too, or the banner floats over the auth screen.
+    if (typeof wpAnonActive === 'function' && wpAnonActive()) wpAnonExit();
     if (typeof resetOrgState === 'function') resetOrgState();
     document.getElementById('auth-screen').style.display = 'flex';
     document.getElementById('app-content').style.display = 'none';
@@ -14106,13 +14719,18 @@ sb.auth.onAuthStateChange(async (event, session) => {
 
 // ── AUTH SCREEN DEFAULTS ────────────────────────────────────────────────────
 // Fresh visitors land on Create Account; anyone this browser has signed in
-// before defaults back to Sign In. A parked calc handoff swaps the value line.
+// before defaults back to Sign In. A parked claim swaps the value line for
+// copy naming the work the signup keeps — never a generic wall.
 (function initAuthDefaults() {
   try {
-    if (sessionStorage.getItem('wp_calc_prefill')) {
-      const line = document.getElementById('auth-value-line');
-      if (line) line.innerHTML = '<b style="color:var(--text);">Your bin calculation is ready to save.</b> ' +
+    const claim = (typeof wpClaimPeek === 'function') ? wpClaimPeek() : null;
+    const line = document.getElementById('auth-value-line');
+    if (line && claim?.kind === 'calc') {
+      line.innerHTML = '<b style="color:var(--text);">Your bin calculation is ready to save.</b> ' +
         "Create a free account and we'll set up the project with your council and unit mix already filled in.";
+    } else if (line && claim?.kind === 'compliance') {
+      line.innerHTML = '<b style="color:var(--text);">Your compliance result is ready to keep.</b> ' +
+        'Create a free account and it attaches to your first project — nothing re-runs.';
     }
     if (!localStorage.getItem('wp_known_user')) {
       const tabs = document.querySelectorAll('.auth-tab');
@@ -14125,6 +14743,13 @@ sb.auth.onAuthStateChange(async (event, session) => {
 (async () => {
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (session?.user?.is_anonymous) {
+      // A persisted anonymous session (the landing-page compliance entry)
+      // NEVER enters the app proper — it re-enters the checker, with its
+      // one-check-used state intact, however many times the guest returns.
+      wpAnonEnter(session.user);
+      return;
+    }
     if (session?.user) {
       // A session can persist at AAL1 with 2FA enabled — must verify before
       // entering the app, or refreshing the page becomes a 2FA bypass.
@@ -14133,7 +14758,13 @@ sb.auth.onAuthStateChange(async (event, session) => {
       try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
       await loadProfile();
       showApp();
+      return;
     }
+    // No session at all: a fresh landing-page arrival opens the anonymous
+    // checker; everyone else gets the auth screen as always.
+    let entry = null;
+    try { entry = sessionStorage.getItem('wp_anon_entry'); } catch (e) {}
+    if (entry === 'compliance') await wpAnonStart();
   } catch(e) { console.log('No existing session'); }
 })();
 
@@ -14346,15 +14977,26 @@ function updateProfileUI() {
 }
 
 function showApp() {
+  // Entering the app proper always ends the anonymous checker mode — the
+  // guest just became (or signed back in as) a real account.
+  if (typeof wpAnonActive === 'function' && wpAnonActive()) wpAnonExit();
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app-content').style.display = 'flex';
   loadProjectsFromDB();
   // Orgs load in the background: accepts pending invites, restores the saved
   // workspace context, and re-fetches projects if that context is an org.
   if (typeof loadOrgs === 'function') loadOrgs();
-  // Calculator handoff (?calc=…) applies once the app is visible; the function
-  // self-clears its sessionStorage payload, so repeated showApp calls are safe.
-  setTimeout(() => { if (typeof applyCalcPrefill === 'function') applyCalcPrefill(); }, 400);
+  // Parked claims (calc handoff, anonymous compliance check) apply once the
+  // app is visible; wpClaimApply self-clears the store, so repeated showApp
+  // calls are safe. A landing-page arrival who signed in WITHOUT running the
+  // free check still lands on the checker they came for.
+  setTimeout(async () => {
+    const applied = (typeof wpClaimApply === 'function') ? await wpClaimApply() : null;
+    let entry = null;
+    try { entry = sessionStorage.getItem('wp_anon_entry'); sessionStorage.removeItem('wp_anon_entry'); } catch (e) {}
+    if (entry === 'compliance' && applied !== 'compliance')
+      showScreen('compliance', document.getElementById('nav-compliance'));
+  }, 400);
 }
 
 // ── PROJECTS — SUPABASE ───────────────────────────────────────────────────
@@ -14387,6 +15029,7 @@ async function loadProjectsFromDB() {
         summary: ad.summary || prev.summary,
         volumes: ad.volumes || prev.volumes,
         pdf_name: ad.pdf_name || prev.pdf_name,
+        check: ad.check || prev.check || null,
       };
       if (ad.ws) {
         try {
@@ -14423,6 +15066,7 @@ async function saveProjectToDB(project) {
       summary: (typeof getProjectSummary === 'function' ? getProjectSummary(project) : {}) || {},
       volumes: project.volumes || null,
       pdf_name: project.pdf_name || null,
+      check: project.check || null,   // compliance result carried through signup (anonymous entry)
       ws: (() => { try { return JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) { return null; } })(),
     },
     updated_at: new Date().toISOString(),
@@ -14617,10 +15261,151 @@ window.loadProfile = async function() {
   applyRoleAccess();
 };
 
-// ── ANONYMOUS MODE: REMOVED ───────────────────────────────────────────────
-// There is no guest path and no monthly cap. Every tool requires a signed-in
-// account; the free plan is one project with everything unlocked (see
-// wpIsFreePlan and the paywall). Do not reintroduce a signed-out mode.
+// ── ANONYMOUS MODE: ONE SCOPED EXCEPTION ──────────────────────────────────
+// The rule stands: every tool requires a signed-in account; the free plan is
+// one project with everything unlocked (see wpIsFreePlan and the paywall).
+// The ONE exception is the planner landing page's compliance entry
+// (?check=wmp): one anonymous WMP check, result shown in full, then the
+// signup gate on ANY further action — a second check, an export, a submit,
+// an engage, or navigating anywhere else in the app. It is not a guest mode:
+// the session is a real Supabase is_anonymous user (so the ai-user function
+// can enforce its one-run allowance server-side), the checker is the only
+// reachable screen (showScreen intercepts the rest), and the delivered
+// result is parked as a claim that attaches to the account created at the
+// gate. Do not widen this to any other tool or entry point.
+let WP_ANON = null;
+
+function wpAnonActive() { return !!WP_ANON; }
+
+function wpAnonCheckUsed() {
+  // Per-device memory that the one free check is spent — it must survive a
+  // "come back tomorrow" (the anon session persists alongside it). Clearing
+  // browser storage resets both; that leakage is accepted: this is lead
+  // generation, and the ai-user allowance still caps each anon USER at one
+  // run — a determined re-checker costs a signup prompt, not the AI budget.
+  try { return localStorage.getItem('wp_anon_check_used') === '1'; } catch (e) { return false; }
+}
+
+function wpAnonGateCopy(trigger) {
+  // Pure: the gate names the value just delivered, per the brief — never a
+  // generic wall. 'navigate' is the only trigger that can fire BEFORE a run
+  // (the guest wandering off), so it alone must not presume a result exists.
+  const t = {
+    second_check: { title: 'That was your free check',
+      body: 'Your first WMP check is done and the result stays right here on screen. Create a free account to check your next WMP — this result comes with you, nothing re-runs.' },
+    export: { title: 'Your report is ready to keep',
+      body: 'The full result is on screen now. Create a free account to export the report — the check you just ran attaches to your first project.' },
+    submit: { title: 'Create an account to submit',
+      body: 'Submitting to council runs through your account so the council can trace who lodged it. Your completed check comes with you — nothing re-runs.' },
+    engage: { title: 'Create an account to engage Pro Waste',
+      body: 'A consultant works from your project, so engaging starts with a free account. The check you just ran comes with you.' },
+    navigate: { title: 'The rest of WastePlanner needs a free account',
+      body: 'This free check is the one tool open without an account. Everything else — bin calculators, layouts, swept paths — is included in a free account, one project, no card needed.' },
+  };
+  return t[trigger] || t.navigate;
+}
+
+async function wpAnonStart() {
+  // Fresh landing-page arrival: mint the anonymous Supabase session the
+  // checker runs under. If anonymous sign-ins are off (or the network is
+  // down) the entry still lands somewhere sane: the normal auth screen with
+  // signup-first copy — the flag survives, so signup still opens the checker.
+  try {
+    const { data, error } = await sb.auth.signInAnonymously();
+    if (error || !data?.session?.user) throw (error || new Error('no session'));
+    wpAnonEnter(data.session.user);
+  } catch (e) {
+    console.warn('Anonymous entry unavailable, falling back to signup:', e?.message || e);
+    const line = document.getElementById('auth-value-line');
+    if (line) line.innerHTML = '<b style="color:var(--text);">Create a free account to run your WMP compliance check.</b> One project, every tool, no card needed.';
+    const tabs = document.querySelectorAll('.auth-tab');
+    if (tabs[1]) switchAuthTab('signup', tabs[1]);
+  }
+}
+
+function wpAnonEnter(user) {
+  WP_ANON = { user };
+  try { sessionStorage.removeItem('wp_anon_entry'); } catch (e) {}
+  document.body.classList.add('wp-anon');
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app-content').style.display = 'flex';
+  wpAnonBanner();
+  logEvent('anon_check_entry', { used: wpAnonCheckUsed() });
+  showScreen('compliance', document.getElementById('nav-compliance'));
+}
+
+function wpAnonExit() {
+  WP_ANON = null;
+  document.body.classList.remove('wp-anon');
+  document.getElementById('wp-anon-banner')?.remove();
+  const gate = document.getElementById('wp-anon-gate-modal');
+  if (gate) gate.style.display = 'none';
+}
+
+function wpAnonBanner() {
+  if (document.getElementById('wp-anon-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'wp-anon-banner';
+  b.innerHTML = '<span><b>Free WMP compliance check</b> — no account needed.</span>' +
+    '<button onclick="logEvent(\'anon_banner_signup\');wpAnonToAuth(\'signup\')">Create free account</button>';
+  document.body.appendChild(b);
+}
+
+// The signup gate. Same visual pattern as the paywall, entirely different
+// job: there is no plan to upgrade — the ask is the free account, and the
+// copy references what the guest just got. "Not now" keeps the result on
+// screen: the first check's result itself is never gated.
+function wpAnonGate(trigger) {
+  logEvent('anon_gate_shown', { trigger: trigger || null });
+  const copy = wpAnonGateCopy(trigger);
+  let m = document.getElementById('wp-anon-gate-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'wp-anon-gate-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11500;align-items:center;justify-content:center;';
+    m.innerHTML = `
+      <div style="background:var(--white);border-radius:16px;width:440px;max-width:94vw;padding:28px 30px;">
+        <div id="wp-anon-gate-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:10px;"></div>
+        <div id="wp-anon-gate-body" style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:20px;"></div>
+        <button onclick="closeAnonGate();wpAnonToAuth('signup')" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Create a free account</button>
+        <button onclick="closeAnonGate();wpAnonToAuth('login')" style="display:block;width:100%;margin-top:10px;padding:11px;border-radius:9px;font-size:13px;font-weight:600;border:1.5px solid var(--teal);color:var(--teal);background:none;cursor:pointer;font-family:inherit;">I already have an account — sign in</button>
+        <button onclick="closeAnonGate()" style="display:block;margin:14px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Not now — keep viewing this result</button>
+      </div>`;
+    m.addEventListener('click', ev => { if (ev.target === m) closeAnonGate(); });
+    document.body.appendChild(m);
+  }
+  m.querySelector('#wp-anon-gate-title').textContent = copy.title;
+  m.querySelector('#wp-anon-gate-body').textContent = copy.body;
+  m.style.display = 'flex';
+}
+function closeAnonGate() {
+  const m = document.getElementById('wp-anon-gate-modal');
+  if (m) m.style.display = 'none';
+}
+
+// Hand the guest to the normal account flow — free account or paid, no
+// special path. The parked result (if any) swaps the value line, and a back
+// link returns to the still-live result rather than trapping them mid-form.
+function wpAnonToAuth(tab) {
+  const claim = (typeof wpClaimPeek === 'function') ? wpClaimPeek() : null;
+  const line = document.getElementById('auth-value-line');
+  if (line) {
+    line.innerHTML = (claim?.kind === 'compliance'
+      ? '<b style="color:var(--text);">Your compliance result is ready to keep.</b> Create a free account and it attaches to your first project — nothing re-runs.'
+      : '<b style="color:var(--text);">Your first project is free.</b> All tools, exports included. No card needed.') +
+      (wpAnonActive() ? ' <a href="#" onclick="wpAnonBackToResult();return false;" style="color:var(--teal);text-decoration:none;white-space:nowrap;">← Back to your check</a>' : '');
+  }
+  document.getElementById('app-content').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+  const tabs = document.querySelectorAll('.auth-tab');
+  if (tab === 'login' && tabs[0]) switchAuthTab('login', tabs[0]);
+  else if (tabs[1]) switchAuthTab('signup', tabs[1]);
+}
+function wpAnonBackToResult() {
+  if (!wpAnonActive()) return;
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app-content').style.display = 'flex';
+}
 
 // Show council note when council role selected at signup
 document.getElementById('signup-role')?.addEventListener('change', function() {
@@ -15695,7 +16480,7 @@ function wsShowTab(name, btn) {
 // Receive results from the bin calculator iframe (schedule → layout targets, summary → project)
 window.addEventListener('message', (e) => {
   if (e.data && e.data.type === 'ws-calc-results') {
-    if (e.data.schedule && typeof wsLayoutSetTargets === 'function') wsLayoutSetTargets(e.data.schedule, e.data.rooms);
+    if (e.data.schedule && typeof wsLayoutSetTargets === 'function') wsLayoutSetTargets(e.data.schedule, e.data.rooms, e.data.presentation || null);
     if (e.data.summary) {
       WS.extractData = { ...(WS.extractData || {}), ...e.data.summary };
       if (typeof wsSweptPopulateVehicles === 'function') wsSweptPopulateVehicles(true);
@@ -16434,7 +17219,16 @@ async function wsLoadEquipmentDB() {
         // D4: stored spec-sheet PDF, appended to the WMP when the item is
         // placed. Null (legacy rows, or migration not run) = skipped silently.
         specDocPath: r.spec_doc_path || null,
+        // Bin-calculator selection metadata (sql/2026-09-13-bin-library-
+        // calculator.sql): the short default list, and which collection
+        // methods may use the record. Empty methods = unrestricted.
+        isCommon: r.is_common === true,
+        collectionMethods: Array.isArray(r.collection_methods) ? r.collection_methods.filter(Boolean) : [],
       }));
+    // The council collection schedules ride the same push. A missing table
+    // (migration not run) or a failed fetch must never take the equipment
+    // library down with it.
+    try { await wpLoadCouncilSchedules(); } catch (e) { console.warn('council schedules unavailable', e?.message || e); }
     wsPushEquipToCalc();
   } catch (e) {
     console.warn('Equipment DB load failed — using built-in bin presets.', e?.message || e);
@@ -16465,7 +17259,95 @@ function wsPushEquipToCalc() {
                  height_mm: x.heightM != null ? x.heightM * 1000 : null,
                  inlet_height_mm: x.inletHeightMm, bin_size_l: x.binSizeL,
                  bin_count: x.binCount, streams: x.streams,
-                 width_mm: x.w * 1000, depth_mm: x.d * 1000 })) }, '*');
+                 collection_methods: x.collectionMethods,
+                 width_mm: x.w * 1000, depth_mm: x.d * 1000 })),
+    // The bin library: the calculator's size dropdowns read THIS, not a
+    // constant. Every active bin record with a capacity, common or not —
+    // the calculator decides what to show first.
+    bins: WS_EQUIP_DB
+      .filter(x => x.kind === 'bin' && x.active !== false && x.capacityL > 0)
+      .map(x => ({ code: x.code, label: x.label, capacity_l: x.capacityL,
+                   streams: x.streams, is_common: x.isCommon,
+                   collection_methods: x.collectionMethods,
+                   footprint_m2: x.footprintM2,
+                   width_mm: x.w > 0 ? x.w * 1000 : null, depth_mm: x.d > 0 ? x.d * 1000 : null })),
+    // Council kerbside schedules + bulk limits from the guidelines library,
+    // keyed by normalised council name (wpCouncilScheduleFromRows).
+    council_schedules: WP_COUNCIL_SCHEDULES || [],
+  }, '*');
+}
+
+// ── COUNCIL COLLECTION SCHEDULES (guidelines library → calculator) ──────────
+// Approved council_requirements rows of type 'collection_limit' on the LIVE
+// guideline version describe a council's collection service. Nothing here is
+// AI output reaching a tool: only status='approved' rows are read, and each
+// carries its clause_ref through to the calculator so the number on screen
+// can be checked against the PDF. Pure projection first, one fetch second.
+let WP_COUNCIL_SCHEDULES = null;   // null = not loaded; [] = loaded, none
+
+function wpCouncilScheduleFromRows(rows) {
+  // Rows in, one schedule out:
+  //   kerbside[stream] = { sizesL: [...], perWeek: n|null, cites: [...] }
+  //   bulk = { maxL: n|null, maxPerWeek: n|null, cites: [...] }
+  // A row is BULK when its wording names the bulk service (bulk / front-lift /
+  // rear-lift / skip / hooklift), else it is the kerbside service. Litres set
+  // a bin size (a "maximum" wording caps instead), per-week / per-fortnight
+  // set frequency (fortnightly = 0.5 collections per week). Anything that
+  // resolves to nothing is dropped — never guessed.
+  const out = { kerbside: {}, bulk: { maxL: null, maxPerWeek: null, cites: [] }, count: 0 };
+  (rows || []).forEach(r => {
+    if (!r || r.status !== 'approved' || r.requirement_type !== 'collection_limit') return;
+    const text = String(r.value_text || '');
+    const unit = String(r.unit || '').toLowerCase();
+    const num = (r.value_num === 0 || r.value_num) ? Number(r.value_num) : NaN;
+    const isBulk = /\b(bulk|front[\s-]?lift|rear[\s-]?lift|skip|hook[\s-]?lift)\b/i.test(text);
+    const isMax = /\b(max(imum)?|no (larger|more) than|not exceed)/i.test(text);
+    const litres = /^l\b|litre|liter/.test(unit) || /\bl\b/.test(unit);
+    const perWeek = /week/.test(unit) ? (/fortnight|2 ?week|two ?week/.test(unit) ? 0.5 : 1)
+                  : /fortnight/.test(unit) ? 0.5 : null;
+    const cite = { stream: r.stream || null, clause: r.clause_ref || null, text: text.slice(0, 160) };
+    if (isBulk) {
+      if (litres && Number.isFinite(num) && num > 0) { out.bulk.maxL = out.bulk.maxL ? Math.min(out.bulk.maxL, num) : num; out.bulk.cites.push(cite); out.count++; }
+      else if (perWeek != null) { const f = Number.isFinite(num) && num > 0 ? num * perWeek : perWeek; out.bulk.maxPerWeek = out.bulk.maxPerWeek ? Math.min(out.bulk.maxPerWeek, f) : f; out.bulk.cites.push(cite); out.count++; }
+      return;
+    }
+    if (!r.stream) return;   // a kerbside rule is always about one stream
+    const sized = litres && Number.isFinite(num) && num > 0;
+    if (!sized && perWeek == null) return;   // nothing usable — no entry, so the UI never claims a schedule it lacks
+    const k = out.kerbside[r.stream] = out.kerbside[r.stream] || { sizesL: [], maxL: null, perWeek: null, cites: [] };
+    if (sized) {
+      if (isMax) k.maxL = k.maxL ? Math.min(k.maxL, num) : num;
+      else if (k.sizesL.indexOf(num) < 0) k.sizesL.push(num);
+    } else {
+      // "1 per week", "per fortnight", "2 per week" — the value multiplies the
+      // unit's own cadence; a bare cadence with no number is one collection.
+      k.perWeek = Number.isFinite(num) && num > 0 ? num * perWeek : perWeek;
+    }
+    k.cites.push(cite); out.count++;
+  });
+  Object.values(out.kerbside).forEach(k => k.sizesL.sort((a, b) => a - b));
+  return out.count ? out : null;
+}
+
+async function wpLoadCouncilSchedules() {
+  if (typeof sb === 'undefined' || !sb) { WP_COUNCIL_SCHEDULES = []; return; }
+  // Embed the guideline so the version is filtered server-side: only rows
+  // pinned to the council's live (non-superseded) document count.
+  const { data, error } = await sb.from('council_requirements')
+    .select('requirement_type,stream,value_num,unit,value_text,clause_ref,status,use_class,council_guidelines!inner(council_name,state,superseded_at)')
+    .eq('status', 'approved').eq('requirement_type', 'collection_limit')
+    .is('council_guidelines.superseded_at', null);
+  if (error) throw error;
+  const byCouncil = {};
+  (data || []).forEach(r => {
+    const g = r.council_guidelines || {};
+    const key = glBridgeNorm(g.council_name);
+    if (!key) return;
+    (byCouncil[key] = byCouncil[key] || { key, name: g.council_name, state: g.state || null, rows: [] }).rows.push(r);
+  });
+  WP_COUNCIL_SCHEDULES = Object.values(byCouncil)
+    .map(c => ({ key: c.key, name: c.name, state: c.state, schedule: wpCouncilScheduleFromRows(c.rows) }))
+    .filter(c => c.schedule);
 }
 function wsLayoutBinList() {
   const db = (WS_EQUIP_DB || []).filter(x => x.kind === 'bin' && x.placeable !== false);
@@ -18220,10 +19102,29 @@ const WS_COLLECT_DEFAULTS = {
   bandM: 2.5,          // an obstruction further than this from the kerb line is ignored
   cycles: { garbage: 'W', recycling: 'A', fogo: 'B', glass: 'A', paper: 'A', soft: 'B' },
 };
-function wsCollectSchedule(streams, saved) {
+function wsCollectSchedule(streams, saved, calc) {
+  // Precedence per stream: what the user set in this panel → what the
+  // calculator carried (W weekly, F fortnightly — a fortnightly stream takes
+  // its A/B week from the default pattern, since a council schedule says
+  // "fortnightly", not which fortnight) → the default pattern.
   const out = {};
   (streams || []).forEach(s => {
-    out[s] = (saved && saved[s]) || WS_COLLECT_DEFAULTS.cycles[s] || 'W';
+    const c = calc && calc[s];
+    const fromCalc = c === 'W' ? 'W' : c === 'F' ? (WS_COLLECT_DEFAULTS.cycles[s] === 'B' ? 'B' : 'A') : c === 'OFF' ? 'OFF' : null;
+    out[s] = (saved && saved[s]) || fromCalc || WS_COLLECT_DEFAULTS.cycles[s] || 'W';
+  });
+  return out;
+}
+// Per-stream cadence from the calculator's targets: W when any target of the
+// stream is weekly-or-more, F when every one is fortnightly. Streams without
+// a cycle (pre-method payloads, placed bins) are absent — the caller's
+// fallback applies.
+function wsCollectCyclesFromTargets(targets) {
+  const out = {};
+  (targets || []).forEach(t => {
+    if (!t || !t.stream || !t.cycle) return;
+    if (t.cycle === 'W' || out[t.stream] === 'W') out[t.stream] = 'W';
+    else if (t.cycle === 'F') out[t.stream] = 'F';
   });
   return out;
 }
@@ -18244,12 +19145,24 @@ function wsCollectScenarios(schedule) {
   return [{ id: 'A', label: 'Week A', streams: A }, { id: 'B', label: 'Week B', streams: B }];
 }
 // The bins one scenario puts at the kerb, from the calculator's targets.
-function wsCollectBins(targets, streams) {
+// `types` is the live bin list (library records first, built-ins behind) —
+// a target whose type id is a library record must still resolve, or every
+// bin silently drops off the kerb the moment the library takes over. A type
+// unknown to either list falls back to the nearest built-in by capacity.
+function wsCollectBins(targets, streams, types) {
   const out = [];
+  const builtin = (typeof WS_BIN_TYPES !== 'undefined') ? WS_BIN_TYPES : [];
+  const list = Array.isArray(types) && types.length ? types : builtin;
   (targets || []).forEach(t => {
     if (streams.indexOf(t.stream) < 0) return;
-    const bt = (typeof WS_BIN_TYPES !== 'undefined') ? WS_BIN_TYPES.find(x => x.id === t.typeId) : null;
-    if (!bt) return;
+    let bt = list.find(x => x.id === t.typeId) || builtin.find(x => x.id === t.typeId) || null;
+    if (!bt && t.sizeL > 0 && builtin.length) {
+      bt = builtin.reduce((best, x) => {
+        const cap = parseInt(x.label, 10) || 0;
+        return Math.abs(cap - t.sizeL) < Math.abs((parseInt(best.label, 10) || 0) - t.sizeL) ? x : best;
+      }, builtin[0]);
+    }
+    if (!bt || !(bt.w > 0) || !(bt.d > 0)) return;
     for (let i = 0; i < (t.qty || 0); i++) out.push({ stream: t.stream, typeId: t.typeId, wM: bt.w, dM: bt.d, label: bt.label });
   });
   return out;
@@ -18444,8 +19357,16 @@ function wsCollectFlipSide() {
 
 // ── data assembly ──
 function wsCollectTargets() {
-  if (typeof WS_CALC_TARGETS !== 'undefined' && WS_CALC_TARGETS.length)
-    return { src: 'the bin calculator', targets: WS_CALC_TARGETS };
+  if (typeof WS_CALC_TARGETS !== 'undefined' && WS_CALC_TARGETS.length) {
+    // Only bins collected AT THE KERB present at the kerb. A bulk collection
+    // point (front-lift in the bin room) or self-haul never lines the
+    // frontage — a payload from before methods existed has no method on any
+    // target and keeps presenting everything, as it always did.
+    const typed = WS_CALC_TARGETS.some(t => t.method);
+    const kerb = typed ? WS_CALC_TARGETS.filter(t => /^kerbside/.test(String(t.method || ''))) : WS_CALC_TARGETS;
+    return { src: 'the bin calculator', targets: kerb, bulkOnly: typed && !kerb.length,
+             cycles: wsCollectCyclesFromTargets(kerb), present: (typeof WS_CALC_PRESENT !== 'undefined') ? WS_CALC_PRESENT : null };
+  }
   const slot = wsLayoutSlot();
   if (slot.bins.length) {
     const by = {};
@@ -18491,9 +19412,10 @@ function wsCollectCompute(slot, mpp) {
   });
   const tg = wsCollectTargets();
   const streams = [...new Set(tg.targets.map(t => t.stream))];
-  const schedule = wsCollectSchedule(streams, c.schedule);
+  const schedule = wsCollectSchedule(streams, c.schedule, tg.cycles || null);
+  const types = (typeof wsLayoutBinList === 'function') ? wsLayoutBinList().concat(WS_BIN_TYPES) : WS_BIN_TYPES;
   const scenarios = wsCollectScenarios(schedule).map(sc => {
-    const bins = wsCollectBins(tg.targets, sc.streams);
+    const bins = wsCollectBins(tg.targets, sc.streams, types);
     return { ...sc, bins, assess: wsCollectAssess(kerbs, bins, mpp, gapM) };
   });
   let worst = scenarios[0];
@@ -18562,8 +19484,19 @@ function wsCollectPanelRefresh() {
     </div>`;
   }).join('') : '<div style="font-size:11px;color:rgba(255,255,255,0.5);">No bin schedule yet — run the Bin Calculator (or place bins on the plan).</div>';
   const note = document.getElementById('ws-collect-sched-note');
-  if (note) note.textContent = Object.keys(c.schedule || {}).length ? ''
-    : '⚠ Standard alternating pattern assumed — confirm this council’s actual collection weeks and adjust above.';
+  if (note) {
+    // The cadence's provenance, in order of confidence: edited here → the
+    // council's schedule via the calculator → frequencies typed into the
+    // calculator (a private contract) → the default pattern, flagged.
+    const cyc = cp.tg.cycles || {};
+    const pres = cp.tg.present || null;
+    const fromCalc = Object.keys(cyc).length > 0;
+    note.textContent = Object.keys(c.schedule || {}).length ? ''
+      : cp.tg.bulkOnly ? 'ℹ Every stream is a bulk collection point or self-haul in the calculator — nothing presents at the kerb. Set a room to a kerbside method to check the frontage.'
+      : (fromCalc && pres && pres.source === 'council') ? `Collection cadence from ${pres.council || 'the council'}’s schedule (guidelines library, via the calculator). Fortnightly streams take the default A/B weeks — adjust if this council pairs them differently.`
+      : fromCalc ? 'Collection cadence from the frequencies entered in the calculator (private contract or manual schedule). Fortnightly streams take the default A/B weeks — adjust above if they alternate differently.'
+      : '⚠ Standard alternating pattern assumed — confirm this council’s actual collection weeks and adjust above.';
+  }
   const scEl = document.getElementById('ws-collect-scen');
   if (scEl) scEl.innerHTML = cp.scenarios.map(sc =>
     `<button class="wsl-btn" style="padding:3px 9px;font-size:10.5px;${sc.id === cp.activeId ? 'background:#1d3a3a;border-color:#00B3B3;color:#7FD8D8;' : ''}" onclick="wsCollectScenarioView('${sc.id}')" title="${sc.streams.join(', ') || 'nothing collected'}">
@@ -18575,7 +19508,9 @@ function wsCollectPanelRefresh() {
   if (v) {
     const a = cp.worst.assess;
     let col = '#4BED12', bg = '#14231a', head;
-    if (a.empty) { col = '#3a4747'; bg = '#141c1c'; head = 'No bins to present yet — the check runs once the calculator (or the plan) has bins.'; }
+    if (a.empty) { col = '#3a4747'; bg = '#141c1c'; head = cp.tg.bulkOnly
+      ? 'Nothing presents at the kerb — every stream is collected from a bulk collection point or self-hauled (set in the Bin Calculator).'
+      : 'No bins to present yet — the check runs once the calculator (or the plan) has bins.'; }
     else if (a.ok) head = `✅ <b>It fits.</b> On your busiest collection week (${cp.worst.label}) you need <b>${a.reqM.toFixed(1)} m</b> of kerb and have <b>${a.netM.toFixed(1)} m</b> clear — <b>${(a.netM - a.reqM).toFixed(1)} m</b> to spare.`;
     else if (a.siteConstraint) { col = '#ED1C24'; bg = '#231414'; head = `❌ <b>The frontage itself is too short.</b> Even with nothing in the way, ${cp.worst.label} needs <b>${a.reqM.toFixed(1)} m</b> and the whole kerb is <b>${a.grossM.toFixed(1)} m</b>. That is a site constraint — fewer/larger bins, more frequent collection, or on-site collection.`; }
     else if (a.fragmented) { col = '#FFB74D'; bg = '#231d12'; head = `🟡 <b>Enough kerb, but broken up.</b> You have ${a.netM.toFixed(1)} m clear in total against ${a.reqM.toFixed(1)} m needed, but the clear stretches are too short — ${a.unplaced.length} bin${a.unplaced.length === 1 ? '' : 's'} won’t fit anywhere.`; }
@@ -20744,7 +21679,11 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
 }
 // ── CALC → LAYOUT TARGETS (single source of truth: the bin calculator) ──
 let WS_CALC_TARGETS = []; // flattened view, kept for anything reading it
-let WS_CALC_ROOMS = [];   // [{id,name,kind,fpM2,areaM2,targets:[{stream,typeId,sizeL,qty}]}]
+let WS_CALC_ROOMS = [];   // [{id,name,kind,fpM2,areaM2,targets:[{stream,typeId,sizeL,qty,method,cycle}]}]
+// Where the calculator's collection cadence came from ({council, source:
+// 'council'|'manual', kerbside}) — the Collection Point names it. null = no
+// calculator payload yet, or one from before methods existed.
+let WS_CALC_PRESENT = null;
 const WS_STREAM_KEYMAP = { GW: 'garbage', REC: 'recycling', ORG: 'fogo', FOGO: 'fogo', GLS: 'glass', PAP: 'paper', CARD: 'paper', SOFT: 'soft' };
 function wsLayoutBestBin(sizeL) {
   const candidates = wsLayoutBinList().filter(b => b.collectable && b.capacityL > 0);
@@ -20754,32 +21693,36 @@ function wsLayoutBestBin(sizeL) {
 }
 // The calculator owns the schedule. Targets are grouped by bin room so each
 // room's bins and footprint can be placed — and checked off — on its own.
-function wsLayoutSetTargets(schedule, rooms) {
+function wsLayoutSetTargets(schedule, rooms, presentation) {
   const byRoom = {};
-  const add = (roomId, name, kind, streamRaw, sizeL, qty, volL, perWeek) => {
+  WS_CALC_PRESENT = presentation || null;
+  const add = (roomId, name, kind, streamRaw, sizeL, qty, volL, perWeek, method, cycle) => {
     const stream = WS_STREAM_KEYMAP[String(streamRaw).toUpperCase()] || 'garbage';
     const best = wsLayoutBestBin(sizeL);
     const r = byRoom[roomId] || (byRoom[roomId] = { id: roomId, name: name || 'Bin room', kind: kind || 'res', fpM2: 0, areaM2: 0, targets: [] });
     const hit = r.targets.find(t => t.stream === stream && t.typeId === best.id);
     // weeklyVolL/perWeek are the compaction basis. They are DATA ONLY — the
     // layout panel shows counts, never litres; volumes would swamp it.
+    // method/cycle are the presentation structure: which bins reach the
+    // kerb and on what cadence (W weekly, F fortnightly). Null = pre-method
+    // payload, treated as "everything presents" for compatibility.
     if (hit) { hit.qty += qty; hit.weeklyVolL = (hit.weeklyVolL || 0) + (volL || 0); if (perWeek > (hit.perWeek || 0)) hit.perWeek = perWeek; }
-    else r.targets.push({ stream, typeId: best.id, sizeL, qty, weeklyVolL: volL || 0, perWeek: perWeek || 1 });
+    else r.targets.push({ stream, typeId: best.id, sizeL, qty, weeklyVolL: volL || 0, perWeek: perWeek || 1, method: method || null, cycle: cycle || null });
   };
   if (Array.isArray(rooms) && rooms.length) {
     rooms.forEach(rm => {
       byRoom[rm.id] = { id: rm.id, name: rm.name, kind: rm.kind || 'res', fpM2: rm.fpM2 || 0,
                         areaM2: rm.areaM2 || 0, targets: [], units: rm.units || [], chute: rm.chute || null };
-      (rm.bins || []).forEach(b => add(rm.id, rm.name, rm.kind, b.stream, b.sizeL, b.qty, b.weeklyVolL, b.perWeek));
+      (rm.bins || []).forEach(b => add(rm.id, rm.name, rm.kind, b.stream, b.sizeL, b.qty, b.weeklyVolL, b.perWeek, b.method, b.cycle));
     });
   } else {
-    (schedule || []).forEach(it => add(it.room || 'R1', it.roomName, it.sec === 'c' ? 'com' : 'res', it.stream, it.sizeL, it.qty, it.weeklyVolL, it.perWeek));
+    (schedule || []).forEach(it => add(it.room || 'R1', it.roomName, it.sec === 'c' ? 'com' : 'res', it.stream, it.sizeL, it.qty, it.weeklyVolL, it.perWeek, it.method, it.cycle));
   }
   WS_CALC_ROOMS = Object.values(byRoom).filter(r => r.targets.length);
   const flat = {};
   WS_CALC_ROOMS.forEach(r => r.targets.forEach(t => {
-    const k = t.stream + '_' + t.typeId;
-    flat[k] = flat[k] || { stream: t.stream, typeId: t.typeId, sizeL: t.sizeL, qty: 0 };
+    const k = t.stream + '_' + t.typeId + '_' + (t.method || '');
+    flat[k] = flat[k] || { stream: t.stream, typeId: t.typeId, sizeL: t.sizeL, qty: 0, method: t.method || null, cycle: t.cycle || null };
     flat[k].qty += t.qty;
   }));
   WS_CALC_TARGETS = Object.values(flat);
