@@ -1061,7 +1061,7 @@ body.wp-anon .ws-top-chip{display:none;}
                 <b>1</b> ⇪ Save the PDF (it appears in the Library) →
                 <b>2</b> 🧾 Extract to list on its Library row — extraction only <b>adds</b> rows, it never deletes or overwrites what is here (a new document version adds its rows beside the old ones; tidy by hand) →
                 <b>3</b> it is live. Rows that look like an existing one carry a <b>≈ possible duplicate</b> flag so you can spot and remove them — nothing is merged automatically.<br><br>
-                <b>Generation rates and stream splits are not here</b> — extraction puts them in <b>Rates from guidelines</b> in the Council &amp; state database section below, their own list with the same add-only rule.</span></span>
+                <b>Generation rates are not here</b> — extraction writes them straight into the Residential and Commercial rate tables in the Council &amp; state database section below, in the tables' own format (add-only: a rate the table already holds is never overwritten). Edit them there, then ⬆ Publish to live.</span></span>
             </div>
             <div id="crq-status" style="font-size:11px;color:var(--muted);"></div>
           </div>
@@ -1087,19 +1087,10 @@ body.wp-anon .ws-top-chip{display:none;}
                exist is how the same PDF gets uploaded twice. -->
           <div id="rdb-guideline-card" style="margin-bottom:14px;"></div>
 
-          <!-- Rates extracted from guidelines: generation_rate / stream_split
-               rows. Same table, same add-only rule and inline editing as the
-               Requirements list, but they live HERE with the rates — a
-               generation rate is a rate, not a clause to cite. -->
-          <div style="display:flex;align-items:center;gap:10px;margin:6px 0 8px;">
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Rates from guidelines <span id="crq-rates-scope-label" style="font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);"></span>
-              <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Generation rates and stream splits that extraction read from this council's guideline PDFs, plus any typed in by hand. Extraction only <b>adds</b> rows here — nothing is deleted or overwritten; tidy possible duplicates by hand. Edit inline, ✕ to remove. The checker and WMP cite them as they stand.<br><br><b>⬆ Rates from the list → Rates DB</b> compares these with the live rates the bin calculator uses and writes the <i>new</i> residential rows to the Rates DB below (an existing rate is never overwritten by the one-click path — change one deliberately per row), then publishes.</span></span>
-            </div>
-            <span style="flex:1"></span>
-            <button class="btn" style="border-color:var(--green);color:var(--green);" title="Compare the generation-rate rows in every council's list with the live rates data, write the NEW residential rows to the Rates DB (an existing rate is never overwritten by the one-click path — change one deliberately per row) and publish; anything needing eyes (odd units, conflicts, commercial bases) is held for per-row review or CSV." onclick="crxExport()">⬆ Rates from the list → Rates DB…</button>
-          </div>
-          <div id="crq-rates-wrap" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;"></div>
-          <div id="crx-out"></div>
+          <!-- Extracted generation rates do not live in a list: extraction writes
+               them straight into the residential / commercial rate tables
+               below, in the tables' own row format (crqWriteRates), add-only.
+               Edit them there like any other rate. -->
 
           <div class="dc-title" style="margin-top:22px;">State &amp; council info <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">officer contacts, guidelines, bin colours, frequencies — used by WMP generation</span></div>
           <div id="rdb-meta-grid" class="rdb-meta"></div>
@@ -11982,9 +11973,15 @@ async function crqExtract(councilKey, localFile) {
     const { error: insErr } = await sb.from('council_requirements').insert(rows);
     if (insErr) { crqMsg('Insert failed: ' + insErr.message + (/source/.test(insErr.message) ? ' — has sql/2026-09-15-requirements-list.sql been run?' : ' — has sql/2026-08-25-package-c3-council-requirements.sql been run?'), true); return; }
     const serving = await crqSyncServe(doc.council_key, doc.council_name);
-    const nRates = rows.filter(crqIsRate).length;
-    crqMsg(`✓ ${rows.length - nRates} requirement${rows.length - nRates === 1 ? '' : 's'}` + (nRates ? ` + ${nRates} rate${nRates === 1 ? '' : 's'} (Rates from guidelines, below)` : '') +
-      ` added for ${doc.council_name} from v${doc.version} — ${serving} now serving the checker and WMP` +
+    // generation rates → the rate tables, in their own format, add-only
+    const rr = await crqWriteRates(rows.filter(crqIsRate), doc);
+    const nReq = rows.length - rows.filter(crqIsRate).length;
+    const rateNote = !rows.some(crqIsRate) ? '' :
+      ` · rates → tables: ${rr.added.length} added` + (rr.kept.length ? `, ${rr.kept.length} already set (kept)` : '') +
+      (rr.unplaced.length ? `, ${rr.unplaced.length} not placed — ` + rr.unplaced.slice(0, 4).map(u => `${u.r.clause_ref || '?'}: ${u.why}`).join('; ') + (rr.unplaced.length > 4 ? '; …' : '') : '') +
+      (rr.added.length ? ' — ⬆ Publish to live to push them to the calculator' : '');
+    if (typeof rdbLoadRates === 'function') rdbLoadRates();
+    crqMsg(`✓ ${nReq} requirement${nReq === 1 ? '' : 's'} added for ${doc.council_name} from v${doc.version} — ${serving} now serving the checker and WMP` + rateNote +
       (unresolved ? ` · ${unresolved} with a stream to set (flagged in the list)` : '') +
       (dropped ? ` · ${dropped} dropped (no clause reference)` : '') +
       (truncated ? ' · ⚠ the reply hit the length cap — complete rows were recovered but the tail was cut off; requirements late in the document may be missing' : '') +
@@ -12043,22 +12040,19 @@ async function crqSyncServe(councilKey, councilName) {
   return legacy.length;
 }
 
-// ── C4: APPROVED RATES → DIFF AGAINST THE LIVE R2 RATES ────────────────────
-// Approved generation_rate / stream_split rows NEVER auto-publish. This
-// produces a reviewable diff against the live waste_rates.json — new /
-// changed / same / conflicting / unmapped, per council, use and stream.
-// Residential rate rows then apply ONE AT A TIME, human-confirmed, into
-// res_rates (crxApply) — and even that goes nowhere until ⬆ Publish to live
-// in the Rates DB section, same as a hand-typed rate. Commercial and split
-// rows keep the hand flow (CSV → the use's own row in the commercial table /
-// SPLIT_DEFS review): their unit bases (per day, per 100 m²) don't map
-// mechanically, and a wrong basis is worse than a re-key. Per-use split
-// percentages surfaced here are the sourced values that should eventually
-// replace the unsourced defaults in SPLIT_DEFS — via this review path only.
-// crxDiffRates is pure: approved rows + their guideline docs + the live
-// rates JSON in, diff rows out. No DOM, no network, no writes.
+// ── EXTRACTED GENERATION RATES → THE RATE TABLES, DIRECTLY ──────────────────
+// A generation_rate row is a RATE, not a clause to list: extraction writes it
+// straight into res_rates / com_rates for the scoped council, in the exact
+// row format those tables (and the rates editor below) use. Add-only — a
+// (council, unit type, stream) or (council, use, stream) the table already
+// holds is left as it is and reported. Anything that does not map onto a
+// table row without guessing (no dwelling type, an unknown commercial use, a
+// unit the calculator has no formula for) is reported with the reason so it
+// can be typed in by hand. Going live stays ⬆ Publish to live, same as a
+// hand-typed rate. The clause itself still serves the checker's citations
+// through the council's requirements projection.
+// crqRateToTable / crqComBasis are PURE — row + context in, table row out.
 const CRX_STREAM_TO_RATES = { garbage: 'GW', recycling: 'REC', fogo: 'ORG', glass: 'GLS', paper: 'CARD', soft: 'SOFT' };
-const CRX_SPLIT_FOR_STREAM = { fogo: 'GW_ORG', soft: 'GW_SOFT', paper: 'REC_CARD', glass: 'REC_GLS' };
 function crxNorm(s) { return String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
 function crxResUnit(useClass) {
   const s = String(useClass || '').toLowerCase();
@@ -12068,294 +12062,103 @@ function crxResUnit(useClass) {
   if (/(^|\D)3\s*(br|bed)/.test(s)) return 'apt_3br';
   return null;   // "residential" alone is not one unit type — never guess one
 }
-function crxDiffRates(rows, docsById, remote, commTable) {
-  const out = [];
-  const profiles = (remote && remote.PROFILES) || {};
-  const councilProfiles = (remote && remote.COUNCIL_PROFILES) || {};
-  const councils = (remote && remote.COUNCILS) || {};
-  const comm = commTable || {};
-  const seen = {};   // conflict detection: same target approved twice with different values
-  (rows || []).forEach(r => {
-    if (!r || r.status !== 'approved') return;
-    if (r.requirement_type !== 'generation_rate' && r.requirement_type !== 'stream_split') return;
-    const doc = docsById[r.council_guideline_id] || {};
-    const state = doc.state || null;
-    // council_value resolves by normalised label against the live councils list
-    const clist = (state && councils[state]) || [];
-    const cv = clist.find(c => crxNorm(c.label) === crxNorm(doc.council_name))
-            || clist.find(c => crxNorm(c.label).includes(crxNorm(doc.council_name)) || crxNorm(doc.council_name).includes(crxNorm(c.label)));
-    const councilValue = cv ? cv.value : null;
-    const profile = state ? (profiles[state] || {}) : {};
-    const override = (state && councilValue) ? (councilProfiles[state + '|' + councilValue] || {}) : {};
-    const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
-    const base = {
-      id: r.id || null,   // the source row, so an unmapped use class can be assigned back onto it
-      kind: r.requirement_type, council: doc.council_name || '?', state,
-      councilValue, guidelineVersion: doc.version ?? null,
-      useClass: r.use_class || null, stream: r.stream || null, streamKey,
-      value: r.value_num, unit: r.unit || null, clauseRef: r.clause_ref,
-    };
-    if (r.value_num == null) { out.push({ ...base, status: 'unmapped', why: 'no numeric value' }); return; }
-    let target = null, current = null, currentSrc = null;
-    if (r.requirement_type === 'stream_split') {
-      const splitId = r.stream ? CRX_SPLIT_FOR_STREAM[r.stream] : null;
-      if (!splitId) { out.push({ ...base, status: 'unmapped', why: 'stream has no split definition' }); return; }
-      const useKey = Object.keys(comm).find(k => crxNorm(comm[k].label) === crxNorm(r.use_class))
-                  || Object.keys(comm).find(k => r.use_class && crxNorm(comm[k].label).includes(crxNorm(r.use_class)));
-      if (!useKey) { out.push({ ...base, status: 'unmapped', why: 'use class not matched to a commercial use — assign manually' }); return; }
-      target = 'splits.' + useKey + '.' + splitId;
-      const uc = (override.comRates && override.comRates[useKey]) || (profile.comRates && profile.comRates[useKey]) || {};
-      current = uc.splits && uc.splits[splitId] != null ? +uc.splits[splitId] : null;
-      currentSrc = current == null ? 'code default (unsourced)' : 'rates data';
-    } else {
-      const resUnit = crxResUnit(r.use_class);
-      if (resUnit) {
-        if (!streamKey) { out.push({ ...base, status: 'unmapped', why: 'no stream on a residential rate' }); return; }
-        target = 'resRates.' + resUnit + '.' + streamKey;
-        const res = (override.resRates && override.resRates[resUnit]) || (profile.resRates && profile.resRates[resUnit]) || null;
-        current = res && res[streamKey] != null ? +res[streamKey] : null;
-        currentSrc = (override.resRates && override.resRates[resUnit]) ? 'council override' : 'state profile';
-      } else {
-        const useKey = Object.keys(comm).find(k => crxNorm(comm[k].label) === crxNorm(r.use_class))
-                    || Object.keys(comm).find(k => r.use_class && crxNorm(comm[k].label).includes(crxNorm(r.use_class)));
-        if (!useKey || !streamKey) { out.push({ ...base, status: 'unmapped', why: !useKey ? 'use class not matched — assign manually' : 'no stream' }); return; }
-        target = 'comRates.' + useKey + '.' + streamKey;
-        const uc = (override.comRates && override.comRates[useKey]) || (profile.comRates && profile.comRates[useKey]) || null;
-        current = uc && uc[streamKey] && uc[streamKey].rate != null ? +uc[streamKey].rate : null;
-        currentSrc = (override.comRates && override.comRates[useKey]) ? 'council override' : 'state profile';
-      }
-    }
-    const skey = (state || '?') + '|' + (councilValue || crxNorm(base.council)) + '|' + target;
-    if (seen[skey] != null && seen[skey] !== +r.value_num) {
-      out.push({ ...base, target, current, currentSrc, status: 'conflicting',
-                 why: 'another approved row set ' + seen[skey] + ' for the same target' });
-      return;
-    }
-    seen[skey] = +r.value_num;
-    const status = current == null ? 'new' : (Math.abs(current - +r.value_num) < 1e-9 ? 'same' : 'changed');
-    out.push({ ...base, target, current, currentSrc, status });
-  });
-  return out;
+// The commercial table's unit strings are the calculator's formula keys and
+// must match EXACTLY (see the PROFILES header in the calculator). An extracted
+// unit is read for its basis (per 100 m², per bed, per occupant…) and period
+// (day / week) and mapped onto one of those keys; a per-m² figure becomes
+// per 100 m² (×100 — a format conversion, not a guess). Anything else → null.
+function crqComBasis(unit) {
+  const u = String(unit || '').toLowerCase().replace(/²/g, '2').replace(/\s+/g, '');
+  if (!u) return null;
+  const day = /day|daily|\/d(\b|\/|$)/.test(u), week = /week|wk/.test(u);
+  if (/100m2/.test(u)) return day ? { unit: 'L/Day/100m2', unit_value: 100, mult: 1 } : week ? { unit: 'L/Week/100m2', unit_value: 100, mult: 1 } : null;
+  if (/m2|sqm|squaremetre/.test(u)) return day ? { unit: 'L/Day/100m2', unit_value: 100, mult: 100 } : week ? { unit: 'L/Week/100m2', unit_value: 100, mult: 100 } : null;
+  if (/bed/.test(u)) return day ? { unit: 'L/Bed/Day', unit_value: 1, mult: 1 } : week ? { unit: 'L/Bed/Week', unit_value: 1, mult: 1 } : null;
+  if (/occupant|person|resident|patron/.test(u)) return week ? { unit: 'L/Occupant/Week', unit_value: 1, mult: 1 } : null;
+  if (/apartment|dwelling|unit/.test(u)) return week ? { unit: 'L/Apartment/Week', unit_value: 1, mult: 1 } : null;
+  if (/student|pupil|child/.test(u)) return week ? { unit: 'L/Student/Week', unit_value: 1, mult: 1 } : null;
+  if (/cat/.test(u)) return week ? { unit: 'L/Cat/Week', unit_value: 1, mult: 1 } : null;
+  return null;
 }
-
-async function crxExport() {
-  crqMsg('Building rates diff…');
-  const { data: rows, error } = await sb.from('council_requirements')
-    .select('*').eq('status', 'approved').in('requirement_type', ['generation_rate', 'stream_split']);
-  if (error) { crqMsg('Load failed: ' + error.message, true); return; }
-  if (!rows?.length) { crqMsg('No generation_rate or stream_split rows in any council’s list yet.', true); return; }
-  const gids = [...new Set(rows.map(r => r.council_guideline_id))];
-  const { data: docs } = await sb.from('council_guidelines')
-    .select('id, council_name, state, version').in('id', gids);
-  const docsById = {}; (docs || []).forEach(d => { docsById[d.id] = d; });
-  let remote = null;
-  try { remote = await (await fetch(RATES_URL_PARENT, { cache: 'no-store' })).json(); }
-  catch (e) { crqMsg('Could not fetch the live rates JSON — no baseline, no diff. ' + (e.message || e), true); return; }
-  // Commercial use classes come from the com_uses table — the calc iframe's
-  // COMM global never existed in this frame, so matching against it silently
-  // left every commercial rate 'unmapped' since the day this shipped.
-  let comm = {};
+function crqRateToTable(r, ctx) {
+  const no = why => ({ ok: false, why });
+  if (!r || r.requirement_type !== 'generation_rate') return no('not a generation rate');
+  if (!(r.value_num === 0 || r.value_num) || isNaN(+r.value_num)) return no('no numeric value');
+  if (!ctx || !ctx.state) return no('the document has no state recorded');
+  if (!ctx.councilValue) return no('the council is not in the councils list — add it in Scope first');
+  const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
+  if (!streamKey) return no('no stream');
+  if (['GW', 'REC', 'ORG', 'GLS'].indexOf(streamKey) < 0) return no(`stream “${r.stream}” has no column in the rate tables (GW/REC/ORG/GLS)`);
+  const unit = String(r.unit || '').toLowerCase();
+  const perWeek = /week|wk/.test(unit), perDay = /day|daily|\/d(\b|\/|$)/.test(unit), perFortnight = /fortnight/.test(unit);
+  const resUnit = crxResUnit(r.use_class);
+  if (resUnit) {
+    // residential: L/week per dwelling — per day ×7, per fortnight ÷2
+    let v = +r.value_num;
+    if (perWeek) { /* as is */ } else if (perDay) v = v * 7; else if (perFortnight) v = v / 2;
+    else return no(`unit “${r.unit || '?'}” is not per week, day or fortnight per dwelling`);
+    return { ok: true, table: 'res_rates', key: resUnit + '|' + streamKey,
+      row: { state: ctx.state, council_value: ctx.councilValue, unit_type: resUnit, stream: streamKey, l_per_week: +v.toFixed(2) } };
+  }
+  const uc = crxNorm(r.use_class);
+  if (!uc) return no('no use class');
+  if (/resid|dwelling|apartment|unit|flat/.test(uc)) return no(`“${r.use_class}” names no dwelling type (1/2/3-bed, townhouse) — the residential table is per type`);
+  const uses = ctx.uses || [];
+  const use = uses.find(u => crxNorm(u.label) === uc) || uses.find(u => crxNorm(u.label).includes(uc) || uc.includes(crxNorm(u.label)));
+  if (!use) return no(`use class “${r.use_class}” matches no commercial use in the table`);
+  const basis = crqComBasis(r.unit);
+  if (!basis) return no(`unit “${r.unit || '?'}” has no formula in the commercial table (per 100 m² / bed / occupant / apartment / student, per day or week)`);
+  return { ok: true, table: 'com_rates', key: use.use_code + '|' + streamKey,
+    row: { state: ctx.state, council_value: ctx.councilValue, use_code: use.use_code, stream: streamKey,
+           rate: +(+r.value_num * basis.mult).toFixed(3), unit_value: basis.unit_value, unit: basis.unit } };
+}
+// Resolve the scoped council's registry value for a document (by state +
+// normalised label), then write every mappable extracted rate that the
+// tables do not already hold. Never an upsert: existing rates are kept.
+async function crqWriteRates(rateRows, doc) {
+  const out = { added: [], kept: [], unplaced: [] };
+  if (!rateRows.length) return out;
+  let councilValue = null;
   try {
-    const { data: uses } = await sb.from('com_uses').select('use_code,label');
-    (uses || []).forEach(u => { comm[u.use_code] = { label: u.label }; });
+    const { data: cl } = await sb.from('councils').select('value,label').eq('state', doc.state || '');
+    const want = crxNorm(doc.council_name);
+    const hit = (cl || []).find(c => crxNorm(c.label) === want) || (cl || []).find(c => crxNorm(c.label).includes(want) || want.includes(crxNorm(c.label)));
+    councilValue = hit ? hit.value : null;
   } catch (e) {}
-  CRX_USES = Object.keys(comm).map(k => ({ use_code: k, label: comm[k].label }));
-  const diff = crxDiffRates(rows, docsById, remote, comm);
-  const wrap = document.getElementById('crx-out');
-  const counts = {};
-  diff.forEach(d => { counts[d.status] = (counts[d.status] || 0) + 1; });
-  const chip = s => ({ new: '#3DD68C', changed: '#EFB080', conflicting: '#EF8080', unmapped: '#B39DDB', same: '#78909C' })[s] || '#78909C';
-  // "clean" = the pure plan accepts it AND the unit needs no human conversion —
-  // exactly the rows the one-click publish may touch
-  const cleanN = diff.filter(d => { const p = crxApplyPlan(d); return p.ok && !p.unitWarning; }).length;
-  wrap.innerHTML = `
-    <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;margin-top:8px;">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-        <span style="font-weight:700;font-size:12px;">Approved rates vs live R2 data</span>
-        ${['new','changed','conflicting','unmapped','same'].filter(s => counts[s]).map(s =>
-          `<span style="font-size:10px;font-weight:700;color:${chip(s)};border:1px solid ${chip(s)};border-radius:9px;padding:1px 8px;">${counts[s]} ${s}</span>`).join('')}
-        <span style="flex:1"></span>
-        <button class="btn" onclick="crxDownload('csv')">⇩ CSV for the spreadsheet</button>
-        <button class="btn" onclick="crxDownload('json')">⇩ JSON</button>
-        ${cleanN ? `<button class="btn" style="background:var(--green);color:var(--dark);font-weight:700;" title="One click for the normal case: writes every CLEAN residential row into the Rates DB, then publishes to live. Rows with odd units, conflicts or commercial bases are held for per-row review — nothing is written without appearing in this list first." onclick="crxApplyAllAndPublish()">⬆ Apply ${cleanN} clean row${cleanN === 1 ? '' : 's'} &amp; publish</button>` : ''}
-      </div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;"><b>⬆ Apply &amp; publish</b> handles the clean residential rows in one go. <b>→ Rates DB</b> stages a single row without publishing (use ⬆ Publish to live below when ready). Rows needing eyes — odd units, conflicting approvals, commercial per-day/per-100m² bases — stay manual: CSV them and enter against the use's own row. 'same' rows confirm the live data.</div>
-      <div style="display:grid;grid-template-columns:110px 1fr 90px 70px 70px 90px 1fr 92px;gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;">
-        <span>Status</span><span>Council</span><span>Kind</span><span>Approved</span><span>Current</span><span>Stream</span><span>Target / clause</span><span></span>
-      </div>
-      ${diff.map((d, i) => `
-      <div style="display:grid;grid-template-columns:110px 1fr 90px 70px 70px 90px 1fr 92px;gap:6px;font-size:10.5px;align-items:center;border-top:1px solid #1e2a2a;padding:3px 0;">
-        <b style="color:${chip(d.status)};">${d.status}${d.why ? ' *' : ''}</b>
-        <span>${cgbEsc(d.council)} ${d.state ? '(' + d.state + ')' : ''} v${d.guidelineVersion ?? '?'}</span>
-        <span>${d.kind === 'stream_split' ? 'split %' : 'rate'}</span>
-        <span>${d.value ?? '—'}${d.unit ? ' ' + cgbEsc(d.unit) : ''}</span>
-        <span>${d.current ?? '—'}</span>
-        <span>${cgbEsc(d.stream || '—')}</span>
-        <span style="color:var(--muted);">${cgbEsc(d.target || d.why || '')} · ${cgbEsc(d.clauseRef)}${d.why && d.target ? ' · ' + cgbEsc(d.why) : ''}
-          ${d.status === 'unmapped' && d.kind === 'generation_rate' && d.id && /use class/.test(d.why || '') ? `
-          <span style="white-space:nowrap;">
-            <select id="crx-uc-${i}" style="background:#101717;border:1px solid #4a5a3a;border-radius:5px;padding:2px 4px;font-size:10px;color:#C5E1A5;font-family:inherit;max-width:170px;">
-              <option value="">— set the use class —</option>
-              <optgroup label="Residential (L/week per dwelling)">
-                <option>1 bed apartment</option><option>2 bed apartment</option><option>3 bed apartment</option><option>townhouse</option>
-              </optgroup>
-              ${CRX_USES.length ? `<optgroup label="Commercial use">${CRX_USES.map(u => `<option value="${cgbEsc(u.label)}">${cgbEsc(u.label)}</option>`).join('')}</optgroup>` : ''}
-            </select>
-            <button class="btn" style="padding:1px 7px;font-size:10px;" onclick="crxAssignUse(${i})">Set</button>
-          </span>` : ''}
-        </span>
-        ${crxApplyPlan(d).ok ? `<button class="btn" id="crx-apply-${i}" title="Write this value into res_rates as a ${cgbEsc(d.council)} override — you still ⬆ Publish to live below to push it to the calculator" onclick="crxApply(${i})" style="padding:2px 8px;font-size:10px;background:#1d3a2a;border-color:#3DD68C;color:#3DD68C;">→ Rates DB</button>` : '<span></span>'}
-      </div>`).join('')}
-    </div>`;
-  CRX_LAST = diff;
-  crqMsg(`Diff built — ${diff.length} approved rate rows compared against live data.`);
-}
-let CRX_LAST = null;
-let CRX_USES = [];
-// The manual assignment the 'unmapped' row asks for: write the chosen use
-// class — that ONE field, nothing else — back onto the approved requirement,
-// then rebuild the comparison so the row maps. The queue deliberately only
-// edits proposed rows; this is the narrow, deliberate exception for a field
-// whose only failure mode is "the diff cannot read it", with the value,
-// stream and clause reference untouched and the clause still the audit trail.
-async function crxAssignUse(i) {
-  const d = (CRX_LAST || [])[i];
-  const sel = document.getElementById('crx-uc-' + i);
-  const v = sel && sel.value;
-  if (!d || !d.id) { crqMsg('This row cannot be assigned from here.', true); return; }
-  if (!v) { crqMsg('Pick a use class first.', true); return; }
-  const { error } = await sb.from('council_requirements').update({ use_class: v }).eq('id', d.id);
-  if (error) { crqMsg('Assign failed: ' + error.message, true); return; }
-  crqMsg(`✓ Use class set to "${v}" — rebuilding the comparison…`);
-  crxExport();
-}
-function crxDownload(kind) {
-  if (!CRX_LAST) return;
-  let blob, name;
-  if (kind === 'csv') {
-    const head = 'status,council,state,council_value,guideline_version,kind,use_class,stream,rates_key,target,approved_value,unit,current_value,current_source,clause_ref,note';
-    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-    const lines = CRX_LAST.map(d => [d.status, d.council, d.state, d.councilValue, d.guidelineVersion, d.kind,
-      d.useClass, d.stream, d.streamKey, d.target, d.value, d.unit, d.current, d.currentSrc, d.clauseRef, d.why].map(q).join(','));
-    blob = new Blob([head + '\n' + lines.join('\n')], { type: 'text/csv' });
-    name = 'approved-rates-diff.csv';
-  } else {
-    blob = new Blob([JSON.stringify(CRX_LAST, null, 2)], { type: 'application/json' });
-    name = 'approved-rates-diff.json';
-  }
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = name; a.click();
-}
-
-// A diff row → the exact res_rates upsert it implies, or the reason it stays
-// manual. Residential generation rates only: they share the Rates DB editor's
-// unit basis (L/week per dwelling) and key, so applying one is the same write
-// the admin would type by hand. Commercial rates carry a per-day / per-100m²
-// basis and splits have no table column — both refuse here rather than guess.
-// Pure: diff row in, plan out. No DOM, no globals, no writes.
-function crxApplyPlan(d) {
-  if (!d) return { ok: false, why: 'no diff row' };
-  if (d.status !== 'new' && d.status !== 'changed')
-    return { ok: false, why: d.status === 'conflicting' ? 'two live rows disagree — remove one in the Requirements list first' : "nothing to apply for a '" + d.status + "' row" };
-  if (d.kind !== 'generation_rate') return { ok: false, why: 'splits have no Rates DB column yet — sourced values replace the code defaults via review' };
-  const m = /^resRates\.([a-z0-9_]+)\.([A-Z]+)$/.exec(d.target || '');
-  if (!m) return { ok: false, why: "commercial rates are entered against the use's own row (per-day / per-100m² basis)" };
-  if (['GW', 'REC', 'ORG', 'GLS'].indexOf(m[2]) < 0) return { ok: false, why: 'res_rates stores GW/REC/ORG/GLS only' };
-  if (!d.state) return { ok: false, why: 'the guideline document has no state recorded' };
-  if (d.value == null || isNaN(+d.value)) return { ok: false, why: 'no numeric value' };
-  return {
-    ok: true,
-    needsCouncil: !d.councilValue,
-    unitWarning: d.unit && !/w(ee)?k/i.test(d.unit)
-      ? 'the approved unit reads "' + d.unit + '" but res_rates stores L/week per dwelling — convert before applying' : null,
-    rec: { state: d.state, council_value: d.councilValue || null, unit_type: m[1], stream: m[2], l_per_week: +d.value },
-  };
-}
-// The explicit, per-row apply. Writes the plan's res_rates row (creating the
-// council if the live list doesn't know it yet — never onto state defaults)
-// after a confirm that shows exactly what will be written. Going live stays a
-// separate step: ⬆ Publish to live in the Rates DB section, same as a
-// hand-typed rate.
-// Resolve the council key (creating the registry row when the live list
-// doesn't know it — never writing a council rate onto state defaults) and
-// perform the one res_rates upsert a plan describes. Shared by the per-row
-// apply and the one-click publish so the write can never drift between them.
-function crxPlanCouncil(plan, d) {
-  if (plan.rec.council_value) return { cv: plan.rec.council_value, mkCouncil: null };
-  const label = String(d.council || '').trim();
-  const cv = cgSlug(label.replace(/^city of /i, '').replace(/\s*(city|shire)?\s*council$/i, ''));
-  return cv ? { cv, mkCouncil: { state: plan.rec.state, value: cv, label } } : { cv: null, mkCouncil: null };
-}
-async function crxWritePlan(plan, cv, mkCouncil) {
-  if (mkCouncil) {
-    const { error: cErr } = await sb.from('councils').insert(mkCouncil);
-    if (cErr && !/duplicate|unique/i.test(cErr.message)) throw cErr;
-  }
-  const { error } = await sb.from('res_rates')
-    .upsert({ ...plan.rec, council_value: cv }, { onConflict: 'state,council_value,unit_type,stream' });
-  if (error) throw error;
-}
-async function crxApply(i) {
-  const d = (CRX_LAST || [])[i];
-  const plan = crxApplyPlan(d);
-  if (!plan.ok) { crqMsg('This row cannot be applied from here — ' + plan.why + '.', true); return; }
-  const { cv, mkCouncil } = crxPlanCouncil(plan, d);
-  if (!cv) { crqMsg('No council name on this row to key the override to.', true); return; }
-  const lines = [
-    'Write to the Rates DB (res_rates):',
-    `${plan.rec.state} · ${cv} · ${RDB_UNIT_LABELS[plan.rec.unit_type] || plan.rec.unit_type} · ${plan.rec.stream} = ${plan.rec.l_per_week} L/week`,
-    `from ${d.council} v${d.guidelineVersion ?? '?'} · ${d.clauseRef || 'no clause'}`,
-  ];
-  if (mkCouncil) lines.push(`"${mkCouncil.label}" is not in the councils list yet — it will be created.`);
-  if (plan.unitWarning) lines.push('⚠ ' + plan.unitWarning);
-  lines.push('', 'Nothing goes live until you hit ⬆ Publish to live in the Council & state database section.');
-  if (!confirm(lines.join('\n'))) return;
+  let uses = RDB.uses && RDB.uses.length ? RDB.uses : [];
+  if (!uses.length) { try { const { data } = await sb.from('com_uses').select('use_code,label'); uses = data || []; } catch (e) {} }
+  const ctx = { state: doc.state || null, councilValue, uses };
+  const plans = rateRows.map(r => ({ r, plan: crqRateToTable(r, ctx) }));
+  plans.filter(x => !x.plan.ok).forEach(x => out.unplaced.push({ r: x.r, why: x.plan.why }));
+  const want = plans.filter(x => x.plan.ok);
+  if (!want.length) return out;
+  const existing = { res_rates: new Set(), com_rates: new Set() };
   try {
-    await crxWritePlan(plan, cv, mkCouncil);
-    const btn = document.getElementById('crx-apply-' + i);
-    if (btn) btn.outerHTML = '<span style="font-size:10px;color:#3DD68C;">✓ in Rates DB</span>';
-    crqMsg(`✓ ${RDB_UNIT_LABELS[plan.rec.unit_type] || plan.rec.unit_type} · ${plan.rec.stream} = ${plan.rec.l_per_week} L/week saved as a ${cv} override — ⬆ Publish to live (Council & state database) pushes it to the calculator.`);
-  } catch (err) { crqMsg('Apply failed: ' + (err.message || err), true); }
-}
-// The one-click path for the normal workflow: every CLEAN, NEW row (the pure
-// plan accepts it, its unit needs no human conversion, and the Rates DB does
-// not already hold a rate for that key) is written to the Rates DB, then the
-// live rates JSON is regenerated. Rates follow the list's add-only rule: an
-// existing rate is never overwritten here — a 'changed' row stays for the
-// per-row apply, which is a deliberate, confirmed edit. Still explicit and
-// still listed: the confirm names every row, and rows needing eyes (odd
-// units, conflicts, commercial bases) are never touched here. A row landing
-// in the requirements list on its own publishes NOTHING to the rates — this
-// button is the deliberate act.
-async function crxApplyAllAndPublish() {
-  const diff = CRX_LAST || [];
-  const jobs = [];
-  diff.forEach((d, i) => {
-    const plan = crxApplyPlan(d);
-    if (!plan.ok || plan.unitWarning || d.status !== 'new') return;
-    const { cv, mkCouncil } = crxPlanCouncil(plan, d);
-    if (cv) jobs.push({ d, i, plan, cv, mkCouncil });
+    const { data: res } = await sb.from('res_rates').select('unit_type,stream').eq('state', ctx.state).eq('council_value', councilValue);
+    (res || []).forEach(x => existing.res_rates.add(x.unit_type + '|' + x.stream));
+    const { data: com } = await sb.from('com_rates').select('use_code,stream').eq('state', ctx.state).eq('council_value', councilValue);
+    (com || []).forEach(x => existing.com_rates.add(x.use_code + '|' + x.stream));
+  } catch (e) {}
+  const batch = { res_rates: [], com_rates: [] };
+  const seen = new Set();
+  want.forEach(({ r, plan }) => {
+    const k = plan.table + '|' + plan.key;
+    if (existing[plan.table].has(plan.key)) { out.kept.push({ r, plan }); return; }   // add-only: the table's value stands
+    if (seen.has(k)) { out.unplaced.push({ r, why: 'another extracted row already fills this cell — the first one was written' }); return; }
+    seen.add(k);
+    batch[plan.table].push(plan.row);
+    out.added.push({ r, plan });
   });
-  if (!jobs.length) { crqMsg('No clean NEW rates to add — changed rows are applied per-row (a deliberate overwrite), and flagged ones need eyes.', true); return; }
-  const lines = ['Add ' + jobs.length + ' new rate' + (jobs.length === 1 ? '' : 's') + ' from the requirements list to the Rates DB, then publish to live (existing rates are not touched):', ''];
-  jobs.forEach(j => lines.push(`· ${j.plan.rec.state} · ${j.cv} · ${RDB_UNIT_LABELS[j.plan.rec.unit_type] || j.plan.rec.unit_type} · ${j.plan.rec.stream} = ${j.plan.rec.l_per_week} L/week (${j.d.clauseRef || 'no clause'})`));
-  const mk = jobs.filter(j => j.mkCouncil).map(j => j.mkCouncil.label);
-  if (mk.length) lines.push('', 'New council row' + (mk.length === 1 ? '' : 's') + ' will be created: ' + [...new Set(mk)].join(', '));
-  lines.push('', 'Publishing regenerates the live waste_rates.json — the calculator picks this up immediately.');
-  if (!confirm(lines.join('\n'))) return;
-  let ok = 0, fail = 0;
-  for (const j of jobs) {
-    try {
-      await crxWritePlan(j.plan, j.cv, j.mkCouncil);
-      ok++;
-      const btn = document.getElementById('crx-apply-' + j.i);
-      if (btn) btn.outerHTML = '<span style="font-size:10px;color:#3DD68C;">✓ published</span>';
-    } catch (e) { fail++; console.warn('crxApplyAllAndPublish:', e?.message || e); }
+  for (const table of ['res_rates', 'com_rates']) {
+    if (!batch[table].length) continue;
+    const { error } = await sb.from(table).insert(batch[table]);
+    if (error) {
+      // report, never half-claim: everything in this table's batch moves to unplaced
+      out.added = out.added.filter(a => a.plan.table !== table);
+      batch[table].forEach((row, i) => out.unplaced.push({ r: want.find(w => w.plan.row === row)?.r || {}, why: table + ' insert failed: ' + error.message }));
+    }
   }
-  if (fail) { crqMsg(`${ok} written, ${fail} FAILED — nothing published. Fix and retry.`, true); return; }
-  crqMsg(`✓ ${ok} rate${ok === 1 ? '' : 's'} written — publishing to live…`);
-  await rdbPublish();
-  crqMsg(`✓ ${ok} rate${ok === 1 ? '' : 's'} from the list written and published to live.`);
+  return out;
 }
 
 // ── the requirements list ───────────────────────────────────────────────────
@@ -12422,55 +12225,48 @@ function crqLatestBatch(rows) {
 }
 const CRQ_TYPE_LABEL = { generation_rate: 'Generation rate', room_dimension: 'Room dimension', aisle_width: 'Aisle width',
   chute_spec: 'Chute', collection_limit: 'Collection service', equipment_rule: 'Equipment', stream_split: 'Stream split', other: 'Other' };
-// Two lists from one table, split by type: generation_rate / stream_split
-// rows are RATES and live with the rates (crq-rates-wrap, in the Council &
-// state database group); everything else is a REQUIREMENT (crq-wrap). Same
-// add-only rule, same inline editing, same duplicate flags for both.
-const CRQ_RATE_TYPES = ['generation_rate', 'stream_split'];
+// One list: requirements. generation_rate rows are RATES — extraction writes
+// them into the rate tables (crqWriteRates) and they are never listed here;
+// their clause still serves the checker's citations via crqSyncServe.
+const CRQ_RATE_TYPES = ['generation_rate'];
 function crqIsRate(r) { return CRQ_RATE_TYPES.includes((r || {}).requirement_type); }
 function crqRender() {
-  crqRenderList('req');
-  crqRenderList('rate');
-}
-function crqRenderList(kind) {
-  const isRate = kind === 'rate';
-  const wrap = document.getElementById(isRate ? 'crq-rates-wrap' : 'crq-wrap'); if (!wrap) return;
-  const scopeLbl = document.getElementById(isRate ? 'crq-rates-scope-label' : 'crq-scope-label');
+  const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
+  const scopeLbl = document.getElementById('crq-scope-label');
   if (scopeLbl) scopeLbl.textContent = CG_SCOPE.name ? '— ' + CG_SCOPE.name : '';
-  const noun = isRate ? 'rate' : 'requirement';
+  const listed = CRQ_L.rows.filter(r => !crqIsRate(r));
   // Scoped to the chosen council: the list is per council, so another
   // council's rows must never show while you edit this one.
   if (!CG_SCOPE.name) {
-    const n = CRQ_L.rows.filter(r => crqIsRate(r) === isRate).length, nd = Object.keys(CRQ_L.docs).length;
+    const n = listed.length, nd = Object.keys(CRQ_L.docs).length;
     wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
-      n + ' ' + noun + (n === 1 ? '' : 's') + ' in the lists across ' + nd + ' document' + (nd === 1 ? '' : 's') +
+      n + ' requirement' + (n === 1 ? '' : 's') + ' in the lists across ' + nd + ' document' + (nd === 1 ? '' : 's') +
       '. Choose a council in Scope at the top to see and edit its list.</div>';
     return;
   }
-  const rows = CRQ_L.rows.filter(r => crqIsRate(r) === isRate && cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));
+  const rows = listed.filter(r => cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));
   const dups = crqDupFlags(rows);
   const latest = crqLatestBatch(rows);
   const manual = rows.filter(r => r.source === 'manual');
   const noStream = rows.filter(r => !r.stream && /did not resolve to a canonical stream/.test(r.value_text || ''));
-  const fKey = isRate ? 'rateFilter' : 'filter';
-  const f = CRQ_L[fKey] || 'all';
+  const f = CRQ_L.filter || 'all';
   const shown = rows.filter(r => f === 'latest' ? latest.has(r.id) : f === 'dups' ? !!dups[r.id] : f === 'manual' ? r.source === 'manual' : f === 'nostream' ? noStream.includes(r) : true)
-    .slice().sort((a, b) => String(a.requirement_type).localeCompare(String(b.requirement_type)) || String(a.use_class || '').localeCompare(String(b.use_class || '')) || String(a.clause_ref || '').localeCompare(String(b.clause_ref || ''), undefined, { numeric: true }));
+    .slice().sort((a, b) => String(a.requirement_type).localeCompare(String(b.requirement_type)) || String(a.clause_ref || '').localeCompare(String(b.clause_ref || ''), undefined, { numeric: true }));
   const opt = (v, l, n) => `<option value="${v}" ${f === v ? 'selected' : ''}>${l}${n != null ? ' (' + n + ')' : ''}</option>`;
   const toolbar = `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-      <span style="font-size:11px;color:rgba(255,255,255,0.75);"><b>${rows.length}</b> ${noun}${rows.length === 1 ? '' : 's'} in ${cgbEsc(CG_SCOPE.name)}’s list — live in the checker and WMP as shown</span>
-      <select class="wsl-sel" style="font-size:11px;padding:4px 6px;" onchange="CRQ_L.${fKey}=this.value;crqRenderList('${kind}');" title="Narrow the list — the rows stay in the list either way">
+      <span style="font-size:11px;color:rgba(255,255,255,0.75);"><b>${rows.length}</b> requirement${rows.length === 1 ? '' : 's'} in ${cgbEsc(CG_SCOPE.name)}’s list — live in the checker and WMP as shown</span>
+      <select class="wsl-sel" style="font-size:11px;padding:4px 6px;" onchange="CRQ_L.filter=this.value;crqRender();" title="Narrow the list — the rows stay in the list either way">
         ${opt('all', 'Show all')}${opt('latest', 'Added by the latest extraction', latest.size)}${opt('dups', '≈ possible duplicates', Object.keys(dups).length)}${opt('manual', 'Added by hand', manual.length)}${opt('nostream', '⚠ stream to set', noStream.length)}
       </select>
       <span style="flex:1"></span>
-      <button class="btn" style="background:var(--teal);color:#fff;font-weight:700;" title="${isRate ? 'Add a generation rate or stream split that is in no document — e.g. a figure council gave you. It joins the list immediately and survives every future extraction.' : 'Add a requirement that is in no document — e.g. something council told you. It joins the list immediately and survives every future extraction.'}" onclick="crqAdd('${kind}')">${isRate ? '+ Add rate' : '+ Add requirement'}</button>
+      <button class="btn" style="background:var(--teal);color:#fff;font-weight:700;" title="Add a requirement that is in no document — e.g. something council told you. It joins the list immediately and survives every future extraction. (Rates are typed straight into the rate tables below.)" onclick="crqAdd()">+ Add requirement</button>
     </div>`;
   if (!rows.length) {
-    wrap.innerHTML = toolbar + '<div style="font-size:11px;color:var(--muted);">Nothing in ' + cgbEsc(CG_SCOPE.name) + '’s ' + noun + ' list yet — 🧾 Extract to list on its document in the Library, or ' + (isRate ? '+ Add rate' : '+ Add requirement') + '.</div>';
+    wrap.innerHTML = toolbar + '<div style="font-size:11px;color:var(--muted);">Nothing in ' + cgbEsc(CG_SCOPE.name) + '’s list yet — 🧾 Extract to list on its document in the Library, or + Add requirement.</div>';
     return;
   }
-  const types = CRQ_TYPES.filter(t => CRQ_RATE_TYPES.includes(t) === isRate);
+  const types = CRQ_TYPES.filter(t => !CRQ_RATE_TYPES.includes(t));
   const streamOpts = sv => `<option value="">— none —</option>` + CRQ_STREAMS.map(x => `<option ${x === sv ? 'selected' : ''}>${x}</option>`).join('');
   const typeOpts = t => types.map(x => `<option value="${x}" ${x === t ? 'selected' : ''}>${CRQ_TYPE_LABEL[x] || x}</option>`).join('');
   const inp = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:10.5px;color:var(--text);font-family:inherit;';
@@ -12483,7 +12279,7 @@ function crqRenderList(kind) {
   wrap.innerHTML = toolbar + `
     <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;">
       <div style="display:grid;grid-template-columns:${cols};gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">
-        <span>Type</span><span>Use class</span><span>Stream</span><span>Value</span><span>Unit</span><span>${isRate ? 'Wording' : 'Requirement'}</span><span title="The clause reference, or where a hand-typed row came from">Clause / source</span><span>From</span><span></span>
+        <span>Type</span><span>Use class</span><span>Stream</span><span>Value</span><span>Unit</span><span>Requirement</span><span title="The clause reference, or where a hand-typed row came from">Clause / source</span><span>From</span><span></span>
       </div>
       ${shown.map(r => `
       <div id="crq-row-${r.id}" style="display:grid;grid-template-columns:${cols};gap:6px;align-items:start;margin-bottom:5px;${dups[r.id] ? 'background:#1e1a10;border-radius:6px;' : ''}">
@@ -12518,9 +12314,7 @@ async function crqSave(id) {
   const patch = { ...edits, reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() };
   const { error } = await sb.from('council_requirements').update(patch).eq('id', id).eq('status', 'approved');
   if (error) { crqMsg('Save failed: ' + error.message, true); return; }
-  const wasRate = crqIsRate(r);
   Object.assign(r, patch);
-  if (crqIsRate(r) !== wasRate) crqRender();   // moved between the rates and requirements lists
   const d = CRQ_L.docs[r.council_guideline_id] || {};
   const n = await crqSyncServe(d.council_key || null, d.council_name || CG_SCOPE.name);
   crqMsg(`✓ Saved — ${n} item${n === 1 ? '' : 's'} serving the checker and WMP.`);
@@ -12533,22 +12327,20 @@ async function crqServingDoc(name) {
   const key = cgSlug(name || '');
   return (data || []).find(d => d.council_key === key) || (data || []).find(d => cgScopeMatches(d.council_name)) || null;
 }
-async function crqAdd(kind) {
-  const isRate = kind === 'rate';
+async function crqAdd() {
   if (!CG_SCOPE.name) { crqMsg('Pick a council in Scope first.', true); return; }
   const doc = await crqServingDoc(CG_SCOPE.name);
   if (!doc) { crqMsg(`${CG_SCOPE.name} has no guideline document on file — ⇪ Save one above first (a council letter or email saved as PDF is fine); every requirement belongs to a document version.`, true); return; }
-  const row = { council_guideline_id: doc.id, requirement_type: isRate ? 'generation_rate' : 'other', use_class: isRate ? 'residential' : null,
-    stream: isRate ? 'garbage' : null, value_num: null, unit: isRate ? 'L/dwelling/week' : null,
+  const row = { council_guideline_id: doc.id, requirement_type: 'other', use_class: null, stream: null, value_num: null, unit: null,
     value_text: '', clause_ref: 'Manual — ' + new Date().toISOString().slice(0, 10), status: 'approved', source: 'manual',
     reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() };
   const { data, error } = await sb.from('council_requirements').insert(row).select('*').single();
   if (error) { crqMsg('Add failed: ' + error.message + (/source/.test(error.message) ? ' — has sql/2026-09-15-requirements-list.sql been run?' : ''), true); return; }
   CRQ_L.rows.push(data);
   if (!CRQ_L.docs[doc.id]) CRQ_L.docs[doc.id] = doc;
-  CRQ_L[isRate ? 'rateFilter' : 'filter'] = 'all';
+  CRQ_L.filter = 'all';
   crqRender();
-  const el = document.querySelector(`[data-crq="${data.id}:${isRate ? 'value_num' : 'value_text'}"]`); if (el) el.focus();
+  const el = document.querySelector(`[data-crq="${data.id}:value_text"]`); if (el) el.focus();
   crqMsg('Row added — fill it in; each field saves as you leave it. Replace the source note with the clause, or where it came from.');
 }
 // Remove = the row leaves the list and the serving projection. Kept in the

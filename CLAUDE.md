@@ -276,15 +276,20 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   council's WHOLE list — every live row across every version, plus manual
   rows — onto the serving guideline version's `requirements` JSONB after
   every change (extract, add, edit, remove). No Serve button.
-- **Rates are a separate list, in the rates section.** `generation_rate`
-  and `stream_split` rows (`CRQ_RATE_TYPES`, `crqIsRate`) never appear in
-  the Requirements list; `crqRenderList('rate')` shows them as **Rates from
-  guidelines** in the Council & state database group, same add-only rule,
-  same inline editing, same duplicate flags. **⬆ Rates from the list →
-  Rates DB** sits there (`crxExport` →
-  `crxApplyAllAndPublish`) writes only `new` rows in one click — an existing
-  rate is never overwritten by the bulk path; a `changed` row is applied per
-  row, deliberately. Not built: version-to-version diffing.
+- **Generation rates go straight into the rate tables.** A
+  `generation_rate` row is a rate, not a clause to list: `crqExtract` hands
+  them to `crqWriteRates`, which maps each onto a `res_rates` row (dwelling
+  type via `crxResUnit`, L/week per dwelling — per day ×7, per fortnight ÷2)
+  or a `com_rates` row (use matched to `com_uses` by label; the unit mapped
+  onto the calculator's exact formula keys by `crqComBasis`, per m² → per
+  100 m²) and INSERTs the ones the table does not already hold — never an
+  upsert, so an existing rate is never overwritten. Anything that would need
+  a guess (no dwelling type, an unknown use, a unit with no formula) is
+  reported with the reason and typed in by hand. No list, no diff, no
+  approve button: edit them in the tables, then ⬆ Publish to live. The
+  clause still serves the checker's citations via `crqSyncServe`; the
+  Requirements list never shows it (`CRQ_RATE_TYPES`, `crqIsRate`). Not
+  built: version-to-version diffing.
 
 Matching is by registry value first, then normalised council name —
 `glBridgeNorm` (parent) and `councilKey` (calculator) must stay identical; a
