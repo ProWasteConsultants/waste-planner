@@ -164,10 +164,9 @@ test('collection method: kerbside tops out at 360L and offers no plant; bulk off
   assert.deepStrictEqual(kerb.list.map(e => e.sizeL), [120, 140, 240], 'nothing above 360L at the kerb — no 660, 1100 or front-lift');
   assert.equal(kerb.M.equipment, false, 'no compaction plant under a kerbside method');
   const bulk = c.binSizesFor('R2', 'r', 'GW');
-  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [80, 120, 140, 240, 660, 1100, 3000], 'bulk offers EVERY library bin');
-  assert.equal(bulk.list.find(e => e.sizeL === 80).common, false, 'a size tagged for another stream is demoted out of the default group, never hidden');
+  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [120, 140, 240, 660, 1100, 3000], 'bulk offers every library bin THAT SERVES THE STREAM');
+  assert.ok(!bulk.list.some(e => e.sizeL === 80), 'the glass-only crate is never a garbage option, under any method');
   assert.equal(bulk.M.equipment, true);
-  assert.ok(c.binSizesRaw('GW', true).find(e => e.sizeL === 80).forStream === false && c.binSizesRaw('GW', true).find(e => e.sizeL === 240).forStream === true);
   assert.ok(!c.binSizesFor('R1', 'r', 'GW').list.some(e => e.sizeL === 3000), 'a bulk-tagged record never appears under kerbside');
   assert.deepStrictEqual(c.normMethod({ r: 'kerbside_individual', c: 'nonsense' }), { r: 'kerbside_individual', c: null });
   assert.ok(c.COLLECT_METHODS.kerbside_individual.kerb && c.COLLECT_METHODS.kerbside_shared.kerb && !c.COLLECT_METHODS.bulk.kerb && !c.COLLECT_METHODS.self_haul.kerb,
@@ -247,12 +246,12 @@ test('council kerbside service: the council database defaults size and cadence; 
   assert.ok(!c.scheduleFor('r', 'GLS'), 'a stream the council does not collect has no service entry');
   // bulk methods: any size within the council's bulk cap, any frequency — the kerbside service never applies
   const bulk = c.binSizesFor('R2', 'r', 'GW');
-  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [80, 120, 140, 240, 660], 'every library bin within the council bulk cap');
+  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [120, 140, 240, 660], 'every stream-serving library bin within the council bulk cap');
   assert.equal(c.defSize('R2', 'r', 'GW'), 660, 'the 1100L default snaps under the council bulk cap');
   assert.equal(c.defCw('R2', 'r', 'GW'), 2, 'kerbside cadence never leaks into a bulk row');
   // a council size the library does not carry yet is still offered, labelled as the council's
   c.setSchedules([{ state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', schedule: { GW: { sizeL: 90, altL: [], cycle: 'W' }, bulk: {} } }]);
-  assert.deepStrictEqual(c.binSizesFor('R1', 'r', 'GW').list[0], { sizeL: 90, common: true, methods: [], source: 'council', forStream: true });
+  assert.deepStrictEqual(c.binSizesFor('R1', 'r', 'GW').list[0], { sizeL: 90, common: true, methods: [], source: 'council' });
   // a state-level row (no council value) is the default for councils without their own
   c.setSchedules([{ state: 'NSW', value: null, name: null, key: null, schedule: { GW: { sizeL: 120, altL: [], cycle: 'W' }, bulk: {} } }]);
   assert.equal(c.defSize('R1', 'r', 'GW'), 120, 'state default applies');

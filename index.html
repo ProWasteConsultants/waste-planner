@@ -2912,26 +2912,24 @@ function rebuildBinLib(rows){
 // stream, BEFORE method and council constraints — one entry per litre value,
 // common if any record of that size is flagged common, restricted to a
 // method set only when every record of that size is.
-function binSizesRaw(stream,anyStream){
-  // anyStream: every library size, with forStream saying whether some record
-  // of it serves this stream (bulk methods offer the lot and just demote the
-  // mismatches). Strict: only sizes with a record serving the stream.
-  const serves=b=&gt;!b.streams.length||b.streams.indexOf(stream)&gt;=0;
-  const lib=BIN_LIB.filter(b=&gt;anyStream||serves(b));
+function binSizesRaw(stream){
+  // Only sizes with a record that serves this stream — the stream rule holds
+  // under every method (a glass crate is never a food-waste option); an
+  // untagged record serves all streams.
+  const lib=BIN_LIB.filter(b=&gt;!b.streams.length||b.streams.indexOf(stream)&gt;=0);
   if(!lib.length){
-    return (ALLOWED_SIZES[stream]||[]).map(sz=&gt;({sizeL:sz,common:true,methods:[],source:'builtin',forStream:true}));
+    return (ALLOWED_SIZES[stream]||[]).map(sz=&gt;({sizeL:sz,common:true,methods:[],source:'builtin'}));
   }
   const by={};
   lib.forEach(b=&gt;{
-    const e=by[b.cap]=by[b.cap]||{sizeL:b.cap,common:false,tagged:[],untagged:false,forStream:false};
+    const e=by[b.cap]=by[b.cap]||{sizeL:b.cap,common:false,tagged:[],untagged:false};
     if(b.common)e.common=true;
-    if(serves(b))e.forStream=true;
     // a size is method-restricted only when EVERY record of it is tagged;
     // the restriction is then the union of the tags
     if(b.methods.length)b.methods.forEach(m=&gt;{if(e.tagged.indexOf(m)&lt;0)e.tagged.push(m);});
     else e.untagged=true;
   });
-  return Object.values(by).map(e=&gt;({sizeL:e.sizeL,common:e.common,methods:e.untagged?[]:e.tagged,source:'library',forStream:e.forStream})).sort((a,b)=&gt;a.sizeL-b.sizeL);
+  return Object.values(by).map(e=&gt;({sizeL:e.sizeL,common:e.common,methods:e.untagged?[]:e.tagged,source:'library'})).sort((a,b)=&gt;a.sizeL-b.sizeL);
 }
 // What the dropdown may offer for one room/section/stream: raw sizes,
 // filtered by the collection method (size ceiling + record method tags),
@@ -2941,15 +2939,14 @@ function binSizesRaw(stream,anyStream){
 // name the source instead of presenting a constraint as a preference.
 function binSizesFor(room,sec,stream){
   const method=methodOf(room,sec),M=COLLECT_METHODS[method]||COLLECT_METHODS[DEFAULT_METHOD];
-  // Bulk and private collection offer EVERY library bin — a size whose
-  // records are all tagged for other streams is merely demoted out of the
-  // default group, never hidden. Kerbside stays strict: what serves the
-  // stream, within the method ceiling.
-  let list=binSizesRaw(stream,!M.kerb).filter(e=&gt;{
+  // Bulk and private collection offer every library bin and container that
+  // SERVES THE STREAM — the stream rule is physical and never bends; the
+  // method only adds its own ceiling (kerbside ≤ 360L) and record tags.
+  let list=binSizesRaw(stream).filter(e=&gt;{
     if(M.maxL&amp;&amp;e.sizeL&gt;M.maxL)return false;
     if(e.methods.length&amp;&amp;e.methods.indexOf(method)&lt;0)return false;
     return true;
-  }).map(e=&gt;e.forStream?e:{...e,common:false});
+  });
   const sch=scheduleFor(sec,stream),bulk=activeSchedule()?.bulk||null;
   let councilSizes=[];
   if(M.kerb&amp;&amp;sch&amp;&amp;sch.sizeL){
@@ -2958,7 +2955,7 @@ function binSizesFor(room,sec,stream){
     // yet. Editing means choosing among what the council actually supplies;
     // any other size is a bulk or private arrangement, not kerbside.
     councilSizes=[sch.sizeL].concat(sch.altL||[]);
-    list=councilSizes.map(sz=&gt;{const hit=binSizesRaw(stream,true).find(e=&gt;e.sizeL===sz);return {sizeL:sz,common:true,methods:[],source:hit?hit.source:'council',forStream:true};});
+    list=councilSizes.map(sz=&gt;{const hit=binSizesRaw(stream).find(e=&gt;e.sizeL===sz);return {sizeL:sz,common:true,methods:[],source:hit?hit.source:'council'};});
   }else if(!M.kerb&amp;&amp;bulk&amp;&amp;bulk.maxL){
     list=list.filter(e=&gt;e.sizeL&lt;=bulk.maxL);
   }

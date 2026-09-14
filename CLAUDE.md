@@ -231,9 +231,10 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    **is** the list — the default bin plus the sizes the council also offers,
    nothing else; editing means choosing among what the council supplies. Its
    cycle sets the frequency (`0.5` fortnightly, `0.25` monthly). Under bulk
-   and self-haul **every library bin** is offered (a size whose records are
-   all tagged for other streams is demoted out of the default group, never
-   hidden), trimmed only by the council's bulk caps. Departing from the
+   and self-haul **every library bin and container that serves the stream**
+   is offered — the stream rule is physical and holds under every method (a
+   glass crusher is never a food-waste option) — trimmed only by the
+   council's bulk caps. Departing from the
    service is allowed and **stated**; no service on record is a visible note
    naming where to add one and how many services are loaded. Saving the grid
    pushes straight to the calculator; ↻ in the calculator re-reads library +
