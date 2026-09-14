@@ -11918,19 +11918,39 @@ async function crqExtract(councilKey, localFile) {
   }
   crqMsg(`Extracting ${doc.council_name} v${doc.version} — big documents can take a minute…`);
   try {
-    const resp = await aiProxy({
-      // 60 requirement rows of JSON run well past the old 8192 cap (a 64-row
-      // guideline died mid-string at ~27KB); 16000 covers the prompt's own
-      // 60-row ceiling with margin, and wsParseExtractionRows salvages the
-      // complete rows — reported, never silent — if a reply still gets cut.
-      max_tokens: 16000,
-      system: CRQ_PROMPT,
-      messages: [{ role: 'user', content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
-        { type: 'text', text: 'Extract the enforceable requirements as structured rows. JSON only — start your response with {' },
-      ]}],
-    });
-    const { rows: cand, truncated } = wsParseExtractionRows(resp, 'rows');
+    // A council rate table can run to 100+ rows, well past one reply's
+    // length cap — one pass silently lost everything after the cut. So the
+    // extraction CONTINUES: each pass is told what has already been
+    // captured and returns only what is still missing, until a pass adds
+    // nothing or the safety limit is reached. Duplicates across passes are
+    // dropped here (same type + use + stream + value + clause).
+    const doc64 = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } };
+    const seenKey = r => [r.requirement_type, String(r.use_class || '').toLowerCase().trim(),
+      r.stream || '', r.value_num ?? '', String(r.unit || '').toLowerCase().trim(),
+      String(r.clause_ref || '').toLowerCase().trim()].join('|');
+    const cand = [], seen = new Set();
+    let truncated = false, passes = 0;
+    for (let pass = 0; pass < 6; pass++) {
+      passes = pass + 1;
+      if (pass) crqMsg(`Extracting ${doc.council_name} v${doc.version} — pass ${passes}, ${cand.length} rows so far…`);
+      const ask = pass === 0
+        ? 'Extract the enforceable requirements as structured rows. JSON only — start your response with {'
+        : 'That reply was cut short by length. Continue: return ONLY the requirements you have NOT already returned — ' +
+          'do not repeat any of these clause/use/stream combinations:\n' +
+          cand.map(r => `${r.clause_ref || '?'} · ${r.use_class || '-'} · ${r.stream || '-'} · ${r.value_num ?? '-'}`).join('\n') +
+          '\nJSON only, same shape — start your response with {. If nothing is left, return {"rows":[]}.';
+      let resp;
+      try { resp = await aiProxy({ max_tokens: 16000, system: CRQ_PROMPT, messages: [{ role: 'user', content: [doc64, { type: 'text', text: ask }] }] }); }
+      catch (e) { if (!pass) throw e; truncated = true; break; }   // a failed continuation keeps what we have, reported
+      let got;
+      try { got = wsParseExtractionRows(resp, 'rows'); }
+      catch (e) { if (!pass) throw e; truncated = true; break; }
+      let fresh = 0;
+      got.rows.forEach(r => { const k = seenKey(r); if (seen.has(k)) return; seen.add(k); cand.push(r); fresh++; });
+      const capped = got.truncated || resp.stop_reason === 'max_tokens';
+      truncated = capped;
+      if (!capped || !fresh) break;   // finished, or a pass that added nothing — stop rather than loop
+    }
     let dropped = 0, unresolved = 0;
     const rows = [];
     cand.forEach(r => {
@@ -11977,7 +11997,8 @@ async function crqExtract(councilKey, localFile) {
     crqMsg(`✓ ${nReq} requirement${nReq === 1 ? '' : 's'} added for ${doc.council_name} from v${doc.version} — ${serving} now serving the checker and WMP` + rateNote +
       (unresolved ? ` · ${unresolved} with a stream to set (flagged in the list)` : '') +
       (dropped ? ` · ${dropped} dropped (no clause reference)` : '') +
-      (truncated ? ' · ⚠ the reply hit the length cap — complete rows were recovered but the tail was cut off; requirements late in the document may be missing' : '') +
+      (passes > 1 ? ` · read in ${passes} passes` : '') +
+      (truncated ? ' · ⚠ still hit the length cap after ' + passes + ' passes — complete rows were kept, but requirements late in the document may be missing; re-run to continue' : '') +
       '. Existing rows were left as they were — look for ≈ possible duplicate flags.');
     crqLoad();
   } catch (err) { crqMsg('Extraction failed: ' + (err.message || err), true); }
@@ -12216,7 +12237,8 @@ function crqRatesReport(rr) {
     if (!needUse && !needStream) return '';
     const sel = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:2px 4px;font-size:10.5px;color:var(--text);font-family:inherit;';
     return ' <span style="display:inline-flex;gap:4px;align-items:center;">' +
-      (needUse ? `<select id="crq-fix-use-${u.r.id}" style="${sel}"><option value="">use…</option>${uses.map(x => `<option value="${cgbEsc(x.use_code)}">${cgbEsc(x.label)}</option>`).join('')}</select>` : '') +
+      (needUse ? `<select id="crq-fix-use-${u.r.id}" style="${sel}" onchange="crqFixUseChanged('${u.r.id}')"><option value="">use…</option>${uses.map(x => `<option value="${cgbEsc(x.use_code)}">${cgbEsc(x.label)}</option>`).join('')}<option value="__new">+ new use…</option></select>` +
+        `<input id="crq-fix-new-${u.r.id}" type="text" placeholder="New use name" value="${cgbEsc(u.r.use_class && !/^(commercial|non-residential|retail|business|mixed use|industrial|other)$/i.test(String(u.r.use_class).trim()) ? u.r.use_class : (String(u.r.value_text || '').split(/[:\u2013-]/)[0] || '').trim().slice(0, 40))}" style="${sel}display:none;width:150px;">` : '') +
       (needStream ? `<select id="crq-fix-stream-${u.r.id}" style="${sel}"><option value="">stream…</option>${CRQ_STREAMS.map(x => `<option>${x}</option>`).join('')}</select>` : '') +
       `<button class="btn" style="padding:1px 7px;font-size:10px;" onclick="crqPlaceFixed('${u.r.id}')">Place</button></span>`;
   };
@@ -12228,16 +12250,47 @@ function crqRatesReport(rr) {
     (rr.added.length ? li('⬆ Publish to live pushes the added rates to the calculator.', 'var(--muted)') : '') +
     '</div>';
 }
+// "+ new use…" reveals the name field, pre-filled from the row itself.
+function crqFixUseChanged(rowId) {
+  const sel = document.getElementById('crq-fix-use-' + rowId), inp = document.getElementById('crq-fix-new-' + rowId);
+  if (!sel || !inp) return;
+  inp.style.display = sel.value === '__new' ? '' : 'none';
+  if (sel.value === '__new') inp.focus();
+}
+// A commercial use code from its label: lowercase words joined by _, which
+// is the shape every existing code uses. Pure.
+function crqUseCode(label) {
+  return String(label || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+}
 // A row the mapper could not place because its use or stream was not
-// stated: the human names them here, the requirement row is corrected (so
-// the citation reads right too) and the pull runs again — add-only.
+// stated: the human names them here (choosing an existing commercial use or
+// creating one), the requirement row is corrected (so the citation reads
+// right too) and the pull runs again — add-only.
 async function crqPlaceFixed(rowId) {
   const useSel = document.getElementById('crq-fix-use-' + rowId), stSel = document.getElementById('crq-fix-stream-' + rowId);
   const patch = {};
   if (useSel) {
     if (!useSel.value) { rdbMsg('Pick the use first.', false); return; }
-    const u = (RDB.uses || []).find(x => x.use_code === useSel.value);
-    patch.use_class = u ? u.label : useSel.value;
+    if (useSel.value === '__new') {
+      const label = (document.getElementById('crq-fix-new-' + rowId) || {}).value?.trim();
+      if (!label) { rdbMsg('Name the new use first.', false); return; }
+      const code = crqUseCode(label);
+      if (!code) { rdbMsg('That name has no letters or digits to make a code from.', false); return; }
+      const dup = (RDB.uses || []).find(x => x.use_code === code);
+      if (!dup) {
+        const { error: uErr } = await sb.from('com_uses').insert({ use_code: code, label });
+        if (uErr && !/duplicate|unique/i.test(uErr.message)) { rdbMsg('Could not add the use: ' + uErr.message, false); return; }
+        RDB.uses.push({ use_code: code, label });
+        RDB.uses.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+        const newSel = document.getElementById('rdb-com-new-use');
+        if (newSel) newSel.innerHTML = RDB.uses.map(x => `<option value="${x.use_code}">${x.label}</option>`).join('');
+      }
+      patch.use_class = label;
+    } else {
+      const u = (RDB.uses || []).find(x => x.use_code === useSel.value);
+      patch.use_class = u ? u.label : useSel.value;
+    }
   }
   if (stSel) {
     if (!stSel.value) { rdbMsg('Pick the stream first.', false); return; }
