@@ -280,6 +280,7 @@ const ws = loadEngine({ blocks: [
   ['wsCollectCyclesFromTargets', /^function wsCollectCyclesFromTargets\(/],
   ['wsCollectBins', /^function wsCollectBins\(/],
   ['wsCollectBinSummary', /^function wsCollectBinSummary\(/],
+  ['wsKerbCleanPts', /^function wsKerbCleanPts\(/],
   ['wsCollectBulk', /^function wsCollectBulk\(/],
 ] });
 
@@ -453,4 +454,21 @@ test('the equipment library reaches the calculator as `bins`, with the two selec
   assert.ok(sql.includes("notify pgrst, 'reload schema'") && sql.includes('ROLLBACK'));
   const claude = fs.readFileSync(path.join(__dirname, '..', 'CLAUDE.md'), 'utf8');
   assert.ok(claude.includes('library-driven') && claude.includes('collection method'), 'CLAUDE.md records the new convention');
+});
+
+test('finishing a kerb trace: Enter commits it (as promised), the panel has its own Finish button, a double-click’s doubled corner is one corner', () => {
+  assert.deepStrictEqual(ws.wsKerbCleanPts([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 20 }]),
+    [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 20 }], 'consecutive identical points collapse');
+  assert.deepStrictEqual(ws.wsKerbCleanPts([{ x: 0, y: 0 }, { x: 5, y: 5 }, { x: 0, y: 0 }]).length, 3, 'a genuine return to a point is kept');
+  assert.deepStrictEqual(ws.wsKerbCleanPts(null), []);
+  // the keydown handler: every mode whose prompt says "or Enter" finishes on Enter
+  assert.ok(SOURCE.includes("if (WS._mode === 'layoutkerb') { e.preventDefault(); wsCollectKerbFinish(); return; }"), 'Enter commits the kerb trace');
+  assert.ok(SOURCE.includes("if (WS._mode === 'layoutman') { e.preventDefault(); wsManFinish(); return; }"), 'Enter commits the manoeuvre route');
+  const fin = extractBlock(/^function wsCollectKerbFinish\(\)/).text;
+  assert.ok(fin.includes('const tr = wsKerbCleanPts(WS_COLLECT.trace || []);'), 'the finish cleans the trace before storing it');
+  const trace = extractBlock(/^function wsCollectTraceHtml\(\)/).text;
+  assert.ok(trace.includes('onclick="wsCollectKerbFinish()"') && trace.includes('onclick="wsCollectKerbCancel()"'), 'panel finish / cancel while tracing');
+  const panel = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
+  assert.ok(panel.includes('wrap.innerHTML = wsCollectTraceHtml() + (cp.kerbs.length'), 'the live trace sits above the kerb list');
+  assert.ok(SOURCE.includes("if (kerbDropped) { wsCollectMsg('Kerb trace discarded (Escape)."), 'Escape on a half-traced kerb says so');
 });
