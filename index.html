@@ -10599,16 +10599,18 @@ const RDB_META_FIELDS = [
   ['officer_name','Council waste officer'], ['officer_phone','Officer contact no.'], ['officer_email','Officer email'],
   ['data_last_updated','Data last updated by PWC'],
   ['guidelines','Guidelines'], ['other_guidelines','Other state guidelines'],
-  ['bin_sizes','Bin sizes'],
+  // bin_sizes and coll_freq_townhouse retired 2026-09-14: the structured
+  // Kerbside collection service grid above is the data now, and no tool
+  // ever read the free text (the WMP takes guidelines, colours and the truck).
   ['bin_colour_gw','Bin colours — General waste'], ['bin_colour_org','Bin colours — Organics'],
   ['bin_colour_rec','Bin colours — Recycling'], ['bin_colour_gls','Bin colours — Glass'],
   ['truck_side','Truck sizes — Side-lift'], ['truck_rear','Truck sizes — Rear-lift'],
   ['truck_front','Truck sizes — Front-lift'], ['truck_hook','Truck sizes — Hook-lift'],
   ['chutes','Chutes'],
-  ['coll_freq_apartments','Collection frequency — Apartments'], ['coll_freq_townhouse','Collection frequency — Townhouses'],
+  ['coll_freq_apartments','Collection frequency — Apartments'],
   ['notes','Notes'],
 ];
-const RDB_META_LONG = new Set(['guidelines','other_guidelines','bin_sizes','chutes','coll_freq_apartments','coll_freq_townhouse','notes']);
+const RDB_META_LONG = new Set(['guidelines','other_guidelines','chutes','coll_freq_apartments','notes']);
 const RDB_UNITS = ['townhouse','apt_1br','apt_2br','apt_3br'];
 const RDB_UNIT_LABELS = { townhouse:'Townhouse', apt_1br:'1-bed apt', apt_2br:'2-bed apt', apt_3br:'3-bed apt' };
 const RDB_STREAMS = ['GW','REC','ORG','GLS'];
@@ -10779,6 +10781,7 @@ async function rdbLoadRates() {
     const { data: metas, error: metaErr } = await mq;
     RDB.meta = {};
     (metas || []).forEach(r => RDB.meta[r.field_key] = r.value);
+    if (!RDB.binSizes) await rdbLoadBinSizes();
     rdbRenderMeta(!!metaErr);
     // header
     document.getElementById('rdb-res-head').innerHTML =
@@ -10951,15 +10954,32 @@ function rdbRenderMeta(loadFailed) {
 const RDB_KERB_LABELS = { GW: 'General waste', REC: 'Recycling', ORG: 'Organics / FOGO', GLS: 'Glass' };
 const RDB_KERB_CYCLES = [['', '— not set —'], ['W', 'Weekly'], ['A', 'Fortnightly — week A'], ['B', 'Fortnightly — week B'],
   ['F', 'Fortnightly (week not stated)'], ['M', 'Monthly'], ['OFF', 'Not collected at the kerb']];
+// The library's bin sizes, for the grid's selects — a council can only be
+// recorded as supplying a bin the library knows, so the calculator can
+// always size and draw it. A stored size the library no longer carries is
+// kept selectable and marked, never silently dropped.
+async function rdbLoadBinSizes() {
+  try {
+    const { data } = await sb.from('equipment').select('capacity_l,item_kind,active');
+    RDB.binSizes = [...new Set((data || [])
+      .filter(r => String(r.item_kind || 'Bin').toLowerCase() === 'bin' && r.active !== false && +r.capacity_l > 0)
+      .map(r => Math.round(+r.capacity_l)))].sort((a, b) => a - b);
+  } catch (e) { RDB.binSizes = RDB.binSizes || []; }
+}
 function rdbKerbGridHtml(inp) {
   const sch = wpKerbScheduleParse(RDB.meta.kerbside_schedule) || { bulk: {} };
+  const lib = RDB.binSizes || [];
+  const sizeOpts = (sel) => {
+    const all = [...new Set(lib.concat(sel.filter(Boolean)))].sort((a, b) => a - b);
+    return all.map(v => `<option value="${v}" ${sel.indexOf(v) >= 0 ? 'selected' : ''}>${v}L${lib.indexOf(v) < 0 ? ' (not in library)' : ''}</option>`).join('');
+  };
   const cell = (k, v, extra) => `<input data-kerb="${k}" type="text" value="${String(v == null ? '' : v).replace(/"/g, '&quot;')}" style="${inp}" oninput="RDB.dirtyMeta=true" ${extra || ''}>`;
   const rows = WP_KERB_STREAMS.map(s => {
     const e = sch[s] || {};
     return `<div style="display:contents;">
       <span style="font-size:11px;color:var(--text);padding-top:7px;">${RDB_KERB_LABELS[s]}</span>
-      ${cell(s + '.sizeL', e.sizeL, 'inputmode="numeric" placeholder="e.g. 140"')}
-      ${cell(s + '.altL', (e.altL || []).join(', '), 'placeholder="e.g. 240, 360"')}
+      <select data-kerb="${s}.sizeL" style="${inp}" onchange="RDB.dirtyMeta=true"><option value="">— none —</option>${sizeOpts(e.sizeL ? [e.sizeL] : [])}</select>
+      <select data-kerb="${s}.altL" multiple size="3" title="Other sizes this council also offers for this stream — Ctrl/⌘-click for more than one" style="${inp}height:auto;" onchange="RDB.dirtyMeta=true">${sizeOpts(e.altL || [])}</select>
       <select data-kerb="${s}.cycle" style="${inp}" onchange="RDB.dirtyMeta=true">${RDB_KERB_CYCLES.map(([v, l]) => `<option value="${v}" ${(e.cycle || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     </div>`;
   }).join('');
@@ -10967,10 +10987,11 @@ function rdbKerbGridHtml(inp) {
     <label style="font-size:11px;color:var(--muted);padding-top:7px;">Kerbside collection service <span class="adm-help" tabindex="0">?<span class="adm-help-pop">What this council actually supplies and collects at the kerb, per stream. The Bin Calculator defaults every kerbside room to these sizes and frequencies (editable per project — the alternatives are offered first), and the Collection Point tab builds its busiest-week check from the cycle letters. Bulk collection points and private contracts are not tied to this. Leave a stream blank if the council has no kerbside service for it.</span></span></label>
     <div>
       <div style="display:grid;grid-template-columns:130px 110px 150px 1fr;gap:4px 8px;align-items:center;">
-        <span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Stream</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Default bin (L)</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Also offered (L)</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Collection</span>
+        <span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Stream</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Default bin</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Also offered</span><span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Collection</span>
         ${rows}
+        ${lib.length ? '' : '<span style="grid-column:1/-1;font-size:10px;color:var(--flag);">No bin records in the equipment library yet — add bins (item kind Bin, with a capacity) in the Equipment table to pick them here.</span>'}
         <span style="font-size:11px;color:var(--text);padding-top:7px;">Bulk collection point</span>
-        ${cell('bulk.maxL', sch.bulk && sch.bulk.maxL, 'inputmode="numeric" placeholder="max bin L"')}
+        <select data-kerb="bulk.maxL" style="${inp}" onchange="RDB.dirtyMeta=true"><option value="">— no cap —</option>${sizeOpts(sch.bulk && sch.bulk.maxL ? [sch.bulk.maxL] : [])}</select>
         ${cell('bulk.maxPerWeek', sch.bulk && sch.bulk.maxPerWeek, 'inputmode="decimal" placeholder="max services / week"')}
         <span style="font-size:10px;color:var(--muted);">caps only — bulk bins may be any library size and frequency within them</span>
       </div>
@@ -10980,7 +11001,7 @@ function rdbKerbGridCollect() {
   const o = { bulk: {} };
   document.querySelectorAll('#rdb-meta-grid [data-kerb]').forEach(el => {
     const [s, f] = el.dataset.kerb.split('.');
-    (o[s] = o[s] || {})[f] = el.value;
+    (o[s] = o[s] || {})[f] = el.multiple ? Array.from(el.selectedOptions).map(x => x.value) : el.value;
   });
   const sch = wpKerbScheduleParse(o);
   return sch ? JSON.stringify(sch) : '';

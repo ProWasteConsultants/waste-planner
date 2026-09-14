@@ -73,6 +73,12 @@ test('wpKerbScheduleParse: the council database row becomes a normalised kerbsid
   // the admin grid round-trips through the same parser
   assert.ok(extractBlock(/^function rdbKerbGridCollect\(\)/).text.includes('wpKerbScheduleParse(o)'), 'the grid saves what the parser accepts');
   assert.ok(SOURCE.includes("field_key: 'kerbside_schedule', value: rdbKerbGridCollect()"), 'stored as one waste_meta row');
+  // sizes are picked from the library, never typed — the calculator can always size and draw a recorded bin
+  const grid = extractBlock(/^function rdbKerbGridHtml\(inp\)/).text;
+  assert.ok(grid.includes('<select data-kerb="${s}.sizeL"') && grid.includes('<select data-kerb="${s}.altL" multiple'), 'default and alternatives are library-size selects');
+  assert.ok(grid.includes("' (not in library)'"), 'a stored size the library no longer carries stays visible, marked');
+  assert.ok(extractBlock(/^function rdbKerbGridCollect\(\)/).text.includes('Array.from(el.selectedOptions)'), 'multi-select alternatives collect as an array');
+  assert.ok(!SOURCE.includes("['bin_sizes','Bin sizes']") && !SOURCE.includes("['coll_freq_townhouse'"), 'the retired free-text fields are gone from the grid');
   assert.ok(!SOURCE.includes('wpCouncilScheduleFromRows'), 'the clause-inference path is gone — a service is typed in, never guessed from clauses');
 });
 
