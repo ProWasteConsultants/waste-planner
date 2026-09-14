@@ -324,18 +324,67 @@ test('a rate seats only on the use the document names — generic words never ma
     'and the contest is shown in the rates report');
 });
 
-// ── pattern 1: one figure for both streams is a decision, not an arithmetic ──
-test('a combined garbage+recycling figure is split by hand, both halves cited to the same clause', () => {
+// ── GUARDRAIL 1: a combined figure is never force-fit into GW/REC ─────────
+test('guardrail: a combined garbage+recycling figure is HELD, never split by the system', () => {
+  const { loadEngine } = require('./extract.js');
+  const w = loadEngine({ blocks: [['crxNorm', /^function crxNorm\(/], ['CRQ_UNIT_BASIS', /^const CRQ_UNIT_BASIS = /],
+    ['crqUseBasis', /^function crqUseBasis\(/], ['crqComBasis', /^function crqComBasis\(/],
+    ['CRQ_GENERIC_WORDS', /^const CRQ_GENERIC_WORDS = /], ['crqUseFromText', /^function crqUseFromText\(/],
+    ['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /], ['crxResUnit', /^function crxResUnit\(/],
+    ['crqRateToTable', /^function crqRateToTable\(/], ['crqIsCombined', /^function crqIsCombined\(/]] });
+  const ctx = { state: 'NSW', councilValue: 'nbc', uses: [{ use_code: 'automotive', label: 'Automotive repair and service' }] };
+  // the real Northern Beaches case: one figure, no stream column
+  const r = { requirement_type: 'generation_rate', clause_ref: 'cl 5.4', use_class: 'Automotive repair and service',
+    stream: null, value_num: 3350, unit: 'L/100m² floor area/day',
+    value_text: 'Automotive repair and service: 3350 L/100m² floor area/day (one figure covers combined garbage and recycling)' };
+  const out = w.crqRateToTable(r, ctx);
+  assert.ok(!out.ok, 'a combined figure never becomes a rate row on the engine\'s own initiative');
+  assert.match(out.why, /one figure covers garbage and recycling together/);
+  assert.ok(w.crqIsCombined({ why: out.why }), 'and it is recognisable as held, not as an ordinary failure');
+  assert.equal(w.crqIsCombined({ why: 'use class “Book shop” matches no commercial use in the table — pick the use below' }), false);
+  assert.equal(w.crqIsCombined(null), false);
+  // no code path derives, apportions or halves a combined value
+  const eng = SOURCE.slice(SOURCE.indexOf('function crqRateToTable('), SOURCE.indexOf('async function crqWriteRates('));
+  assert.ok(!/value_num\s*[\/*]\s*2|rate\s*[\/*]\s*2|\*\s*0\.[0-9]/.test(eng), 'nothing halves or apportions a figure');
+  // the report HOLDS them in their own section rather than offering a split inline
+  const rep = SOURCE.slice(SOURCE.indexOf('function crqRatesReport('), SOURCE.indexOf('async function crqPlaceSplit('));
+  assert.ok(rep.includes('const held = rr.unplaced.filter(crqIsCombined), rest = rr.unplaced.filter(u => !crqIsCombined(u));'),
+    'combined rows are partitioned out of the ordinary not-placed list');
+  assert.ok(rep.includes("if (crqIsCombined(u)) return '';"), 'no split box is offered inline as if it were an ordinary fix');
+  assert.ok(rep.includes('The rate tables have no combined type, so this is held rather than split.'),
+    'the row says it is held and why');
+  assert.ok(rep.includes('representing one needs a combined-rate type in the rate tables, which is a pending decision'),
+    'the pending schema decision is surfaced, not buried');
+  assert.ok(rep.includes('Nothing is written for these until it lands.'), 'and nothing is written meanwhile');
+  // the hand split survives only as an explicit, labelled override
+  assert.ok(rep.includes('<details') && rep.includes('record a split myself'), 'a split is a disclosure, not the default offer');
+  assert.ok(rep.includes("your numbers, not the council's"), 'the UI says whose numbers these are');
   const fn = SOURCE.slice(SOURCE.indexOf('async function crqPlaceSplit('), SOURCE.indexOf('async function crqPullRatesForScope('));
-  assert.ok(SOURCE.includes('onclick="crqPlaceSplit(\'${u.r.id}\')"'), 'the split is offered on the unplaced row itself');
-  assert.ok(SOURCE.includes('The council gives one figure for both streams — these two values are yours.'),
-    'the UI says whose numbers these are');
-  assert.ok(fn.includes("if (isNaN(gw) || isNaN(rec))"), 'both halves are required — no default split');
-  assert.ok(fn.includes("stream: 'garbage'") && fn.includes("stream: 'recycling'"), 'the row becomes garbage; a sibling carries recycling');
-  assert.ok(fn.includes("source: 'manual'"), 'the recycling half is recorded as a human addition, not an extraction');
-  assert.ok(fn.includes('clause_ref: src.clause_ref'), 'both halves cite the clause the council actually wrote');
-  assert.ok(fn.includes('combined figure split by hand: '), 'the wording records that the split was made here');
-  assert.ok(!/value_num: *\(?[a-z]*\/ *2/.test(fn), 'never halved automatically');
+  assert.ok(fn.includes('if (isNaN(gw) || isNaN(rec))'), 'both halves are required — no default, no prefilled guess');
+  assert.ok(fn.includes("stream: 'garbage'") && fn.includes("stream: 'recycling'") && fn.includes("source: 'manual'"),
+    'a recorded split is marked as a human addition, not an extraction');
+  assert.ok(fn.includes('clause_ref: src.clause_ref') && fn.includes('combined figure split by hand: '),
+    'both halves cite the council\'s clause and record that the split was made here');
+});
+
+// ── GUARDRAIL 2: the taxonomy never grows on its own ──────────────────────
+test('guardrail: a commercial use is only ever created by a deliberate human act', () => {
+  const inserts = SOURCE.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => /from\('com_uses'\)\s*\.insert/.test(l));
+  assert.equal(inserts.length, 1, 'exactly one place in the whole app creates a commercial use');
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crqPlaceFixed('), SOURCE.indexOf('async function crqPullRatesForScope('));
+  assert.ok(fn.includes("from('com_uses').insert("), 'and it is the report\'s pick-a-use action');
+  assert.ok(fn.includes("if (useSel.value === '__new')"), 'reached only by choosing “+ new use…” explicitly');
+  assert.ok(fn.includes("if (!label) { rdbMsg('Name the new use first.', false); return; }"), 'the human names it — never derived and inserted silently');
+  // the automatic paths never create one
+  const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('function crqIsCombined('));
+  assert.ok(!/com_uses'\)\s*\.(insert|upsert|update)/.test(wr), 'crqWriteRates only READS the uses list');
+  const ex = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
+  assert.ok(!/com_uses/.test(ex), 'extraction never touches the uses table at all');
+  // a premises with no matching use is reported with its source value intact, awaiting that act
+  const rep = SOURCE.slice(SOURCE.indexOf('function crqRatesReport('), SOURCE.indexOf('async function crqPlaceSplit('));
+  assert.ok(rep.includes("'✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')]"),
+    'the unplaced row carries the council\'s own use, stream and figure, ready to place once the use exists');
+  assert.ok(rep.includes('<option value="__new">+ new use…</option>'), 'with the create-a-use action on the row itself');
 });
 
 test('C5: warnings compare council minima to measured layout facts, citing clause + version', () => {
