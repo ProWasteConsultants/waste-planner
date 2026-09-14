@@ -212,6 +212,10 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    containers**; a record tagged `collection_methods` (e.g. a front-lift bin
    tagged `bulk`) is never offered elsewhere. Only kerbside methods are
    `kerb: true` — the Collection Point presents those bins and nothing else.
+   **Kerbside individual counts dwellings, not litres**: every dwelling (every
+   tenancy, for a commercial section) wheels out its own bin per stream, so
+   `perDwellingUnits` sets the count and the capacity check then says whether
+   that one bin holds its share. Shared kerbside and bulk size from volume.
 3. **The council's kerbside service specialises.** It is **structured data
    typed in by someone who knows it** — Admin › Council & state database ›
    *Kerbside collection service*, stored as one JSON `waste_meta` row

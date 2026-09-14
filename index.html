@@ -2521,6 +2521,16 @@ function methodOf(roomId,sec){
   const m=room?normMethod(room.method):{r:null,c:null};
   return m[sec==='c'?'c':'r']||defaultMethod(room,sec);
 }
+// Kerbside — individual means every dwelling wheels out its OWN set of bins:
+// the count is the number of dwellings (tenancies, for a commercial section),
+// not litres ÷ capacity. Shared kerbside and every other method size from
+// volume as normal. Returns null when the rule does not apply.
+function perDwellingUnits(roomId,sec){
+  if(methodOf(roomId,sec)!=='kerbside_individual')return null;
+  const room=roomById(roomId);if(!room)return null;
+  if(sec==='c')return (room.com||[]).filter(c=&gt;(Number(c.value)||0)&gt;0).length;
+  return roomDwellings(room);
+}
 // ── COUNCIL KERBSIDE SCHEDULES (council database) ───────────────────────────
 // Pushed by the parent from waste_meta 'kerbside_schedule' rows, entered per
 // council in Admin › Council &amp; state database. Matched by the council's
@@ -2539,7 +2549,11 @@ function activeScheduleEntry(){
   const st=g('state').value,co=g('council').value;
   if(!co)return null;
   const k=councilKey(activeCouncilLabel());
+  // value first (the registry key both sides share), then the value read as
+  // a name, then the label, then the state row
+  const vk=councilKey(String(co).replace(/_/g,' '));
   return COUNCIL_SCHEDULES.find(c=&gt;c.value&amp;&amp;c.value===co&amp;&amp;(!c.state||c.state===st))
+    ||COUNCIL_SCHEDULES.find(c=&gt;c.valueKey&amp;&amp;vk&amp;&amp;c.valueKey===vk)
     ||COUNCIL_SCHEDULES.find(c=&gt;c.key&amp;&amp;k&amp;&amp;c.key===k)
     ||COUNCIL_SCHEDULES.find(c=&gt;!c.value&amp;&amp;c.state===st)
     ||null;
@@ -2576,11 +2590,14 @@ function ratesNoteHtml(){
   else src=`${g('state').value} state defaults — &lt;b style=&quot;color:#EFB080&quot;&gt;no published override for ${escAttr(i.label)}&lt;/b&gt; (value ${escAttr(i.value)}). Save its rates and ⬆ Publish to live, then ↻`;
   return `&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Generation rates&lt;/span&gt; ${src}`+
     (i.when?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· published ${escAttr(new Date(i.when).toLocaleString('en-AU'))}&lt;/span&gt;`:'')+
-    ` &lt;button class=&quot;wsr-rates-reload&quot; onclick=&quot;reloadRates()&quot; title=&quot;Re-fetch the published rates file and recalculate&quot;&gt;↻ reload rates&lt;/button&gt;&lt;/div&gt;`;
+    ` &lt;button class=&quot;wsr-rates-reload&quot; onclick=&quot;reloadRates()&quot; title=&quot;Re-fetch the published rates, the bin library and the council kerbside services, then recalculate&quot;&gt;↻ reload rates &amp;amp; council data&lt;/button&gt;&lt;/div&gt;`;
 }
 async function reloadRates(){
   RATES_REMOTE=await loadRemoteRatesIfConfigured();
   refreshCouncils();
+  // the bin library and the council kerbside services live in the platform —
+  // ask it to re-read and push them too (it answers with ws-calc-fill)
+  if(window.parent&amp;&amp;window.parent!==window)window.parent.postMessage({type:'ws-calc-refresh'},'*');
   wsCalcTrigger();
 }
 // ── ALLOWANCE STREAMS ────────────────────────────────────────────────────────
@@ -3308,7 +3325,7 @@ function onPlantPick(el){
   if(typeof wsUpdateVolumes==='function')wsUpdateVolumes();
 }
 function ovKey(room,sec,stream){return room+'|'+sec+'|'+stream;}
-function getBinCount(room,sec,stream,vol,sz,cw){const k=ovKey(room,sec,stream);return _binOv[k]!=null?_binOv[k]:calcBins(vol,sz,cw);}
+function getBinCount(room,sec,stream,vol,sz,cw){const k=ovKey(room,sec,stream);if(_binOv[k]!=null)return _binOv[k];const pd=perDwellingUnits(room,sec);return pd!=null?(vol&gt;0?pd:0):calcBins(vol,sz,cw);}
 function provHtml(room,sec,stream,nCalc){
   const k=ovKey(room,sec,stream);
   if(_binOv[k]==null)return '';
@@ -3839,7 +3856,11 @@ function provision(rr,sec,stream,streams){
   // bins that physically exist in the receiver (index 2, carousel 4 — with or
   // without a bundled compactor) floor the count: they are there regardless
   const minBins=(!container&amp;&amp;recv&amp;&amp;(recv.bins||0)&gt;1&amp;&amp;vol&gt;0)?recv.bins:0;
-  const nCalc=per&gt;0?Math.max(minBins,Math.max(0,Math.ceil(vol/per))):0;
+  // kerbside individual: one bin per dwelling, however small the volume —
+  // the bin exists because the dwelling does, and the capacity check below
+  // then says whether that one bin actually holds its share
+  const pd=perDwellingUnits(rr.id,sec);
+  const nCalc=pd!=null?(vol&gt;0?pd:0):(per&gt;0?Math.max(minBins,Math.max(0,Math.ceil(vol/per))):0);
   const ov=_binOv[ovKey(rr.id,sec,stream)];
   const n=ov!=null?ov:nCalc;
   const cap=n*per;
@@ -3857,7 +3878,7 @@ function provision(rr,sec,stream,streams){
   }
   return {vol,eq:container,container,plant,chutePlant:!!chutePlant,chuteOverridden:overridden,
           volAfter:pRatio&gt;1?vol/pRatio:null,minBins,sz,cw,per,cRatio,pRatio,
-          nCalc,n,cap,fp,atChute,recv,served:!!served};
+          nCalc,n,cap,fp,atChute,recv,served:!!served,perDwelling:pd!=null,dwellings:pd};
 }
 // ── results rendering: one block per bin room, plus development totals ───────
 function roomStats(rr,streams){
@@ -3970,6 +3991,11 @@ function eqRowHtml(rr,sec,s,p){
     bits.push({icon:'⇣',cls:'wsr-eq-chute',txt:`beneath chute: &lt;b&gt;${p.recv.label}&lt;/b&gt;${share}${min}`,
                m2:p.recv.fp!=null?fmtM2(p.recv.fp):null});
   }
+  if(p.perDwelling&amp;&amp;p.n&gt;0){
+    const perUnit=p.vol/Math.max(1,p.n);
+    bits.push({icon:'🏠',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Kerbside — individual&lt;/span&gt; one ${p.sz}L bin per ${sec==='c'?'tenancy':'dwelling'} · ${p.dwellings} ${sec==='c'?'tenancies':'dwellings'} · each holds ${fmtVol(p.per)}/wk against ${fmtVol(perUnit)}/wk`+
+      (p.per&lt;perUnit?' &lt;b style=&quot;color:#EFB080&quot;&gt;· not enough — pick a larger bin or more frequent collection&lt;/b&gt;':'')});
+  }
   const w=[];
   // A size picked earlier that this method (or council) no longer offers is
   // snapped by defSize — the snap is stated, never silent, and the pick is
@@ -4049,7 +4075,7 @@ function methodLineHtml(rr,sec){
   const hasKerb=!!(sch&amp;&amp;Object.keys(sch).some(k=&gt;k!=='bulk'));
   let src;
   if(COLLECT_METHODS[method].kerb&amp;&amp;hasKerb)src=`bin sizes and frequency from &lt;b&gt;${escAttr(ent.name||council||(g('state').value+' state'))}&lt;/b&gt;’s kerbside service (council database) — change a size or frequency if this development differs`;
-  else if(COLLECT_METHODS[method].kerb&amp;&amp;council&amp;&amp;!hasKerb)src=`no kerbside service recorded for ${escAttr(council)} in the council database (Admin › Council &amp;amp; state database › Kerbside collection service) — library sizes shown`;
+  else if(COLLECT_METHODS[method].kerb&amp;&amp;council&amp;&amp;!hasKerb)src=`no kerbside service recorded for ${escAttr(council)} (value ${escAttr(g('council').value)}) in the council database — Admin › Council &amp;amp; state database › Kerbside collection service; ${COUNCIL_SCHEDULES.length} council${COUNCIL_SCHEDULES.length===1?'':'s'} loaded, ↻ to refresh — library sizes shown`;
   else if(!COLLECT_METHODS[method].kerb)src='any size and frequency — bulk and private collection are not tied to the council’s kerbside service'+(BIN_LIB.length?'':' (built-in sizes: equipment library not reached)');
   else if(BIN_LIB.length)src='sizes from the equipment library';
   else src='built-in sizes (equipment library not reached)';
@@ -11021,6 +11047,8 @@ async function rdbSaveMeta() {
     if (error) throw error;
     RDB.dirtyMeta = false;
     rdbMsg('✓ Info saved. Publish to push live.');
+    // the kerbside service reaches the calculator directly — no publish step
+    if (typeof wpRefreshCouncilSchedules === 'function') wpRefreshCouncilSchedules();
     return true;
   } catch(err) { rdbMsg('Info save failed: ' + (err.message || err), false); return false; }
 }
@@ -16677,6 +16705,9 @@ window.addEventListener('message', (e) => {
 // Handshake: calculator announces readiness, we reply with the project dev summary
 window.addEventListener('message', (e) => {
   if (e.data && e.data.type === 'ws-calc-ready') { wsPushSummaryToCalc(); wsPushEquipToCalc(); }
+  // the calculator's ↻: the library and the council schedules come from the
+  // platform, so a refresh has to come through here
+  if (e.data && e.data.type === 'ws-calc-refresh' && typeof wsLoadEquipmentDB === 'function') wsLoadEquipmentDB();
   if (e.data && e.data.type === 'ws-ai-extract') wsRunAiExtract();
 });
 
@@ -17525,8 +17556,16 @@ async function wpLoadCouncilSchedules() {
     if (!schedule) return null;
     const label = r.council_value ? labelOf(r.state, r.council_value) : null;
     return { state: r.state || null, value: r.council_value || null, name: label,
-             key: label ? glBridgeNorm(label) : null, schedule };
+             key: label ? glBridgeNorm(label) : null,
+             valueKey: r.council_value ? glBridgeNorm(String(r.council_value).replace(/_/g, ' ')) : null,
+             schedule };
   }).filter(Boolean);
+}
+// Re-read the council schedules (after an admin save, or the calculator's ↻)
+// and push them, with the library, to the calculator.
+async function wpRefreshCouncilSchedules() {
+  try { await wpLoadCouncilSchedules(); } catch (e) { console.warn('council schedules refresh failed', e?.message || e); }
+  if (typeof wsPushEquipToCalc === 'function') wsPushEquipToCalc();
 }
 function wsLayoutBinList() {
   const db = (WS_EQUIP_DB || []).filter(x => x.kind === 'bin' && x.placeable !== false);

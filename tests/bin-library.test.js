@@ -98,7 +98,7 @@ function loadCalc({ rooms = [], councilLabel = '', councilValue = '', state = 'N
   const blocks = [
     /^const ALLOWED_SIZES=/, /^const LIB_STREAM_KEY=/, /^let BIN_LIB=/,
     /^const COLLECT_METHODS=\{/, /^const DEFAULT_METHOD=/, /^function normMethod\(/,
-    /^function defaultMethod\(/, /^function methodOf\(/,
+    /^function defaultMethod\(/, /^function methodOf\(/, /^const DWELL=/, /^function roomDwellings\(/, /^function perDwellingUnits\(/,
     /^let COUNCIL_SCHEDULES=/, /^function councilKey\(/, /^function activeCouncilLabel\(/,
     /^function activeScheduleEntry\(/, /^function activeSchedule\(/, /^function scheduleFor\(/, /^function cycleCw\(/,
     /^const BIN_EQUIPMENT=/, /^function binFP\(/, /^function rebuildBinLib\(/,
@@ -111,11 +111,12 @@ function loadCalc({ rooms = [], councilLabel = '', councilValue = '', state = 'N
   const g = id => id === 'council'
     ? { value: councilValue, selectedIndex: 0, options: [{ text: councilLabel }] }
     : id === 'state' ? { value: state } : { value: '' };
+  rooms.forEach(r => { if (!r.com) r.com = []; });
   const factory = new Function('ROOMS', 'g', code + `
-    ;return { COLLECT_METHODS, normMethod, defaultMethod, methodOf, rebuildBinLib, binSizesRaw, binSizesFor, binFP,
+    ;return { COLLECT_METHODS, normMethod, defaultMethod, methodOf, perDwellingUnits, rebuildBinLib, binSizesRaw, binSizesFor, binFP,
               defSize, defCw, normCw, cwLabel, cycleFor, activeSchedule, scheduleFor, ALLOWED_SIZES,
               setLib: rows => rebuildBinLib(rows), setSchedules: s => { COUNCIL_SCHEDULES = s; },
-              setSz: (k, v) => { _szOv[k] = v; }, setCw: (k, v) => { _cwOv[k] = v; }, lib: () => BIN_LIB };`);
+              setSz: (k, v) => { _szOv[k] = v; }, setCw: (k, v) => { _cwOv[k] = v; }, lib: () => BIN_LIB, rooms: ROOMS };`);
   return factory(rooms, g);
 }
 const LIB = [
@@ -169,6 +170,34 @@ test('collection method: kerbside tops out at 360L and offers no plant; bulk off
   assert.deepStrictEqual(c.normMethod({ r: 'kerbside_individual', c: 'nonsense' }), { r: 'kerbside_individual', c: null });
   assert.ok(c.COLLECT_METHODS.kerbside_individual.kerb && c.COLLECT_METHODS.kerbside_shared.kerb && !c.COLLECT_METHODS.bulk.kerb && !c.COLLECT_METHODS.self_haul.kerb,
     'only kerbside methods present bins at the frontage');
+});
+
+test('kerbside individual is one bin per dwelling; shared kerbside and bulk size from volume', () => {
+  const c = loadCalc({ rooms: [
+    room('R1', { townhouse: 6 }),                                   // defaults to kerbside individual
+    room('R2', { apt_2br: 20 }, { r: 'kerbside_shared', c: null }),
+    room('R3', { apt_1br: 3, apt_3br: 2 }, { r: 'kerbside_individual', c: 'kerbside_individual' }),
+  ] });
+  c.rooms[2].com = [{ use: 'cafe', value: 120 }, { use: 'office', value: 0 }, { use: 'shop', value: 40 }];
+  assert.equal(c.perDwellingUnits('R1', 'r'), 6, 'six townhouses → six bins per stream');
+  assert.equal(c.perDwellingUnits('R2', 'r'), null, 'shared kerbside sizes from volume as normal');
+  assert.equal(c.perDwellingUnits('R3', 'r'), 5, 'every dwelling type counts');
+  assert.equal(c.perDwellingUnits('R3', 'c'), 2, 'commercial: one set per tenancy with a size');
+  assert.equal(c.perDwellingUnits('nope', 'r'), null);
+  // provision() and getBinCount() both take the rule, so the table, the payload and the layout agree
+  const prov = extractSrcdocBlock('calc-iframe', /^function provision\(/).text;
+  assert.ok(prov.includes('const pd=perDwellingUnits(rr.id,sec);') && prov.includes('pd!=null?(vol>0?pd:0)'), 'provision counts dwellings under kerbside individual');
+  assert.ok(extractSrcdocBlock('calc-iframe', /^function getBinCount\(/).text.includes('perDwellingUnits(room,sec)'), 'the results builder agrees');
+  assert.ok(decodeSrcdoc('calc-iframe').html.includes('not enough — pick a larger bin or more frequent collection'), 'a per-dwelling bin that cannot hold its share is flagged');
+});
+
+test('the council service reaches the calculator without a publish, and ↻ refreshes it', () => {
+  assert.ok(SOURCE.includes("if (typeof wpRefreshCouncilSchedules === 'function') wpRefreshCouncilSchedules();"), 'saving the grid pushes straight to the calculator');
+  assert.ok(SOURCE.includes("e.data.type === 'ws-calc-refresh'"), 'the calculator can ask the platform to re-read library + schedules');
+  assert.ok(decodeSrcdoc('calc-iframe').html.includes("postMessage({type:'ws-calc-refresh'},'*')"), '↻ asks');
+  const load = extractBlock(/^async function wpLoadCouncilSchedules\(\)/).text;
+  assert.ok(load.includes("valueKey: r.council_value ? glBridgeNorm(String(r.council_value).replace(/_/g, ' ')) : null"), 'the registry value also matches read as a name');
+  assert.ok(decodeSrcdoc('calc-iframe').html.includes("loaded, ↻ to refresh"), 'a miss says how many services are loaded, so a stale or empty load is visible');
 });
 
 test('defaults snap onto what is offered, and say so through the pick they keep', () => {
