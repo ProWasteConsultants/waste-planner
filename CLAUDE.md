@@ -276,6 +276,14 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   council's WHOLE list — every live row across every version, plus manual
   rows — onto the serving guideline version's `requirements` JSONB after
   every change (extract, add, edit, remove). No Serve button.
+- **Extraction continues past the length cap.** A council rate table can
+  run to 100+ rows, well past one reply's cap — a single pass silently lost
+  everything after the cut. `crqExtract` now loops (at most six passes):
+  each continuation is told which clause/use/stream combinations are already
+  captured and returns only what is missing; rows repeated across passes are
+  dropped by key, a pass that adds nothing ends the loop, and a failed
+  continuation keeps what was read and says so. The status line reports the
+  pass count and whether anything may still be missing.
 - **Generation rates go straight into the rate tables.** A
   `generation_rate` row is a rate, not a clause to list: `crqExtract` hands
   them to `crqWriteRates`, which maps each onto a `res_rates` row (dwelling
@@ -285,7 +293,10 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   100 m²) and INSERTs the ones the table does not already hold — never an
   upsert, so an existing rate is never overwritten. Anything that would need
   a guess (no dwelling type, an unknown use, a unit with no formula) is
-  reported with the reason and typed in by hand. No list, no diff, no
+  reported with the reason and typed in by hand — or resolved in the rates
+  report itself, whose picker can also CREATE a commercial use
+  (`crqUseCode` derives the code, the row is inserted into `com_uses` and
+  appears at once in the commercial table's picker). No list, no diff, no
   approve button: edit them in the tables, then ⬆ Publish to live. The
   clause still serves the checker's citations via `crqSyncServe`; the
   Requirements list never shows it (`CRQ_RATE_TYPES`, `crqIsRate`). Not

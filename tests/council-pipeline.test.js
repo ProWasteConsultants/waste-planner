@@ -417,14 +417,36 @@ test('wsParseExtractionRows: clean parse, salvage, or an error that names the ca
     /length cap/, 'an unsalvageable capped reply names the cap, not just the parse error');
 });
 
-test('the one extraction call carries the raised cap and reports truncation to the admin', () => {
-  // cgExtract (the upload-row extractor) is gone — crqExtract on the Library
-  // row is the one extract action on the page, so one call carries the cap
+test('extraction CONTINUES past the length cap — a 100-row rate table is read in full', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
   assert.equal((SOURCE.match(/max_tokens: 16000,/g) || []).length, 1, 'crqExtract carries the raised cap');
   assert.ok(!SOURCE.includes('max_tokens: 8192'), 'no extraction is left on the old cap');
-  assert.ok(SOURCE.includes("wsParseExtractionRows(resp, 'rows')"), 'the queue extraction parses through the salvage path');
-  const warns = SOURCE.match(/he reply hit the length cap — complete rows were recovered/g) || [];
-  assert.ok(warns.length >= 1, 'truncation is reported, never silent');
+  assert.ok(fn.includes("for (let pass = 0; pass < 6; pass++)"), 'a capped reply is continued, with a safety limit');
+  assert.ok(fn.includes('do not repeat any of these clause/use/stream combinations'),
+    'each continuation is told what has already been captured');
+  assert.ok(fn.includes('if (seen.has(k)) return; seen.add(k);'), 'rows repeated across passes are dropped, never double-inserted');
+  assert.ok(fn.includes('if (!capped || !fresh) break;'), 'it stops when done, or when a pass adds nothing');
+  assert.ok(fn.includes("catch (e) { if (!pass) throw e; truncated = true; break; }"),
+    'a failed continuation keeps what was read and reports it, rather than losing the run');
+  assert.ok(fn.includes("wsParseExtractionRows(resp, 'rows')"), 'every pass parses through the salvage path');
+  assert.ok(fn.includes('still hit the length cap after ') && fn.includes('read in ${passes} passes'),
+    'the outcome says how many passes ran, and whether anything may still be missing');
+});
+
+test('an unplaced rate can be given a NEW commercial use from the report', () => {
+  const { loadEngine } = require('./extract.js');
+  const w = loadEngine({ blocks: [['crqUseCode', /^function crqUseCode\(/]] });
+  assert.equal(w.crqUseCode('Café / restaurant'), 'cafe_restaurant', 'accents and punctuation collapse into the existing code shape');
+  assert.equal(w.crqUseCode('Domestic hardware and houseware'), 'domestic_hardware_and_houseware');
+  assert.equal(w.crqUseCode('  ???  '), '', 'a name with nothing to key on yields no code — refused, never guessed');
+  const fix = SOURCE.slice(SOURCE.indexOf('async function crqPlaceFixed(rowId)'), SOURCE.indexOf('// Place the rates already extracted'));
+  assert.ok(fix.includes("if (useSel.value === '__new')"), 'the picker offers a new use');
+  assert.ok(fix.includes("await sb.from('com_uses').insert({ use_code: code, label })"), 'which is created in com_uses');
+  assert.ok(fix.includes("if (uErr && !/duplicate|unique/i.test(uErr.message))"), 'a name that already exists is reused, not an error');
+  assert.ok(fix.includes("RDB.uses.push({ use_code: code, label })") && fix.includes("rdb-com-new-use"),
+    'and appears at once in the commercial table’s own use picker');
+  assert.ok(SOURCE.includes("<option value=\"__new\">+ new use…</option>") && SOURCE.includes('function crqFixUseChanged(rowId)'),
+    'the option and its name field are wired in the report');
 });
 
 // ── admin page consolidation: one scope, one extract, one-click publish ──
