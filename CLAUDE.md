@@ -338,6 +338,42 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   Requirements list never shows it (`CRQ_RATE_TYPES`, `crqIsRate`). Not
   built: version-to-version diffing.
 
+### Two guardrails on rate extraction (2026-09-14)
+
+Both are **refusals**, both are tested in `tests/council-pipeline.test.js`,
+and neither is a UI preference to be traded away for convenience. They exist
+because a wrong rate on an issued drawing reads as the council's own number.
+
+**1 — A combined figure is never force-fit into GW/REC.** Where a guideline
+states ONE figure covering garbage and recycling together (Northern Beaches
+has seven: Automotive 3350, Camera shop 130, Domestic appliance 50, Domestic
+hardware 40, Fabric 40, Florist 1170, Newsagent 80), that figure is neither a
+garbage rate nor a recycling rate. `crqRateToTable` **refuses** it and never
+divides, apportions or assigns it to one stream; the rates report **holds**
+it in its own section (`crqIsCombined`, pure), shows the council's figure
+verbatim, and says the rate tables have no combined type yet — a pending
+schema decision, surfaced rather than worked around. Nothing is written for
+a held row until that type lands. `crqPlaceSplit` survives only as an
+explicit disclosure ("record a split myself") that requires both halves,
+states on screen that the numbers are the user's and not the council's, and
+records the split on the row as a human act (`source: 'manual'`, same
+clause). Inventing a split deliberately would be worse than the accidental
+80-instead-of-50 bleed that prompted these rules.
+
+**2 — The use taxonomy never grows on its own.** Exactly ONE place in the
+app inserts into `com_uses`: the rates report's "+ new use…" action inside
+`crqPlaceFixed`, reached by opening the picker, choosing it, typing the name
+and pressing Place. `crqWriteRates` only reads the uses list and `crqExtract`
+never touches the table at all. A premises the table does not carry surfaces
+as **not placed**, with the council's own use, stream and figure intact and
+the create-a-use action on the row — visible and ready, waiting on a human
+to decide what becomes an official use. Same manual-first rule as the
+requirements list.
+
+Not decided by these guardrails, and deliberately left open: how a
+combined-rate type is structured in the data model and the calculator, and
+the final shape of the not-placed review state.
+
 Matching is by registry value first, then normalised council name —
 `glBridgeNorm` (parent) and `councilKey` (calculator) must stay identical; a
 test compares them.

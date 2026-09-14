@@ -12313,6 +12313,9 @@ function crqRateToTable(r, ctx) {
   if (!ctx || !ctx.state) return no('the document has no state recorded');
   if (!ctx.councilValue) return no('the council is not in the councils list — add it in Scope first');
   const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
+  // GUARDRAIL 1: a combined figure is REFUSED here and never divided,
+  // apportioned, or assigned to one stream on the engine's own initiative.
+  // A fabricated split reads as the council's number on an issued drawing.
   if (!streamKey) return no(/combined/i.test(String(r.value_text || '') + ' ' + String(r.unit || ''))
     ? 'one figure covers garbage and recycling together — the split is a judgement call, so enter it by hand (or pick one stream below)'
     : 'no stream — pick the stream below');
@@ -12441,6 +12444,14 @@ async function crqWriteRates(rateRows, doc) {
   Object.keys(clash).forEach(k => out.clashes.push({ cell: k.split('|').slice(1).join(' · '), kept: first[k], also: [...new Set(clash[k])] }));
   return out;
 }
+// GUARDRAIL 1: a row the council states as ONE combined garbage+recycling
+// figure. It is neither a garbage rate nor a recycling rate, so it is never
+// written into either column — not by the engine, and not by a UI that
+// invites a guess. Pure; the single definition both the report and its
+// tests key on.
+function crqIsCombined(u) {
+  return /one figure covers garbage and recycling together/.test(String((u && u.why) || ''));
+}
 // What happened to the guideline's generation rates — shown IN the rates
 // section, where the rows land, and kept until the next extraction or pull.
 function crqRatesReport(rr) {
@@ -12453,18 +12464,23 @@ function crqRatesReport(rr) {
   const total = rr.added.length + rr.kept.length + rr.unplaced.length;
   if (!total) { el.innerHTML = li('The guideline has no generation-rate rows extracted yet — 🧾 Extract to list on its document (Council documents section) reads them.', 'var(--muted)'); return; }
   const uses = rr.uses || RDB.uses || [];
+  // GUARDRAIL 1 — a combined figure is never force-fit into the GW/REC
+  // columns. It is HELD, shown with the council's own figure, and waits for
+  // a combined-rate type in the rate tables. Any split is the user's own
+  // number, so it lives behind an explicit disclosure and says whose it is.
+  const held = rr.unplaced.filter(crqIsCombined), rest = rr.unplaced.filter(u => !crqIsCombined(u));
+  const splitOverride = u => {
+    const sel0 = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:2px 4px;font-size:10.5px;color:var(--text);font-family:inherit;';
+    return `<details style="display:inline;"><summary style="display:inline;cursor:pointer;color:var(--muted);font-size:10.5px;"> record a split myself</summary>
+      <span style="display:inline-flex;gap:4px;align-items:center;margin-left:6px;">GW
+        <input id="crq-split-gw-${u.r.id}" type="number" step="any" style="${sel0}width:64px;">
+        REC <input id="crq-split-rec-${u.r.id}" type="number" step="any" style="${sel0}width:64px;">
+        <button class="btn" style="padding:1px 7px;font-size:10px;" title="These two numbers are YOURS, not the council's. The guideline gives one combined figure; the split is recorded on the row as your decision." onclick="crqPlaceSplit('${u.r.id}')">Record</button>
+        <i style="color:var(--muted);">your numbers, not the council's — recorded as such</i></span></details>`;
+  };
   const fix = u => {
     const needUse = /pick the use below/.test(u.why), needStream = /pick the stream below/.test(u.why);
-    const sel0 = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:2px 4px;font-size:10.5px;color:var(--text);font-family:inherit;';
-    // ONE figure for garbage + recycling: the council did not split it, so
-    // neither do we — the split is typed here and both halves are written.
-    if (/one figure covers garbage and recycling together/.test(u.why)) {
-      const v = (u.r.value_num === 0 || u.r.value_num) ? u.r.value_num : '';
-      return ` <span style="display:inline-flex;gap:4px;align-items:center;">split: GW
-        <input id="crq-split-gw-${u.r.id}" type="number" step="any" value="${v}" style="${sel0}width:64px;">
-        REC <input id="crq-split-rec-${u.r.id}" type="number" step="any" value="0" style="${sel0}width:64px;">
-        <button class="btn" style="padding:1px 7px;font-size:10px;" title="Write both halves. The council gives one figure for both streams — these two values are yours." onclick="crqPlaceSplit('${u.r.id}')">Place both</button></span>`;
-    }
+    if (crqIsCombined(u)) return '';                      // held — rendered in its own section below
     if (!needUse && !needStream) return '';
     const sel = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:2px 4px;font-size:10.5px;color:var(--text);font-family:inherit;';
     return ' <span style="display:inline-flex;gap:4px;align-items:center;">' +
@@ -12478,7 +12494,11 @@ function crqRatesReport(rr) {
     rr.added.map(a => li('✓ added · ' + cgbEsc(cell(a)) + ' <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', '#3DD68C')).join('') +
     rr.kept.map(a => li('· kept · ' + cgbEsc(cell(a)) + ' — the table already has a rate for this cell <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', 'var(--muted)')).join('') +
     (rr.clashes || []).map(c => li('⚠ two premises want the same cell (' + cgbEsc(c.cell) + ') — kept <b>' + cgbEsc(c.kept) + '</b>, also claimed by ' + cgbEsc(c.also.join(', ')) + '. Check which is right.', '#FFB74D')).join('') +
-    rr.unplaced.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + (u.r.value_text ? ' <i style="color:var(--muted);">' + cgbEsc(String(u.r.value_text).slice(0, 90)) + '</i>' : '') + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + fix(u), '#FFB74D')).join('') +
+    held.map(u => li('⏸ held · ' + cgbEsc([u.r.use_class, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) +
+      ' — the council states ONE combined garbage + recycling figure. The rate tables have no combined type, so this is held rather than split.' +
+      ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + splitOverride(u), '#9FB4FF')).join('') +
+    (held.length ? li('⏸ ' + held.length + ' combined figure' + (held.length === 1 ? '' : 's') + ' held. A combined rate is not a garbage rate and not a recycling rate — representing one needs a combined-rate type in the rate tables, which is a pending decision. Nothing is written for these until it lands.', 'var(--muted)') : '') +
+    rest.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + (u.r.value_text ? ' <i style="color:var(--muted);">' + cgbEsc(String(u.r.value_text).slice(0, 90)) + '</i>' : '') + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + fix(u), '#FFB74D')).join('') +
     (rr.added.length ? li('⬆ Publish to live pushes the added rates to the calculator.', 'var(--muted)') : '') +
     '</div>';
 }
@@ -12534,6 +12554,11 @@ async function crqPlaceFixed(rowId) {
       if (!code) { rdbMsg('That name has no letters or digits to make a code from.', false); return; }
       const dup = (RDB.uses || []).find(x => x.use_code === code);
       if (!dup) {
+        // GUARDRAIL 2: the ONLY place a commercial use is created, and it
+        // takes four deliberate acts — open the picker, choose "+ new use…",
+        // type the name, press Place. Extraction and crqWriteRates never
+        // create one: what counts as an official use is a human's call, not
+        // a taxonomy the extractor grows on its own.
         const { error: uErr } = await sb.from('com_uses').insert({ use_code: code, label });
         if (uErr && !/duplicate|unique/i.test(uErr.message)) { rdbMsg('Could not add the use: ' + uErr.message, false); return; }
         RDB.uses.push({ use_code: code, label });
