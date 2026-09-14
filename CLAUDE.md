@@ -243,6 +243,45 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    services. `sql/2026-09-14-kerbside-service-read.sql` lets every signed-in
    user read that one `waste_meta` row (officer contacts stay closed).
 
+## Council requirements list (C3, revised 2026-09-15)
+
+The "Requirements review queue" is gone. Each council has ONE persistent,
+always-editable **Requirements list**, and the list IS the live data — there
+is no approved state to graduate into. In `council_requirements`,
+`status = 'approved'` now means *in the list* (the anon/authenticated read
+policy keys on it, so every consumer is unchanged), `'rejected'` means
+*removed* (kept for audit, never served), and `'proposed'` is retired
+(`sql/2026-09-15-requirements-list.sql` promotes any old queue rows and adds
+`source` = `extraction` | `manual`). Rules, all tested in
+`tests/council-pipeline.test.js`:
+
+- **Extraction is append-only.** `crqExtract` only ever INSERTs rows pinned
+  to the document version it read; it never updates or deletes an existing
+  row — an earlier run's rows, an older version's rows and hand-typed rows
+  all survive every re-run and every new upload. A row whose stream cannot be
+  resolved joins the list with the stream blank and the wording noted, and
+  the list flags it ("⚠ stream to set") — never guessed, never dropped.
+- **Duplicates are flagged, never merged.** `crqDupFlags` (pure) marks the
+  NEWER of two rows of the same type and stream as a possible duplicate when
+  they share a figure (value + unit + use class), the same clause across
+  document versions, or mostly the same wording. Two facts under one clause
+  in the same document are not duplicates. Removal is always a human act.
+- **Add / inline edit / remove need no approval.** `crqAdd` inserts a live
+  `source: 'manual'` row pinned to the council's serving document (a council
+  with no document cannot hold rows — the FK is the data model, and the
+  panel says so); `crqSave` saves a field as it is left; `crqRemove` soft
+  deletes to `'rejected'`. Every row keeps a source: the clause, or where it
+  came from.
+- **Serving is automatic.** `crqSyncServe(councilKey, name)` projects the
+  council's WHOLE list — every live row across every version, plus manual
+  rows — onto the serving guideline version's `requirements` JSONB after
+  every change (extract, add, edit, remove). No Serve button.
+- **Rates follow the same rule in their own place.** Generation-rate rows
+  stay in the list; **⬆ Rates from the list → Rates DB** (`crxExport` →
+  `crxApplyAllAndPublish`) writes only `new` rows in one click — an existing
+  rate is never overwritten by the bulk path; a `changed` row is applied per
+  row, deliberately. Not built: version-to-version diffing.
+
 Matching is by registry value first, then normalised council name —
 `glBridgeNorm` (parent) and `councilKey` (calculator) must stay identical; a
 test compares them.
