@@ -2119,16 +2119,17 @@ body.wp-anon .ws-top-chip{display:none;}
               <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;line-height:1.5;">Place items on the plan near the kerb — anything close to the line blocks its stretch of kerb. Corner sightlines: draw a <b>Sight splay</b> zone from the Layout tab's Zones palette over the corner.</div>
             </div>
             <div class="wsl-group">
-              <div class="wsl-group-hd">3 · Collection weeks</div>
+              <div class="wsl-group-hd">3 · Bins on collection day</div>
               <div id="ws-collect-sched"></div>
               <div id="ws-collect-scen" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;"></div>
+              <div id="ws-collect-set" style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;"></div>
               <div style="font-size:10px;color:#FFD740;margin-top:4px;line-height:1.5;" id="ws-collect-sched-note"></div>
             </div>
             <div class="wsl-group">
               <div class="wsl-group-hd">4 · Does it fit?</div>
               <div id="ws-collect-verdict"></div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-                <button class="wsl-btn" onclick="wsCollectAreaMode()" title="Draw the bulk collection point / presentation area (front-lift or private contractor). Every bin on a bulk or self-haul method is packed into it — all streams at once, since a bulk service does not alternate weeks.">▱ Draw collection point area</button>
+                <button class="wsl-btn" onclick="wsCollectAreaMode()" title="Draw the bulk collection point / presentation area (front-lift or private contractor). Every bin on a bulk collection point or private shared bin collection method is packed into it — all streams at once, since neither service alternates weeks.">▱ Draw collection point area</button>
               </div>
               <div id="ws-collect-bulk" style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:6px;"></div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:6px;font-size:10px;color:rgba(255,255,255,0.5);">
@@ -2136,7 +2137,7 @@ body.wp-anon .ws-top-chip{display:none;}
                 <label>Gap between bins mm<input type="number" id="ws-collect-gap" min="0" step="10" class="wsl-sel" style="width:100%;margin-top:2px;" onchange="wsCollectSettingChanged()"></label>
               </div>
             </div>
-            <div style="margin-top:auto;padding:4px 2px;font-size:11px;color:rgba(255,255,255,0.55);line-height:1.5;" id="ws-collect-status">Trace the kerb where bins go out on collection day, add anything in the way, and the busiest week is checked automatically.</div>
+            <div style="margin-top:auto;padding:4px 2px;font-size:11px;color:rgba(255,255,255,0.55);line-height:1.5;" id="ws-collect-status">The bins come from the Bin Calculator. Kerbside rooms: trace the kerb and the busiest collection week is checked against it. Bulk collection point / private shared bin collection rooms: draw the collection point area and every bin is packed into it.</div>
           </div>
 
           <!-- SWEPT PATH TAB — sectioned like the layout tab: vehicle (with a
@@ -2498,7 +2499,7 @@ const COLLECT_METHODS={
   kerbside_individual:{label:'Kerbside — individual bins',maxL:360,equipment:false,kerb:true},
   kerbside_shared:{label:'Kerbside — shared / communal bins',maxL:360,equipment:false,kerb:true},
   bulk:{label:'Bulk bin collection point (front / rear-lift)',maxL:null,equipment:true,kerb:false},
-  self_haul:{label:'Self-haul / private transfer',maxL:null,equipment:true,kerb:false},
+  self_haul:{label:'Private shared bin collection',maxL:null,equipment:true,kerb:false},
 };
 const DEFAULT_METHOD='bulk';
 function normMethod(m){
@@ -3951,7 +3952,7 @@ function eqRowHtml(rr,sec,s,p){
     if(sch.sizeL&amp;&amp;bs.councilSizes.indexOf(p.sz)&lt;0&amp;&amp;!p.container)off.push('size');
     if(cycleCw(sch.cycle)&amp;&amp;cycleCw(sch.cycle)!==p.cw)off.push('frequency');
     bits.push({icon:'🏛',cls:'wsr-eq-council',txt:`&lt;span class=&quot;wsr-eq-meta&quot;&gt;Council kerbside service&lt;/span&gt; ${parts.join(' · ')}`+
-      (sch.cycle==='OFF'?' &lt;b style=&quot;color:#EFB080&quot;&gt;· this council does not collect this stream at the kerb — private collection or self-haul&lt;/b&gt;':'')+
+      (sch.cycle==='OFF'?' &lt;b style=&quot;color:#EFB080&quot;&gt;· this council does not collect this stream at the kerb — bulk collection point or private shared bin collection&lt;/b&gt;':'')+
       (off.length?` &lt;b style=&quot;color:#EFB080&quot;&gt;· differs from the council service (${off.join(', ')})&lt;/b&gt;`:'')});
   }else if(bs.bulkCap&amp;&amp;(bs.bulkCap.maxL||bs.bulkCap.maxPerWeek)){
     const b=bs.bulkCap,parts=[];
@@ -11086,7 +11087,8 @@ async function rdbViewTable() {
 // ── ADMIN: Equipment & Contractors editors ─────────────────────────────────
 // The collection-method vocabulary shared by the equipment library, the bin
 // calculator (its COLLECT_METHODS table) and the Collection Point tab.
-// Kerbside methods present bins at the kerb; bulk and self-haul do not.
+// Kerbside methods present bins at the kerb; a bulk collection point and a
+// private shared bin collection (id self_haul, its original name) do not.
 const WP_COLLECT_METHOD_IDS = ['kerbside_individual', 'kerbside_shared', 'bulk', 'self_haul'];
 function wpParseMethods(v) {
   // Admin types a comma list; the column stores text[]. Synonyms collapse
@@ -11102,7 +11104,8 @@ function wpParseMethods(v) {
     if (s === 'individual') return push('kerbside_individual');
     if (s === 'shared' || s === 'communal' || s === 'kerbside_communal') return push('kerbside_shared');
     if (s === 'front_lift' || s === 'rear_lift' || s === 'collection_point' || s === 'bulk_bin') return push('bulk');
-    if (s === 'self' || s === 'selfhaul' || s === 'private') return push('self_haul');
+    if (s === 'self' || s === 'selfhaul' || s === 'private' || s === 'private_shared' || s === 'private_shared_bin' ||
+        s === 'private_shared_bin_collection' || s === 'private_collection' || s === 'shared_private') return push('self_haul');
     push(s);
   });
   return out;
@@ -16666,6 +16669,7 @@ function wsShowTab(name, btn) {
     if (sweptOverlay) sweptOverlay.style.display = 'none';   // native tool — draws on the plan
     const eb3 = document.getElementById('ws-export-btn');
     if (eb3) eb3.style.display = '';                          // the kerb diagram exports on the sheet
+    if (WS_EQUIP_DB === null) wsLoadEquipmentDB();            // bin footprints come from the library
     if (typeof wsCollectPanelRefresh === 'function') wsCollectPanelRefresh();
     if (typeof wsRenderLayoutLayer === 'function') wsRenderLayoutLayer();
   } else {
@@ -17460,6 +17464,10 @@ async function wsLoadEquipmentDB() {
     if (mapped || legacy) console.info('layout equipment migration:', mapped, 'mapped,', legacy, 'kept as legacy');
   } catch (e) { console.warn('equipment migration skipped', e); }
   wsLayoutPopulateBins();
+  if (typeof _wsPanelTab !== 'undefined' && _wsPanelTab === 'collect' && typeof wsCollectPanelRefresh === 'function') {
+    wsCollectPanelRefresh();
+    if (typeof wsRenderLayoutLayer === 'function') wsRenderLayoutLayer();
+  }
 }
 function wsPushEquipToCalc() {
   const f = document.getElementById('ws-calc-iframe');
@@ -19400,9 +19408,32 @@ function wsCollectBins(targets, streams, types) {
       }, builtin[0]);
     }
     if (!bt || !(bt.w > 0) || !(bt.d > 0)) return;
-    for (let i = 0; i < (t.qty || 0); i++) out.push({ stream: t.stream, typeId: t.typeId, wM: bt.w, dM: bt.d, label: bt.label });
+    // The label is the SIZE the calculator scheduled; the footprint is the
+    // record's. When the two disagree (a 140L record with no W×D placed as
+    // the nearest 120L) the summary says so instead of quietly relabelling.
+    const cap = bt.capacityL > 0 ? bt.capacityL : (parseInt(bt.label, 10) || 0);
+    const sizeL = t.sizeL > 0 ? t.sizeL : cap;
+    const fpAssumed = sizeL > 0 && cap > 0 && cap !== sizeL;
+    for (let i = 0; i < (t.qty || 0); i++) out.push({ stream: t.stream, typeId: t.typeId, wM: bt.w, dM: bt.d,
+      label: sizeL > 0 ? sizeL + 'L' : bt.label, sizeL, fpFrom: bt.label, fpAssumed });
   });
   return out;
+}
+// The bin set as a schedule: one line per stream and size, in stream order,
+// with the count. Pure — the panel, the report numbers and the bulk list all
+// read the same grouping, so "20 × 140L garbage" is the same figure everywhere.
+function wsCollectBinSummary(bins) {
+  const order = (typeof WS_STREAMS !== 'undefined' ? WS_STREAMS : []).map(s => s.id);
+  const by = {};
+  (bins || []).forEach(b => {
+    const k = b.stream + '|' + b.label;
+    by[k] = by[k] || { stream: b.stream, label: b.label, typeId: b.typeId, n: 0, fpFrom: b.fpFrom || null, fpAssumed: !!b.fpAssumed };
+    by[k].n++;
+  });
+  return Object.values(by).sort((a, b) => {
+    const ia = order.indexOf(a.stream), ib = order.indexOf(b.stream);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || String(a.label).localeCompare(String(b.label), undefined, { numeric: true });
+  });
 }
 
 // ── kerb polyline, parameterised by arc length (px) ──
@@ -19554,6 +19585,21 @@ function wsCollectSlot() {
   return s.collect;
 }
 function wsCollectMsg(t) { const el = document.getElementById('ws-collect-status'); if (el) el.textContent = t; }
+// One line per stream and size — "20 × 140L Garbage" — for the kerb set and
+// the bulk set alike. A footprint borrowed from another record (the size's
+// own record has no W×D) is named, with the fix, rather than drawn silently.
+function wsCollectSetHtml(bins, note) {
+  const rows = wsCollectBinSummary(bins);
+  if (!rows.length) return '';
+  const assumed = rows.filter(r => r.fpAssumed);
+  return `<div style="margin-top:4px;">` + rows.map(r => {
+    const stc = WS_STREAMS.find(x => x.id === r.stream) || {};
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:11px;line-height:1.5;">
+      <span style="width:9px;height:9px;border-radius:50%;background:${stc.col || '#888'};flex:0 0 auto;"></span>
+      <span><b>${r.n}</b> × ${cgbEsc(r.label)} ${cgbEsc(stc.label || r.stream)}</span></div>`;
+  }).join('') + (note ? `<div style="font-size:10px;color:rgba(255,255,255,0.4);">${note}</div>` : '') +
+  (assumed.length ? `<div style="font-size:10px;color:#FFD740;line-height:1.45;margin-top:2px;">⚠ ${assumed.map(r => `${cgbEsc(r.label)} drawn with the footprint of the ${cgbEsc(r.fpFrom)}`).join('; ')} — add width × depth to that size's equipment record to draw it true.</div>` : '') + `</div>`;
+}
 
 // ── kerb tracing (mode name starts with 'layout' so the shared key guards apply) ──
 function wsCollectKerbMode() {
@@ -19596,7 +19642,8 @@ function wsCollectFlipSide() {
 function wsCollectTargets() {
   if (typeof WS_CALC_TARGETS !== 'undefined' && WS_CALC_TARGETS.length) {
     // Only bins collected AT THE KERB present at the kerb. A bulk collection
-    // point (front-lift in the bin room) or self-haul never lines the
+    // point (front-lift in the bin room) or a private shared bin collection
+    // never lines the
     // frontage — a payload from before methods existed has no method on any
     // target and keeps presenting everything, as it always did.
     const typed = WS_CALC_TARGETS.some(t => t.method);
@@ -19675,8 +19722,12 @@ function wsCollectCompute(slot, mpp) {
   const c = slot.collect;
   if (!mpp) return null;
   const areas = wsCollectAreas(slot, mpp);
-  if (!c || !c.kerbs) { if (!areas.length) return null; }
-  else if (!c.kerbs.length && !areas.length) return null;
+  const tg = wsCollectTargets();
+  // Nothing at all — no kerb, no area, no schedule — is the only null. A
+  // calculator schedule with no kerb yet still computes, so the tab shows
+  // the bin set it will present BEFORE the user traces anything.
+  const nKerb = (c && c.kerbs) ? c.kerbs.length : 0;
+  if (!nKerb && !areas.length && !tg.targets.length && !(tg.bulk || []).length) return null;
   const clearanceM = c && c.clearanceM != null ? c.clearanceM : WS_COLLECT_DEFAULTS.clearanceM;
   const gapM = c && c.gapM != null ? c.gapM : WS_COLLECT_DEFAULTS.gapM;
   const obs = wsCollectObsList(slot, mpp);
@@ -19686,9 +19737,8 @@ function wsCollectCompute(slot, mpp) {
     const L = wsKerbLen(k.pts);
     return { k, L, excl, free: wsIntervalsFree(L, excl) };
   });
-  const tg = wsCollectTargets();
   const streams = [...new Set(tg.targets.map(t => t.stream))];
-  const schedule = wsCollectSchedule(streams, c.schedule, tg.cycles || null);
+  const schedule = wsCollectSchedule(streams, (c && c.schedule) || null, tg.cycles || null);
   const types = (typeof wsLayoutBinList === 'function') ? wsLayoutBinList().concat(WS_BIN_TYPES) : WS_BIN_TYPES;
   const scenarios = wsCollectScenarios(schedule).map(sc => {
     const bins = wsCollectBins(tg.targets, sc.streams, types);
@@ -19730,26 +19780,24 @@ function wsCollectPanelRefresh() {
   const cp = wsCollectCompute(slot, mpp);
   const bulkEl = document.getElementById('ws-collect-bulk');
   if (!cp) {
+    // no kerb, no area AND no schedule — the calculator has not run yet
     wrap.innerHTML = 'No kerb traced yet.';
     const v = document.getElementById('ws-collect-verdict'); if (v) v.innerHTML = '';
     const sc = document.getElementById('ws-collect-scen'); if (sc) sc.innerHTML = '';
-    const sh = document.getElementById('ws-collect-sched'); if (sh) sh.innerHTML = '';
-    if (bulkEl) {
-      const tg = wsCollectTargets();
-      const nb = (tg.bulk || []).reduce((s, t) => s + (t.qty || 0), 0);
-      bulkEl.innerHTML = nb ? `${nb} bin${nb === 1 ? '' : 's'} on a bulk / private collection method — draw the collection point area to check they fit.` : '';
-    }
+    const sh = document.getElementById('ws-collect-sched'); if (sh) sh.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.5);">No bin schedule yet — run the Bin Calculator and its bins arrive here.</div>';
+    const se = document.getElementById('ws-collect-set'); if (se) se.innerHTML = '';
+    if (bulkEl) bulkEl.innerHTML = '';
     return;
   }
   // bulk collection point — every bulk-method bin, all streams at once
   if (bulkEl) {
     const b = cp.bulk;
-    if (b.empty) bulkEl.innerHTML = cp.areas.length ? 'Collection point area drawn — no bins on a bulk / private method in the calculator yet.' : '';
-    else if (!cp.areas.length) bulkEl.innerHTML = `${b.bins.length} bin${b.bins.length === 1 ? '' : 's'} on a bulk / private collection method (${[...new Set(b.bins.map(x => x.stream))].join(', ')}) — draw the collection point area to check they fit.`;
+    if (b.empty) bulkEl.innerHTML = cp.areas.length ? 'Collection point area drawn — no bins on a bulk collection point / private shared bin collection method in the calculator yet.' : '';
+    else if (!cp.areas.length) bulkEl.innerHTML = `<b>${b.bins.length} bin${b.bins.length === 1 ? '' : 's'}</b> on a bulk collection point / private shared bin collection method — draw the collection point area to check they fit.` + wsCollectSetHtml(b.bins, 'all streams at once');
     else bulkEl.innerHTML = `<div style="border:1px solid ${b.ok ? '#4BED12' : '#ED1C24'};border-radius:8px;background:${b.ok ? '#14231a' : '#231414'};padding:7px 9px;line-height:1.5;color:rgba(255,255,255,0.9);">` +
-      (b.ok ? `✅ <b>All ${b.bins.length} bins fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${cp.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Every stream is shown at once — a bulk service does not alternate weeks.`
+      (b.ok ? `✅ <b>All ${b.bins.length} bins fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${cp.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Every stream is shown at once — a bulk collection point or private shared bin collection does not alternate weeks.`
             : `❌ <b>${b.left} of ${b.bins.length} bins do not fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${cp.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Enlarge the area, draw another, or reduce the bulk schedule in the calculator.`) +
-      `</div>`;
+      `</div>` + wsCollectSetHtml(b.bins, 'all streams at once');
   }
   const nameOf = i => 'Kerb ' + String.fromCharCode(65 + i);
   wrap.innerHTML = cp.kerbs.length ? cp.kerbs.map((ki, i) =>
@@ -19793,7 +19841,7 @@ function wsCollectPanelRefresh() {
     const pres = cp.tg.present || null;
     const fromCalc = Object.keys(cyc).length > 0;
     note.textContent = Object.keys(c.schedule || {}).length ? ''
-      : cp.tg.bulkOnly ? 'ℹ Every stream is a bulk collection point or self-haul in the calculator — nothing presents at the kerb. Set a room to a kerbside method to check the frontage.'
+      : cp.tg.bulkOnly ? 'ℹ Every stream is a bulk collection point or private shared bin collection in the calculator — nothing presents at the kerb. Set a room to a kerbside method to check the frontage.'
       : (fromCalc && pres && pres.source === 'council') ? `Collection cadence from ${pres.council || 'the council'}’s schedule (guidelines library, via the calculator). Fortnightly streams take the default A/B weeks — adjust if this council pairs them differently.`
       : fromCalc ? 'Collection cadence from the frequencies entered in the calculator (private contract or manual schedule). Fortnightly streams take the default A/B weeks — adjust above if they alternate differently.'
       : '⚠ Standard alternating pattern assumed — confirm this council’s actual collection weeks and adjust above.';
@@ -19804,13 +19852,27 @@ function wsCollectPanelRefresh() {
       ${sc.label} · ${sc.bins.length} bin${sc.bins.length === 1 ? '' : 's'} · ${sc.assess.reqM.toFixed(1)} m${sc.id === cp.worst.id && cp.scenarios.length > 1 ? ' ★' : ''}
     </button>`).join('') +
     (cp.scenarios.length > 1 ? '<div style="flex-basis:100%;font-size:9.5px;color:rgba(255,255,255,0.4);">★ busiest week — the one the site has to fit</div>' : '');
+  // the bin set that goes out on the design week — pushed from the
+  // calculator, stated per stream so the user can see the schedule it read
+  const setEl = document.getElementById('ws-collect-set');
+  if (setEl) {
+    if (cp.worst.assess.empty) setEl.innerHTML = '';
+    else {
+      const alt = cp.scenarios.length > 1 ? cp.scenarios.find(x => x.id !== cp.worst.id) : null;
+      const same = alt && Math.abs(alt.assess.reqM - cp.worst.assess.reqM) < 0.005;
+      const why = !alt ? '' : `<div style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:3px;line-height:1.45;">${same
+        ? `${cp.worst.label} and ${alt.label} need the same kerb length (${cp.worst.assess.reqM.toFixed(1)} m) — either week sets it`
+        : `${cp.worst.label} is the busier week (${cp.worst.assess.reqM.toFixed(1)} m vs ${alt.assess.reqM.toFixed(1)} m for ${alt.label})`} — the weekly bins plus the larger of the two alternating fortnights set the kerb.</div>`;
+      setEl.innerHTML = `<div style="color:rgba(255,255,255,0.75);">At the kerb on <b>${cp.worst.label}</b>${cp.tg.src ? ` · from ${cp.tg.src}` : ''}:</div>` + wsCollectSetHtml(cp.worst.bins, null) + why;
+    }
+  }
   // the verdict, in plain words, always judged on the busiest week
   const v = document.getElementById('ws-collect-verdict');
   if (v) {
     const a = cp.worst.assess;
     let col = '#4BED12', bg = '#14231a', head;
     if (a.empty) { col = '#3a4747'; bg = '#141c1c'; head = cp.tg.bulkOnly
-      ? 'Nothing presents at the kerb — every stream is collected from a bulk collection point or self-hauled (set in the Bin Calculator). See the collection point area below.'
+      ? 'Nothing presents at the kerb — every stream is collected from a bulk collection point or a private shared bin collection (set in the Bin Calculator). See the collection point area below.'
       : 'No bins to present yet — the check runs once the calculator (or the plan) has bins.'; }
     else if (!cp.kerbs.length) { col = '#FFB74D'; bg = '#231d12'; head = `${cp.worst.bins.length} bin${cp.worst.bins.length === 1 ? '' : 's'} present at the kerb on the busiest week (${cp.worst.label}) — trace the kerb to check the frontage fits them.`; }
     else if (a.ok) head = `✅ <b>It fits.</b> On your busiest collection week (${cp.worst.label}) you need <b>${a.reqM.toFixed(1)} m</b> of kerb and have <b>${a.netM.toFixed(1)} m</b> clear — <b>${(a.netM - a.reqM).toFixed(1)} m</b> to spare.`;
@@ -19821,6 +19883,7 @@ function wsCollectPanelRefresh() {
       ${!a.empty ? `<details style="margin-top:5px;"><summary style="cursor:pointer;font-size:10px;color:rgba(255,255,255,0.5);">Numbers for the report</summary>
         <div style="font-size:10.5px;color:rgba(255,255,255,0.65);margin-top:4px;">
           Design case ${cp.worst.label}: ${cp.worst.streams.join(' + ') || '—'} · ${cp.worst.bins.length} bins · required run ${a.reqM.toFixed(2)} m (${Math.round(cp.gapM * 1000)} mm between bins)
+          <br>${wsCollectBinSummary(cp.worst.bins).map(r => `${r.n} × ${r.label} ${(WS_STREAMS.find(x => x.id === r.stream) || {}).label || r.stream}${r.fpAssumed ? ' (footprint of ' + r.fpFrom + ')' : ''}`).join(' · ')}
           <br>Frontage ${a.grossM.toFixed(2)} m gross · ${a.netM.toFixed(2)} m clear after exclusions (${Math.round(cp.clearanceM * 1000)} mm working clearance each side of obstructions — default values are assumptions, verify against the council’s collection guidelines)
           <br>Bin schedule from ${cp.tg.src || '—'}
           ${cp.kerbs.map((ki, i) => `<br>Kerb ${String.fromCharCode(65 + i)}: ${(ki.L * mpp).toFixed(2)} m gross, ${(ki.free.reduce((x, g) => x + (g.s1 - g.s0), 0) * mpp).toFixed(2)} m clear${ki.excl.length ? ' — blocked by ' + ki.excl.map(e => e.why).join('; ') : ''}`).join('')}
@@ -19864,7 +19927,7 @@ function wsCollectRender(mk, gW, mpp, slot) {
   }
   const cp = wsCollectCompute(slot, mpp);
   if (!cp) return;
-  const side = (slot.collect.side === -1) ? -1 : 1;
+  const side = (slot.collect && slot.collect.side === -1) ? -1 : 1;   // a schedule can exist before any kerb (no collect slot yet)
   cp.kerbs.forEach((ki, i) => {
     const pts = ki.k.pts;
     mk('polyline', { points: pts.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' '),
@@ -19923,7 +19986,7 @@ function wsCollectRender(mk, gW, mpp, slot) {
     }
     // verdict pill at the start of the first kerb
     const a = cp.worst.assess;
-    const p0 = wsKerbAt(cp.kerbs[0].k.pts, 0);
+    const p0 = cp.kerbs.length ? wsKerbAt(cp.kerbs[0].k.pts, 0) : null;
     if (p0 && !a.empty) {
       const okc = a.ok ? '#4BED12' : '#ED1C24';
       const t = mk('text', { x: p0.x, y: p0.y + 22, fill: okc, 'font-size': 11, 'font-weight': 700 }, gW);
@@ -22055,6 +22118,12 @@ function wsLayoutSetTargets(schedule, rooms, presentation) {
   // wsLayoutChuteMode still exists for placing by hand, but is never required
   if (typeof wsChuteSyncFromCalc === 'function') wsChuteSyncFromCalc();
   wsLayoutRenderTargets();
+  // the Collection Point reads the same targets — a schedule change in the
+  // calculator must land on its panel and kerb without a tab round-trip
+  if (typeof _wsPanelTab !== 'undefined' && _wsPanelTab === 'collect') {
+    if (typeof wsCollectPanelRefresh === 'function') wsCollectPanelRefresh();
+    if (typeof wsRenderLayoutLayer === 'function') wsRenderLayoutLayer();
+  }
 }
 // Which drawn rectangle (if any) a point falls inside, so bins placed in a
 // room that was drawn to a calc room's size are attributed to it automatically.

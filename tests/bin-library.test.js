@@ -41,6 +41,7 @@ test('wpParseMethods: comma lists and synonyms collapse onto the four ids; junk 
   assert.deepStrictEqual(wpParseMethods('kerbside'), ['kerbside_individual', 'kerbside_shared'], 'a bare kerbside means both kerbside methods');
   assert.deepStrictEqual(wpParseMethods('Front-lift; communal'), ['bulk', 'kerbside_shared'], 'synonyms and separators');
   assert.deepStrictEqual(wpParseMethods(['self haul', 'bulk', 'bulk']), ['self_haul', 'bulk'], 'arrays pass through, deduped');
+  assert.deepStrictEqual(wpParseMethods('Private shared bin collection, private shared'), ['self_haul'], 'the method’s current name resolves to its original id');
   assert.deepStrictEqual(wpParseMethods('helicopter'), [], 'unknown words never become a silent no-match tag');
   assert.deepStrictEqual(wpParseMethods(null), []);
 });
@@ -171,6 +172,8 @@ test('collection method: kerbside tops out at 360L and offers no plant; bulk off
   assert.deepStrictEqual(c.normMethod({ r: 'kerbside_individual', c: 'nonsense' }), { r: 'kerbside_individual', c: null });
   assert.ok(c.COLLECT_METHODS.kerbside_individual.kerb && c.COLLECT_METHODS.kerbside_shared.kerb && !c.COLLECT_METHODS.bulk.kerb && !c.COLLECT_METHODS.self_haul.kerb,
     'only kerbside methods present bins at the frontage');
+  assert.equal(c.COLLECT_METHODS.self_haul.label, 'Private shared bin collection', 'the id is persisted in bin_rooms — the NAME changed, the id must not');
+  assert.equal(c.COLLECT_METHODS.bulk.label, 'Bulk bin collection point (front / rear-lift)');
 });
 
 test('kerbside individual is one bin per dwelling; shared kerbside and bulk size from volume', () => {
@@ -266,6 +269,7 @@ test('council kerbside service: the council database defaults size and cadence; 
 // ── §3: Collection Point ──
 const ws = loadEngine({ blocks: [
   ['WS_BIN_TYPES', /^const WS_BIN_TYPES = \[/],
+  ['WS_STREAMS', /^const WS_STREAMS = \[/],
   ['wsPolyArea', /^function wsPolyArea\(/],
   ['wsPolyBBox', /^function wsPolyBBox\(/],
   ['wsPointInPoly', /^function wsPointInPoly\(/],
@@ -275,6 +279,7 @@ const ws = loadEngine({ blocks: [
   ['wsCollectScenarios', /^function wsCollectScenarios\(/],
   ['wsCollectCyclesFromTargets', /^function wsCollectCyclesFromTargets\(/],
   ['wsCollectBins', /^function wsCollectBins\(/],
+  ['wsCollectBinSummary', /^function wsCollectBinSummary\(/],
   ['wsCollectBulk', /^function wsCollectBulk\(/],
 ] });
 
@@ -337,17 +342,69 @@ test('kerb bins resolve library ids, and an unknown type falls back to the neare
   const bins = ws.wsCollectBins(t, ['garbage', 'recycling'], libTypes);
   assert.equal(bins.length, 3, 'library-typed bins are no longer dropped');
   assert.equal(bins[0].wM, 0.5);
-  assert.equal(bins[2].label, '240L MGB', 'built-ins still resolve through the same list');
+  assert.equal(bins[2].label, '240L', 'the label is the size the calculator scheduled');
+  assert.equal(bins[2].fpFrom, '240L MGB', '…and the footprint record is named');
+  assert.ok(!bins[2].fpAssumed && !bins[0].fpAssumed, 'record capacity matches the scheduled size → nothing assumed');
   const legacy = ws.wsCollectBins([{ stream: 'garbage', typeId: 'eq_gone', sizeL: 660, qty: 1 }], ['garbage']);
   assert.equal(legacy.length, 1);
-  assert.equal(legacy[0].label, '660L Bin', 'nearest built-in by capacity when the id resolves nowhere');
+  assert.equal(legacy[0].fpFrom, '660L Bin', 'nearest built-in by capacity when the id resolves nowhere');
   assert.equal(ws.wsCollectBins([{ stream: 'garbage', typeId: 'eq_gone', qty: 1 }], ['garbage']).length, 0, 'no id, no size → nothing invented');
+  // a 140L record with no W×D is not placeable, so the layout points the
+  // target at the nearest sized record (120L) — the kerb keeps the scheduled
+  // size on the label and FLAGS the borrowed footprint instead of relabelling
+  const borrowed = ws.wsCollectBins([{ stream: 'garbage', typeId: 'b120', sizeL: 140, qty: 2 }], ['garbage']);
+  assert.equal(borrowed.length, 2);
+  assert.equal(borrowed[0].label, '140L');
+  assert.equal(borrowed[0].fpFrom, '120L MGB');
+  assert.ok(borrowed[0].fpAssumed, 'the footprint is stated as borrowed');
+});
+
+test('the bin set is summarised per stream and size, in stream order, with borrowed footprints carried', () => {
+  const bins = [
+    { stream: 'fogo', label: '240L', typeId: 'b240', fpFrom: '240L MGB', fpAssumed: false },
+    { stream: 'garbage', label: '140L', typeId: 'b120', fpFrom: '120L MGB', fpAssumed: true },
+    { stream: 'garbage', label: '140L', typeId: 'b120', fpFrom: '120L MGB', fpAssumed: true },
+    { stream: 'recycling', label: '240L', typeId: 'b240', fpFrom: '240L MGB', fpAssumed: false },
+    { stream: 'garbage', label: '1100L', typeId: 'b1100', fpFrom: '1100L Bin', fpAssumed: false },
+  ];
+  const rows = ws.wsCollectBinSummary(bins);
+  assert.deepStrictEqual(rows.map(r => [r.stream, r.label, r.n]),
+    [['garbage', '140L', 2], ['garbage', '1100L', 1], ['recycling', '240L', 1], ['fogo', '240L', 1]],
+    'stream order is WS_STREAMS order; sizes sort numerically within a stream');
+  assert.ok(rows[0].fpAssumed && rows[0].fpFrom === '120L MGB');
+  assert.deepStrictEqual(ws.wsCollectBinSummary([]), []);
+  // the panel draws that list for the kerb set AND the bulk set from the same helper
+  const panel = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
+  assert.ok(panel.includes("wsCollectSetHtml(cp.worst.bins, null)"), 'the design-week bins are listed under the scenario chips');
+  assert.ok(panel.includes("wsCollectSetHtml(b.bins, 'all streams at once')"), 'the bulk set lists every stream together');
+  assert.ok(panel.includes('the weekly bins plus the larger of the two alternating fortnights set the kerb'), 'the choice between alternating weeks is explained');
+  assert.ok(SOURCE.includes('id="ws-collect-set"'), 'the set has its own element in section 3');
+  const setHtml = extractBlock(/^function wsCollectSetHtml\(/).text;
+  assert.ok(setHtml.includes('add width × depth to that size'), 'a borrowed footprint names the fix');
+});
+
+test('the Collection Point computes from the calculator’s schedule before any kerb or area is drawn', () => {
+  const compute = extractBlock(/^function wsCollectCompute\(/).text;
+  assert.ok(compute.includes("if (!nKerb && !areas.length && !tg.targets.length && !(tg.bulk || []).length) return null;"),
+    'null only when there is nothing at all — no kerb, no area, no schedule');
+  assert.ok(!compute.includes("else if (!c.kerbs.length && !areas.length) return null;"), 'the old kerb-or-area gate is gone');
+  const render = extractBlock(/^function wsCollectRender\(/).text;
+  assert.ok(render.includes("cp.kerbs.length ? wsKerbAt(cp.kerbs[0].k.pts, 0) : null"), 'no kerb → no verdict pill, no crash');
+  assert.ok(render.includes("const side = (slot.collect && slot.collect.side === -1) ? -1 : 1;"), 'the renderer runs from every tab — a schedule with no collect slot yet must not throw');
+  // a fresh calculator payload lands on the open tab; the tab loads the library it needs
+  const setT = extractBlock(/^function wsLayoutSetTargets\(/).text;
+  assert.ok(setT.includes("_wsPanelTab === 'collect'") && setT.includes('wsCollectPanelRefresh()'), 'calc → targets → Collection Point refresh');
+  assert.ok(SOURCE.includes("if (WS_EQUIP_DB === null) wsLoadEquipmentDB();            // bin footprints come from the library"), 'the tab loads the library itself');
+  const load = extractBlock(/^async function wsLoadEquipmentDB\(\)/).text;
+  assert.ok(load.includes("_wsPanelTab === 'collect' && typeof wsCollectPanelRefresh === 'function'"), 'and the loader refreshes the tab once the footprints are in');
+  // the DXF still only carries kerb content once a kerb or area exists — no silent extra content
+  assert.ok(SOURCE.includes("const anyCollect = (slot.collect && slot.collect.kerbs && slot.collect.kerbs.length)"), 'DXF gate unchanged');
 });
 
 test('only kerbside-method bins present at the kerb; pre-method payloads keep presenting everything', () => {
   const fn = extractBlock(/^function wsCollectTargets\(\)/).text;
   assert.ok(fn.includes("WS_CALC_TARGETS.some(t => t.method)"), 'typed payload detection');
-  assert.ok(fn.includes("/^kerbside/.test(String(t.method || ''))"), 'bulk collection point and self-haul never line the frontage');
+  assert.ok(fn.includes("/^kerbside/.test(String(t.method || ''))"), 'bulk collection point and private shared bin collection never line the frontage');
   assert.ok(fn.includes('bulkOnly: typed && !kerb.length'), 'an all-bulk site is reported, not shown as "no bins"');
   assert.ok(SOURCE.includes('Nothing presents at the kerb — every stream is collected from a bulk collection point'), 'the verdict names the reason');
   assert.ok(SOURCE.includes('Standard alternating pattern assumed'), 'the default cadence stays flagged');
