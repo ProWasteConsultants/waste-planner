@@ -19585,6 +19585,19 @@ function wsCollectSlot() {
   return s.collect;
 }
 function wsCollectMsg(t) { const el = document.getElementById('ws-collect-status'); if (el) el.textContent = t; }
+// While a trace is live the panel carries its own commit button — a click in
+// the panel cannot be mistaken for another corner, and it works when the
+// keyboard focus is somewhere the Enter key does not reach.
+function wsCollectTraceHtml() {
+  const tr = (typeof WS_COLLECT !== 'undefined' && WS._mode === 'layoutkerb') ? WS_COLLECT.trace : null;
+  if (!tr) return '';
+  const n = tr.length;
+  return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;padding:5px 7px;border:1px dashed #C58B2A;border-radius:6px;">
+    <span style="flex:1;color:#C58B2A;">Tracing — ${n} corner${n === 1 ? '' : 's'} so far</span>
+    <button class="wsl-btn" style="padding:2px 8px;font-size:10.5px;color:#4BED12;${n < 2 ? 'opacity:0.45;' : ''}" onclick="wsCollectKerbFinish()" title="Keep this kerb and draw the bins along it (Enter or double-click on the plan does the same)">✓ Finish kerb</button>
+    <button class="wsl-btn" style="padding:2px 8px;font-size:10.5px;color:#ED1C24;" onclick="wsCollectKerbCancel()" title="Discard the trace">✕</button>
+  </div>`;
+}
 // One line per stream and size — "20 × 140L Garbage" — for the kerb set and
 // the bulk set alike. A footprint borrowed from another record (the size's
 // own record has no W×D) is named, with the fix, rather than drawn silently.
@@ -19615,17 +19628,36 @@ function wsCollectKerbClick(x, y) {
   if (!WS_COLLECT.trace) WS_COLLECT.trace = [];
   WS_COLLECT.trace.push({ x, y });
   wsRenderLayoutLayer();
+  wsCollectPanelRefresh();   // the panel's ✓ Finish button counts the corners
+  wsCollectMsg(WS_COLLECT.trace.length + ' corner' + (WS_COLLECT.trace.length === 1 ? '' : 's') + ' — keep clicking along the kerb, then press Enter, double-click, or ✓ Finish kerb.');
+}
+// A double-click lands its two clicks as two identical corners before the
+// finish fires; consecutive near-identical points are one point.
+function wsKerbCleanPts(pts) {
+  const out = [];
+  (pts || []).forEach(p => {
+    const last = out[out.length - 1];
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1e-6) return;
+    out.push({ x: p.x, y: p.y });
+  });
+  return out;
 }
 function wsCollectKerbFinish() {
-  const tr = WS_COLLECT.trace || [];
+  const tr = wsKerbCleanPts(WS_COLLECT.trace || []);
   if (tr.length < 2) { wsCollectMsg('Click at least two points along the kerb first.'); return; }
   const c = wsCollectSlot();
-  c.kerbs.push({ id: 'kerb_' + Date.now(), kind: 'line', pts: tr.slice() });
+  c.kerbs.push({ id: 'kerb_' + Date.now(), kind: 'line', pts: tr });
   WS_COLLECT.trace = null;
   wsLayoutEndMode();
   wsLayoutAutosave();
   wsCollectPanelRefresh();
-  wsCollectMsg('Kerb traced — ' + (c.kerbs.length > 1 ? 'segments are checked together (corner lots split bins across them).' : 'now add anything in the way, or read the verdict below.'));
+  wsCollectMsg('Kerb traced — ' + (c.kerbs.length > 1 ? 'segments are checked together (corner lots split bins across them).' : 'the bins are drawn along it; add anything in the way, or read the verdict below.'));
+}
+function wsCollectKerbCancel() {
+  if (WS._mode !== 'layoutkerb') return;
+  wsLayoutEndMode();
+  wsCollectMsg('Kerb trace discarded.');
+  wsCollectPanelRefresh();
 }
 function wsCollectKerbDelete(i) {
   const c = wsCollectSlot();
@@ -19781,7 +19813,7 @@ function wsCollectPanelRefresh() {
   const bulkEl = document.getElementById('ws-collect-bulk');
   if (!cp) {
     // no kerb, no area AND no schedule — the calculator has not run yet
-    wrap.innerHTML = 'No kerb traced yet.';
+    wrap.innerHTML = wsCollectTraceHtml() || 'No kerb traced yet.';
     const v = document.getElementById('ws-collect-verdict'); if (v) v.innerHTML = '';
     const sc = document.getElementById('ws-collect-scen'); if (sc) sc.innerHTML = '';
     const sh = document.getElementById('ws-collect-sched'); if (sh) sh.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.5);">No bin schedule yet — run the Bin Calculator and its bins arrive here.</div>';
@@ -19800,11 +19832,11 @@ function wsCollectPanelRefresh() {
       `</div>` + wsCollectSetHtml(b.bins, 'all streams at once');
   }
   const nameOf = i => 'Kerb ' + String.fromCharCode(65 + i);
-  wrap.innerHTML = cp.kerbs.length ? cp.kerbs.map((ki, i) =>
+  wrap.innerHTML = wsCollectTraceHtml() + (cp.kerbs.length ? cp.kerbs.map((ki, i) =>
     `<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
       <span style="flex:1;">${nameOf(i)} — ${(ki.L * mpp).toFixed(1)} m${ki.excl.length ? ` <span style="color:rgba(255,255,255,0.4);">(${((ki.L - ki.free.reduce((a, g) => a + (g.s1 - g.s0), 0)) * mpp).toFixed(1)} m blocked)</span>` : ''}</span>
       <button class="wsl-btn" style="padding:1px 6px;font-size:10px;color:#ED1C24;" onclick="wsCollectKerbDelete(${i})">✕</button>
-    </div>`).join('') : 'No kerb traced yet.';
+    </div>`).join('') : (WS_COLLECT.trace ? '' : 'No kerb traced yet.'));
   // obstructions near a kerb, with editable blocked-width
   const obsEl = document.getElementById('ws-collect-obs');
   if (obsEl) {
@@ -21216,6 +21248,10 @@ function wsLayoutBind() {
     if (e.key === 'Enter') {
       if (WS._mode === 'layoutroom' && WS_LAYOUT.roomPts && WS_LAYOUT.roomPts.length >= 3) { wsLayoutRoomFinish(); return; }
       if (WS._mode === 'layoutmark' && WS_LAYOUT._mark) { wsMarkFinish(); return; }
+      // the kerb trace and the manoeuvre route both say "double-click (or
+      // Enter) to finish" — Enter has to COMMIT them, same as the double-click
+      if (WS._mode === 'layoutkerb') { e.preventDefault(); wsCollectKerbFinish(); return; }
+      if (WS._mode === 'layoutman') { e.preventDefault(); wsManFinish(); return; }
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) { wsLayoutDo('copy'); e.preventDefault(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) { wsLayoutDo('cut'); e.preventDefault(); return; }
@@ -21234,7 +21270,9 @@ function wsLayoutBind() {
     if (e.ctrlKey || e.metaKey) return;   // don't hijack browser shortcuts (Ctrl+R etc.)
     if (e.key === 'Escape') {
       if (WS._mode === 'layoutmark') { wsMarkExit(); return; }   // restores the parked tool
+      const kerbDropped = WS._mode === 'layoutkerb' && WS_COLLECT.trace && WS_COLLECT.trace.length > 0;
       if (WS._mode === 'layoutbin' || WS._mode === 'layoutroom' || WS._mode === 'layoutroomsize' || WS._mode === 'layoutchute' || WS._mode === 'layoutequip' || WS._mode === 'layoutfixture' || WS._mode === 'layoutman' || WS._mode === 'layoutkerb') wsLayoutEndMode();
+      if (kerbDropped) { wsCollectMsg('Kerb trace discarded (Escape). Trace it again and press Enter, double-click, or use ✓ Finish kerb to keep it.'); wsCollectPanelRefresh(); }
     }
     else if (e.key === 'r' || e.key === 'R') { wsLayoutDo('rotate'); }
     else if (e.key === 'l' || e.key === 'L') { wsLayoutDo('lock'); }
