@@ -445,7 +445,7 @@ test('the equipment library reaches the calculator as `bins`, with the two selec
   const reqs = extractBlock(/^async function glCouncilReqs\(row, mountId\)/).text;
   assert.ok(reqs.includes(".in('council_guideline_id', ids).eq('status', 'approved')"), 'approved rows across every version of the council’s document');
   assert.ok(reqs.includes('(superseded)'), 'a clause from an older version says so');
-  assert.ok(reqs.includes('approved clause') && reqs.includes('clause_ref'), 'each clause shows its reference');
+  assert.ok(reqs.includes("' in the list — '") && reqs.includes('clause_ref'), 'each requirement shows its reference');
   assert.ok(extractBlock(/^async function glCouncilCard\(/).text.includes("glCouncilReqs(row, mountId + '-reqs')"), 'both council cards get the list');
   assert.ok(calc.includes('is not offered for ${bs.M.label}'), 'a snapped pick is stated');
   // admin table + migration + extraction hint

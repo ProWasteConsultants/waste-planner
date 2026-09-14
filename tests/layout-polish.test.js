@@ -904,16 +904,16 @@ test('admin guidelines section is scoped to one council', () => {
     'the library renders through the scope');
   assert.ok(SOURCE.includes('.filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name))'),
     'library entries are filtered by the selected council');
-  assert.ok(SOURCE.includes('gidsEvery.filter(g => cgScopeMatches((CRQ_Q.docs[g] || {}).council_name))'),
-    'queue documents are filtered by the selected council');
-  assert.ok(SOURCE.includes('CRQ_Q.rows.forEach(r => { if (byDoc[r.council_guideline_id]) byDoc[r.council_guideline_id].push(r); });'),
-    'rows never re-create a document the scope filtered out');
+  assert.ok(SOURCE.includes('const rows = CRQ_L.rows.filter(r => cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));'),
+    'the requirements list is filtered by the selected council');
+  assert.ok(SOURCE.includes("'. Choose a council in Scope at the top to see and edit its list.</div>'"),
+    'with nothing selected the list shows counts only');
   // with nothing selected, no council-specific content — but counts, so
   // nothing is hidden silently
   assert.ok(SOURCE.includes("Choose a council in Scope at the top to see its document and review its rows."),
     'unselected library shows a count and a prompt, not another council');
-  assert.ok(SOURCE.includes("'. Choose a council in Scope at the top to review its rows.</div>'"),
-    'unselected queue shows a count and a prompt, not another council');
+  assert.ok(SOURCE.includes("'. Choose a council in Scope at the top to see and edit its list.</div>'"),
+    'unselected list shows a count and a prompt, not another council');
   // the selected council's document card is the same renderer the rates panel uses
   assert.ok(SOURCE.includes('async function glCouncilCard(label, mountId, emptyHint)'), 'one card renderer');
   assert.ok(SOURCE.includes("glCouncilCard(CG_SCOPE.name, 'cg-council-card'") &&

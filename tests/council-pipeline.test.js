@@ -108,31 +108,83 @@ test('C3 migration: pipeline table with the agreed enum, clause_ref required, RL
     'GRANTs ship with the table, every time');
 });
 
-test('C3: extraction drops untraceable rows and never invents streams', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('const CRQ_Q ='));
+test('C3 (list): extraction APPENDS straight into the live list, drops untraceable rows, never invents streams', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
   assert.ok(fn.includes('if (!clause) { dropped++; return; }'),
     'a row with no clause reference is never inserted');
-  assert.ok(fn.includes("status = 'rejected'; rejected++;"),
-    'an unresolvable stream rejects the row rather than guessing');
-  assert.ok(fn.includes('wsStreamId'),
-    'synonyms resolve through the one canonical resolver');
-  assert.ok(fn.includes('council_guideline_id: doc.id'),
-    'every proposal is pinned to the exact guideline version');
-  assert.ok(fn.includes(".is('superseded_at', null)"),
-    'extraction targets the live document version');
+  assert.ok(fn.includes("status: 'approved',      // = in the list, live") && fn.includes("source: 'extraction',"),
+    'extracted rows go straight into the list — no proposed state, no approval step');
+  assert.ok(fn.includes('did not resolve to a canonical stream — set it') && !fn.includes("status = 'rejected'"),
+    'an unresolvable stream joins the list blank and flagged — never guessed, never silently dropped');
+  assert.ok(fn.includes('wsStreamId'), 'synonyms resolve through the one canonical resolver');
+  assert.ok(fn.includes('council_guideline_id: doc.id'), 'every row is pinned to the exact guideline version');
+  assert.ok(fn.includes(".is('superseded_at', null)"), 'extraction targets the live document version');
+  assert.ok(fn.includes("await sb.from('council_requirements').insert(rows);") &&
+            !/council_requirements'\)\s*\.(update|delete|upsert)/.test(fn),
+    'extraction only ever INSERTs — existing rows (earlier runs, older versions, hand-typed) are never touched');
+  assert.ok(fn.includes('const serving = await crqSyncServe(doc.council_key, doc.council_name);'),
+    'the whole council list is re-served the moment rows land');
 });
 
-test('C3: approval is the only path to machine-usable rows', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crqDecide'), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
-  assert.ok(fn.includes("if (status === 'approved' && !edits.clause_ref)"),
-    'approval without a clause reference is refused');
-  assert.ok(fn.includes("reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString()"),
-    'decisions record who and when');
-  assert.ok(fn.includes(".eq('status', 'proposed')"),
-    'a decision only ever moves a PROPOSED row — no re-approving rejected rows by accident');
-  const q = SOURCE.slice(SOURCE.indexOf('async function crqLoad'), SOURCE.indexOf('function crqRender'));
-  assert.ok(q.includes("CRQ_Q.rows = (data || []).filter(r => r.status === 'proposed');"),
-    'only proposed rows are editable in the queue');
+test('C3 (list): the list is live and freely editable — add, inline edit, remove; every change re-serves', () => {
+  const list = SOURCE.slice(SOURCE.indexOf('// ── the requirements list'), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
+  assert.ok(list.includes(".select('*').eq('status', 'approved').order('created_at')"), 'the list IS the live rows');
+  assert.ok(!list.includes("'proposed'"), 'no proposed state anywhere in the list');
+  for (const fn of ['async function crqSave(id)', 'async function crqAdd()', 'async function crqRemove(id)'])
+    assert.ok(list.includes(fn), fn + ' exists');
+  assert.ok(list.includes("if (!edits.clause_ref) { crqMsg('Every row needs a source"), 'a row cannot lose its source');
+  assert.ok(list.includes(".update(patch).eq('id', id).eq('status', 'approved')"), 'an edit saves in place with no approval step');
+  assert.ok(list.includes("clause_ref: 'Manual — ' + new Date().toISOString().slice(0, 10), status: 'approved', source: 'manual'"),
+    'a hand-typed row is live at once and marked manual — it survives every future extraction');
+  assert.ok(list.includes("has no guideline document on file — ⇪ Save one above first"), 'a manual row needs a document version to belong to — stated, not silent');
+  assert.ok(list.includes(".update({ status: 'rejected', reviewed_by"), 'remove is a soft delete — kept for audit, never served');
+  assert.equal((list.match(/await crqSyncServe\(/g) || []).length, 2, 'save and remove re-serve the council list');
+  assert.ok(SOURCE.includes("onclick=\"crqAdd()\"") && SOURCE.includes("onclick=\"crqRemove('${r.id}')\""), 'add and remove are on the panel');
+  assert.ok(!SOURCE.includes('async function crqDecide') && !SOURCE.includes('async function crqBulkApprove') && !SOURCE.includes('async function crqServe('),
+    'approve / reject / bulk-approve / explicit Serve are gone with the queue');
+  assert.ok(!SOURCE.includes('⇧ Serve') && !SOURCE.includes('Extract to queue') && SOURCE.includes('🧾 Extract to list'),
+    'no queue-era actions remain on the page');
+});
+
+test('C3 (list): duplicates are flagged, never merged; the latest extraction is filterable', () => {
+  const { loadEngine } = require('./extract.js');
+  const w = loadEngine({ blocks: [['crqDupFlags', /^function crqDupFlags\(/], ['crqLatestBatch', /^function crqLatestBatch\(/]] });
+  const rows = [
+    { id: 'a', requirement_type: 'generation_rate', stream: 'garbage', use_class: 'residential', value_num: 80, unit: 'L/dwelling/week', value_text: '80 L per dwelling per week', clause_ref: 'cl 4.2, p.12', council_guideline_id: 'v1', created_at: '2026-09-01T00:00:00Z', source: 'extraction' },
+    { id: 'b', requirement_type: 'generation_rate', stream: 'garbage', use_class: 'Residential', value_num: 80, unit: 'L/dwelling/week', value_text: 'Garbage generation 80L/dwelling/week', clause_ref: 'cl 4.2.1, p.13', council_guideline_id: 'v2', created_at: '2026-09-14T00:00:00Z', source: 'extraction' },
+    { id: 'c', requirement_type: 'aisle_width', stream: null, use_class: null, value_num: 1500, unit: 'mm', value_text: 'Aisles minimum 1500 mm clear', clause_ref: 'cl 5.1', council_guideline_id: 'v1', created_at: '2026-09-01T00:00:01Z', source: 'extraction' },
+    { id: 'd', requirement_type: 'aisle_width', stream: null, use_class: null, value_num: null, unit: null, value_text: 'Aisles must be a minimum of 1500 mm clear width', clause_ref: 'cl 5.1', council_guideline_id: 'v2', created_at: '2026-09-14T00:00:01Z', source: 'extraction' },
+    { id: 'e', requirement_type: 'collection_limit', stream: 'garbage', value_num: 140, unit: 'L', value_text: 'Garbage supplied in 140L bins', clause_ref: 'cl 7', council_guideline_id: 'v1', created_at: '2026-09-01T00:00:02Z' },
+    { id: 'f', requirement_type: 'collection_limit', stream: 'garbage', value_num: 1, unit: 'per week', value_text: 'Garbage collected weekly', clause_ref: 'cl 7', council_guideline_id: 'v1', created_at: '2026-09-01T00:00:03Z' },
+    { id: 'g', requirement_type: 'other', stream: null, value_num: null, unit: null, value_text: 'Council advised by email that bins are presented on Tuesdays', clause_ref: 'Manual — 2026-09-14', council_guideline_id: 'v2', created_at: '2026-09-14T09:00:00Z', source: 'manual' },
+  ];
+  const flags = w.crqDupFlags(rows);
+  assert.equal(flags.b && flags.b.of, 'a', 'same figure, unit and use class → flagged against the earlier row');
+  assert.equal(flags.b.why, 'same figure as');
+  assert.equal(flags.d && flags.d.of, 'c', 'mostly the same wording → flagged');
+  assert.equal(flags.d.why, 'similar wording to');
+  assert.ok(!flags.f, 'two facts under one clause in the SAME document are not duplicates of each other');
+  assert.ok(!flags.a && !flags.c && !flags.e, 'the earlier row never carries the flag');
+  assert.ok(!flags.g, 'a hand-typed row about something else is left alone');
+  assert.deepStrictEqual(w.crqDupFlags([]), {});
+  const latest = w.crqLatestBatch(rows);
+  assert.deepStrictEqual([...latest].sort(), ['b', 'd'], 'the latest extraction = the newest extraction batch; manual rows are not an extraction');
+  assert.equal(w.crqLatestBatch([]).size, 0);
+  const render = SOURCE.slice(SOURCE.indexOf('function crqRender()'), SOURCE.indexOf('function crqCollect'));
+  assert.ok(render.includes('≈ possible duplicate') && !/crqMerge|\.delete\(/.test(render), 'flag on the row, nothing merged or deleted automatically');
+  assert.ok(render.includes("opt('latest', 'Added by the latest extraction', latest.size)") && render.includes("opt('manual', 'Added by hand', manual.length)"),
+    'filter by what the last extraction added, and by hand-typed rows');
+});
+
+test('the list migration: source column, proposed rows promoted, read policy unchanged', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const mig = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-09-15-requirements-list.sql'), 'utf8');
+  assert.ok(mig.includes("add column if not exists source text not null default 'extraction'"), 'source is additive with a default — no restructure');
+  assert.ok(mig.includes("check (source in ('extraction','manual'))"));
+  assert.ok(mig.includes("update public.council_requirements set status = 'approved' where status = 'proposed';"),
+    'the old queue becomes visible list rows rather than being thrown away');
+  assert.ok(!mig.includes('drop policy') && !mig.includes('alter policy'), 'the approved-read policy is untouched — every consumer keeps working');
+  assert.ok(mig.includes("notify pgrst, 'reload schema';"));
 });
 
 // ── check-in amendments ─────────────────────────────────────────────────
@@ -142,16 +194,18 @@ test('a live version with no requirements falls back — a fresh upload never bl
   assert.ok(wmp.includes('g.withReqs'), 'fallback picks by content, not just by liveness');
   assert.ok(SOURCE.includes('Object.assign({}, g.withReqs, { servedFallback:'),
     'the compliance checker iframe applies the same fallback');
-  assert.ok(SOURCE.includes('serving this version until its extraction is approved'),
+  assert.ok(SOURCE.includes('serving this version until the new one has requirements in its list'),
     'fallback serving is visible on the WMP check, not silent');
 });
 
-test('approved rows reach consumers only through the explicit Serve action', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('function crqToLegacy'), SOURCE.indexOf('// ── the review queue'));
-  assert.ok(fn.includes('async function crqServe'), 'the bridge exists');
-  assert.ok(fn.includes('if (!confirm('), 'serving is confirmed, never silent');
-  const decide = SOURCE.slice(SOURCE.indexOf('async function crqDecide'), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
-  assert.ok(!decide.includes('crqServe('), 'approving a row never auto-publishes — no silent publication, anywhere');
+test('the list reaches consumers automatically — crqSyncServe projects the WHOLE council list onto the serving version', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('function crqToLegacy'), SOURCE.indexOf('// ── C4: APPROVED RATES'));
+  assert.ok(fn.includes('async function crqSyncServe(councilKey, councilName)'), 'the bridge exists');
+  assert.ok(!fn.includes('if (!confirm('), 'serving is automatic — the list is the live data');
+  assert.ok(fn.includes(".in('council_guideline_id', docs.map(d => d.id)).eq('status', 'approved')"),
+    'every version of the council document contributes — older-version rows and hand-typed rows survive a new upload');
+  assert.ok(fn.includes("const serving = byVersion.find(d => !d.superseded_at) || byVersion[0];"), 'projected onto the live version');
+  assert.ok(fn.includes(".update({ requirements: legacy, updated_at: new Date().toISOString() }).eq('id', serving.id)"));
 });
 
 // ── C4: approved rates → diff against live R2 data ──────────────────────
@@ -253,7 +307,7 @@ test('C4: crxApplyPlan applies residential rate rows only and refuses everything
   for (const [over, why] of [
     [{ kind: 'stream_split', target: 'splits.cafe.REC_CARD' }, /no Rates DB column/],
     [{ target: 'comRates.cafe.GW' }, /per-day \/ per-100m/],
-    [{ status: 'conflicting' }, /reject one/],
+    [{ status: 'conflicting' }, /remove one/],
     [{ status: 'same' }, /nothing to apply/],
     [{ status: 'unmapped', target: null }, /nothing to apply/],
     [{ target: 'resRates.apt_2br.CARD' }, /GW\/REC\/ORG\/GLS only/],
@@ -468,19 +522,19 @@ test('extraction has exactly one entry point, and it requires a saved document',
     'the review pane survives for hand-editing stored versions');
 });
 
-test('one-click publish: clean rows only, listed in a confirm, through the shared writer, then live', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApplyAllAndPublish()'), SOURCE.indexOf('// ── the review queue'));
-  assert.ok(fn.includes('if (!plan.ok || plan.unitWarning) return;'),
-    'rows needing human eyes are never touched by the bulk path');
+test('one-click publish: clean NEW rows only, listed in a confirm, through the shared writer, then live', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApplyAllAndPublish()'), SOURCE.indexOf('// ── the requirements list'));
+  assert.ok(fn.includes("if (!plan.ok || plan.unitWarning || d.status !== 'new') return;"),
+    'rows needing human eyes, and rates the DB already holds, are never touched by the bulk path — rates are add-only like the list');
   assert.ok(fn.includes('if (!confirm('), 'still explicit — the confirm lists every row it will write');
   assert.ok(fn.includes('await crxWritePlan('), 'writes go through the same helper as the per-row apply — no drift');
   assert.ok(fn.includes('await rdbPublish()'), 'and publishing is part of the one action');
   assert.ok(fn.includes('nothing published. Fix and retry'), 'a failed write blocks the publish, never half-ships');
   // the staged path survives: per-row apply without publishing
   assert.ok(SOURCE.includes('onclick="crxApply(${i})"'), 'per-row staging is still available');
-  // approving a queue row alone still publishes nothing (pinned above too)
-  const decide = SOURCE.slice(SOURCE.indexOf('async function crqDecide'), SOURCE.indexOf('async function crqBulkApprove'));
-  assert.ok(!decide.includes('rdbPublish') && !decide.includes('crxApply'), 'approval is not publication');
+  // editing the requirements list alone still publishes nothing to the rates
+  const save = SOURCE.slice(SOURCE.indexOf('async function crqSave(id)'), SOURCE.indexOf('async function crqServingDoc'));
+  assert.ok(!save.includes('rdbPublish') && !save.includes('crxApply'), 'a list edit is not a rates publication');
 });
 
 test('onboarding copy moved behind (?) popovers; the dev table browser left the main flow', () => {
