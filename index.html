@@ -484,6 +484,12 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .adm-help:hover .adm-help-pop,.adm-help:focus .adm-help-pop,.adm-help:focus-within .adm-help-pop{display:block;}
 .adm-group-sub{font-size:11px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;}
 .adm-group-body{padding:16px;}
+/* Readability: the admin panels are set in 9–12px inline sizes (hundreds of
+   them, tuned for density) and read too small. ONE scale factor lifts every
+   panel — inline px included — and the tab labels are lifted directly. To
+   change the size, change the number here, never the inline sizes. */
+#screen-admin .admin-screen-panel{zoom:1.25;--muted:#A6BABA;}   /* muted text lifted too — it is most of the copy on these panels */
+#screen-admin .admin-screen-tab{font-size:14px !important;padding:14px !important;}
 .adm-group.adm-setup{border-left:3px solid var(--teal);}
 .adm-group.adm-setup .adm-group-head{background:linear-gradient(90deg,rgba(22,126,126,0.20),rgba(22,126,126,0.04));color:#7FD8D8;}
 .adm-group.adm-db{border-left:3px solid #C58B2A;}
