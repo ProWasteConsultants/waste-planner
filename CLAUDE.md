@@ -230,11 +230,13 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    whoever types the service in. Under a kerbside method the council service
    **is** the list — the default bin plus the sizes the council also offers,
    nothing else; editing means choosing among what the council supplies. Its
-   cycle sets the frequency (`0.5` fortnightly, `0.25` monthly). Under bulk
-   and self-haul **every library bin and container that serves the stream**
-   is offered — the stream rule is physical and holds under every method (a
-   glass crusher is never a food-waste option) — trimmed only by the
-   council's bulk caps. Departing from the
+   cycle sets the frequency (`0.5` fortnightly, `0.25` monthly). Under a
+   bulk collection point and a private shared bin collection (method id
+   `self_haul` — its original name; the id is persisted in `bin_rooms`, so
+   only the label changed) **every library bin and container that serves
+   the stream** is offered — the stream rule is physical and holds under
+   every method (a glass crusher is never a food-waste option) — trimmed
+   only by the council's bulk caps. Departing from the
    service is allowed and **stated**; no service on record is a visible note
    naming where to add one and how many services are loaded. Saving the grid
    pushes straight to the calculator; ↻ in the calculator re-reads library +
@@ -256,11 +258,22 @@ naming the cadence's source. The Collection Point:
   every week, A/B alternating, OFF never — the busiest week is the design case,
   so the kerb shows the weekly bins plus the larger of the two alternating
   fortnights (plus monthly), never every stream at once.
-- **Bulk / self-haul methods** → a drawn **Collection point area** (zone type
-  `COLLECT`, drawn through the zone polygon tool from the tab's own button).
-  `wsCollectBulk` packs **every** bulk-method bin, all streams at once — a
-  bulk service does not alternate weeks — first-fit across the areas via
-  `wsPackBins`; the verdict counts what does not fit. DXF: `A-COLLECT-BINS`.
+- **Bulk collection point / private shared bin collection** → a drawn
+  **Collection point area** (zone type `COLLECT`, drawn through the zone
+  polygon tool from the tab's own button). `wsCollectBulk` packs **every**
+  bulk-method bin, all streams at once — neither service alternates weeks —
+  first-fit across the areas via `wsPackBins`; the verdict counts what does
+  not fit. DXF: `A-COLLECT-BINS`.
+- **The tab shows the calculator's bin set before anything is drawn.**
+  `wsCollectCompute` returns null only when there is no kerb, no area *and*
+  no schedule; with a schedule and nothing traced it lists the design-week
+  bins per stream (`wsCollectBinSummary`, pure) and says which alternating
+  week won and why, so the user traces the kerb knowing what must fit. A
+  fresh calculator payload refreshes the open tab (`wsLayoutSetTargets`). Bin
+  labels are the **scheduled size**; the footprint is the record's, and a
+  borrowed footprint (a size whose record has no W×D, placed as the nearest
+  sized record) is flagged with the fix, never relabelled. The DXF still
+  carries kerb content only once a kerb or area exists.
 - Bin types resolve against the **live** bin list
   (`wsCollectBins(targets, streams, types)`) — library ids used to miss the
   built-in lookup and silently empty the kerb.
