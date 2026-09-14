@@ -17776,6 +17776,7 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
       slot.bins = slot.bins.filter(x => !ids.has(x.id));
       slot.equip = slot.equip.filter(x => !ids.has(x.id));
       slot.chutes = slot.chutes.filter(x => !ids.has(x.id));
+      wsCollectPruneAreaBins(slot);
       wsSelSet([]);
       wsLayoutStatus('Cut ' + ids.size + ' item' + (ids.size === 1 ? '' : 's') + ' — Ctrl+V to place.');
       wsRenderLayoutLayer(); wsLayoutAutosave(); return;
@@ -17857,6 +17858,7 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
       slot.bins = slot.bins.filter(x => !ids.has(x.id));
       slot.equip = slot.equip.filter(x => !ids.has(x.id));
       slot.chutes = slot.chutes.filter(x => !ids.has(x.id));
+      wsCollectPruneAreaBins(slot);
       wsSelSet([]);
       wsLayoutStatus('Deleted ' + live.length + ' items.');
       wsRenderLayoutLayer(); wsLayoutAutosave(); return;
@@ -17871,6 +17873,8 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
     });
     if (wasLocked) { wsLayoutStatus('🔒 Locked — press L to unlock before deleting.'); return; }
     if (!hit) { wsLayoutStatus('Click something to select it first, then Delete.'); return; }
+    const pruned = wsCollectPruneAreaBins(slot);
+    if (pruned) wsLayoutStatus('Collection point area removed with its ' + pruned + ' bin' + (pruned === 1 ? '' : 's') + ' — Ctrl+Z brings both back.');
   }
   wsRenderLayoutLayer(); wsLayoutAutosave();
 }
@@ -18022,6 +18026,9 @@ function wsBinRoomId(rooms, bin) {
 function wsTagBinsToRooms(rooms, bins) {
   let changed = 0;
   (bins || []).forEach(b => {
+    // a kerb / collection point bin is presentation, never a room's storage —
+    // an area drawn inside the bin room must not double-count its schedule
+    if (b && (b.kerb || b.collectArea)) { if (b.roomId) { b.roomId = null; changed++; } return; }
     const id = wsBinRoomId(rooms, b);
     if (b.roomId !== id) { b.roomId = id; changed++; }
   });
@@ -19000,8 +19007,10 @@ function wsKeepoutFps(slot, mpp, opts) {
     });
   });
   slot.equip.forEach(e => {
-    if (e.round) out.push({ ...wsFpCircle(e.x, e.y, Math.max(e.w, e.d) / 2 / mpp), why: e.label });
-    else out.push({ ...wsFpRect(e.x, e.y, e.w / 2 / mpp, e.d / 2 / mpp, e.rot || 0), why: e.label });
+    // zoneType rides along so the clash test can exempt a collection point
+    // bin from the area it was packed into
+    if (e.round) out.push({ ...wsFpCircle(e.x, e.y, Math.max(e.w, e.d) / 2 / mpp), why: e.label, zoneType: e.zoneType || null });
+    else out.push({ ...wsFpRect(e.x, e.y, e.w / 2 / mpp, e.d / 2 / mpp, e.rot || 0), why: e.label, zoneType: e.zoneType || null });
   });
   if (opts && opts.locked) slot.bins.forEach(b => {
     if (!b.locked) return;
@@ -19454,6 +19463,19 @@ function wsCollectKerbBinPoses(cp, side, mpp) {
   return out;
 }
 
+// Same for the collection point AREA: the packed placements as bin poses,
+// each tagged with the area it was packed into. Pure.
+function wsCollectAreaBinPoses(bulk) {
+  const out = [];
+  ((bulk && bulk.areas) || []).forEach(ar => (ar.placed || []).forEach(pl => {
+    out.push({ areaId: ar.id, x: pl.x, y: pl.y, rot: 0, type: pl.it.resolvedType || pl.it.typeId, stream: pl.it.stream });
+  }));
+  return out;
+}
+// A bin on the kerb or in a collection point area is PRESENTATION, not room
+// storage — every room count and the targets fallback leave it out.
+function wsIsPresentationBin(b) { return !!(b && (b.kerb || b.collectArea)); }
+
 // ── kerb polyline, parameterised by arc length (px) ──
 function wsKerbLen(pts) {
   let L = 0;
@@ -19705,21 +19727,43 @@ function wsCollectFlipSide() {
 // the plan, print on the sheet and export to A-KERB-BINS. Re-running replaces
 // the bins tagged to those kerbs (a moved bin snaps back to the pack) — the
 // panel button says so. Undo covers it.
+function wsCollectMaterialise(slot, tag, want, poses) {
+  wsLayoutSnapshot();
+  slot.bins = slot.bins.filter(b => !(b[tag] && want.has(b[tag])));
+  const lib = WS_EQUIP_DB || [];
+  poses.forEach((p, i) => slot.bins.push({ id: 'bin_' + Date.now() + '_' + tag[0] + i + '_' + Math.floor(Math.random() * 999),
+    type: p.type, stream: p.stream, x: p.x, y: p.y, rot: p.rot || 0, calcRoom: null,
+    equipmentId: lib.some(r => r.id === p.type) ? p.type : null, receiver: false, roomId: null, [tag]: p[tag === 'kerb' ? 'kerbId' : 'areaId'] }));
+  wsRenderLayoutLayer(); wsLayoutAutosave(); wsCollectPanelRefresh();
+  return poses.length;
+}
 function wsCollectPlaceBins(kerbIds) {
   const mpp = wsSweptMpp(); if (!mpp) return 0;
   const slot = wsLayoutSlot(), c = wsCollectSlot();
   const cp = wsCollectCompute(slot, mpp);
   if (!cp || !cp.kerbs.length) return 0;
   const want = new Set(kerbIds && kerbIds.length ? kerbIds : cp.kerbs.map(k => k.k.id));
-  const poses = wsCollectKerbBinPoses(cp, c.side, mpp).filter(p => want.has(p.kerbId));
-  wsLayoutSnapshot();
-  slot.bins = slot.bins.filter(b => !(b.kerb && want.has(b.kerb)));
-  const lib = WS_EQUIP_DB || [];
-  poses.forEach((p, i) => slot.bins.push({ id: 'bin_' + Date.now() + '_k' + i + '_' + Math.floor(Math.random() * 999),
-    type: p.type, stream: p.stream, x: p.x, y: p.y, rot: p.rot, calcRoom: null,
-    equipmentId: lib.some(r => r.id === p.type) ? p.type : null, receiver: false, roomId: null, kerb: p.kerbId }));
-  wsRenderLayoutLayer(); wsLayoutAutosave(); wsCollectPanelRefresh();
-  return poses.length;
+  return wsCollectMaterialise(slot, 'kerb', want, wsCollectKerbBinPoses(cp, c.side, mpp).filter(p => want.has(p.kerbId)));
+}
+// The collection point AREA gets the same treatment: every bulk-method bin
+// packed into the drawn area becomes a real bin tagged `collectArea`. Drawing
+// the area places them; the panel button re-places; deleting the zone
+// removes them (wsCollectPruneAreaBins).
+function wsCollectPlaceAreaBins(areaIds) {
+  const mpp = wsSweptMpp(); if (!mpp) return 0;
+  const slot = wsLayoutSlot();
+  const cp = wsCollectCompute(slot, mpp);
+  if (!cp || !cp.areas.length) return 0;
+  const want = new Set(areaIds && areaIds.length ? areaIds : cp.areas.map(a => a.id));
+  return wsCollectMaterialise(slot, 'collectArea', want, wsCollectAreaBinPoses(cp.bulk).filter(p => want.has(p.areaId)));
+}
+// Bins whose collection point area is gone go with it — a zone deleted from
+// the plan takes the bins it was packed with (the delete is undoable).
+function wsCollectPruneAreaBins(slot) {
+  const live = new Set((slot.equip || []).filter(e => e.zoneType === 'COLLECT').map(e => e.id));
+  const before = slot.bins.length;
+  slot.bins = slot.bins.filter(b => !b.collectArea || live.has(b.collectArea));
+  return before - slot.bins.length;
 }
 
 // ── data assembly ──
@@ -19739,7 +19783,7 @@ function wsCollectTargets() {
              cycles: wsCollectCyclesFromTargets(kerb), present: (typeof WS_CALC_PRESENT !== 'undefined') ? WS_CALC_PRESENT : null };
   }
   const slot = wsLayoutSlot();
-  const plan = slot.bins.filter(b => !b.kerb);   // bins already ON the kerb are output, never the schedule
+  const plan = slot.bins.filter(b => !wsIsPresentationBin(b));   // bins already presented are output, never the schedule
   if (plan.length) {
     const by = {};
     plan.forEach(b => {
@@ -19781,7 +19825,7 @@ function wsCollectBulk(targets, areas, mpp, gapM, types) {
   const items = {};
   bins.forEach(b => {
     const k = b.typeId + '|' + b.stream;
-    items[k] = items[k] || { kind: 'bin', typeId: b.typeId, stream: b.stream, w: b.wM, d: b.dM, n: 0, label: b.label };
+    items[k] = items[k] || { kind: 'bin', typeId: b.typeId, resolvedType: b.resolvedType || b.typeId, stream: b.stream, w: b.wM, d: b.dM, n: 0, label: b.label };
     items[k].n++;
   });
   let remaining = Object.values(items);
@@ -19880,9 +19924,16 @@ function wsCollectPanelRefresh() {
     if (b.empty) bulkEl.innerHTML = cp.areas.length ? 'Collection point area drawn — no bins on a bulk collection point / private shared bin collection method in the calculator yet.' : '';
     else if (!cp.areas.length) bulkEl.innerHTML = `<b>${b.bins.length} bin${b.bins.length === 1 ? '' : 's'}</b> on a bulk collection point / private shared bin collection method — draw the collection point area to check they fit.` + wsCollectSetHtml(b.bins, 'all streams at once');
     else bulkEl.innerHTML = `<div style="border:1px solid ${b.ok ? '#4BED12' : '#ED1C24'};border-radius:8px;background:${b.ok ? '#14231a' : '#231414'};padding:7px 9px;line-height:1.5;color:rgba(255,255,255,0.9);">` +
-      (b.ok ? `✅ <b>All ${b.bins.length} bins fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${cp.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Every stream is shown at once — a bulk collection point or private shared bin collection does not alternate weeks.`
-            : `❌ <b>${b.left} of ${b.bins.length} bins do not fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${cp.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Enlarge the area, draw another, or reduce the bulk schedule in the calculator.`) +
+      (b.ok ? `✅ <b>All ${b.bins.length} bins fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${b.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Every stream is shown at once — a bulk collection point or private shared bin collection does not alternate weeks.`
+            : `❌ <b>${b.left} of ${b.bins.length} bins do not fit</b> in the collection point area${cp.areas.length > 1 ? 's' : ''} (${b.areas.map(a => a.m2.toFixed(1) + ' m²').join(' + ')}). Enlarge the area, draw another, or reduce the bulk schedule in the calculator.`) +
       `</div>` + wsCollectSetHtml(b.bins, 'all streams at once');
+    if (!b.empty && cp.areas.length) {
+      const inArea = slot.bins.filter(x => x.collectArea).length;
+      bulkEl.innerHTML += `<div style="margin-top:5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <button class="wsl-btn" style="padding:3px 8px;font-size:10.5px;" onclick="wsCollectPlaceAreaBins()" title="${inArea ? 'Puts every collection point bin back where the pack has it — bins you moved snap back. Ctrl+Z undoes.' : 'Places every bulk-method bin in the area as ordinary bins.'}">${inArea ? '↻ Re-place bins in the area' : '⤓ Place the bins in the area'}</button>
+        <span style="font-size:10px;color:rgba(255,255,255,0.4);">${inArea ? inArea + ' in the area — drag, R rotates, Del deletes, like any bin' : 'they become ordinary bins you can drag, rotate and delete'}</span>
+      </div>`;
+    }
   }
   const nameOf = i => 'Kerb ' + String.fromCharCode(65 + i);
   wrap.innerHTML = wsCollectTraceHtml() + (cp.kerbs.length ? cp.kerbs.map((ki, i) =>
@@ -20045,15 +20096,7 @@ function wsCollectRender(mk, gW, mpp, slot) {
       }
     });
   });
-  // bulk collection point: every bulk-method bin, packed into the drawn area
-  (cp.bulk ? cp.bulk.areas : []).forEach(ar => {
-    ar.placed.forEach(pl => {
-      const stc = WS_STREAMS.find(x => x.id === pl.it.stream) || {};
-      const cs = wsOBBCorners(pl.x, pl.y, pl.it.w / 2 / mpp, pl.it.d / 2 / mpp, 0);
-      mk('polygon', { points: cs.map(q => q.x.toFixed(1) + ',' + q.y.toFixed(1)).join(' '),
-        fill: stc.col || '#888', 'fill-opacity': 0.75, stroke: '#fff', 'stroke-width': 1 }, gW);
-    });
-  });
+  // (collection point area bins are real placed bins too — drawn by the bin pass)
   // the one mark that stays on the drawing: bins the busiest week cannot
   // fit anywhere — a shortfall must not be invisible on the plan
   const a = cp.worst.assess;
@@ -21752,7 +21795,10 @@ function wsRenderLayoutLayer() {
       stroke: '#FF5252', 'stroke-width': 2, 'stroke-dasharray': '4 4' });
   };
   binFps.forEach(({ b, fp }) => {
-    for (const k of clashFps) if (wsFpOverlap(fp, k, 0)) { flag(b, fp, k.why); break; }
+    for (const k of clashFps) {
+      if (b.collectArea && k.zoneType === 'COLLECT') continue;   // a collection point bin belongs inside its area
+      if (wsFpOverlap(fp, k, 0)) { flag(b, fp, k.why); break; }
+    }
   });
   for (let i = 0; i < binFps.length; i++) for (let j = i + 1; j < binFps.length; j++) {
     if (wsFpOverlap(binFps[i].fp, binFps[j].fp, 0)) {
@@ -21797,9 +21843,10 @@ function wsLayoutUpdateStats(slot, mpp) {
   const el = document.getElementById('ws-layout-stats'); if (!el) return;
   if (!slot.bins.length && !slot.rooms.length && !slot.chutes.length && !slot.equip.length) { el.textContent = ''; if (typeof wsFloatStatus === 'function') wsFloatStatus(''); return; }
   const byStream = {};
-  let fp = 0, onKerb = 0;
+  let fp = 0, onKerb = 0, inArea = 0;
   slot.bins.forEach(b => {
     if (b.kerb) { onKerb++; return; }   // presentation, not storage — counted on its own
+    if (b.collectArea) { inArea++; return; }
     const bt = wsBinType(b.type); if (!bt) return;
     const st = WS_STREAMS.find(s => s.id === b.stream);
     const key = st ? st.label : '?';
@@ -21808,9 +21855,10 @@ function wsLayoutUpdateStats(slot, mpp) {
   });
   let roomA = 0;
   if (mpp) slot.rooms.forEach(r => { roomA += (r.x2 - r.x1) * (r.y2 - r.y1) * mpp * mpp; });
-  const parts = [`${slot.bins.length - onKerb} bins`];
+  const parts = [`${slot.bins.length - onKerb - inArea} bins`];
   for (const k in byStream) parts.push(`${byStream[k]} ${k}`);
   if (onKerb) parts.push(`${onKerb} at the kerb`);
+  if (inArea) parts.push(`${inArea} at the collection point`);
   if (fp) parts.push(`${fp.toFixed(1)} m² footprint`);
   slot.chutes.forEach(c => { const cs = WS_CHUTE_SPECS[c.type]; if (cs) fp += cs.w * cs.d; });
   // aisles are clearance, not plant; a traced zone claims its measured area
@@ -22066,7 +22114,7 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
   slot.bins.forEach(b => {
     const bt = wsBinType(b.type); if (!bt) return;
     const st = WS_STREAMS.find(s => s.id === b.stream) || WS_STREAMS[0];
-    const layer = b.kerb ? 'A-KERB-BINS' : 'BINS_' + st.id.toUpperCase();   // kerb presentation keeps its own layer
+    const layer = b.kerb ? 'A-KERB-BINS' : b.collectArea ? 'A-COLLECT-BINS' : 'BINS_' + st.id.toUpperCase();   // presentation keeps its own layers
     // Reference the block defined for this type+stream. Bins used to draw a
     // raw bounding rectangle here while their blocks sat unreferenced — which
     // lost the drawn plan shape in CAD and left orphan definitions.
@@ -22082,11 +22130,8 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
   if (anyCollect && typeof wsCollectCompute === 'function') {
     const cp = wsCollectCompute(slot, mpp);
     if (cp && cp.bulk && cp.bulk.areas.length && !cp.bulk.empty) {
-      // bulk collection point — every bulk-method bin, all streams at once
-      cp.bulk.areas.forEach(ar => ar.placed.forEach(pl => {
-        const stc = WS_STREAMS.find(x => x.id === pl.it.stream) || { aci: 8 };
-        d += rect('A-COLLECT-BINS', stc.aci, pl.x, pl.y, pl.it.w, pl.it.d, 0);
-      }));
+      // bulk collection point — the bins are real placed bins, written to
+      // A-COLLECT-BINS by the bin pass above; only the header is added here
       const a0 = cp.bulk.areas[0];
       d += text('A-COLLECT-BINS', cp.bulk.ok ? 3 : 1, a0.pts[0].x, a0.pts[0].y - 14, 220,
         'COLLECTION POINT - ALL STREAMS - ' + cp.bulk.bins.length + ' BINS - ' +
@@ -22209,14 +22254,14 @@ function wsLayoutCalcRoomAt(x, y) {
 }
 function wsLayoutPlacedCount(stream, typeId, roomId) {
   // bins on the kerb are presentation, not room storage — never a room's count
-  const bins = wsLayoutSlot().bins.filter(b => !b.kerb && b.stream === stream && b.type === typeId);
+  const bins = wsLayoutSlot().bins.filter(b => !wsIsPresentationBin(b) && b.stream === stream && b.type === typeId);
   if (roomId === undefined || roomId === null) return bins.length;
   const lone = WS_CALC_ROOMS.length <= 1;
   return bins.filter(b => b.calcRoom === roomId || (lone && !b.calcRoom)).length;
 }
 function wsLayoutUntagged() {
   if (WS_CALC_ROOMS.length <= 1) return 0;
-  return wsLayoutSlot().bins.filter(b => !b.calcRoom && !b.kerb).length;
+  return wsLayoutSlot().bins.filter(b => !b.calcRoom && !wsIsPresentationBin(b)).length;
 }
 // ── AUTO-LAYOUT ──────────────────────────────────────────────────────────────
 // Pack a room's bins into a polygon: rows from the top, deepest first, every
@@ -23159,6 +23204,10 @@ function wsZonePolyFinish(pts, mpp) {
     wsRenderLayoutLayer();
     // after endMode, so its default hint does not stomp the measurement
     wsLayoutStatus(`${t.label} drawn — ${wsPolyArea(pts, mpp).toFixed(1)} m² measured from the outline.`);
+    if (t.id === 'COLLECT' && typeof wsCollectPlaceAreaBins === 'function') {
+      const n = wsCollectPlaceAreaBins([it.id]);
+      if (n) wsLayoutStatus(`${t.label} drawn — ${wsPolyArea(pts, mpp).toFixed(1)} m²; ${n} bin${n === 1 ? '' : 's'} placed in it (drag, R rotates, Del deletes).`);
+    }
     return;
   }
   WS_LAYOUT.roomPts = null; WS_LAYOUT._zonePoly = null;
