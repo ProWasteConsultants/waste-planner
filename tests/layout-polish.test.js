@@ -906,14 +906,12 @@ test('admin guidelines section is scoped to one council', () => {
     'library entries are filtered by the selected council');
   assert.ok(SOURCE.includes('const rows = listed.filter(r => cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));'),
     'the requirements list is filtered by the selected council');
-  assert.ok(SOURCE.includes("'. Choose a council in Scope at the top to see and edit its list.</div>'"),
-    'with nothing selected the list shows counts only');
-  // with nothing selected, no council-specific content — but counts, so
-  // nothing is hidden silently
-  assert.ok(SOURCE.includes("Choose a council in Scope at the top to see its document and review its rows."),
-    'unselected library shows a count and a prompt, not another council');
-  assert.ok(SOURCE.includes("'. Choose a council in Scope at the top to see and edit its list.</div>'"),
-    'unselected list shows a count and a prompt, not another council');
+  // with nothing selected, no council-specific content and no prompt copy
+  assert.ok(SOURCE.includes("if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing council-specific, no prompt"),
+    'unselected library renders nothing, never another council');
+  assert.ok(SOURCE.includes("if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing, no prompt"),
+    'unselected list renders nothing, never another council');
+  assert.ok(!SOURCE.includes('id="cg-scope-echo"') && !SOURCE.includes('Each saved PDF becomes a NEW version'), 'the scope chip and the versioning note are gone');
   // the selected council's document card is the same renderer the rates panel uses
   assert.ok(SOURCE.includes('async function glCouncilCard(label, mountId, emptyHint)'), 'one card renderer');
   assert.ok(SOURCE.includes("glCouncilCard(CG_SCOPE.name, 'cg-council-card'") &&
