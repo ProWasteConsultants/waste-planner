@@ -11847,47 +11847,132 @@ const CRQ_SWEEP_LIST = `You are reading an Australian council waste guideline PD
 - "clause_ref": the clause/section AND page as printed, e.g. "cl 5.4, p.4". REQUIRED.
 - "combined": true when ONE figure covers garbage and recycling together, false when the row gives a figure per stream.
 Include EVERY row that carries a rate, including rates of 0. Skip headings that carry no rate of their own, and skip residential/dwelling rates. Labels only — no values.`;
-const CRQ_SWEEP_FILL = `You are reading an Australian council waste guideline PDF. For EACH premises type the user lists, return its waste GENERATION RATE rows exactly as the table prints them. Respond with JSON only: {"rows":[...]}. Each row:
-- "label": the premises type, copied EXACTLY from the user's list
-- "stream": "garbage" or "recycling" (or "fogo" / "glass" / "paper" where the table has such a column); null when one figure covers several streams
-- "value_num": the number only (50, 0.25, 3350)
-- "unit": the unit verbatim ("L/100m² floor area/day", "L/bed/per day", "L/seats/screening")
-- "combined": true when this one figure covers garbage and recycling together
-- "clause_ref": the clause/section AND page as printed. REQUIRED.
-One row per stream per premises type; a combined figure is ONE row with "combined": true and "stream": null. Copy every number exactly — never round, never infer a value the table does not print. Omit a listed premises type only if the document gives it no rate.`;
+const CRQ_SWEEP_TRANSCRIBE = `You are reading an Australian council waste guideline PDF. TRANSCRIBE every table of NON-RESIDENTIAL / commercial waste GENERATION RATES, verbatim. No JSON, no commentary, no summary — just the table as pipe-delimited lines, one line per table row, in document order:
+
+Premises type | garbage rate | recycling rate
+
+Rules:
+- Copy each cell EXACTLY as printed, including the unit ("50L/100m² floor area/day", "5L/bed/per day", "25L/seats/screening") and any note in brackets such as "(combined garbage and recycling)".
+- A row whose ONE figure covers garbage and recycling together: put that figure in the garbage column with its "(combined ...)" note exactly as printed, and leave the recycling column empty.
+- A heading row that groups indented sub-rows: write the heading on its own line with both rate columns empty, then each sub-row on its own line beginning with "- ".
+- A row with no rate at all still gets its line, with both rate columns empty.
+- Transcribe EVERY row, including rates of 0. Do not skip, merge, rename, reorder or summarise any row. Do not include residential/dwelling rate tables.`;
+// Parse one transcribed rate cell. Pure: the document's own text in, a
+// figure + its verbatim unit out, or null when the cell holds no rate.
+function crqRateCell(cell) {
+  const t = String(cell || '').replace(/ /g, ' ').trim();
+  if (!t || /^[-–—n\/a.]+$/i.test(t)) return null;
+  const m = /(-?\d+(?:\.\d+)?)\s*(?:l|litres?|liters?)\b\s*\/?\s*([^()]*)/i.exec(t);
+  // A bare figure in a rate column is a rate stated in the row's other unit
+  // — "Car parks | 0 | 0L/100m²/day". Returned with no unit for the caller
+  // to fill from its sibling; never discarded, because 0 is a real figure.
+  if (!m) return /^-?\d+(?:\.\d+)?$/.test(t) ? { value: +t, unit: null, combined: false } : null;
+  const value = +m[1];
+  if (isNaN(value)) return null;
+  const unit = ('L/' + String(m[2] || '').trim())
+    .replace(/\s*\/\s*/g, '/').replace(/\/per\s+/gi, '/').replace(/\s+/g, ' ').replace(/\/+$/, '').trim();
+  return { value, unit, combined: /combin|both|total/i.test(t) };
+}
+// Parse a transcribed rate TABLE into rows. Pure — no model, no network, so
+// the structure of the document is decided by code that can be tested
+// against the real table, not by a model's idea of the right JSON shape.
+// Handles: split garbage/recycling columns, a single combined figure,
+// indented sub-rows under a heading, rates of 0, and rows with no rate.
+function crqRateLines(text, clause) {
+  const out = { rows: [], headings: [], skipped: [] };
+  let heading = null;
+  String(text || '').split(/\r?\n/).forEach(raw => {
+    const line = raw.replace(/ /g, ' ').replace(/^\s*\|/, '').replace(/\|\s*$/, '').trim();
+    if (!line || /^[-=|:\s]+$/.test(line)) return;                       // rules and blank lines
+    const cells = line.split('|').map(c => c.trim());
+    const first = cells[0] || '';
+    const isSub = /^[-–—•·*]\s+/.test(first);
+    const label = first.replace(/^[-–—•·*]\s+/, '').replace(/\s+/g, ' ').trim();
+    if (!label) return;
+    const g = crqRateCell(cells[1]), r = crqRateCell(cells[2]);
+    if (!g && !r) {
+      // a header row of the table itself is not a premises
+      if (/^(type of premises|premises|use|category|garbage|recycling|waste)\b/i.test(label) && cells.length > 1) return;
+      // A premises whose rate cells hold something unreadable — "–", "n/a" —
+      // stated no rate; it is skipped and SAID, not turned into a heading
+      // that would then swallow the rows beneath it.
+      if (cells.slice(1).some(c => c)) { out.skipped.push((isSub && heading) ? heading + ' — ' + label : label); return; }
+      heading = label; out.headings.push(label); return;                 // groups the sub-rows beneath it
+    }
+    const full = (isSub && heading) ? heading + ' — ' + label : label;
+    if (!isSub) heading = null;                                          // a flat row ends the group
+    if (g && !g.unit && r && r.unit) g.unit = r.unit;                    // a bare figure takes the row's unit
+    if (r && !r.unit && g && g.unit) r.unit = g.unit;
+    const push = (stream, cell, combined) => {
+      if (!cell.unit) { out.skipped.push(full + ' (' + stream + ': no unit stated)'); return; }
+      out.rows.push({ label: full, stream, value_num: cell.value, unit: cell.unit,
+        combined: !!combined, clause_ref: clause || null });
+    };
+    if (g && g.combined && !r) push(null, g, true);                      // ONE figure covers both streams
+    else { if (g) push('garbage', g, false); if (r) push('recycling', r, false); }
+  });
+  return out;
+}
+// The sweep: TWO independent reads that must agree. The transcription is the
+// source of truth (copying is what a model does reliably; inventing JSON for
+// a 45-row table is not), parsed by crqRateLines above. The label manifest
+// is the VERIFIER — anything it lists that the transcription did not yield
+// is reported by name, so a short read is visible instead of silent.
 async function crqRateSweep(call, onProgress) {
-  const out = { labels: [], rows: [], missing: [], error: null };
-  const norm = v => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
-  let manifest;
-  try { manifest = await call(CRQ_SWEEP_LIST, 'List the premises types. JSON only — start your response with {', 'labels'); }
+  const out = { labels: [], rows: [], missing: [], error: null, transcript: '' };
+  const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (onProgress) onProgress('reading the rate table');
+  let text = '';
+  try { text = await call(CRQ_SWEEP_TRANSCRIBE, 'Transcribe the non-residential generation rate table(s) now, pipe-delimited, one line per row.', null); }
   catch (e) { out.error = e.message || String(e); return out; }
+  out.transcript = String(text || '');
+  const parsed = crqRateLines(out.transcript, null);
+  out.rows = parsed.rows;
+  if (onProgress) onProgress('checking every row came through');
+  let manifest = null;
+  try { manifest = await call(CRQ_SWEEP_LIST, 'List the premises types. JSON only — start your response with {', 'labels'); }
+  catch (e) { manifest = null; }                                         // the transcription still stands
   (manifest || []).forEach(x => {
     const label = String((x && x.label) || '').trim();
     if (!label || out.labels.some(y => norm(y.label) === norm(label))) return;
     out.labels.push({ label, clause_ref: String((x && x.clause_ref) || '').trim(), combined: !!(x && x.combined) });
   });
-  if (!out.labels.length) return out;
-  const got = new Set();
-  const fill = async list => {
-    const text = 'Return the generation rates for EXACTLY these premises types, one row per stream:\n' +
-      list.map(l => '· ' + l.label).join('\n') + '\nJSON only — start your response with {';
-    let rows;
-    try { rows = await call(CRQ_SWEEP_FILL, text, 'rows'); } catch (e) { return; }
-    (rows || []).forEach(r => {
-      const hit = out.labels.find(l => norm(l.label) === norm(r && r.label));
-      if (!hit) return;   // never invent a premises the document did not print
-      got.add(hit.label);
-      out.rows.push({ ...r, label: hit.label, clause_ref: String((r && r.clause_ref) || '').trim() || hit.clause_ref });
-    });
+  // clause references come from the manifest where the transcription has none
+  const byLabel = {};
+  out.labels.forEach(l => { byLabel[norm(l.label)] = l; });
+  const fillClauses = () => out.rows.forEach(r => {
+    const hit = byLabel[norm(r.label)] || out.labels.find(l => { const a = norm(l.label), b = norm(r.label); return a && b && (a.includes(b) || b.includes(a)); });
+    if (hit && !r.clause_ref) r.clause_ref = hit.clause_ref;
+  });
+  fillClauses();
+  const recount = () => {
+    const got = out.rows.map(r => norm(r.label));
+    out.missing = out.labels.filter(l => {
+      const n = norm(l.label);
+      return !got.some(g => g === n || g.includes(n) || n.includes(g));
+    }).map(l => l.label);
   };
-  const BATCH = 12;
-  for (let i = 0; i < out.labels.length; i += BATCH) {
-    if (onProgress) onProgress(i, out.labels.length);
-    await fill(out.labels.slice(i, i + BATCH));
+  recount();
+  // The verifier drives the retry: rather than a blind "continue", the rows
+  // the manifest saw and the transcription did not are asked for BY NAME,
+  // once. Anything still missing after that is reported, not assumed read.
+  if (out.missing.length) {
+    if (onProgress) onProgress(`re-reading ${out.missing.length} row${out.missing.length === 1 ? '' : 's'} that did not come through`);
+    try {
+      const again = await call(CRQ_SWEEP_TRANSCRIBE,
+        'Transcribe ONLY these rows from the same table(s), same pipe-delimited format, one line per row, copying each cell exactly as printed:\n'
+        + out.missing.map(l => '· ' + l).join('\n'), null);
+      out.transcript += '\n' + String(again || '');
+      const have = new Set(out.rows.map(r => norm(r.label) + '|' + (r.stream || '')));
+      crqRateLines(String(again || ''), null).rows.forEach(r => {
+        const k = norm(r.label) + '|' + (r.stream || '');
+        if (!norm(r.label) || have.has(k)) return;
+        have.add(k); out.rows.push(r);
+      });
+      fillClauses();
+      recount();
+    } catch (e) {}                                                       // the first read still stands
   }
-  const missed = out.labels.filter(l => !got.has(l.label));
-  for (let i = 0; i < missed.length; i += BATCH) await fill(missed.slice(i, i + BATCH));   // one retry, then reported
-  out.missing = out.labels.filter(l => !got.has(l.label)).map(l => l.label);
   return out;
 }
 
@@ -12009,24 +12094,25 @@ async function crqExtract(councilKey, localFile) {
       truncated = capped;
       if (!capped || !fresh) break;   // finished, or a pass that added nothing — stop rather than loop
     }
-    // The rate table gets its own sweep: the general pass reads a 50-row
-    // table as "some rates", which is how Office, Supermarket and thirty
-    // others went missing. Rows it finds join the same dedupe.
+    // The rate table gets its own sweep, because the general pass reads a
+    // 50-row table as "some rates" — which is how Office, Supermarket and
+    // thirty others went missing. Asked for JSON the model summarises the
+    // table; asked to COPY it, it copies. So: transcribe, then let our own
+    // code (crqRateLines) decide the structure. Rows join the same dedupe.
     const call = async (system, text, key) => {
       const resp = await aiProxy({ max_tokens: 16000, system, messages: [{ role: 'user', content: [doc64, { type: 'text', text }] }] });
+      if (!key) return (resp.content?.[0]?.text || '').trim();   // transcription: raw text, not JSON
       return wsParseExtractionRows(resp, key).rows;
     };
-    crqMsg(`Extracting ${doc.council_name} v${doc.version} — reading the rate table…`);
-    const sweep = await crqRateSweep(call, (done, total) =>
-      crqMsg(`Extracting ${doc.council_name} v${doc.version} — rate table, ${done} of ${total} rows…`));
+    const sweep = await crqRateSweep(call, stage =>
+      crqMsg(`Extracting ${doc.council_name} v${doc.version} — ${stage}…`));
     sweep.rows.forEach(x => {
-      const combined = !!x.combined || (!x.stream && sweep.labels.some(l => l.label === x.label && l.combined));
       const v = (x.value_num === 0 || x.value_num) && !isNaN(+x.value_num) ? +x.value_num : null;
       if (v == null) return;   // a rate with no number is not a rate
       const row = { requirement_type: 'generation_rate', use_class: x.label,
-        stream: combined ? null : (x.stream || null), value_num: v, unit: String(x.unit || '').trim() || null,
-        value_text: `${x.label}: ${v}${x.unit ? ' ' + x.unit : ''}` + (combined ? ' (one figure covers combined garbage and recycling)' : ''),
-        clause_ref: x.clause_ref };
+        stream: x.combined ? null : (x.stream || null), value_num: v, unit: String(x.unit || '').trim() || null,
+        value_text: `${x.label}: ${v}${x.unit ? ' ' + x.unit : ''}` + (x.combined ? ' (one figure covers combined garbage and recycling)' : ''),
+        clause_ref: x.clause_ref || (sweep.labels[0] || {}).clause_ref || 'rate table' };
       const k = seenKey(row);
       if (seen.has(k)) return;
       seen.add(k); cand.push(row);
@@ -12062,11 +12148,15 @@ async function crqExtract(councilKey, localFile) {
     });
     if (!rows.length) { crqMsg('No citable requirements found in that PDF.', true); return; }
     // INSERT only. Existing rows — earlier extractions, older versions, hand-typed — are never touched.
-    const { error: insErr } = await sb.from('council_requirements').insert(rows);
+    // .select() so the inserted rows come back WITH their ids — the rates
+    // report's pickers (pick a use, split a combined figure) address a row
+    // by id, and a report rendered off id-less rows has dead buttons.
+    const { data: ins, error: insErr } = await sb.from('council_requirements').insert(rows).select();
     if (insErr) { crqMsg('Insert failed: ' + insErr.message + (/source/.test(insErr.message) ? ' — has sql/2026-09-15-requirements-list.sql been run?' : ' — has sql/2026-08-25-package-c3-council-requirements.sql been run?'), true); return; }
+    const saved = (ins && ins.length === rows.length) ? ins : rows;
     const serving = await crqSyncServe(doc.council_key, doc.council_name);
     // generation rates → the rate tables, in their own format, add-only
-    const rr = await crqWriteRates(rows.filter(crqIsRate), doc);
+    const rr = await crqWriteRates(saved.filter(crqIsRate), doc);
     if (rows.some(crqIsRate)) crqRatesReport(rr);
     const nReq = rows.length - rows.filter(crqIsRate).length;
     const rateNote = !rows.some(crqIsRate) ? '' :
@@ -12078,9 +12168,10 @@ async function crqExtract(councilKey, localFile) {
       (unresolved ? ` · ${unresolved} with a stream to set (flagged in the list)` : '') +
       (dropped ? ` · ${dropped} dropped (no clause reference)` : '') +
       (passes > 1 ? ` · read in ${passes} passes` : '') +
-      (sweep.labels.length ? ` · rate table: ${sweep.labels.length - sweep.missing.length} of ${sweep.labels.length} rows read` +
-        (sweep.missing.length ? ` — NOT read: ${sweep.missing.slice(0, 6).join(', ')}${sweep.missing.length > 6 ? ', …' : ''}; re-run to try again` : '') : '') +
-      (sweep.error ? ` · ⚠ the rate table could not be listed (${sweep.error})` : '') +
+      (sweep.rows.length ? ` · rate table: ${sweep.rows.length} rate rows transcribed` +
+        (sweep.labels.length ? ` across ${sweep.labels.length} premises` : '') +
+        (sweep.missing.length ? ` — ⚠ NOT transcribed: ${sweep.missing.slice(0, 8).join(', ')}${sweep.missing.length > 8 ? ', …' : ''}; re-run to try again` : '') : '') +
+      (sweep.error ? ` · ⚠ the rate table could not be read (${sweep.error})` : '') +
       (truncated ? ' · ⚠ still hit the length cap after ' + passes + ' passes — complete rows were kept, but requirements late in the document may be missing; re-run to continue' : '') +
       '. Existing rows were left as they were — look for ≈ possible duplicate flags.');
     crqLoad();
@@ -12195,13 +12286,22 @@ function crqComBasis(unit) {
 // specific use is usually in its wording ("Office: 50 L/100m² per day").
 // Match the commercial uses' label words against that text — longest word
 // wins; nothing shorter than four letters counts. Pure.
+// Words that name a KIND of premises rather than a premises: "Retail store
+// (non-food)", "General retail (small)" and "Bulky goods / department store"
+// all carry "retail" or "store", so matching on one of them seats a rate on
+// whichever use happens to be tried first. A match must be distinctive.
+const CRQ_GENERIC_WORDS = new Set(['shop', 'store', 'stores', 'retail', 'retailing', 'house', 'houses', 'housing',
+  'room', 'rooms', 'centre', 'center', 'centres', 'goods', 'general', 'other', 'small', 'large', 'area', 'floor',
+  'premises', 'building', 'buildings', 'commercial', 'business', 'service', 'services', 'shopping', 'per', 'bed',
+  'beds', 'food', 'nonfood', 'trading', 'accommodation', 'club', 'venue', 'space', 'use', 'uses']);
 function crqUseFromText(text, uses, wantBasis) {
   const t = ' ' + crxNorm(text) + ' ';
   if (t.trim().length < 3) return null;
   let best = null, bestLen = 0;
   (uses || []).filter(u => { if (!wantBasis) return true; const b = crqUseBasis(u.label); return !b || b === wantBasis; }).forEach(u => {
     const label = String(u.label || '');
-    const words = [label].concat(label.split(/[\/(),&+-]| and | or /i)).map(w => crxNorm(w)).filter(w => w.length >= 4);
+    const words = [label].concat(label.split(/[\/(),&+-]| and | or /i))
+      .map(w => crxNorm(w)).filter(w => w.length >= 5 && !CRQ_GENERIC_WORDS.has(w));
     words.forEach(w => { if (w.length > bestLen && t.includes(w)) { best = u; bestLen = w.length; } });
   });
   return best;
@@ -12241,7 +12341,7 @@ function crqRateToTable(r, ctx) {
   if (!uc) return no('no use class');
   const uses = ctx.uses || [];
   const basis = crqComBasis(r.unit);
-  if (!basis) return no(`unit “${r.unit || '?'}” has no formula in the commercial table (per 100 m² / bed / occupant / apartment / student, per day or week)`);
+  if (!basis) return no(`unit “${r.unit || '?'}” has no formula in the commercial table (per 100 m² / bed / occupant / apartment / student, per day or week) — the rate stays in the requirements list; put it in the table by hand if the calculator should use it`);
   // The uses list carries per-bed / per-m² / per-occupant VARIANTS of the same
   // premises. A floor-area rate landing on the per-bed variant reads 6 L per
   // bed where the council said 6 L per 100 m² — so the unit's basis decides
@@ -12256,8 +12356,12 @@ function crqRateToTable(r, ctx) {
   const exact = broad ? [] : uses.filter(u => crxNorm(u.label) === uc);
   const near = broad ? [] : uses.filter(u => crxNorm(u.label).includes(uc) || uc.includes(crxNorm(u.label)));
   let use = pick(exact) || pick(near);
+  // Reading the use out of the wording is a LAST resort for a row that names
+  // no premises of its own. A row that DOES name one and matches nothing is
+  // refused — "Retail store (non-food)" guessed onto "General retail" is how
+  // one premises' figure lands under another's name.
   let viaText = false;
-  if (!use) { use = crqUseFromText(r.value_text, uses, wantBasis); viaText = !!use; }
+  if (!use && broad) { use = crqUseFromText(r.value_text, uses, wantBasis); viaText = !!use; }
   if (!use) return no(broad ? `use class “${r.use_class}” is a broad class and the wording names no commercial use in the table — pick the use below`
                             : `use class “${r.use_class}” matches no commercial use in the table — pick the use below`);
   const gotBasis = crqUseBasis(use.label);
@@ -12271,7 +12375,7 @@ function crqRateToTable(r, ctx) {
 // normalised label), then write every mappable extracted rate that the
 // tables do not already hold. Never an upsert: existing rates are kept.
 async function crqWriteRates(rateRows, doc) {
-  const out = { added: [], kept: [], unplaced: [], council: doc.council_name, state: null, councilValue: null };
+  const out = { added: [], kept: [], unplaced: [], clashes: [], council: doc.council_name, state: null, councilValue: null };
   if (!rateRows.length) return out;
   // council value: the Scope bar's selection when it IS this council,
   // otherwise the registry row whose label matches (any state — an older
@@ -12307,20 +12411,20 @@ async function crqWriteRates(rateRows, doc) {
     (com || []).forEach(x => existing.com_rates.add(x.use_code + '|' + x.stream));
   } catch (e) {}
   const batch = { res_rates: [], com_rates: [] };
-  const seen = new Set();
+  const seen = new Set(), clash = {}, first = {};
   want.forEach(({ r, plan }) => {
     const rows = plan.rows || [plan.row], keys = plan.keys || [plan.key];
     let added = 0, kept = 0;
     rows.forEach((row, i) => {
       const k = plan.table + '|' + keys[i];
       if (existing[plan.table].has(keys[i])) { kept++; return; }   // add-only: the table's value stands
-      if (seen.has(k)) return;                                       // an earlier extracted row already fills this cell
-      seen.add(k);
+      if (seen.has(k)) { clash[k] = (clash[k] || []).concat(r.use_class || '?'); return; }
+      seen.add(k); first[k] = r.use_class || '?';
       batch[plan.table].push(row); added++;
     });
     if (added) out.added.push({ r, plan, cells: added, kept });
     else if (kept) out.kept.push({ r, plan, cells: kept });
-    else out.unplaced.push({ r, why: 'another extracted row already fills this cell — the first one was written' });
+    else out.unplaced.push({ r, why: 'this cell was already filled by another premises in the same run — check which is right' });
   });
   for (const table of ['res_rates', 'com_rates']) {
     if (!batch[table].length) continue;
@@ -12332,6 +12436,9 @@ async function crqWriteRates(rateRows, doc) {
       failed.forEach(a => out.unplaced.push({ r: a.r, why: table + ' insert refused: ' + error.message }));
     }
   }
+  // Two different premises landing in one cell is a real ambiguity — name
+  // both rather than keeping whichever arrived first and saying nothing.
+  Object.keys(clash).forEach(k => out.clashes.push({ cell: k.split('|').slice(1).join(' · '), kept: first[k], also: [...new Set(clash[k])] }));
   return out;
 }
 // What happened to the guideline's generation rates — shown IN the rates
@@ -12348,6 +12455,16 @@ function crqRatesReport(rr) {
   const uses = rr.uses || RDB.uses || [];
   const fix = u => {
     const needUse = /pick the use below/.test(u.why), needStream = /pick the stream below/.test(u.why);
+    const sel0 = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:2px 4px;font-size:10.5px;color:var(--text);font-family:inherit;';
+    // ONE figure for garbage + recycling: the council did not split it, so
+    // neither do we — the split is typed here and both halves are written.
+    if (/one figure covers garbage and recycling together/.test(u.why)) {
+      const v = (u.r.value_num === 0 || u.r.value_num) ? u.r.value_num : '';
+      return ` <span style="display:inline-flex;gap:4px;align-items:center;">split: GW
+        <input id="crq-split-gw-${u.r.id}" type="number" step="any" value="${v}" style="${sel0}width:64px;">
+        REC <input id="crq-split-rec-${u.r.id}" type="number" step="any" value="0" style="${sel0}width:64px;">
+        <button class="btn" style="padding:1px 7px;font-size:10px;" title="Write both halves. The council gives one figure for both streams — these two values are yours." onclick="crqPlaceSplit('${u.r.id}')">Place both</button></span>`;
+    }
     if (!needUse && !needStream) return '';
     const sel = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:2px 4px;font-size:10.5px;color:var(--text);font-family:inherit;';
     return ' <span style="display:inline-flex;gap:4px;align-items:center;">' +
@@ -12360,9 +12477,33 @@ function crqRatesReport(rr) {
     li('<b>Generation rates from ' + cgbEsc(rr.council || 'the guideline') + '</b>' + (rr.councilValue ? '' : ' — <b style="color:#EF8080;">not in the councils list for ' + cgbEsc(rr.state || 'this state') + ' (Scope → + Add council), so nothing could be placed</b>'), 'var(--text)') +
     rr.added.map(a => li('✓ added · ' + cgbEsc(cell(a)) + ' <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', '#3DD68C')).join('') +
     rr.kept.map(a => li('· kept · ' + cgbEsc(cell(a)) + ' — the table already has a rate for this cell <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', 'var(--muted)')).join('') +
+    (rr.clashes || []).map(c => li('⚠ two premises want the same cell (' + cgbEsc(c.cell) + ') — kept <b>' + cgbEsc(c.kept) + '</b>, also claimed by ' + cgbEsc(c.also.join(', ')) + '. Check which is right.', '#FFB74D')).join('') +
     rr.unplaced.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + (u.r.value_text ? ' <i style="color:var(--muted);">' + cgbEsc(String(u.r.value_text).slice(0, 90)) + '</i>' : '') + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + fix(u), '#FFB74D')).join('') +
     (rr.added.length ? li('⬆ Publish to live pushes the added rates to the calculator.', 'var(--muted)') : '') +
     '</div>';
+}
+// A combined garbage+recycling figure, split by hand: the row becomes the
+// garbage half and a manual sibling carries the recycling half, so both are
+// cited to the same clause and the split is visible as a human decision.
+async function crqPlaceSplit(rowId) {
+  const gw = parseFloat((document.getElementById('crq-split-gw-' + rowId) || {}).value);
+  const rec = parseFloat((document.getElementById('crq-split-rec-' + rowId) || {}).value);
+  if (isNaN(gw) || isNaN(rec)) { rdbMsg('Enter both halves of the split first.', false); return; }
+  const src = (CRQ_L.rows || []).find(x => x.id === rowId);
+  if (!src) { rdbMsg('That row is no longer in the list — re-run the pull.', false); return; }
+  const note = ' [combined figure split by hand: ' + gw + ' garbage + ' + rec + ' recycling]';
+  const { error } = await sb.from('council_requirements')
+    .update({ stream: 'garbage', value_num: gw, value_text: String(src.value_text || '').replace(/\s*\[combined figure split[^\]]*\]/, '') + note,
+              reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() }).eq('id', rowId);
+  if (error) { rdbMsg('Could not split the row: ' + error.message, false); return; }
+  const { error: e2 } = await sb.from('council_requirements').insert({
+    council_guideline_id: src.council_guideline_id, requirement_type: 'generation_rate',
+    use_class: src.use_class, stream: 'recycling', value_num: rec, unit: src.unit,
+    value_text: String(src.value_text || '').replace(/\s*\[combined figure split[^\]]*\]/, '') + note,
+    clause_ref: src.clause_ref, status: 'approved', source: 'manual',
+    reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() });
+  if (e2) { rdbMsg('Garbage half saved, recycling half failed: ' + e2.message, false); return; }
+  await crqPullRatesForScope();
 }
 // "+ new use…" reveals the name field, pre-filled from the row itself.
 function crqFixUseChanged(rowId) {

@@ -283,15 +283,28 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   captured and returns only what is missing; rows repeated across passes are
   dropped by key, a pass that adds nothing ends the loop, and a failed
   continuation keeps what was read and says so.
-- **The rate table gets its own SWEEP** (`crqRateSweep`), because a general
-  "extract the requirements" pass reads a 50-row table as *some* rates and
-  a continue-until-nothing-new loop cannot tell finished from bored. Three
-  steps: **list** the table's row labels (a short reply, so it arrives
-  complete), **fill** those labels in batches of 12 (each reply small enough
-  to finish), then **verify** every label came back. Missing labels are
-  retried once and then REPORTED BY NAME — coverage is stated ("48 of 50
-  rows read"), never assumed. A returned premises that was not on the list
-  is dropped, never invented. Sweep rows join the general pass's dedupe.
+- **The rate table is TRANSCRIBED, not summarised** (`crqRateSweep`). A
+  general "extract the requirements" pass reads a 50-row table as *some*
+  rates, and asking for structured JSON over that table made it worse: the
+  model summarises. Asked to **copy** it, it copies. So the sweep is two
+  independent reads — a verbatim pipe-delimited **transcription**
+  (`CRQ_SWEEP_TRANSCRIBE`) parsed by our own code, and a short label
+  **manifest** (`CRQ_SWEEP_LIST`) that acts only as the **verifier**.
+  Anything the manifest saw and the transcription did not is re-asked **by
+  name**, once, and then REPORTED BY NAME — never a blind "continue", never
+  assumed read. A failed manifest leaves the transcription standing; only a
+  failed transcription is a failed sweep. Sweep rows join the general pass's
+  dedupe.
+- **`crqRateLines` / `crqRateCell` are pure and are where the table's
+  structure is decided** — so it can be tested against the real table
+  instead of trusting a model's idea of the right JSON shape. They handle
+  split garbage/recycling columns, a single **combined** figure (carried as
+  `stream: null, combined: true` — never halved), indented sub-rows under a
+  heading (`"Assembly Rooms — Social"`), a bare figure taking its row's unit
+  (`Car parks | 0 | 0L/100m²/day`), a rate of **0** as a real figure, and an
+  unusual unit copied verbatim (`L/seats/screening` — which has no formula
+  in the commercial table, so the row is captured, listed and reported
+  rather than forced onto a unit the council did not write).
 - **Generation rates go straight into the rate tables.** A
   `generation_rate` row is a rate, not a clause to list: `crqExtract` hands
   them to `crqWriteRates`, which maps each onto a `res_rates` row (dwelling
@@ -304,13 +317,22 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   `CRQ_UNIT_BASIS` keep a per-100 m² rate off the per-bed row, and refuse
   with the mismatch named when no matching variant exists. A **combined**
   garbage-and-recycling figure is labelled as such and never split
-  automatically — the split is a judgement call. — never an
+  automatically — the split is a judgement call, typed into the report's own
+  GW/REC boxes (`crqPlaceSplit`), which writes the garbage half onto the row
+  and a `source: 'manual'` recycling sibling under the same clause. — never an
   upsert, so an existing rate is never overwritten. Anything that would need
   a guess (no dwelling type, an unknown use, a unit with no formula) is
   reported with the reason and typed in by hand — or resolved in the rates
   report itself, whose picker can also CREATE a commercial use
   (`crqUseCode` derives the code, the row is inserted into `com_uses` and
-  appears at once in the commercial table's picker). No list, no diff, no
+  appears at once in the commercial table's picker). **A premises is never
+  relabelled onto a lookalike**: the wording is read for a use only when the
+  row names no premises of its own (a *broad* class), and generic words that
+  name a KIND of premises rather than one — "retail", "store", "goods",
+  "house" (`CRQ_GENERIC_WORDS`) — never carry a match, because "Retail store
+  (non-food)" seated on "General retail" is how one premises' figure lands
+  under another's name. Two premises claiming one cell are BOTH named in the
+  report (`out.clashes`) — first-wins is not silence. No list, no diff, no
   approve button: edit them in the tables, then ⬆ Publish to live. The
   clause still serves the checker's citations via `crqSyncServe`; the
   Requirements list never shows it (`CRQ_RATE_TYPES`, `crqIsRate`). Not
