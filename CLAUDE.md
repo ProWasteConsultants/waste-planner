@@ -276,8 +276,12 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   council's WHOLE list — every live row across every version, plus manual
   rows — onto the serving guideline version's `requirements` JSONB after
   every change (extract, add, edit, remove). No Serve button.
-- **Rates follow the same rule in their own place.** Generation-rate rows
-  stay in the list; **⬆ Rates from the list → Rates DB** (`crxExport` →
+- **Rates are a separate list, in the rates section.** `generation_rate`
+  and `stream_split` rows (`CRQ_RATE_TYPES`, `crqIsRate`) never appear in
+  the Requirements list; `crqRenderList('rate')` shows them as **Rates from
+  guidelines** in the Council & state database group, same add-only rule,
+  same inline editing, same duplicate flags. **⬆ Rates from the list →
+  Rates DB** sits there (`crxExport` →
   `crxApplyAllAndPublish`) writes only `new` rows in one click — an existing
   rate is never overwritten by the bulk path; a `changed` row is applied per
   row, deliberately. Not built: version-to-version diffing.

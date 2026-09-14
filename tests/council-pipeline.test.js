@@ -130,7 +130,7 @@ test('C3 (list): the list is live and freely editable — add, inline edit, remo
   const list = SOURCE.slice(SOURCE.indexOf('// ── the requirements list'), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
   assert.ok(list.includes(".select('*').eq('status', 'approved').order('created_at')"), 'the list IS the live rows');
   assert.ok(!list.includes("'proposed'"), 'no proposed state anywhere in the list');
-  for (const fn of ['async function crqSave(id)', 'async function crqAdd()', 'async function crqRemove(id)'])
+  for (const fn of ['async function crqSave(id)', 'async function crqAdd(kind)', 'async function crqRemove(id)'])
     assert.ok(list.includes(fn), fn + ' exists');
   assert.ok(list.includes("if (!edits.clause_ref) { crqMsg('Every row needs a source"), 'a row cannot lose its source');
   assert.ok(list.includes(".update(patch).eq('id', id).eq('status', 'approved')"), 'an edit saves in place with no approval step');
@@ -139,7 +139,17 @@ test('C3 (list): the list is live and freely editable — add, inline edit, remo
   assert.ok(list.includes("has no guideline document on file — ⇪ Save one above first"), 'a manual row needs a document version to belong to — stated, not silent');
   assert.ok(list.includes(".update({ status: 'rejected', reviewed_by"), 'remove is a soft delete — kept for audit, never served');
   assert.equal((list.match(/await crqSyncServe\(/g) || []).length, 2, 'save and remove re-serve the council list');
-  assert.ok(SOURCE.includes("onclick=\"crqAdd()\"") && SOURCE.includes("onclick=\"crqRemove('${r.id}')\""), 'add and remove are on the panel');
+  assert.ok(SOURCE.includes("onclick=\"crqAdd('${kind}')\"") && SOURCE.includes("onclick=\"crqRemove('${r.id}')\""), 'add and remove are on the panel');
+  // rates are a separate list, in the rates section — never mixed into the requirements rows
+  assert.deepStrictEqual(require('./extract.js').loadEngine({ blocks: [['CRQ_RATE_TYPES', /^const CRQ_RATE_TYPES = /], ['crqIsRate', /^function crqIsRate\(/]] }).CRQ_RATE_TYPES, ['generation_rate', 'stream_split']);
+  const render = SOURCE.slice(SOURCE.indexOf('function crqRenderList(kind)'), SOURCE.indexOf('function crqCollect'));
+  assert.ok(render.includes("const rows = CRQ_L.rows.filter(r => crqIsRate(r) === isRate && cgScopeMatches("), 'each list shows only its own kind');
+  assert.ok(render.includes("const types = CRQ_TYPES.filter(t => CRQ_RATE_TYPES.includes(t) === isRate);"), 'and offers only its own types');
+  const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
+  assert.ok(rates.indexOf('id="crq-rates-wrap"') > rates.indexOf('adm-group adm-db') && rates.indexOf('id="crq-rates-wrap"') < rates.indexOf('State &amp; council info'),
+    'the rates list sits in the Council & state database group, above the rates tables');
+  assert.ok(rates.indexOf('onclick="crxExport()"') > rates.indexOf('adm-group adm-db'), 'the Rates DB button sits with the rates list, not the requirements');
+  assert.ok(SOURCE.includes("requirement_type: isRate ? 'generation_rate' : 'other'"), '+ Add rate starts a rate row');
   assert.ok(!SOURCE.includes('async function crqDecide') && !SOURCE.includes('async function crqBulkApprove') && !SOURCE.includes('async function crqServe('),
     'approve / reject / bulk-approve / explicit Serve are gone with the queue');
   assert.ok(!SOURCE.includes('⇧ Serve') && !SOURCE.includes('Extract to queue') && SOURCE.includes('🧾 Extract to list'),
