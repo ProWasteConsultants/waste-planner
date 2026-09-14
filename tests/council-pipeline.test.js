@@ -223,7 +223,9 @@ test('extracted generation rates map onto the rate tables in their exact row for
   const gr = o => ({ requirement_type: 'generation_rate', clause_ref: 'cl 4', ...o });
   // residential → res_rates, L/week per dwelling
   let t = w.crqRateToTable(gr({ use_class: '2 bedroom apartments', stream: 'garbage', value_num: 80, unit: 'L/dwelling/week' }), ctx);
-  assert.deepStrictEqual(t, { ok: true, table: 'res_rates', key: 'apt_2br|GW', row: { state: 'NSW', council_value: 'camden', unit_type: 'apt_2br', stream: 'GW', l_per_week: 80 } });
+  assert.equal(t.ok && t.table, 'res_rates'); assert.equal(t.key, 'apt_2br|GW');
+  assert.deepStrictEqual(t.row, { state: 'NSW', council_value: 'camden', unit_type: 'apt_2br', stream: 'GW', l_per_week: 80 });
+  assert.deepStrictEqual(t.rows, [t.row], 'a typed dwelling rate is one row');
   assert.equal(w.crqRateToTable(gr({ use_class: 'townhouse', stream: 'recycling', value_num: 10, unit: 'L/day/dwelling' }), ctx).row.l_per_week, 70, 'per day → ×7');
   assert.equal(w.crqRateToTable(gr({ use_class: '1 bed', stream: 'fogo', value_num: 40, unit: 'L per dwelling per fortnight' }), ctx).row.l_per_week, 20, 'per fortnight → ÷2');
   // commercial → com_rates, in the calculator's exact unit keys
@@ -233,7 +235,12 @@ test('extracted generation rates map onto the rate tables in their exact row for
   assert.equal(w.crqRateToTable(gr({ use_class: 'hotel', stream: 'garbage', value_num: 5, unit: 'L/bed/day' }), ctx).row.unit, 'L/Bed/Day');
   assert.equal(w.crqRateToTable(gr({ use_class: 'cafe', stream: 'garbage', value_num: 100, unit: 'L/100m2/week' }), ctx).row.unit, 'L/Week/100m2');
   // refusals name the reason — nothing is guessed
-  assert.match(w.crqRateToTable(gr({ use_class: 'residential', stream: 'garbage', value_num: 80, unit: 'L/dwelling/week' }), ctx).why, /no dwelling type/);
+  // a per-dwelling rate with no type is the council's rule for every type — it fills all four rows
+  const all = w.crqRateToTable(gr({ use_class: 'residential', stream: 'garbage', value_num: 80, unit: 'L/dwelling/week' }), ctx);
+  assert.ok(all.ok && all.allTypes && all.rows.length === 4 && all.rows.every(x => x.l_per_week === 80), 'generic residential → every dwelling type');
+  assert.deepStrictEqual(w.crqRateToTable(gr({ use_class: 'apartments', stream: 'garbage', value_num: 60, unit: 'L/unit/week' }), ctx).rows.map(x => x.unit_type), ['apt_1br', 'apt_2br', 'apt_3br'], 'apartments → the three apartment types');
+  assert.match(w.crqRateToTable(gr({ use_class: 'residential', stream: 'garbage', value_num: 30, unit: 'L/bedroom/week' }), ctx).why, /per bedroom/);
+  assert.equal(w.crqRateToTable(gr({ use_class: 'Café / restaurant', stream: 'garbage', value_num: 240, unit: 'L/100m2/day' }), { ...ctx, uses: [{ use_code: 'cafe', label: 'Café / restaurant' }] }).row.use_code, 'cafe', 'accent-insensitive use matching');
   assert.match(w.crqRateToTable(gr({ use_class: 'cafe', stream: 'garbage', value_num: 5, unit: 'L/employee/day' }), ctx).why, /no formula/);
   assert.match(w.crqRateToTable(gr({ use_class: 'nail salon', stream: 'garbage', value_num: 5, unit: 'L/100m2/day' }), ctx).why, /matches no commercial use/);
   assert.match(w.crqRateToTable(gr({ use_class: '2 bed', stream: 'paper', value_num: 5, unit: 'L/dwelling/week' }), ctx).why, /no column/);
@@ -243,7 +250,9 @@ test('extracted generation rates map onto the rate tables in their exact row for
   assert.deepStrictEqual(w.crqComBasis('L / student / week'), { unit: 'L/Student/Week', unit_value: 1, mult: 1 });
   // the writer is ADD-ONLY and the extraction calls it
   const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('// ── the requirements list'));
-  assert.ok(wr.includes("if (existing[plan.table].has(plan.key)) { out.kept.push({ r, plan }); return; }"), 'a rate the table already holds is kept, never overwritten');
+  assert.ok(wr.includes("if (existing[plan.table].has(keys[i])) { kept++; return; }   // add-only: the table's value stands"), 'a rate the table already holds is kept, never overwritten');
+  assert.ok(SOURCE.includes('async function crqPullRatesForScope()') && SOURCE.includes('onclick="crqPullRatesForScope()"'), 'rates already extracted can be pulled into the tables without re-extracting');
+  assert.ok(SOURCE.includes('function crqRatesReport(rr)') && SOURCE.includes('id="rdb-rates-note"'), 'the outcome is reported in the rates section, where the rows land');
   assert.ok(wr.includes('.insert(batch[table])') && !wr.includes('upsert'), 'insert only — never an upsert');
   const ex = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
   assert.ok(ex.includes('const rr = await crqWriteRates(rows.filter(crqIsRate), doc);'), 'extraction writes the rates into the tables');

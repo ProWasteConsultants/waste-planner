@@ -1075,11 +1075,15 @@ body.wp-anon .ws-top-chip{display:none;}
               <span class="adm-help" tabindex="0">?<span class="adm-help-pop">These are the numbers the calculator, the WMP and the checker read, for the state/council chosen in Scope at the top. Blank council cells inherit the state defaults. Saving stores edits; <b>⬆ Publish to live</b> regenerates <code>waste_rates.json</code> on R2 so the calculator and the Excel generator pick up changes immediately — nothing is live until you publish.</span></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn" title="Read the generation rates already extracted from this council's guideline and place the ones the tables do not yet hold — add-only; a rate the table has is kept. Use after adding the council to the list, or when an extraction reported rates it could not place." onclick="crqPullRatesForScope()">⇩ Pull rates from guideline</button>
               <button class="btn" onclick="rdbLoad()">↻ Load</button>
               <button class="btn btn-primary" onclick="rdbPublish()" style="background:var(--green);color:var(--dark);font-weight:700;">⬆ Publish to live</button>
             </div>
           </div>
           <div id="rdb-status" style="font-size:11px;color:var(--muted);min-height:16px;margin-bottom:10px;"></div>
+          <!-- what the last extraction / pull did with the guideline's generation
+               rates: added / kept / not placed, each with its reason -->
+          <div id="rdb-rates-note" style="margin-bottom:12px;"></div>
           <!-- What guideline document this council has on file. Selecting a
                council for its rates and not knowing whether its guidelines
                exist is how the same PDF gets uploaded twice. -->
@@ -11963,6 +11967,7 @@ async function crqExtract(councilKey, localFile) {
     const serving = await crqSyncServe(doc.council_key, doc.council_name);
     // generation rates → the rate tables, in their own format, add-only
     const rr = await crqWriteRates(rows.filter(crqIsRate), doc);
+    if (rows.some(crqIsRate)) crqRatesReport(rr);
     const nReq = rows.length - rows.filter(crqIsRate).length;
     const rateNote = !rows.some(crqIsRate) ? '' :
       ` · rates → tables: ${rr.added.length} added` + (rr.kept.length ? `, ${rr.kept.length} already set (kept)` : '') +
@@ -12041,7 +12046,7 @@ async function crqSyncServe(councilKey, councilName) {
 // through the council's requirements projection.
 // crqRateToTable / crqComBasis are PURE — row + context in, table row out.
 const CRX_STREAM_TO_RATES = { garbage: 'GW', recycling: 'REC', fogo: 'ORG', glass: 'GLS', paper: 'CARD', soft: 'SOFT' };
-function crxNorm(s) { return String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
+function crxNorm(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
 function crxResUnit(useClass) {
   const s = String(useClass || '').toLowerCase();
   if (/town\s*house|townhouse/.test(s)) return 'townhouse';
@@ -12078,19 +12083,27 @@ function crqRateToTable(r, ctx) {
   if (!streamKey) return no('no stream');
   if (['GW', 'REC', 'ORG', 'GLS'].indexOf(streamKey) < 0) return no(`stream “${r.stream}” has no column in the rate tables (GW/REC/ORG/GLS)`);
   const unit = String(r.unit || '').toLowerCase();
-  const perWeek = /week|wk/.test(unit), perDay = /day|daily|\/d(\b|\/|$)/.test(unit), perFortnight = /fortnight/.test(unit);
+  const perWeek = /week|wk|weekly|\/w(\b|\/|$)/.test(unit), perDay = /day|daily|\/d(\b|\/|$)/.test(unit), perFortnight = /fortnight/.test(unit);
+  const uc = crxNorm(r.use_class);
   const resUnit = crxResUnit(r.use_class);
-  if (resUnit) {
+  // A rate stated per dwelling with no type applies to EVERY type the table
+  // has — that is the council's rule, not a guess; "apartment / unit / flat"
+  // is the three apartment types, "townhouse" its own row.
+  const resUnits = resUnit ? [resUnit]
+    : /apartment|unit|flat/.test(uc) ? ['apt_1br', 'apt_2br', 'apt_3br']
+    : /resid|dwelling|house|mud|multiunit|multidwelling|perdwelling/.test(uc) || /dwelling|apartment|unit|house/.test(unit) ? ['townhouse', 'apt_1br', 'apt_2br', 'apt_3br']
+    : null;
+  if (resUnits) {
     // residential: L/week per dwelling — per day ×7, per fortnight ÷2
+    if (/bedroom|\/bed\b|perbed/.test(unit.replace(/\s+/g, ''))) return no(`unit “${r.unit}” is per bedroom — the residential table is per dwelling; enter by hand`);
     let v = +r.value_num;
     if (perWeek) { /* as is */ } else if (perDay) v = v * 7; else if (perFortnight) v = v / 2;
     else return no(`unit “${r.unit || '?'}” is not per week, day or fortnight per dwelling`);
-    return { ok: true, table: 'res_rates', key: resUnit + '|' + streamKey,
-      row: { state: ctx.state, council_value: ctx.councilValue, unit_type: resUnit, stream: streamKey, l_per_week: +v.toFixed(2) } };
+    const rows = resUnits.map(u => ({ state: ctx.state, council_value: ctx.councilValue, unit_type: u, stream: streamKey, l_per_week: +v.toFixed(2) }));
+    return { ok: true, table: 'res_rates', key: resUnits[0] + '|' + streamKey, row: rows[0],
+      rows, keys: resUnits.map(u => u + '|' + streamKey), allTypes: !resUnit && resUnits.length === 4 };
   }
-  const uc = crxNorm(r.use_class);
   if (!uc) return no('no use class');
-  if (/resid|dwelling|apartment|unit|flat/.test(uc)) return no(`“${r.use_class}” names no dwelling type (1/2/3-bed, townhouse) — the residential table is per type`);
   const uses = ctx.uses || [];
   const use = uses.find(u => crxNorm(u.label) === uc) || uses.find(u => crxNorm(u.label).includes(uc) || uc.includes(crxNorm(u.label)));
   if (!use) return no(`use class “${r.use_class}” matches no commercial use in the table`);
@@ -12104,49 +12117,110 @@ function crqRateToTable(r, ctx) {
 // normalised label), then write every mappable extracted rate that the
 // tables do not already hold. Never an upsert: existing rates are kept.
 async function crqWriteRates(rateRows, doc) {
-  const out = { added: [], kept: [], unplaced: [] };
+  const out = { added: [], kept: [], unplaced: [], council: doc.council_name, state: null, councilValue: null };
   if (!rateRows.length) return out;
-  let councilValue = null;
+  // council value: the Scope bar's selection when it IS this council,
+  // otherwise the registry row whose label matches (any state — an older
+  // document may carry no state at all; the registry row supplies it)
+  let councilValue = null, state = doc.state || null;
   try {
-    const { data: cl } = await sb.from('councils').select('value,label').eq('state', doc.state || '');
+    const sel = document.getElementById('rdb-council');
+    const selLabel = sel && sel.value ? (sel.options[sel.selectedIndex]?.text || '') : '';
     const want = crxNorm(doc.council_name);
-    const hit = (cl || []).find(c => crxNorm(c.label) === want) || (cl || []).find(c => crxNorm(c.label).includes(want) || want.includes(crxNorm(c.label)));
-    councilValue = hit ? hit.value : null;
+    if (selLabel && (crxNorm(selLabel) === want || crxNorm(selLabel).includes(want) || want.includes(crxNorm(selLabel)))) {
+      councilValue = sel.value; state = state || document.getElementById('rdb-state')?.value || null;
+    } else {
+      const { data: cl } = await sb.from('councils').select('value,label,state');
+      const hit = (cl || []).find(c => crxNorm(c.label) === want && (!state || c.state === state))
+               || (cl || []).find(c => (crxNorm(c.label).includes(want) || want.includes(crxNorm(c.label))) && (!state || c.state === state));
+      if (hit) { councilValue = hit.value; state = state || hit.state || null; }
+    }
   } catch (e) {}
+  out.state = state; out.councilValue = councilValue;
   let uses = RDB.uses && RDB.uses.length ? RDB.uses : [];
   if (!uses.length) { try { const { data } = await sb.from('com_uses').select('use_code,label'); uses = data || []; } catch (e) {} }
-  const ctx = { state: doc.state || null, councilValue, uses };
+  const ctx = { state, councilValue, uses };
   const plans = rateRows.map(r => ({ r, plan: crqRateToTable(r, ctx) }));
   plans.filter(x => !x.plan.ok).forEach(x => out.unplaced.push({ r: x.r, why: x.plan.why }));
   const want = plans.filter(x => x.plan.ok);
   if (!want.length) return out;
   const existing = { res_rates: new Set(), com_rates: new Set() };
   try {
-    const { data: res } = await sb.from('res_rates').select('unit_type,stream').eq('state', ctx.state).eq('council_value', councilValue);
+    const { data: res } = await sb.from('res_rates').select('unit_type,stream').eq('state', state).eq('council_value', councilValue);
     (res || []).forEach(x => existing.res_rates.add(x.unit_type + '|' + x.stream));
-    const { data: com } = await sb.from('com_rates').select('use_code,stream').eq('state', ctx.state).eq('council_value', councilValue);
+    const { data: com } = await sb.from('com_rates').select('use_code,stream').eq('state', state).eq('council_value', councilValue);
     (com || []).forEach(x => existing.com_rates.add(x.use_code + '|' + x.stream));
   } catch (e) {}
   const batch = { res_rates: [], com_rates: [] };
   const seen = new Set();
   want.forEach(({ r, plan }) => {
-    const k = plan.table + '|' + plan.key;
-    if (existing[plan.table].has(plan.key)) { out.kept.push({ r, plan }); return; }   // add-only: the table's value stands
-    if (seen.has(k)) { out.unplaced.push({ r, why: 'another extracted row already fills this cell — the first one was written' }); return; }
-    seen.add(k);
-    batch[plan.table].push(plan.row);
-    out.added.push({ r, plan });
+    const rows = plan.rows || [plan.row], keys = plan.keys || [plan.key];
+    let added = 0, kept = 0;
+    rows.forEach((row, i) => {
+      const k = plan.table + '|' + keys[i];
+      if (existing[plan.table].has(keys[i])) { kept++; return; }   // add-only: the table's value stands
+      if (seen.has(k)) return;                                       // an earlier extracted row already fills this cell
+      seen.add(k);
+      batch[plan.table].push(row); added++;
+    });
+    if (added) out.added.push({ r, plan, cells: added, kept });
+    else if (kept) out.kept.push({ r, plan, cells: kept });
+    else out.unplaced.push({ r, why: 'another extracted row already fills this cell — the first one was written' });
   });
   for (const table of ['res_rates', 'com_rates']) {
     if (!batch[table].length) continue;
     const { error } = await sb.from(table).insert(batch[table]);
     if (error) {
-      // report, never half-claim: everything in this table's batch moves to unplaced
+      // report, never half-claim: everything planned for this table moves to unplaced
+      const failed = out.added.filter(a => a.plan.table === table);
       out.added = out.added.filter(a => a.plan.table !== table);
-      batch[table].forEach((row, i) => out.unplaced.push({ r: want.find(w => w.plan.row === row)?.r || {}, why: table + ' insert failed: ' + error.message }));
+      failed.forEach(a => out.unplaced.push({ r: a.r, why: table + ' insert refused: ' + error.message }));
     }
   }
   return out;
+}
+// What happened to the guideline's generation rates — shown IN the rates
+// section, where the rows land, and kept until the next extraction or pull.
+function crqRatesReport(rr) {
+  const el = document.getElementById('rdb-rates-note'); if (!el) return;
+  if (!rr) { el.innerHTML = ''; return; }
+  const cell = a => a.plan.table === 'res_rates'
+    ? (a.plan.allTypes ? 'every dwelling type' : a.plan.rows.map(x => RDB_UNIT_LABELS[x.unit_type] || x.unit_type).join(', ')) + ' · ' + a.plan.row.stream + ' = ' + a.plan.row.l_per_week + ' L/week'
+    : a.plan.row.use_code + ' · ' + a.plan.row.stream + ' = ' + a.plan.row.rate + ' ' + a.plan.row.unit;
+  const li = (txt, col) => '<div style="font-size:11px;color:' + col + ';line-height:1.5;">' + txt + '</div>';
+  const total = rr.added.length + rr.kept.length + rr.unplaced.length;
+  if (!total) { el.innerHTML = li('The guideline has no generation-rate rows extracted yet — 🧾 Extract to list on its document (Council documents section) reads them.', 'var(--muted)'); return; }
+  el.innerHTML = '<div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 12px;">' +
+    li('<b>Generation rates from ' + cgbEsc(rr.council || 'the guideline') + '</b>' + (rr.councilValue ? '' : ' — <b style="color:#EF8080;">not in the councils list for ' + cgbEsc(rr.state || 'this state') + ' (Scope → + Add council), so nothing could be placed</b>'), 'var(--text)') +
+    rr.added.map(a => li('✓ added · ' + cgbEsc(cell(a)) + ' <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', '#3DD68C')).join('') +
+    rr.kept.map(a => li('· kept · ' + cgbEsc(cell(a)) + ' — the table already has a rate for this cell <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', 'var(--muted)')).join('') +
+    rr.unplaced.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>', '#FFB74D')).join('') +
+    (rr.added.length ? li('⬆ Publish to live pushes the added rates to the calculator.', 'var(--muted)') : '') +
+    '</div>';
+}
+// Place the rates already extracted for the scoped council — every
+// generation_rate row across its document versions — without re-running
+// the extraction. Add-only, like the extraction itself.
+async function crqPullRatesForScope() {
+  const name = (document.getElementById('cg-name') || {}).value || CG_SCOPE.name;
+  if (!name) { rdbMsg('Pick a council in Scope first.', false); return; }
+  rdbMsg('Reading the guideline’s generation rates…');
+  try {
+    const { data: docs, error } = await sb.from('council_guidelines').select('id, council_key, council_name, state, version, superseded_at');
+    if (error) throw error;
+    const want = crxNorm(name);
+    const mine = (docs || []).filter(d => { const n = crxNorm(d.council_name); return n && (n === want || n.includes(want) || want.includes(n)); });
+    if (!mine.length) { rdbMsg('No guideline document on file for ' + name + '.', false); crqRatesReport(null); return; }
+    const { data: rows, error: e2 } = await sb.from('council_requirements').select('*')
+      .in('council_guideline_id', mine.map(d => d.id)).eq('status', 'approved').eq('requirement_type', 'generation_rate');
+    if (e2) throw e2;
+    const live = mine.slice().sort((a, b) => (b.version || 0) - (a.version || 0)).find(d => !d.superseded_at) || mine[0];
+    const doc = { ...live, state: live.state || mine.find(d => d.state)?.state || null };
+    const rr = await crqWriteRates(rows || [], doc);
+    crqRatesReport(rr);
+    rdbMsg(rr.added.length ? `✓ ${rr.added.length} rate${rr.added.length === 1 ? '' : 's'} added to the tables — ⬆ Publish to live to push them to the calculator.` : (rows || []).length ? 'Nothing new to add — see the note above for what was kept or could not be placed.' : 'The guideline has no generation-rate rows extracted yet.', !!rr.added.length || !(rows || []).length);
+    await rdbLoadRates();
+  } catch (err) { rdbMsg('Pull failed: ' + (err.message || err), false); }
 }
 
 // ── the requirements list ───────────────────────────────────────────────────
