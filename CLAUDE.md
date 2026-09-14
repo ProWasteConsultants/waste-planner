@@ -277,19 +277,26 @@ naming the cadence's source. The Collection Point:
 - Bin types resolve against the **live** bin list
   (`wsCollectBins(targets, streams, types)`) — library ids used to miss the
   built-in lookup and silently empty the kerb.
-- **Kerb bins are real placed bins.** Committing a kerb (Enter, double-click
-  or the panel's ✓ Finish kerb) runs `wsCollectPlaceBins`, which turns the
-  design-case pack (`wsCollectKerbBinPoses`, pure) into `slot.bins` entries
-  tagged `kerb: <kerbId>` — from then on they select, drag, rotate and delete
-  like any bin, print on the sheet and export to `A-KERB-BINS`. The engine
-  never draws ghost bins on the canvas. A `kerb` bin is **presentation, not
-  storage**: `wsLayoutPlacedCount`, `wsLayoutUntagged`, the status line and
-  the targets fallback all leave it out. Deleting a kerb deletes its bins
-  (stated on the button, undoable); flipping the side re-places them; the
-  panel's re-place button snaps moved bins back to the pack. The kerb LINE
-  (trace, committed line, blocked stretches) renders into `ws-layer-binroom`,
-  so the Bin room layer toggle hides it. No verdict text on the drawing —
-  only the "don't fit" mark when the busiest week overflows.
+- **Kerb and collection point bins are real placed bins.** Committing a
+  kerb (Enter, double-click or the panel's ✓ Finish kerb) runs
+  `wsCollectPlaceBins`; drawing a `COLLECT` zone runs
+  `wsCollectPlaceAreaBins`. Both go through `wsCollectMaterialise`, which
+  turns the pack (`wsCollectKerbBinPoses` / `wsCollectAreaBinPoses`, pure)
+  into `slot.bins` entries tagged `kerb: <kerbId>` or `collectArea:
+  <zoneId>` — from then on they select, drag, rotate and delete like any
+  bin, print on the sheet and export to `A-KERB-BINS` / `A-COLLECT-BINS`.
+  The engine never draws ghost bins on the canvas. Such a bin is
+  **presentation, not storage** (`wsIsPresentationBin`):
+  `wsLayoutPlacedCount`, `wsLayoutUntagged`, the status line, the targets
+  fallback and `wsTagBinsToRooms` all leave it out — an area drawn inside
+  the bin room must not double-count the schedule. Deleting a kerb deletes
+  its bins (stated on the button); deleting the zone prunes its bins
+  (`wsCollectPruneAreaBins` on every delete path); both undoable. Flipping
+  the kerb side re-places; the panel's re-place buttons snap moved bins back
+  to the pack. The kerb LINE (trace, committed line, blocked stretches)
+  renders into `ws-layer-binroom`, so the Bin room layer toggle hides it. No
+  verdict text on the drawing — only the "don't fit" mark when the busiest
+  week overflows.
 
 Not built (its own brief): equipment **categories** with distinct calculation
 branches — balers, transpackers, organics processors. Today anything with a

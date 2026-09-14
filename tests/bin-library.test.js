@@ -283,6 +283,9 @@ const ws = loadEngine({ blocks: [
   ['wsKerbCleanPts', /^function wsKerbCleanPts\(/],
   ['wsKerbLen', /^function wsKerbLen\(/], ['wsKerbAt', /^function wsKerbAt\(/],
   ['wsCollectKerbBinPoses', /^function wsCollectKerbBinPoses\(/],
+  ['wsCollectAreaBinPoses', /^function wsCollectAreaBinPoses\(/],
+  ['wsIsPresentationBin', /^function wsIsPresentationBin\(/],
+  ['wsTagBinsToRooms', /^function wsTagBinsToRooms\(/], ['wsBinRoomId', /^function wsBinRoomId\(/], ['wsRoomAtPt', /^function wsRoomAtPt\(/], ['wsRoomPts', /^function wsRoomPts\(/],
   ['wsCollectBulk', /^function wsCollectBulk\(/],
 ] });
 
@@ -335,7 +338,8 @@ test('bulk collection point: every bulk-method bin packs into the drawn area, al
   // wiring: the COLLECT zone is drawn through the zone polygon tool, and the DXF carries the packed bins
   assert.ok(SOURCE.includes("COLLECT:   { id: 'COLLECT',   label: 'Collection point area'"), 'a real zone type — edits, tags and exports like every other zone');
   assert.ok(extractBlock(/^function wsCollectAreaMode\(\)/).text.includes("WS_LAYOUT._zoneType = 'COLLECT'"));
-  assert.ok(SOURCE.includes("rect('A-COLLECT-BINS', stc.aci, pl.x, pl.y, pl.it.w, pl.it.d, 0)"), 'DXF layer for the collection point bins');
+  assert.ok(SOURCE.includes("b.collectArea ? 'A-COLLECT-BINS'"), 'DXF layer for the collection point bins (real placed bins)');
+  assert.ok(!SOURCE.includes("rect('A-COLLECT-BINS'"), 'no ghost rectangles in the export');
   assert.ok(SOURCE.includes("'COLLECTION POINT - ALL STREAMS - '"), 'the DXF header says every stream is shown at once');
 });
 
@@ -496,19 +500,20 @@ test('kerb bins are REAL placed bins: poses from the design case, tagged `kerb`,
   const fin = extractBlock(/^function wsCollectKerbFinish\(\)/).text;
   assert.ok(fin.includes('const n = wsCollectPlaceBins([kerb.id]);'), 'a committed kerb gets its bins immediately');
   const place = extractBlock(/^function wsCollectPlaceBins\(/).text;
-  assert.ok(place.includes('wsLayoutSnapshot();'), 'undoable');
-  assert.ok(place.includes('roomId: null, kerb: p.kerbId'), 'tagged to the kerb, never to a room');
+  assert.ok(extractBlock(/^function wsCollectMaterialise\(/).text.includes('wsLayoutSnapshot();'), 'undoable');
+  assert.ok(extractBlock(/^function wsCollectMaterialise\(/).text.includes("roomId: null, [tag]: p[tag === 'kerb' ? 'kerbId' : 'areaId']"), 'tagged to the kerb / area, never to a room');
   assert.ok(extractBlock(/^function wsCollectKerbDelete\(/).text.includes('slot.bins = slot.bins.filter(b => b.kerb !== k.id);'), 'deleting a kerb takes its bins — stated in the button title');
   assert.ok(SOURCE.includes('title="Remove this kerb and the bins placed along it (Ctrl+Z restores both)"'));
   assert.ok(extractBlock(/^function wsCollectFlipSide\(\)/).text.includes('wsCollectPlaceBins(withBins)'), 'flip re-places on the other side');
   const panel = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
   assert.ok(panel.includes("'↻ Re-place bins along the kerb' : '⤓ Place the bins on the kerb'"), 'a kerb without bins (legacy save) can place them from the panel');
   // counted apart from room storage everywhere a room count is taken
-  assert.ok(extractBlock(/^function wsLayoutPlacedCount\(/).text.includes('!b.kerb && b.stream === stream'), 'kerb bins never satisfy a room target');
-  assert.ok(extractBlock(/^function wsLayoutUntagged\(\)/).text.includes('!b.calcRoom && !b.kerb'));
+  assert.ok(extractBlock(/^function wsLayoutPlacedCount\(/).text.includes('!wsIsPresentationBin(b) && b.stream === stream'), 'presentation bins never satisfy a room target');
+  assert.ok(extractBlock(/^function wsLayoutUntagged\(\)/).text.includes('!b.calcRoom && !wsIsPresentationBin(b)'));
   const stats = extractBlock(/^function wsLayoutUpdateStats\(/).text;
   assert.ok(stats.includes("if (b.kerb) { onKerb++; return; }") && stats.includes('at the kerb'), 'the status line counts them on their own');
-  assert.ok(extractBlock(/^function wsCollectTargets\(\)/).text.includes('const plan = slot.bins.filter(b => !b.kerb);'), 'kerb bins are never their own schedule');
+  assert.ok(extractBlock(/^function wsCollectTargets\(\)/).text.includes('const plan = slot.bins.filter(b => !wsIsPresentationBin(b));'), 'presented bins are never their own schedule');
+  assert.ok(!SOURCE.includes("cp.areas.map(a => a.m2.toFixed(1)"), 'the panel reads the area m² from the bulk pack (cp.areas carries no m² — this used to throw the moment an area held bins)');
   // the drawing: no verdict text, no kerb label, no ghost bins; the kerb line sits on the Bin room layer
   const render = extractBlock(/^function wsCollectRender\(/).text;
   assert.ok(!render.includes('fits on the busiest week') && !render.includes("'Kerb ' + String.fromCharCode(65 + i) + ' — '"), 'the two canvas labels are gone');
@@ -517,6 +522,42 @@ test('kerb bins are REAL placed bins: poses from the design case, tagged `kerb`,
   assert.ok(render.includes("don’t fit (' + cp.worst.label + ')"), 'a shortfall still shows on the plan');
   // DXF: real kerb bins on their own layer, drawn once
   const dxf = SOURCE.slice(SOURCE.indexOf('function wsLayoutDXFEntities'), SOURCE.indexOf('// ── CALC → LAYOUT TARGETS'));
-  assert.ok(dxf.includes("const layer = b.kerb ? 'A-KERB-BINS' : 'BINS_' + st.id.toUpperCase();"));
+  assert.ok(dxf.includes("const layer = b.kerb ? 'A-KERB-BINS' : b.collectArea ? 'A-COLLECT-BINS' : 'BINS_' + st.id.toUpperCase();"));
+  assert.ok(SOURCE.includes("if (b.collectArea && k.zoneType === 'COLLECT') continue;"), 'a collection point bin is not a clash with its own area');
   assert.ok(!dxf.includes("rect('A-KERB-BINS'"), 'the ghost rectangles are gone from the export');
+});
+
+test('collection point AREA bins get the same treatment: real bins tagged `collectArea`, placed on draw, pruned with the zone, never a room’s storage', () => {
+  const mpp = 0.02;
+  const area = { id: 'fx_9', label: 'Collection point area', pts: [{ x: 0, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 200 }, { x: 0, y: 200 }] };
+  const targets = [
+    { stream: 'garbage', typeId: 'eq_gone', sizeL: 1100, qty: 2, method: 'bulk', cycle: 'W' },
+    { stream: 'fogo', typeId: 'b240', sizeL: 240, qty: 1, method: 'bulk', cycle: 'B' },
+  ];
+  const b = ws.wsCollectBulk(targets, [area], mpp, 0.15, ws.WS_BIN_TYPES);
+  const poses = ws.wsCollectAreaBinPoses(b);
+  assert.equal(poses.length, 3, 'one pose per packed bin');
+  assert.ok(poses.every(p => p.areaId === 'fx_9' && p.rot === 0));
+  assert.equal(poses[0].type, 'b1100', 'the resolved type is placed, never an id that would draw nothing');
+  assert.ok(poses.every(p => ws.wsPointInPoly(area.pts, p.x, p.y)), 'inside the drawn area');
+  assert.deepStrictEqual(ws.wsCollectAreaBinPoses(null), []);
+  // presentation bins are never a room's storage, even when the area sits inside the bin room
+  assert.ok(ws.wsIsPresentationBin({ kerb: 'k' }) && ws.wsIsPresentationBin({ collectArea: 'a' }) && !ws.wsIsPresentationBin({ calcRoom: 'R1' }));
+  const room = { id: 'room1', pts: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 1000 }, { x: 0, y: 1000 }] };
+  const bins = [{ id: 'a', x: 50, y: 50, collectArea: 'fx_9', roomId: 'stale' }, { id: 'b', x: 60, y: 60 }];
+  ws.wsTagBinsToRooms([room], bins);
+  assert.equal(bins[0].roomId, null, 'an area bin inside the room is untagged, not counted toward the schedule');
+  assert.equal(bins[1].roomId, 'room1', 'an ordinary bin inside the room still tags');
+  // wiring
+  assert.ok(extractBlock(/^function wsZonePolyFinish\(/).text.includes("if (t.id === 'COLLECT' && typeof wsCollectPlaceAreaBins === 'function')"), 'drawing the area places its bins');
+  assert.ok(extractBlock(/^function wsCollectPruneAreaBins\(/).text.includes("filter(e => e.zoneType === 'COLLECT')"), 'bins follow their area out');
+  assert.equal((SOURCE.match(/(?<!function )wsCollectPruneAreaBins\(slot\)/g) || []).length, 3, 'pruned on cut, multi-delete and single delete');
+  const place = extractBlock(/^function wsCollectPlaceAreaBins\(/).text;
+  assert.ok(place.includes("wsCollectMaterialise(slot, 'collectArea', want,"), 'same materialiser as the kerb');
+  const panel = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
+  assert.ok(panel.includes("'↻ Re-place bins in the area' : '⤓ Place the bins in the area'"));
+  const render = extractBlock(/^function wsCollectRender\(/).text;
+  assert.ok(!render.includes("mk('polygon'"), 'no engine-drawn ghost bins anywhere — the bin pass draws the real ones');
+  const stats = extractBlock(/^function wsLayoutUpdateStats\(/).text;
+  assert.ok(stats.includes('at the collection point'));
 });
