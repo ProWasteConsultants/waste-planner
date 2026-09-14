@@ -130,7 +130,7 @@ test('C3 (list): the list is live and freely editable — add, inline edit, remo
   const list = SOURCE.slice(SOURCE.indexOf('// ── the requirements list'), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
   assert.ok(list.includes(".select('*').eq('status', 'approved').order('created_at')"), 'the list IS the live rows');
   assert.ok(!list.includes("'proposed'"), 'no proposed state anywhere in the list');
-  for (const fn of ['async function crqSave(id)', 'async function crqAdd(kind)', 'async function crqRemove(id)'])
+  for (const fn of ['async function crqSave(id)', 'async function crqAdd()', 'async function crqRemove(id)'])
     assert.ok(list.includes(fn), fn + ' exists');
   assert.ok(list.includes("if (!edits.clause_ref) { crqMsg('Every row needs a source"), 'a row cannot lose its source');
   assert.ok(list.includes(".update(patch).eq('id', id).eq('status', 'approved')"), 'an edit saves in place with no approval step');
@@ -139,17 +139,13 @@ test('C3 (list): the list is live and freely editable — add, inline edit, remo
   assert.ok(list.includes("has no guideline document on file — ⇪ Save one above first"), 'a manual row needs a document version to belong to — stated, not silent');
   assert.ok(list.includes(".update({ status: 'rejected', reviewed_by"), 'remove is a soft delete — kept for audit, never served');
   assert.equal((list.match(/await crqSyncServe\(/g) || []).length, 2, 'save and remove re-serve the council list');
-  assert.ok(SOURCE.includes("onclick=\"crqAdd('${kind}')\"") && SOURCE.includes("onclick=\"crqRemove('${r.id}')\""), 'add and remove are on the panel');
-  // rates are a separate list, in the rates section — never mixed into the requirements rows
-  assert.deepStrictEqual(require('./extract.js').loadEngine({ blocks: [['CRQ_RATE_TYPES', /^const CRQ_RATE_TYPES = /], ['crqIsRate', /^function crqIsRate\(/]] }).CRQ_RATE_TYPES, ['generation_rate', 'stream_split']);
-  const render = SOURCE.slice(SOURCE.indexOf('function crqRenderList(kind)'), SOURCE.indexOf('function crqCollect'));
-  assert.ok(render.includes("const rows = CRQ_L.rows.filter(r => crqIsRate(r) === isRate && cgScopeMatches("), 'each list shows only its own kind');
-  assert.ok(render.includes("const types = CRQ_TYPES.filter(t => CRQ_RATE_TYPES.includes(t) === isRate);"), 'and offers only its own types');
-  const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
-  assert.ok(rates.indexOf('id="crq-rates-wrap"') > rates.indexOf('adm-group adm-db') && rates.indexOf('id="crq-rates-wrap"') < rates.indexOf('State &amp; council info'),
-    'the rates list sits in the Council & state database group, above the rates tables');
-  assert.ok(rates.indexOf('onclick="crxExport()"') > rates.indexOf('adm-group adm-db'), 'the Rates DB button sits with the rates list, not the requirements');
-  assert.ok(SOURCE.includes("requirement_type: isRate ? 'generation_rate' : 'other'"), '+ Add rate starts a rate row');
+  assert.ok(SOURCE.includes("onclick=\"crqAdd()\"") && SOURCE.includes("onclick=\"crqRemove('${r.id}')\""), 'add and remove are on the panel');
+  // generation rates are never listed — they go straight into the rate tables
+  assert.deepStrictEqual(require('./extract.js').loadEngine({ blocks: [['CRQ_RATE_TYPES', /^const CRQ_RATE_TYPES = /], ['crqIsRate', /^function crqIsRate\(/]] }).CRQ_RATE_TYPES, ['generation_rate']);
+  const render = SOURCE.slice(SOURCE.indexOf('function crqRender()'), SOURCE.indexOf('function crqCollect'));
+  assert.ok(render.includes('const listed = CRQ_L.rows.filter(r => !crqIsRate(r));'), 'the list never shows a generation rate');
+  assert.ok(render.includes('const types = CRQ_TYPES.filter(t => !CRQ_RATE_TYPES.includes(t));'), 'nor offers the type');
+  assert.ok(!SOURCE.includes('id="crq-rates-wrap"') && !SOURCE.includes('crxExport'), 'no separate rates list, no diff/publish button');
   assert.ok(!SOURCE.includes('async function crqDecide') && !SOURCE.includes('async function crqBulkApprove') && !SOURCE.includes('async function crqServe('),
     'approve / reject / bulk-approve / explicit Serve are gone with the queue');
   assert.ok(!SOURCE.includes('⇧ Serve') && !SOURCE.includes('Extract to queue') && SOURCE.includes('🧾 Extract to list'),
@@ -209,7 +205,7 @@ test('a live version with no requirements falls back — a fresh upload never bl
 });
 
 test('the list reaches consumers automatically — crqSyncServe projects the WHOLE council list onto the serving version', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('function crqToLegacy'), SOURCE.indexOf('// ── C4: APPROVED RATES'));
+  const fn = SOURCE.slice(SOURCE.indexOf('function crqToLegacy'), SOURCE.indexOf('// ── EXTRACTED GENERATION RATES'));
   assert.ok(fn.includes('async function crqSyncServe(councilKey, councilName)'), 'the bridge exists');
   assert.ok(!fn.includes('if (!confirm('), 'serving is automatic — the list is the live data');
   assert.ok(fn.includes(".in('council_guideline_id', docs.map(d => d.id)).eq('status', 'approved')"),
@@ -219,137 +215,42 @@ test('the list reaches consumers automatically — crqSyncServe projects the WHO
 });
 
 // ── C4: approved rates → diff against live R2 data ──────────────────────
-test('C4: the diff engine classifies new/changed/same/conflicting/unmapped and never guesses', () => {
+test('extracted generation rates map onto the rate tables in their exact row format — or say why not', () => {
   const { loadEngine } = require('./extract.js');
-  const ws4 = loadEngine({ blocks: [
-    ['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /],
-    ['CRX_SPLIT_FOR_STREAM', /^const CRX_SPLIT_FOR_STREAM = /],
-    ['crxNorm', /^function crxNorm\(/],
-    ['crxResUnit', /^function crxResUnit\(/],
-    ['crxDiffRates', /^function crxDiffRates\(/],
-  ] });
-  const docs = { g1: { id: 'g1', council_name: 'Randwick City Council', state: 'NSW', version: 2 } };
-  const remote = {
-    COUNCILS: { NSW: [{ value: 'randwick', label: 'Randwick City Council' }] },
-    PROFILES: { NSW: { resRates: { apt_2br: { GW: 100, REC: 100 } },
-                       comRates: { cafe: { GW: { rate: 240, unitValue: 100, unit: 'L/Day/100m2' } } } } },
-    COUNCIL_PROFILES: {},
-  };
-  const comm = { cafe: { label: 'Cafe' } };
-  const row = (over) => ({ status: 'approved', requirement_type: 'generation_rate',
-    council_guideline_id: 'g1', clause_ref: 'cl 1, p.2', ...over });
-  const diff = ws4.crxDiffRates([
-    row({ use_class: '2 bedroom apartments', stream: 'garbage', value_num: 100 }),   // same
-    row({ use_class: '2 bedroom apartments', stream: 'recycling', value_num: 120 }), // changed
-    row({ use_class: 'cafe', stream: 'fogo', value_num: 60 }),                       // new (no ORG rate yet)
-    row({ use_class: 'residential', stream: 'garbage', value_num: 90 }),             // unmapped: not one unit type
-    row({ use_class: '2 bedroom apartments', stream: 'garbage', value_num: 110 }),   // conflicting with the first
-    { status: 'proposed', requirement_type: 'generation_rate', council_guideline_id: 'g1',
-      use_class: 'cafe', stream: 'garbage', value_num: 999, clause_ref: 'x' },       // proposed never exports
-  ], docs, remote, comm);
-  assert.deepEqual(diff.map(d => d.status), ['same', 'changed', 'new', 'unmapped', 'conflicting']);
-  assert.equal(diff[0].target, 'resRates.apt_2br.GW');
-  assert.equal(diff[1].current, 100);
-  assert.equal(diff[2].target, 'comRates.cafe.ORG');
-  assert.ok(/not one unit type|never guess/.test('never guess'), 'sanity');
-  assert.equal(diff[4].why.includes('another approved row'), true);
-  // stream_split maps onto the split ids that should replace the code defaults
-  const split = ws4.crxDiffRates([row({ requirement_type: 'stream_split',
-    use_class: 'Cafe', stream: 'paper', value_num: 45 })], docs, remote, comm);
-  assert.equal(split[0].target, 'splits.cafe.REC_CARD');
-  assert.equal(split[0].status, 'new');
+  const w = loadEngine({ blocks: [['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /], ['crxNorm', /^function crxNorm\(/],
+    ['crxResUnit', /^function crxResUnit\(/], ['crqComBasis', /^function crqComBasis\(/], ['crqRateToTable', /^function crqRateToTable\(/]] });
+  const ctx = { state: 'NSW', councilValue: 'camden', uses: [{ use_code: 'cafe', label: 'Cafe / restaurant' }, { use_code: 'hotel_beds', label: 'Hotel (per bed)' }] };
+  const gr = o => ({ requirement_type: 'generation_rate', clause_ref: 'cl 4', ...o });
+  // residential → res_rates, L/week per dwelling
+  let t = w.crqRateToTable(gr({ use_class: '2 bedroom apartments', stream: 'garbage', value_num: 80, unit: 'L/dwelling/week' }), ctx);
+  assert.deepStrictEqual(t, { ok: true, table: 'res_rates', key: 'apt_2br|GW', row: { state: 'NSW', council_value: 'camden', unit_type: 'apt_2br', stream: 'GW', l_per_week: 80 } });
+  assert.equal(w.crqRateToTable(gr({ use_class: 'townhouse', stream: 'recycling', value_num: 10, unit: 'L/day/dwelling' }), ctx).row.l_per_week, 70, 'per day → ×7');
+  assert.equal(w.crqRateToTable(gr({ use_class: '1 bed', stream: 'fogo', value_num: 40, unit: 'L per dwelling per fortnight' }), ctx).row.l_per_week, 20, 'per fortnight → ÷2');
+  // commercial → com_rates, in the calculator's exact unit keys
+  t = w.crqRateToTable(gr({ use_class: 'cafe', stream: 'garbage', value_num: 240, unit: 'L/100m²/day' }), ctx);
+  assert.deepStrictEqual(t.row, { state: 'NSW', council_value: 'camden', use_code: 'cafe', stream: 'GW', rate: 240, unit_value: 100, unit: 'L/Day/100m2' });
+  assert.deepStrictEqual(w.crqRateToTable(gr({ use_class: 'Cafe', stream: 'recycling', value_num: 2, unit: 'L/m2/day' }), ctx).row.rate, 200, 'per m² → per 100 m² (×100)');
+  assert.equal(w.crqRateToTable(gr({ use_class: 'hotel', stream: 'garbage', value_num: 5, unit: 'L/bed/day' }), ctx).row.unit, 'L/Bed/Day');
+  assert.equal(w.crqRateToTable(gr({ use_class: 'cafe', stream: 'garbage', value_num: 100, unit: 'L/100m2/week' }), ctx).row.unit, 'L/Week/100m2');
+  // refusals name the reason — nothing is guessed
+  assert.match(w.crqRateToTable(gr({ use_class: 'residential', stream: 'garbage', value_num: 80, unit: 'L/dwelling/week' }), ctx).why, /no dwelling type/);
+  assert.match(w.crqRateToTable(gr({ use_class: 'cafe', stream: 'garbage', value_num: 5, unit: 'L/employee/day' }), ctx).why, /no formula/);
+  assert.match(w.crqRateToTable(gr({ use_class: 'nail salon', stream: 'garbage', value_num: 5, unit: 'L/100m2/day' }), ctx).why, /matches no commercial use/);
+  assert.match(w.crqRateToTable(gr({ use_class: '2 bed', stream: 'paper', value_num: 5, unit: 'L/dwelling/week' }), ctx).why, /no column/);
+  assert.match(w.crqRateToTable(gr({ use_class: '2 bed', stream: 'garbage', value_num: 5, unit: 'L/dwelling/week' }), { ...ctx, councilValue: null }).why, /not in the councils list/);
+  assert.match(w.crqRateToTable(gr({ use_class: '2 bed', stream: 'garbage', value_num: null, unit: 'L/dwelling/week' }), ctx).why, /no numeric value/);
+  assert.equal(w.crqComBasis('L/staff/day'), null);
+  assert.deepStrictEqual(w.crqComBasis('L / student / week'), { unit: 'L/Student/Week', unit_value: 1, mult: 1 });
+  // the writer is ADD-ONLY and the extraction calls it
+  const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('// ── the requirements list'));
+  assert.ok(wr.includes("if (existing[plan.table].has(plan.key)) { out.kept.push({ r, plan }); return; }"), 'a rate the table already holds is kept, never overwritten');
+  assert.ok(wr.includes('.insert(batch[table])') && !wr.includes('upsert'), 'insert only — never an upsert');
+  const ex = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
+  assert.ok(ex.includes('const rr = await crqWriteRates(rows.filter(crqIsRate), doc);'), 'extraction writes the rates into the tables');
+  assert.ok(ex.includes('rates → tables:') && ex.includes('not placed — '), 'and reports added / kept / not placed with the reason');
+  assert.ok(ex.includes('⬆ Publish to live to push them to the calculator'), 'going live stays the explicit publish, as for a hand-typed rate');
 });
 
-test('C4: unmapped rows are assignable — commercial uses are real, and the fix writes one field', () => {
-  // the diff used to match commercial use classes against the calc iframe's
-  // COMM global, which never exists in this frame — every commercial rate was
-  // silently unmappable, and 'assign manually' had no mechanism at all
-  const ex = SOURCE.slice(SOURCE.indexOf('async function crxExport'), SOURCE.indexOf('let CRX_LAST'));
-  assert.ok(ex.includes("from('com_uses').select('use_code,label')"),
-    'commercial use classes come from the com_uses table, not a phantom global');
-  assert.ok(!SOURCE.includes("typeof COMM !== 'undefined'"), 'the phantom COMM read is gone');
-  assert.ok(ex.includes("/use class/.test(d.why || '')") && ex.includes('crx-uc-'),
-    'unmapped rate rows carry the set-the-use-class control the message promises');
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crxAssignUse('), SOURCE.indexOf('function crxDownload('));
-  assert.ok(fn.includes('.update({ use_class: v })'), 'assignment writes the use class');
-  assert.equal((fn.match(/\.update\(/g) || []).length, 1,
-    'and ONLY the use class — value, stream and clause stay untouched');
-  assert.ok(fn.includes('crxExport()'), 'then the comparison rebuilds so the row maps');
-  // the canonical residential labels resolve through the real unit matcher
-  const { loadEngine } = require('./extract.js');
-  const ru = loadEngine({ blocks: [['crxResUnit', /^function crxResUnit\(/]] });
-  assert.deepEqual(['1 bed apartment', '2 bed apartment', '3 bed apartment', 'townhouse'].map(ru.crxResUnit),
-    ['apt_1br', 'apt_2br', 'apt_3br', 'townhouse'], 'every offered option actually maps');
-});
-
-test('C4: export is a diff for the human flow — nothing writes, ever', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crxExport'), SOURCE.indexOf('let CRX_LAST'));
-  assert.ok(fn.includes(".eq('status', 'approved')"), 'approved rows only');
-  assert.ok(!/\.(upsert|insert|update|delete)\(/.test(fn.replace(/from\('council_guidelines'\)\s*\n?\s*\.select/g, '')),
-    'the export never writes to any table');
-  assert.ok(fn.includes('no baseline, no diff'), 'no live JSON, no diff — never diff against nothing');
-  assert.ok(!SOURCE.includes('publish-rates', SOURCE.indexOf('async function crxExport')) ||
-    SOURCE.indexOf('publish-rates', SOURCE.indexOf('async function crxExport')) > SOURCE.indexOf('let CRX_LAST'),
-    'the export never calls the publish edge function');
-});
-
-// ── C4: the apply lane — residential diff rows into res_rates ───────────
-test('C4: crxApplyPlan applies residential rate rows only and refuses everything else with a reason', () => {
-  const { loadEngine } = require('./extract.js');
-  const ws = loadEngine({ blocks: [['crxApplyPlan', /^function crxApplyPlan\(/]] });
-  const base = { kind: 'generation_rate', status: 'changed', state: 'NSW', councilValue: 'randwick',
-    target: 'resRates.apt_2br.GW', value: 120, unit: 'L/week', council: 'Randwick City Council' };
-  const p = ws.crxApplyPlan(base);
-  assert.equal(p.ok, true);
-  assert.deepEqual(p.rec, { state: 'NSW', council_value: 'randwick', unit_type: 'apt_2br', stream: 'GW', l_per_week: 120 },
-    'the plan is the exact upsert the Rates DB editor would make by hand');
-  assert.equal(p.unitWarning, null);
-  assert.equal(p.needsCouncil, false);
-  // an unresolved council means CREATE one — a council rate must never land on state defaults
-  const noCv = ws.crxApplyPlan({ ...base, councilValue: null });
-  assert.equal(noCv.ok, true);
-  assert.equal(noCv.needsCouncil, true);
-  assert.equal(noCv.rec.council_value, null);
-  // a non-weekly unit warns (res_rates stores L/week) — the human decides, nothing converts silently
-  assert.match(ws.crxApplyPlan({ ...base, unit: 'L/day' }).unitWarning, /L\/week/);
-  assert.equal(ws.crxApplyPlan({ ...base, unit: 'L/wk/dwelling' }).unitWarning, null);
-  // refusals, each with a stated reason
-  for (const [over, why] of [
-    [{ kind: 'stream_split', target: 'splits.cafe.REC_CARD' }, /no Rates DB column/],
-    [{ target: 'comRates.cafe.GW' }, /per-day \/ per-100m/],
-    [{ status: 'conflicting' }, /remove one/],
-    [{ status: 'same' }, /nothing to apply/],
-    [{ status: 'unmapped', target: null }, /nothing to apply/],
-    [{ target: 'resRates.apt_2br.CARD' }, /GW\/REC\/ORG\/GLS only/],
-    [{ state: null }, /no state/],
-    [{ value: null }, /no numeric value/],
-  ]) {
-    const r = ws.crxApplyPlan({ ...base, ...over });
-    assert.equal(r.ok, false, JSON.stringify(over) + ' must refuse');
-    assert.match(r.why, why);
-  }
-  assert.equal(ws.crxApplyPlan(null).ok, false);
-});
-
-test('C4: applying a row is confirmed, writes the plan into res_rates only, and never publishes', () => {
-  // the per-row apply is the STAGED path — publishing belongs only to the
-  // one-click crxApplyAllAndPublish, so slice up to that function
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApply('), SOURCE.indexOf('async function crxApplyAllAndPublish('));
-  assert.ok(fn.includes('crxApplyPlan(d)'), 'the write is exactly what the pure plan computed');
-  assert.ok(fn.includes('if (!confirm('), 'human-confirmed, never silent');
-  const writer = SOURCE.slice(SOURCE.indexOf('async function crxWritePlan('), SOURCE.indexOf('async function crxApply('));
-  assert.ok(fn.includes('await crxWritePlan(') &&
-            writer.includes("from('res_rates')") && writer.includes("onConflict: 'state,council_value,unit_type,stream'"),
-    'one shared writer, same table and key as the Rates DB editor');
-  assert.ok(!fn.includes('publish-rates') && !fn.includes('rdbPublish') && !writer.includes('rdbPublish'),
-    'the staged path never publishes — going live is its own explicit step');
-  assert.ok(SOURCE.includes('onclick="crxApply(${i})"'), 'the diff rows actually wire the apply button');
-  assert.ok(SOURCE.includes('crxApplyPlan(d).ok ?'), 'the button renders only on rows the plan accepts');
-  assert.ok(SOURCE.includes('How a number in a guideline PDF becomes live:'),
-    'the queue carries the end-to-end pipeline map');
-});
-
-// ── C5: layout soft warnings ────────────────────────────────────────────
 test('C5: warnings compare council minima to measured layout facts, citing clause + version', () => {
   const { loadEngine } = require('./extract.js');
   const ws5 = loadEngine({ blocks: [['wsCouncilLayoutWarnings', /^function wsCouncilLayoutWarnings\(/]] });
@@ -530,21 +431,6 @@ test('extraction has exactly one entry point, and it requires a saved document',
     'Extract to queue on the Library row is the one extract action');
   assert.ok(SOURCE.includes('function cgRenderReview()') && SOURCE.includes('async function cgEdit('),
     'the review pane survives for hand-editing stored versions');
-});
-
-test('one-click publish: clean NEW rows only, listed in a confirm, through the shared writer, then live', () => {
-  const fn = SOURCE.slice(SOURCE.indexOf('async function crxApplyAllAndPublish()'), SOURCE.indexOf('// ── the requirements list'));
-  assert.ok(fn.includes("if (!plan.ok || plan.unitWarning || d.status !== 'new') return;"),
-    'rows needing human eyes, and rates the DB already holds, are never touched by the bulk path — rates are add-only like the list');
-  assert.ok(fn.includes('if (!confirm('), 'still explicit — the confirm lists every row it will write');
-  assert.ok(fn.includes('await crxWritePlan('), 'writes go through the same helper as the per-row apply — no drift');
-  assert.ok(fn.includes('await rdbPublish()'), 'and publishing is part of the one action');
-  assert.ok(fn.includes('nothing published. Fix and retry'), 'a failed write blocks the publish, never half-ships');
-  // the staged path survives: per-row apply without publishing
-  assert.ok(SOURCE.includes('onclick="crxApply(${i})"'), 'per-row staging is still available');
-  // editing the requirements list alone still publishes nothing to the rates
-  const save = SOURCE.slice(SOURCE.indexOf('async function crqSave(id)'), SOURCE.indexOf('async function crqServingDoc'));
-  assert.ok(!save.includes('rdbPublish') && !save.includes('crxApply'), 'a list edit is not a rates publication');
 });
 
 test('onboarding copy moved behind (?) popovers; the dev table browser left the main flow', () => {

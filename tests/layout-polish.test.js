@@ -904,8 +904,8 @@ test('admin guidelines section is scoped to one council', () => {
     'the library renders through the scope');
   assert.ok(SOURCE.includes('.filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name))'),
     'library entries are filtered by the selected council');
-  assert.ok(SOURCE.includes('const rows = CRQ_L.rows.filter(r => crqIsRate(r) === isRate && cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));'),
-    'the requirements and rates lists are filtered by the selected council');
+  assert.ok(SOURCE.includes('const rows = listed.filter(r => cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));'),
+    'the requirements list is filtered by the selected council');
   assert.ok(SOURCE.includes("'. Choose a council in Scope at the top to see and edit its list.</div>'"),
     'with nothing selected the list shows counts only');
   // with nothing selected, no council-specific content — but counts, so
