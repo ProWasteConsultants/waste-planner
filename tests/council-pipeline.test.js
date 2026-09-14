@@ -71,10 +71,17 @@ test('C1: the compliance checker fetches versions newest-first and stamps the sc
 });
 
 // ── C2: bulk upload ─────────────────────────────────────────────────────
-test('C2: bulk upload — councils assigned by hand, versioned through one path', () => {
+test('C2: bulk upload — every file saves to the SCOPED council, versioned through one path', () => {
   const fn = SOURCE.slice(SOURCE.indexOf('const CGB = '), SOURCE.indexOf('// C1: guidelines are VERSIONED'));
-  assert.ok(fn.includes("if (!name) { r.status = 'assign a council'; return false; }"),
-    'no council assigned, no upload — filenames are never auto-matched');
+  assert.ok(fn.includes("if (!name) { r.status = 'pick a council in Scope above'; return false; }"),
+    'no scoped council, no upload — filenames are never auto-matched and nothing is picked per file');
+  assert.ok(!fn.includes('function cgbSetCouncil(') && !SOURCE.includes('list="cgb-councils"') && !SOURCE.includes('<datalist id="cgb-councils">'),
+    'the per-file council picker is gone');
+  const store = SOURCE.slice(SOURCE.indexOf('async function cgStoreDocument()'), SOURCE.indexOf('async function cgSave()'));
+  assert.ok(store.includes("Object.assign(r, { council: name }, meta);") && store.includes('if (await cgbUploadOne(r)) ok++;'),
+    'Save document stamps the Scope council + the shared fields on every queued file and runs them through the one upload path');
+  assert.ok(!SOURCE.includes("id=\"cg-file\"") && !SOURCE.includes('⇪ Upload assigned files') && !SOURCE.includes('id="cgb-actions"'),
+    'the second upload path (single file picker + Upload assigned files) is gone');
   assert.ok(fn.includes('await cgInsertVersion({'),
     'bulk uploads version through the same supersede path as single saves');
   assert.ok(fn.includes('requirements: [],     // structured rows come from extraction + review (C3)'),
