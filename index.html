@@ -1010,7 +1010,7 @@ body.wp-anon .ws-top-chip{display:none;}
           </div>
 
           <div class="adm-group adm-setup">
-            <div class="adm-group-head">🗂 Council documents &amp; review<span class="adm-group-sub">which guideline PDFs are on file for the scoped council, and the clauses awaiting approval</span></div>
+            <div class="adm-group-head">🗂 Council documents &amp; review</div>
             <div class="adm-group-body">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Council Guidelines
@@ -1029,7 +1029,7 @@ body.wp-anon .ws-top-chip{display:none;}
                ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbSetMode('guidelines');cgbAddFiles(event.dataTransfer.files);"
                onclick="cgbSetMode('guidelines');document.getElementById('cgb-files').click()"
                style="border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:8px;">
-            <span id="cgb-drop-hint">⇪ Drop guideline PDFs here (or click to choose) — they are saved to the council selected in Scope above.</span>
+            <span id="cgb-drop-hint">⇪ Drop PDF here or click</span>
             <input type="file" id="cgb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbSetMode('guidelines');cgbAddFiles(this.files);this.value='';">
           </div>
           <div id="cgb-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
@@ -1039,13 +1039,11 @@ body.wp-anon .ws-top-chip{display:none;}
                  rates bridge) on their existing element contract -->
             <input type="hidden" id="cg-name" value="">
             <input type="hidden" id="cg-state" value="">
-            <span id="cg-scope-echo" style="font-size:11px;color:#7FD8D8;border:1px solid #2c4a4a;border-radius:7px;padding:5px 10px;">pick a council in Scope above</span>
             <input type="text" id="cg-version" placeholder="Doc label, e.g. 2023 DCP" title="Free-text label from the document — the integer version number is sequenced automatically" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;width:130px;">
             <input type="date" id="cg-effective" title="Effective date, if the document states one" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;">
             <input type="url" id="cg-source-url" placeholder="Source URL (optional)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:200px;">
             <button class="btn btn-primary" style="background:var(--teal);color:#fff;font-weight:700;" title="Store the dropped PDF(s) against the scoped council now. The checker shows the document side by side immediately; extract clauses afterwards with 🧾 Extract to list on its Library row." onclick="cgStoreDocument()">⇪ Save document</button>
           </div>
-          <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;">Each saved PDF becomes a NEW version of the scoped council's guideline — the previous version is superseded, and its structured requirements stop being served until a new extraction is approved.</div>
           <div id="cg-review"></div>
           <div id="cg-council-card" style="margin:14px 0 0;"></div>
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 6px;">Library <span id="cg-scope-label" style="font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);"></span></div>
@@ -1070,7 +1068,7 @@ body.wp-anon .ws-top-chip{display:none;}
           </div>
 
           <div class="adm-group adm-db">
-            <div class="adm-group-head">🗄 Council &amp; state database<span class="adm-group-sub">the numbers the calculator, the WMP and the checker read — published to live</span></div>
+            <div class="adm-group-head">🗄 Council &amp; state database</div>
             <div class="adm-group-body">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Rates for the selected scope
@@ -10883,11 +10881,6 @@ function admScopeSync() {
   const nm = document.getElementById('cg-name'); if (nm) nm.value = label;
   const stEl = document.getElementById('cg-state');
   if (stEl) stEl.value = document.getElementById('rdb-state')?.value || '';
-  const echo = document.getElementById('cg-scope-echo');
-  if (echo) {
-    echo.textContent = label ? 'for: ' + label : 'pick a council in Scope above';
-    echo.style.color = label ? '#7FD8D8' : 'var(--flag)';
-  }
   // rename / delete act on the selected council only; State defaults has neither
   const acts = document.getElementById('rdb-council-actions');
   if (acts) acts.style.display = label ? 'inline-flex' : 'none';
@@ -11409,12 +11402,7 @@ function cgRenderLibrary() {
   const keys = Object.keys(byKey).sort()
     .filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name));
   if (scopeLbl) scopeLbl.textContent = CG_SCOPE.name ? '— ' + CG_SCOPE.name : '';
-  if (!CG_SCOPE.name) {
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
-      Object.keys(byKey).length + ' council' + (Object.keys(byKey).length === 1 ? '' : 's') +
-      ' on file. Choose a council in Scope at the top to see its document and review its rows.</div>';
-    return;
-  }
+  if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing council-specific, no prompt
   if (!keys.length) {
     wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Nothing on file for ' + ssxEsc(CG_SCOPE.name) + ' yet — extract a PDF above to create v1.</div>';
     return;
@@ -12237,13 +12225,7 @@ function crqRender() {
   const listed = CRQ_L.rows.filter(r => !crqIsRate(r));
   // Scoped to the chosen council: the list is per council, so another
   // council's rows must never show while you edit this one.
-  if (!CG_SCOPE.name) {
-    const n = listed.length, nd = Object.keys(CRQ_L.docs).length;
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
-      n + ' requirement' + (n === 1 ? '' : 's') + ' in the lists across ' + nd + ' document' + (nd === 1 ? '' : 's') +
-      '. Choose a council in Scope at the top to see and edit its list.</div>';
-    return;
-  }
+  if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing, no prompt
   const rows = listed.filter(r => cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));
   const dups = crqDupFlags(rows);
   const latest = crqLatestBatch(rows);
