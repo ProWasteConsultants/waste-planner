@@ -227,12 +227,18 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    **Never infer it from guideline clauses** — a non-residential generation
    rate approved under the wrong type once became a 50L residential bin. The
    approved clauses are listed on the council card as the *reference* for
-   whoever types the service in. Under a kerbside method the council default
-   is the default, its alternatives lead the dropdown, every other
-   kerbside-legal size stays under "Other sizes" (a default, not a lock), and
-   its cycle sets the frequency (`0.5` fortnightly, `0.25` monthly). Under bulk
-   only the caps apply. Departing from the service is allowed and **stated**;
-   no service on record is a visible note naming where to add one.
+   whoever types the service in. Under a kerbside method the council service
+   **is** the list — the default bin plus the sizes the council also offers,
+   nothing else; editing means choosing among what the council supplies. Its
+   cycle sets the frequency (`0.5` fortnightly, `0.25` monthly). Under bulk
+   and self-haul **every library bin** is offered (a size whose records are
+   all tagged for other streams is demoted out of the default group, never
+   hidden), trimmed only by the council's bulk caps. Departing from the
+   service is allowed and **stated**; no service on record is a visible note
+   naming where to add one and how many services are loaded. Saving the grid
+   pushes straight to the calculator; ↻ in the calculator re-reads library +
+   services. `sql/2026-09-14-kerbside-service-read.sql` lets every signed-in
+   user read that one `waste_meta` row (officer contacts stay closed).
 
 Matching is by registry value first, then normalised council name —
 `glBridgeNorm` (parent) and `councilKey` (calculator) must stay identical; a

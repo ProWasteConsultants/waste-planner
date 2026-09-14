@@ -164,8 +164,10 @@ test('collection method: kerbside tops out at 360L and offers no plant; bulk off
   assert.deepStrictEqual(kerb.list.map(e => e.sizeL), [120, 140, 240], 'nothing above 360L at the kerb — no 660, 1100 or front-lift');
   assert.equal(kerb.M.equipment, false, 'no compaction plant under a kerbside method');
   const bulk = c.binSizesFor('R2', 'r', 'GW');
-  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [120, 140, 240, 660, 1100, 3000]);
+  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [80, 120, 140, 240, 660, 1100, 3000], 'bulk offers EVERY library bin');
+  assert.equal(bulk.list.find(e => e.sizeL === 80).common, false, 'a size tagged for another stream is demoted out of the default group, never hidden');
   assert.equal(bulk.M.equipment, true);
+  assert.ok(c.binSizesRaw('GW', true).find(e => e.sizeL === 80).forStream === false && c.binSizesRaw('GW', true).find(e => e.sizeL === 240).forStream === true);
   assert.ok(!c.binSizesFor('R1', 'r', 'GW').list.some(e => e.sizeL === 3000), 'a bulk-tagged record never appears under kerbside');
   assert.deepStrictEqual(c.normMethod({ r: 'kerbside_individual', c: 'nonsense' }), { r: 'kerbside_individual', c: null });
   assert.ok(c.COLLECT_METHODS.kerbside_individual.kerb && c.COLLECT_METHODS.kerbside_shared.kerb && !c.COLLECT_METHODS.bulk.kerb && !c.COLLECT_METHODS.self_haul.kerb,
@@ -195,6 +197,9 @@ test('the council service reaches the calculator without a publish, and ↻ refr
   assert.ok(SOURCE.includes("if (typeof wpRefreshCouncilSchedules === 'function') wpRefreshCouncilSchedules();"), 'saving the grid pushes straight to the calculator');
   assert.ok(SOURCE.includes("e.data.type === 'ws-calc-refresh'"), 'the calculator can ask the platform to re-read library + schedules');
   assert.ok(decodeSrcdoc('calc-iframe').html.includes("postMessage({type:'ws-calc-refresh'},'*')"), '↻ asks');
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-09-14-kerbside-service-read.sql'), 'utf8');
+  assert.ok(sql.includes("using (field_key = 'kerbside_schedule')"), 'every signed-in user reads the service row — and only that row');
+  assert.ok(sql.includes('grant select on public.waste_meta to anon, authenticated'), 'GRANT with the policy, per the Supabase convention');
   const load = extractBlock(/^async function wpLoadCouncilSchedules\(\)/).text;
   assert.ok(load.includes("valueKey: r.council_value ? glBridgeNorm(String(r.council_value).replace(/_/g, ' ')) : null"), 'the registry value also matches read as a name');
   assert.ok(decodeSrcdoc('calc-iframe').html.includes("loaded, ↻ to refresh"), 'a miss says how many services are loaded, so a stale or empty load is visible');
@@ -228,9 +233,7 @@ test('council kerbside service: the council database defaults size and cadence; 
   assert.ok(c.activeSchedule(), 'the selected council matches by registry value');
   const gw = c.binSizesFor('R1', 'r', 'GW');
   assert.deepStrictEqual(gw.councilSizes, [140, 240], 'the council default and its alternative');
-  assert.deepStrictEqual(gw.list.slice(0, 2).map(e => [e.sizeL, e.common]), [[140, true], [240, true]], 'council sizes lead the dropdown');
-  assert.deepStrictEqual(gw.list.slice(2).map(e => e.sizeL), [120], 'every other kerbside-legal size stays under Other sizes — the schedule is a default, not a lock');
-  assert.ok(!gw.list.some(e => e.sizeL > 360), 'still no 660/1100 at the kerb');
+  assert.deepStrictEqual(gw.list.map(e => [e.sizeL, e.common]), [[140, true], [240, true]], 'the council service IS the kerbside list — default plus what the council also offers, nothing else');
   assert.equal(c.defSize('R1', 'r', 'GW'), 140, 'the council DEFAULT is the default, not the largest');
   assert.equal(c.defCw('R1', 'r', 'GW'), 1);
   assert.equal(c.defSize('R1', 'r', 'REC'), 240);
@@ -244,12 +247,12 @@ test('council kerbside service: the council database defaults size and cadence; 
   assert.ok(!c.scheduleFor('r', 'GLS'), 'a stream the council does not collect has no service entry');
   // bulk methods: any size within the council's bulk cap, any frequency — the kerbside service never applies
   const bulk = c.binSizesFor('R2', 'r', 'GW');
-  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [120, 140, 240, 660]);
+  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [80, 120, 140, 240, 660], 'every library bin within the council bulk cap');
   assert.equal(c.defSize('R2', 'r', 'GW'), 660, 'the 1100L default snaps under the council bulk cap');
   assert.equal(c.defCw('R2', 'r', 'GW'), 2, 'kerbside cadence never leaks into a bulk row');
   // a council size the library does not carry yet is still offered, labelled as the council's
-  c.setSchedules([{ state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', schedule: { GW: { sizeL: 80, altL: [], cycle: 'W' }, bulk: {} } }]);
-  assert.deepStrictEqual(c.binSizesFor('R1', 'r', 'GW').list[0], { sizeL: 80, common: true, methods: [], source: 'council' });
+  c.setSchedules([{ state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', schedule: { GW: { sizeL: 90, altL: [], cycle: 'W' }, bulk: {} } }]);
+  assert.deepStrictEqual(c.binSizesFor('R1', 'r', 'GW').list[0], { sizeL: 90, common: true, methods: [], source: 'council', forStream: true });
   // a state-level row (no council value) is the default for councils without their own
   c.setSchedules([{ state: 'NSW', value: null, name: null, key: null, schedule: { GW: { sizeL: 120, altL: [], cycle: 'W' }, bulk: {} } }]);
   assert.equal(c.defSize('R1', 'r', 'GW'), 120, 'state default applies');
@@ -363,7 +366,8 @@ test('the equipment library reaches the calculator as `bins`, with the two selec
   assert.ok(push.includes('council_schedules: WP_COUNCIL_SCHEDULES || []'), 'council schedules ride the same push');
   const calc = decodeSrcdoc('calc-iframe').html;
   assert.ok(calc.includes('if (Array.isArray(d.bins)) rebuildBinLib(d.bins);'), 'calculator rebuilds its bin library from the push');
-  assert.ok(calc.includes("if (Array.isArray(d.council_schedules)) COUNCIL_SCHEDULES ="), 'and its council schedules');
+  assert.ok(calc.includes("if (Array.isArray(d.council_schedules)) {"), 'and its council schedules');
+  assert.ok(calc.includes("council kerbside services ("), 'and logs what arrived, by council value');
   assert.ok(calc.includes('optgroup label="More sizes"'), 'non-common sizes stay selectable under their own group');
   assert.ok(calc.includes('class="wsr-methodsel"'), 'the collection method is a visible select per room section');
   assert.ok(calc.includes("method: methodOf(rr.id, sec), cycle: cycleFor(rr.id, sec, s, cw)"), 'the schedule payload carries method + the council’s cycle letter');
