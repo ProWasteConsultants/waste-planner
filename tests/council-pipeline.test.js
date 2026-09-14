@@ -119,7 +119,7 @@ test('C3 (list): extraction APPENDS straight into the live list, drops untraceab
   assert.ok(fn.includes('wsStreamId'), 'synonyms resolve through the one canonical resolver');
   assert.ok(fn.includes('council_guideline_id: doc.id'), 'every row is pinned to the exact guideline version');
   assert.ok(fn.includes(".is('superseded_at', null)"), 'extraction targets the live document version');
-  assert.ok(fn.includes("await sb.from('council_requirements').insert(rows);") &&
+  assert.ok(fn.includes("await sb.from('council_requirements').insert(rows).select();") &&
             !/council_requirements'\)\s*\.(update|delete|upsert)/.test(fn),
     'extraction only ever INSERTs — existing rows (earlier runs, older versions, hand-typed) are never touched');
   assert.ok(fn.includes('const serving = await crqSyncServe(doc.council_key, doc.council_name);'),
@@ -219,7 +219,8 @@ test('extracted generation rates map onto the rate tables in their exact row for
   const { loadEngine } = require('./extract.js');
   const w = loadEngine({ blocks: [['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /], ['crxNorm', /^function crxNorm\(/],
     ['crxResUnit', /^function crxResUnit\(/], ['CRQ_UNIT_BASIS', /^const CRQ_UNIT_BASIS = /], ['crqUseBasis', /^function crqUseBasis\(/],
-    ['crqComBasis', /^function crqComBasis\(/], ['crqUseFromText', /^function crqUseFromText\(/], ['crqRateToTable', /^function crqRateToTable\(/]] });
+    ['crqComBasis', /^function crqComBasis\(/], ['CRQ_GENERIC_WORDS', /^const CRQ_GENERIC_WORDS = /],
+    ['crqUseFromText', /^function crqUseFromText\(/], ['crqRateToTable', /^function crqRateToTable\(/]] });
   const ctx = { state: 'NSW', councilValue: 'camden', uses: [{ use_code: 'cafe', label: 'Cafe / restaurant' }, { use_code: 'hotel_beds', label: 'Hotel (per bed)' }] };
   const gr = o => ({ requirement_type: 'generation_rate', clause_ref: 'cl 4', ...o });
   // residential → res_rates, L/week per dwelling
@@ -278,9 +279,63 @@ test('extracted generation rates map onto the rate tables in their exact row for
   assert.ok(SOURCE.includes('function crqRatesReport(rr)') && SOURCE.includes('id="rdb-rates-note"'), 'the outcome is reported in the rates section, where the rows land');
   assert.ok(wr.includes('.insert(batch[table])') && !wr.includes('upsert'), 'insert only — never an upsert');
   const ex = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
-  assert.ok(ex.includes('const rr = await crqWriteRates(rows.filter(crqIsRate), doc);'), 'extraction writes the rates into the tables');
+  assert.ok(ex.includes('const rr = await crqWriteRates(saved.filter(crqIsRate), doc);'), 'extraction writes the rates into the tables');
+  assert.ok(ex.includes(".insert(rows).select();") && ex.includes('const saved = (ins && ins.length === rows.length) ? ins : rows;'),
+    'the report is built from the SAVED rows, so its pick-a-use and split buttons address real row ids');
   assert.ok(ex.includes('rates → tables:') && ex.includes('not placed — '), 'and reports added / kept / not placed with the reason');
   assert.ok(ex.includes('⬆ Publish to live to push them to the calculator'), 'going live stays the explicit publish, as for a hand-typed rate');
+});
+
+// ── pattern 4: a premises must never be silently relabelled onto another ──
+test('a rate seats only on the use the document names — generic words never match, and a contested cell is named', () => {
+  const { loadEngine } = require('./extract.js');
+  const w = loadEngine({ blocks: [['crxNorm', /^function crxNorm\(/], ['CRQ_UNIT_BASIS', /^const CRQ_UNIT_BASIS = /],
+    ['crqUseBasis', /^function crqUseBasis\(/], ['crqComBasis', /^function crqComBasis\(/],
+    ['CRQ_GENERIC_WORDS', /^const CRQ_GENERIC_WORDS = /], ['crqUseFromText', /^function crqUseFromText\(/],
+    ['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /], ['crxResUnit', /^function crxResUnit\(/],
+    ['crqRateToTable', /^function crqRateToTable\(/]] });
+  // the app's own commercial uses — several share the words "retail", "store", "goods"
+  const uses = [{ use_code: 'retail_bulky', label: 'Bulky goods / department store' },
+                { use_code: 'retail_general', label: 'General retail (non-food)' },
+                { use_code: 'supermarket', label: 'Supermarket' }];
+  const ctx = { state: 'NSW', councilValue: 'nbc', uses };
+  const gr = o => ({ requirement_type: 'generation_rate', clause_ref: 'cl 5.4', unit: 'L/100m²/day', ...o });
+  // "Retail store (non-food)" shares only generic words with both retail uses —
+  // it is refused by name rather than seated on whichever was tried first
+  const r = w.crqRateToTable(gr({ use_class: 'Retail store (non-food)', stream: 'garbage', value_num: 50 }), ctx);
+  assert.ok(!r.ok, 'a premises the table does not carry is never absorbed by a lookalike');
+  assert.match(r.why, /Retail store \(non-food\).*matches no commercial use/);
+  assert.equal(w.crqUseFromText('Retail store (non-food): 50L per 100m² per day', uses), null,
+    '"retail" and "store" are kinds of premises, not premises — a generic word never carries a match');
+  assert.equal(w.crqUseFromText('Supermarket: 100L/100m²/day', uses).use_code, 'supermarket',
+    'a distinctive word still matches');
+  assert.equal(w.crqUseFromText('Department stores: 100L/100m²/day', uses).use_code, 'retail_bulky',
+    'and a distinctive phrase inside the app\'s own label still matches the premises it names');
+  // the wording is read only for a row that names no premises of its own
+  const named = w.crqRateToTable(gr({ use_class: 'Newsagent', stream: 'garbage', value_num: 80, value_text: 'Supermarket is nearby' }), ctx);
+  assert.ok(!named.ok, 'a row that names its own premises is judged on that name, not on stray wording');
+  assert.equal(w.crqRateToTable(gr({ use_class: 'commercial', stream: 'garbage', value_num: 80, value_text: 'Supermarket: 80L' }), ctx).row.use_code, 'supermarket');
+  // two premises landing in one cell are BOTH named — first-wins is not silence
+  const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('function crqRatesReport('));
+  assert.ok(wr.includes('if (seen.has(k)) { clash[k] = (clash[k] || []).concat(r.use_class || \'?\'); return; }'),
+    'a second premises for the same cell is recorded, not dropped');
+  assert.ok(wr.includes("out.clashes.push({ cell: k.split('|').slice(1).join(' · '), kept: first[k], also: [...new Set(clash[k])] })"));
+  assert.ok(SOURCE.includes('two premises want the same cell') && SOURCE.includes('Check which is right.'),
+    'and the contest is shown in the rates report');
+});
+
+// ── pattern 1: one figure for both streams is a decision, not an arithmetic ──
+test('a combined garbage+recycling figure is split by hand, both halves cited to the same clause', () => {
+  const fn = SOURCE.slice(SOURCE.indexOf('async function crqPlaceSplit('), SOURCE.indexOf('async function crqPullRatesForScope('));
+  assert.ok(SOURCE.includes('onclick="crqPlaceSplit(\'${u.r.id}\')"'), 'the split is offered on the unplaced row itself');
+  assert.ok(SOURCE.includes('The council gives one figure for both streams — these two values are yours.'),
+    'the UI says whose numbers these are');
+  assert.ok(fn.includes("if (isNaN(gw) || isNaN(rec))"), 'both halves are required — no default split');
+  assert.ok(fn.includes("stream: 'garbage'") && fn.includes("stream: 'recycling'"), 'the row becomes garbage; a sibling carries recycling');
+  assert.ok(fn.includes("source: 'manual'"), 'the recycling half is recorded as a human addition, not an extraction');
+  assert.ok(fn.includes('clause_ref: src.clause_ref'), 'both halves cite the clause the council actually wrote');
+  assert.ok(fn.includes('combined figure split by hand: '), 'the wording records that the split was made here');
+  assert.ok(!/value_num: *\(?[a-z]*\/ *2/.test(fn), 'never halved automatically');
 });
 
 test('C5: warnings compare council minima to measured layout facts, citing clause + version', () => {
@@ -448,45 +503,106 @@ test('extraction CONTINUES past the length cap — a 100-row rate table is read 
     'the outcome says how many passes ran, and whether anything may still be missing');
 });
 
-test('the rate table is SWEPT — labels listed, filled in batches, coverage verified and reported', async () => {
+test('the rate table is TRANSCRIBED and parsed in code — every row, verified against an independent manifest', async () => {
   const { loadEngine } = require('./extract.js');
-  const w = loadEngine({ blocks: [['CRQ_SWEEP_LIST', /^const CRQ_SWEEP_LIST = /], ['CRQ_SWEEP_FILL', /^const CRQ_SWEEP_FILL = /],
+  const w = loadEngine({ blocks: [['CRQ_SWEEP_LIST', /^const CRQ_SWEEP_LIST = /], ['CRQ_SWEEP_TRANSCRIBE', /^const CRQ_SWEEP_TRANSCRIBE = /],
+    ['crqRateCell', /^function crqRateCell\(/], ['crqRateLines', /^function crqRateLines\(/],
     ['crqRateSweep', /^async function crqRateSweep\(/]] });
-  // 30 labels: the fill is batched, and a label the model keeps skipping is
-  // retried once and then NAMED — never quietly dropped
-  const labels = Array.from({ length: 30 }, (_, i) => ({ label: 'Use ' + i, clause_ref: 'cl 5.4, p.4', combined: i === 29 }));
-  const batches = [];
+
+  // ── the parser, against the shape the real Northern Beaches table prints ──
+  // Every failure pattern from the bug brief is one line of this table.
+  const table = [
+    'Type of premises | Garbage | Recycling',
+    'Assembly Rooms | |',
+    '- Social | 50L/100m² floor area/day | 25L/100m² floor area/day',
+    '- Religious | 10L/100m² floor area/day | 5L/100m² floor area/day',
+    'Automotive repair and service | 3350L/100m² floor area/day (combined garbage and recycling) |',
+    'Book shop | 50L/100m² floor area/day | 50L/100m² floor area/day',
+    'Car parks | 0 | 0L/100m² floor area/day',
+    'Hotels/Motels | 5L/bed/per day | 5L/bed/per day',
+    'Theatres | 25L/seats/screening | 5L/seats/screening',
+    'Retail store (non-food) | 50L/100m² floor area/day | 50L/100m² floor area/day',
+    'Boarding houses | |',
+    'Dry cleaners | – | –',
+  ].join('\n');
+  const p = w.crqRateLines(table, 'cl 5.4, p.4');
+  const by = l => p.rows.filter(r => r.label === l);
+  // pattern 3: a plainly-formatted row is a row — nothing is skipped for being ordinary
+  assert.deepStrictEqual(by('Book shop').map(r => [r.stream, r.value_num]), [['garbage', 50], ['recycling', 50]]);
+  assert.deepStrictEqual(by('Retail store (non-food)').map(r => r.value_num), [50, 50],
+    'the source label is kept verbatim — never relabelled onto a nearby use');
+  // pattern 1: one figure covering both streams is carried as combined, never split or dropped
+  const auto = by('Automotive repair and service');
+  assert.equal(auto.length, 1);
+  assert.equal(auto[0].stream, null, 'a combined figure claims no stream');
+  assert.ok(auto[0].combined && auto[0].value_num === 3350);
+  // pattern 2: an unusual unit is transcribed as printed, not forced into a known one
+  assert.equal(by('Theatres')[0].unit, 'L/seats/screening');
+  assert.equal(by('Hotels/Motels')[0].unit, 'L/bed/day');
+  assert.equal(by('Assembly Rooms — Social')[0].unit, 'L/100m² floor area/day');
+  // sub-rows carry their heading; the heading itself is not a rate row
+  assert.deepStrictEqual(p.headings, ['Assembly Rooms', 'Boarding houses']);
+  assert.equal(by('Assembly Rooms').length, 0);
+  assert.deepStrictEqual(by('Assembly Rooms — Religious').map(r => r.value_num), [10, 5]);
+  // a rate of 0 is a rate; a blank/dashed row is not
+  assert.equal(by('Car parks').length, 2, 'zero is a figure the council stated');
+  assert.equal(by('Dry cleaners').length, 0);
+  assert.equal(by('Boarding houses').length, 0);
+  assert.ok(p.rows.every(r => r.clause_ref === 'cl 5.4, p.4'), 'every parsed row keeps the clause');
+  assert.equal(w.crqRateCell('n/a'), null);
+  assert.equal(w.crqRateCell(''), null);
+  assert.deepStrictEqual(w.crqRateCell('120 litres / 100m2 / week'), { value: 120, unit: 'L/100m2/week', combined: false });
+
+  // ── the sweep: transcription is the source of truth, the manifest verifies it ──
+  const manifest = [{ label: 'Book shop', clause_ref: 'cl 5.4, p.4' }, { label: 'Car parks', clause_ref: 'cl 5.4, p.4' },
+    { label: 'Warehouses', clause_ref: 'cl 5.4, p.4' }];
+  const seen = { systems: [], asked: [] };
   const call = async (system, text, key) => {
-    if (key === 'labels') return labels;
-    batches.push(text);
-    const asked = labels.filter(l => text.includes('· ' + l.label + '\n') || text.endsWith('· ' + l.label + '\nJSON only — start your response with {'));
-    return asked.filter(l => l.label !== 'Use 7').map(l => ({ label: l.label, stream: 'garbage', value_num: 50, unit: 'L/100m²/day', clause_ref: 'cl 5.4, p.4' }));
+    seen.systems.push(key || 'transcribe');
+    if (key === 'labels') return manifest;
+    if (/ONLY these rows/.test(text)) { seen.asked.push(text); return 'Warehouses | 20L/100m²/day | 10L/100m²/day'; }
+    return 'Book shop | 50L/100m²/day | 50L/100m²/day\nCar parks | 0L/100m²/day |';
   };
   const out = await w.crqRateSweep(call);
-  assert.equal(out.labels.length, 30, 'every listed label is kept');
-  assert.ok(batches.length >= 3, 'filled in batches, not one huge ask');
-  assert.deepStrictEqual(out.missing, ['Use 7'], 'a label that never came back is reported by name');
-  assert.equal(out.rows.length, 29);
-  assert.ok(out.rows.every(r => r.clause_ref), 'every row keeps a clause reference');
-  // a row the model returns that was never on the list is dropped, not invented
-  const rogue = await w.crqRateSweep(async (sys, text, key) => key === 'labels'
-    ? [{ label: 'Office', clause_ref: 'cl 1' }]
-    : [{ label: 'Office', stream: 'garbage', value_num: 10, unit: 'L/100m2/day', clause_ref: 'cl 1' },
-       { label: 'Invented premises', stream: 'garbage', value_num: 999, unit: 'L/100m2/day', clause_ref: 'cl 1' }]);
-  assert.deepStrictEqual(rogue.rows.map(r => r.label), ['Office'], 'only premises the document listed are kept');
-  // duplicate labels in the manifest collapse; a failed listing is reported, not thrown
-  const dup = await w.crqRateSweep(async (sys, t, key) => key === 'labels' ? [{ label: 'Office' }, { label: 'office' }] : []);
+  assert.deepStrictEqual(seen.systems, ['transcribe', 'labels', 'transcribe'],
+    'transcribe, verify against an independent read, then re-ask for what is missing');
+  assert.match(seen.asked[0], /· Warehouses/, 'the retry names the rows that did not come through — never a blind “continue”');
+  assert.deepStrictEqual(out.rows.map(r => r.label), ['Book shop', 'Book shop', 'Car parks', 'Warehouses', 'Warehouses']);
+  assert.deepStrictEqual(out.missing, [], 'a row recovered by the retry is no longer missing');
+  assert.ok(out.rows.every(r => r.clause_ref === 'cl 5.4, p.4'), 'the manifest supplies the clause the transcription lacks, retried rows included');
+  assert.ok(out.transcript.includes('Book shop') && out.transcript.includes('Warehouses'), 'the raw transcription is kept for inspection');
+  // still missing after the retry → named, never assumed read, and never asked a third time
+  const stub = { n: 0 };
+  const short = await w.crqRateSweep(async (sys, text, key) => {
+    if (key === 'labels') return manifest;
+    stub.n++; return 'Book shop | 50L/100m²/day | 50L/100m²/day\nCar parks | 0L/100m²/day |';
+  });
+  assert.deepStrictEqual(short.missing, ['Warehouses']);
+  assert.equal(stub.n, 2, 'one retry, then it is reported rather than looped');
+  // a manifest that fails leaves the transcription standing — a verifier that is down is not a lost table
+  const noList = await w.crqRateSweep(async (sys, text, key) => {
+    if (key === 'labels') throw new Error('proxy down');
+    return 'Office | 10L/100m²/day |';
+  });
+  assert.equal(noList.rows.length, 1);
+  assert.deepStrictEqual(noList.missing, []);
+  assert.equal(noList.error, null, 'only a failed transcription is a failed sweep');
+  // duplicate manifest labels collapse; a failed transcription is reported, not thrown
+  const dup = await w.crqRateSweep(async (sys, t, key) => key === 'labels' ? [{ label: 'Office' }, { label: 'office' }] : 'Office | 10L/100m²/day |');
   assert.equal(dup.labels.length, 1);
   const bad = await w.crqRateSweep(async () => { throw new Error('proxy down'); });
   assert.equal(bad.error, 'proxy down');
-  assert.deepStrictEqual(bad.labels, []);
+  assert.deepStrictEqual(bad.rows, []);
+  // the prompts ask for a copy, not a summary
+  assert.match(w.CRQ_SWEEP_TRANSCRIBE, /TRANSCRIBE every table[\s\S]*verbatim/);
+  assert.match(w.CRQ_SWEEP_TRANSCRIBE, /Do not skip, merge, rename, reorder or summarise any row/);
   // wiring: the sweep runs in the extraction, its rows join the same dedupe, coverage is reported
   const fn = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
   assert.ok(fn.includes('const sweep = await crqRateSweep(call,'), 'the extraction sweeps the rate table');
+  assert.ok(fn.includes('if (!key) return (resp.content?.[0]?.text || \'\').trim();'), 'the transcription pass reads raw text, not JSON');
   assert.ok(fn.includes('const k = seenKey(row);') && fn.includes('seen.add(k); cand.push(row);'), 'sweep rows go through the same dedupe as the general pass');
-  assert.ok(fn.includes("rate table: ${sweep.labels.length - sweep.missing.length} of ${sweep.labels.length} rows read"),
-    'coverage is stated, not assumed');
-  assert.ok(fn.includes('NOT read: ${sweep.missing.slice(0, 6)'), 'and anything missed is named');
+  assert.ok(fn.includes('rate table: ${sweep.rows.length} rate rows transcribed'), 'coverage is stated, not assumed');
+  assert.ok(fn.includes('⚠ NOT transcribed: ${sweep.missing.slice(0, 8)'), 'and anything missed is named');
   assert.ok(fn.includes("' (one figure covers combined garbage and recycling)'"), 'a combined figure is labelled as such rather than split');
 });
 
