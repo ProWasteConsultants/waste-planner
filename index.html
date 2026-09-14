@@ -2108,7 +2108,7 @@ body.wp-anon .ws-top-chip{display:none;}
               <div class="wsl-group-hd">1 · Kerb space</div>
               <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
                 <button class="wsl-btn" onclick="wsCollectKerbMode()" title="Click along the kerb where bins can be presented — corner by corner for curved or corner frontages. Double-click (or Enter) to finish. Trace each usable frontage separately.">✏ Trace the kerb</button>
-                <button class="wsl-btn" onclick="wsCollectFlipSide()" title="Draw the bins on the other side of the traced line">⇅ Flip bin side</button>
+                <button class="wsl-btn" onclick="wsCollectFlipSide()" title="Re-place the kerb bins on the other side of the traced line">⇅ Flip bin side</button>
               </div>
               <div id="ws-collect-kerbs" style="font-size:11px;color:rgba(255,255,255,0.6);"></div>
             </div>
@@ -19414,7 +19414,7 @@ function wsCollectBins(targets, streams, types) {
     const cap = bt.capacityL > 0 ? bt.capacityL : (parseInt(bt.label, 10) || 0);
     const sizeL = t.sizeL > 0 ? t.sizeL : cap;
     const fpAssumed = sizeL > 0 && cap > 0 && cap !== sizeL;
-    for (let i = 0; i < (t.qty || 0); i++) out.push({ stream: t.stream, typeId: t.typeId, wM: bt.w, dM: bt.d,
+    for (let i = 0; i < (t.qty || 0); i++) out.push({ stream: t.stream, typeId: t.typeId, resolvedType: bt.id, wM: bt.w, dM: bt.d,
       label: sizeL > 0 ? sizeL + 'L' : bt.label, sizeL, fpFrom: bt.label, fpAssumed });
   });
   return out;
@@ -19434,6 +19434,24 @@ function wsCollectBinSummary(bins) {
     const ia = order.indexOf(a.stream), ib = order.indexOf(b.stream);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || String(a.label).localeCompare(String(b.label), undefined, { numeric: true });
   });
+}
+
+// The design-case placements as bin poses — centre, rotation along the kerb
+// tangent, offset to the chosen side — ready to become REAL placed bins.
+// Pure: the assembler's result in, poses out.
+function wsCollectKerbBinPoses(cp, side, mpp) {
+  const out = [];
+  if (!cp || !cp.worst || !cp.worst.assess || !mpp) return out;
+  const sg = side === -1 ? -1 : 1;
+  (cp.worst.assess.placed || []).forEach(pl => {
+    const ki = cp.kerbs[pl.kerb]; if (!ki) return;
+    const p = wsKerbAt(ki.k.pts, (pl.s0 + pl.s1) / 2); if (!p) return;
+    const off = (pl.bin.dM / 2 + 0.08) / mpp;
+    out.push({ kerbId: ki.k.id, x: p.x - p.ty * off * sg, y: p.y + p.tx * off * sg,
+      rot: +(Math.atan2(p.ty, p.tx) * 180 / Math.PI).toFixed(1),
+      type: pl.bin.resolvedType || pl.bin.typeId, stream: pl.bin.stream });
+  });
+  return out;
 }
 
 // ── kerb polyline, parameterised by arc length (px) ──
@@ -19646,12 +19664,15 @@ function wsCollectKerbFinish() {
   const tr = wsKerbCleanPts(WS_COLLECT.trace || []);
   if (tr.length < 2) { wsCollectMsg('Click at least two points along the kerb first.'); return; }
   const c = wsCollectSlot();
-  c.kerbs.push({ id: 'kerb_' + Date.now(), kind: 'line', pts: tr });
+  const kerb = { id: 'kerb_' + Date.now(), kind: 'line', pts: tr };
+  c.kerbs.push(kerb);
   WS_COLLECT.trace = null;
   wsLayoutEndMode();
   wsLayoutAutosave();
+  const n = wsCollectPlaceBins([kerb.id]);
   wsCollectPanelRefresh();
-  wsCollectMsg('Kerb traced — ' + (c.kerbs.length > 1 ? 'segments are checked together (corner lots split bins across them).' : 'the bins are drawn along it; add anything in the way, or read the verdict below.'));
+  wsCollectMsg('Kerb traced — ' + (n ? n + ' bin' + (n === 1 ? '' : 's') + ' placed along it (drag, R rotates, Del deletes). ' : '') +
+    (c.kerbs.length > 1 ? 'Segments are checked together (corner lots split bins across them).' : 'Add anything in the way, or read the verdict below.'));
 }
 function wsCollectKerbCancel() {
   if (WS._mode !== 'layoutkerb') return;
@@ -19661,13 +19682,44 @@ function wsCollectKerbCancel() {
 }
 function wsCollectKerbDelete(i) {
   const c = wsCollectSlot();
+  const k = c.kerbs[i]; if (!k) return;
+  wsLayoutSnapshot();
   c.kerbs.splice(i, 1);
+  // the bins placed along it go too — the panel button says so; Ctrl+Z restores both
+  const slot = wsLayoutSlot();
+  const n = slot.bins.filter(b => b.kerb === k.id).length;
+  slot.bins = slot.bins.filter(b => b.kerb !== k.id);
   wsLayoutAutosave(); wsCollectPanelRefresh(); wsRenderLayoutLayer();
+  wsCollectMsg('Kerb removed' + (n ? ' with its ' + n + ' bin' + (n === 1 ? '' : 's') : '') + ' — Ctrl+Z brings it back.');
 }
 function wsCollectFlipSide() {
   const c = wsCollectSlot();
   c.side = (c.side === -1 ? 1 : -1);
   wsLayoutAutosave(); wsRenderLayoutLayer();
+  // kerbs that already carry bins get them re-placed on the new side
+  const withBins = [...new Set(wsLayoutSlot().bins.filter(b => b.kerb).map(b => b.kerb))];
+  if (withBins.length) wsCollectPlaceBins(withBins);
+}
+// Materialise the design-case bins as REAL placed bins (slot.bins, tagged
+// `kerb`): from here on they select, drag, rotate and delete like any bin on
+// the plan, print on the sheet and export to A-KERB-BINS. Re-running replaces
+// the bins tagged to those kerbs (a moved bin snaps back to the pack) — the
+// panel button says so. Undo covers it.
+function wsCollectPlaceBins(kerbIds) {
+  const mpp = wsSweptMpp(); if (!mpp) return 0;
+  const slot = wsLayoutSlot(), c = wsCollectSlot();
+  const cp = wsCollectCompute(slot, mpp);
+  if (!cp || !cp.kerbs.length) return 0;
+  const want = new Set(kerbIds && kerbIds.length ? kerbIds : cp.kerbs.map(k => k.k.id));
+  const poses = wsCollectKerbBinPoses(cp, c.side, mpp).filter(p => want.has(p.kerbId));
+  wsLayoutSnapshot();
+  slot.bins = slot.bins.filter(b => !(b.kerb && want.has(b.kerb)));
+  const lib = WS_EQUIP_DB || [];
+  poses.forEach((p, i) => slot.bins.push({ id: 'bin_' + Date.now() + '_k' + i + '_' + Math.floor(Math.random() * 999),
+    type: p.type, stream: p.stream, x: p.x, y: p.y, rot: p.rot, calcRoom: null,
+    equipmentId: lib.some(r => r.id === p.type) ? p.type : null, receiver: false, roomId: null, kerb: p.kerbId }));
+  wsRenderLayoutLayer(); wsLayoutAutosave(); wsCollectPanelRefresh();
+  return poses.length;
 }
 
 // ── data assembly ──
@@ -19687,9 +19739,10 @@ function wsCollectTargets() {
              cycles: wsCollectCyclesFromTargets(kerb), present: (typeof WS_CALC_PRESENT !== 'undefined') ? WS_CALC_PRESENT : null };
   }
   const slot = wsLayoutSlot();
-  if (slot.bins.length) {
+  const plan = slot.bins.filter(b => !b.kerb);   // bins already ON the kerb are output, never the schedule
+  if (plan.length) {
     const by = {};
-    slot.bins.forEach(b => {
+    plan.forEach(b => {
       const k = b.stream + '|' + b.type;
       by[k] = by[k] || { stream: b.stream, typeId: b.type, qty: 0 };
       by[k].qty++;
@@ -19835,8 +19888,15 @@ function wsCollectPanelRefresh() {
   wrap.innerHTML = wsCollectTraceHtml() + (cp.kerbs.length ? cp.kerbs.map((ki, i) =>
     `<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
       <span style="flex:1;">${nameOf(i)} — ${(ki.L * mpp).toFixed(1)} m${ki.excl.length ? ` <span style="color:rgba(255,255,255,0.4);">(${((ki.L - ki.free.reduce((a, g) => a + (g.s1 - g.s0), 0)) * mpp).toFixed(1)} m blocked)</span>` : ''}</span>
-      <button class="wsl-btn" style="padding:1px 6px;font-size:10px;color:#ED1C24;" onclick="wsCollectKerbDelete(${i})">✕</button>
+      <button class="wsl-btn" style="padding:1px 6px;font-size:10px;color:#ED1C24;" onclick="wsCollectKerbDelete(${i})" title="Remove this kerb and the bins placed along it (Ctrl+Z restores both)">✕</button>
     </div>`).join('') : (WS_COLLECT.trace ? '' : 'No kerb traced yet.'));
+  if (cp.kerbs.length && !cp.worst.assess.empty) {
+    const onKerb = slot.bins.filter(b => b.kerb).length;
+    wrap.innerHTML += `<div style="margin-top:5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+      <button class="wsl-btn" style="padding:3px 8px;font-size:10.5px;" onclick="wsCollectPlaceBins()" title="${onKerb ? 'Puts every kerb bin back where the busiest-week pack has it — bins you moved snap back. Ctrl+Z undoes.' : 'Places the busiest-week bins along the kerb as ordinary bins.'}">${onKerb ? '↻ Re-place bins along the kerb' : '⤓ Place the bins on the kerb'}</button>
+      <span style="font-size:10px;color:rgba(255,255,255,0.4);">${onKerb ? onKerb + ' on the kerb — drag, R rotates, Del deletes, like any bin' : 'they become ordinary bins you can drag, rotate and delete'}</span>
+    </div>`;
+  }
   // obstructions near a kerb, with editable blocked-width
   const obsEl = document.getElementById('ws-collect-obs');
   if (obsEl) {
@@ -19951,11 +20011,17 @@ function wsCollectSettingChanged() {
 // ── canvas rendering (real content — it prints on the sheet and reaches DXF) ──
 function wsCollectRender(mk, gW, mpp, slot) {
   if (!gW || !mpp) return;
+  // The kerb LINE (trace, committed line, blocked stretches) is site linework
+  // and lives on the Bin room layer, so that layer's toggle hides it. The
+  // bins along it are real placed bins — drawn by the ordinary bin pass into
+  // the waste layer, not here. No verdict text on the drawing: the panel says
+  // whether it fits; the sheet shows the kerb and the bins.
+  const gB = document.getElementById('ws-layer-binroom') || gW;
   const tr = WS_COLLECT.trace;
   if (tr && tr.length) {
     mk('polyline', { points: tr.map(p => p.x + ',' + p.y).join(' '), fill: 'none',
-      stroke: '#C58B2A', 'stroke-width': 3, 'stroke-dasharray': '8 5', opacity: 0.9 }, gW);
-    tr.forEach(p => mk('circle', { cx: p.x, cy: p.y, r: 4, fill: '#C58B2A' }, gW));
+      stroke: '#C58B2A', 'stroke-width': 3, 'stroke-dasharray': '8 5', opacity: 0.9 }, gB);
+    tr.forEach(p => mk('circle', { cx: p.x, cy: p.y, r: 4, fill: '#C58B2A' }, gB));
   }
   const cp = wsCollectCompute(slot, mpp);
   if (!cp) return;
@@ -19963,12 +20029,7 @@ function wsCollectRender(mk, gW, mpp, slot) {
   cp.kerbs.forEach((ki, i) => {
     const pts = ki.k.pts;
     mk('polyline', { points: pts.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' '),
-      fill: 'none', stroke: '#C58B2A', 'stroke-width': 3.5, 'stroke-linecap': 'round' }, gW);
-    const p0 = wsKerbAt(pts, 8);
-    if (p0) {
-      const t = mk('text', { x: p0.x, y: p0.y - 10, fill: '#C58B2A', 'font-size': 11, 'font-weight': 700 }, gW);
-      t.textContent = 'Kerb ' + String.fromCharCode(65 + i) + ' — ' + (ki.L * mpp).toFixed(1) + ' m';
-    }
+      fill: 'none', stroke: '#C58B2A', 'stroke-width': 3.5, 'stroke-linecap': 'round' }, gB);
     // blocked stretches, hugged to the line
     ki.excl.forEach(ex => {
       const seg = [];
@@ -19976,10 +20037,10 @@ function wsCollectRender(mk, gW, mpp, slot) {
         const p = wsKerbAt(pts, s); if (p) seg.push(p.x.toFixed(1) + ',' + p.y.toFixed(1));
       }
       const pe = wsKerbAt(pts, ex.s1); if (pe) seg.push(pe.x.toFixed(1) + ',' + pe.y.toFixed(1));
-      mk('polyline', { points: seg.join(' '), fill: 'none', stroke: '#ED1C24', 'stroke-width': 6, opacity: 0.55, 'stroke-linecap': 'butt' }, gW);
+      mk('polyline', { points: seg.join(' '), fill: 'none', stroke: '#ED1C24', 'stroke-width': 6, opacity: 0.55, 'stroke-linecap': 'butt' }, gB);
       const pm = wsKerbAt(pts, (ex.s0 + ex.s1) / 2);
       if (pm) {
-        const t = mk('text', { x: pm.x - pm.ty * side * -14, y: pm.y + pm.tx * side * -14, fill: '#ED1C24', 'font-size': 8.5, 'text-anchor': 'middle' }, gW);
+        const t = mk('text', { x: pm.x - pm.ty * side * -14, y: pm.y + pm.tx * side * -14, fill: '#ED1C24', 'font-size': 8.5, 'text-anchor': 'middle' }, gB);
         t.textContent = ex.why;
       }
     });
@@ -19993,36 +20054,15 @@ function wsCollectRender(mk, gW, mpp, slot) {
         fill: stc.col || '#888', 'fill-opacity': 0.75, stroke: '#fff', 'stroke-width': 1 }, gW);
     });
   });
-  // the active scenario's bins, snapped along the clear stretches
-  const sc = cp.active;
-  if (sc && sc.assess) {
-    sc.assess.placed.forEach(pl => {
-      const ki = cp.kerbs[pl.kerb];
-      const p = wsKerbAt(ki.k.pts, (pl.s0 + pl.s1) / 2);
-      if (!p) return;
-      const stc = WS_STREAMS.find(x => x.id === pl.bin.stream) || {};
-      const off = (pl.bin.dM / 2 + 0.08) / mpp;
-      const cx = p.x - p.ty * off * side, cy = p.y + p.tx * off * side;
-      const rot = Math.atan2(p.ty, p.tx) * 180 / Math.PI;
-      const cs = wsOBBCorners(cx, cy, pl.bin.wM / 2 / mpp, pl.bin.dM / 2 / mpp, rot);
-      mk('polygon', { points: cs.map(q => q.x.toFixed(1) + ',' + q.y.toFixed(1)).join(' '),
-        fill: stc.col || '#888', 'fill-opacity': 0.75, stroke: '#fff', 'stroke-width': 1 }, gW);
-    });
-    if (sc.assess.unplaced.length && cp.kerbs.length) {
-      const ki = cp.kerbs[cp.kerbs.length - 1];
-      const pe = wsKerbAt(ki.k.pts, ki.L);
-      if (pe) {
-        const t = mk('text', { x: pe.x + 10, y: pe.y + 4, fill: '#ED1C24', 'font-size': 11, 'font-weight': 700 }, gW);
-        t.textContent = '✕ ' + sc.assess.unplaced.length + ' bin' + (sc.assess.unplaced.length === 1 ? '' : 's') + ' don’t fit';
-      }
-    }
-    // verdict pill at the start of the first kerb
-    const a = cp.worst.assess;
-    const p0 = cp.kerbs.length ? wsKerbAt(cp.kerbs[0].k.pts, 0) : null;
-    if (p0 && !a.empty) {
-      const okc = a.ok ? '#4BED12' : '#ED1C24';
-      const t = mk('text', { x: p0.x, y: p0.y + 22, fill: okc, 'font-size': 11, 'font-weight': 700 }, gW);
-      t.textContent = a.ok ? '✓ fits on the busiest week' : '✕ short by ' + a.shortM.toFixed(1) + ' m (' + cp.worst.label + ')';
+  // the one mark that stays on the drawing: bins the busiest week cannot
+  // fit anywhere — a shortfall must not be invisible on the plan
+  const a = cp.worst.assess;
+  if (a.unplaced.length && cp.kerbs.length) {
+    const ki = cp.kerbs[cp.kerbs.length - 1];
+    const pe = wsKerbAt(ki.k.pts, ki.L);
+    if (pe) {
+      const t = mk('text', { x: pe.x + 10, y: pe.y + 4, fill: '#ED1C24', 'font-size': 11, 'font-weight': 700 }, gB);
+      t.textContent = '✕ ' + a.unplaced.length + ' bin' + (a.unplaced.length === 1 ? '' : 's') + ' don’t fit (' + cp.worst.label + ')';
     }
   }
   // keep the side panel's lists in step with canvas edits (a placed pole must
@@ -21757,8 +21797,9 @@ function wsLayoutUpdateStats(slot, mpp) {
   const el = document.getElementById('ws-layout-stats'); if (!el) return;
   if (!slot.bins.length && !slot.rooms.length && !slot.chutes.length && !slot.equip.length) { el.textContent = ''; if (typeof wsFloatStatus === 'function') wsFloatStatus(''); return; }
   const byStream = {};
-  let fp = 0;
+  let fp = 0, onKerb = 0;
   slot.bins.forEach(b => {
+    if (b.kerb) { onKerb++; return; }   // presentation, not storage — counted on its own
     const bt = wsBinType(b.type); if (!bt) return;
     const st = WS_STREAMS.find(s => s.id === b.stream);
     const key = st ? st.label : '?';
@@ -21767,8 +21808,9 @@ function wsLayoutUpdateStats(slot, mpp) {
   });
   let roomA = 0;
   if (mpp) slot.rooms.forEach(r => { roomA += (r.x2 - r.x1) * (r.y2 - r.y1) * mpp * mpp; });
-  const parts = [`${slot.bins.length} bins`];
+  const parts = [`${slot.bins.length - onKerb} bins`];
   for (const k in byStream) parts.push(`${byStream[k]} ${k}`);
+  if (onKerb) parts.push(`${onKerb} at the kerb`);
   if (fp) parts.push(`${fp.toFixed(1)} m² footprint`);
   slot.chutes.forEach(c => { const cs = WS_CHUTE_SPECS[c.type]; if (cs) fp += cs.w * cs.d; });
   // aisles are clearance, not plant; a traced zone claims its measured area
@@ -22024,7 +22066,7 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
   slot.bins.forEach(b => {
     const bt = wsBinType(b.type); if (!bt) return;
     const st = WS_STREAMS.find(s => s.id === b.stream) || WS_STREAMS[0];
-    const layer = 'BINS_' + st.id.toUpperCase();
+    const layer = b.kerb ? 'A-KERB-BINS' : 'BINS_' + st.id.toUpperCase();   // kerb presentation keeps its own layer
     // Reference the block defined for this type+stream. Bins used to draw a
     // raw bounding rectangle here while their blocks sat unreferenced — which
     // lost the drawn plan shape in CAD and left orphan definitions.
@@ -22064,16 +22106,8 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
           if (seg.length >= 2) d += poly('A-KERB-EXCL', 1, seg);
         });
       });
-      const side = (slot.collect.side === -1) ? -1 : 1;
-      (cp.worst.assess.placed || []).forEach(pl => {
-        const ki = cp.kerbs[pl.kerb];
-        const p = wsKerbAt(ki.k.pts, (pl.s0 + pl.s1) / 2);
-        if (!p) return;
-        const stc = WS_STREAMS.find(x => x.id === pl.bin.stream) || { aci: 8 };
-        const off = (pl.bin.dM / 2 + 0.08) / mpp;
-        d += rect('A-KERB-BINS', stc.aci, p.x - p.ty * off * side, p.y + p.tx * off * side,
-                  pl.bin.wM, pl.bin.dM, Math.atan2(p.ty, p.tx) * 180 / Math.PI);
-      });
+      // the kerb bins themselves are real placed bins — the bin pass above
+      // wrote them to A-KERB-BINS; nothing is drawn twice
       const a = cp.worst.assess;
       const ph = wsKerbAt(cp.kerbs[0].k.pts, 0);
       if (ph && !a.empty) d += text('A-KERB', a.ok ? 3 : 1, ph.x, ph.y + 26, 220,
@@ -22174,14 +22208,15 @@ function wsLayoutCalcRoomAt(x, y) {
   return null;
 }
 function wsLayoutPlacedCount(stream, typeId, roomId) {
-  const bins = wsLayoutSlot().bins.filter(b => b.stream === stream && b.type === typeId);
+  // bins on the kerb are presentation, not room storage — never a room's count
+  const bins = wsLayoutSlot().bins.filter(b => !b.kerb && b.stream === stream && b.type === typeId);
   if (roomId === undefined || roomId === null) return bins.length;
   const lone = WS_CALC_ROOMS.length <= 1;
   return bins.filter(b => b.calcRoom === roomId || (lone && !b.calcRoom)).length;
 }
 function wsLayoutUntagged() {
   if (WS_CALC_ROOMS.length <= 1) return 0;
-  return wsLayoutSlot().bins.filter(b => !b.calcRoom).length;
+  return wsLayoutSlot().bins.filter(b => !b.calcRoom && !b.kerb).length;
 }
 // ── AUTO-LAYOUT ──────────────────────────────────────────────────────────────
 // Pack a room's bins into a polygon: rows from the top, deepest first, every

@@ -281,6 +281,8 @@ const ws = loadEngine({ blocks: [
   ['wsCollectBins', /^function wsCollectBins\(/],
   ['wsCollectBinSummary', /^function wsCollectBinSummary\(/],
   ['wsKerbCleanPts', /^function wsKerbCleanPts\(/],
+  ['wsKerbLen', /^function wsKerbLen\(/], ['wsKerbAt', /^function wsKerbAt\(/],
+  ['wsCollectKerbBinPoses', /^function wsCollectKerbBinPoses\(/],
   ['wsCollectBulk', /^function wsCollectBulk\(/],
 ] });
 
@@ -390,7 +392,6 @@ test('the Collection Point computes from the calculator’s schedule before any 
     'null only when there is nothing at all — no kerb, no area, no schedule');
   assert.ok(!compute.includes("else if (!c.kerbs.length && !areas.length) return null;"), 'the old kerb-or-area gate is gone');
   const render = extractBlock(/^function wsCollectRender\(/).text;
-  assert.ok(render.includes("cp.kerbs.length ? wsKerbAt(cp.kerbs[0].k.pts, 0) : null"), 'no kerb → no verdict pill, no crash');
   assert.ok(render.includes("const side = (slot.collect && slot.collect.side === -1) ? -1 : 1;"), 'the renderer runs from every tab — a schedule with no collect slot yet must not throw');
   // a fresh calculator payload lands on the open tab; the tab loads the library it needs
   const setT = extractBlock(/^function wsLayoutSetTargets\(/).text;
@@ -471,4 +472,51 @@ test('finishing a kerb trace: Enter commits it (as promised), the panel has its 
   const panel = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
   assert.ok(panel.includes('wrap.innerHTML = wsCollectTraceHtml() + (cp.kerbs.length'), 'the live trace sits above the kerb list');
   assert.ok(SOURCE.includes("if (kerbDropped) { wsCollectMsg('Kerb trace discarded (Escape)."), 'Escape on a half-traced kerb says so');
+});
+
+test('kerb bins are REAL placed bins: poses from the design case, tagged `kerb`, counted apart, exported to A-KERB-BINS', () => {
+  // a straight kerb along +x; bins sit on side +1 (below the line in canvas y), rotated along the tangent
+  const mpp = 0.02;
+  const kerb = { k: { id: 'kerb_1', pts: [{ x: 0, y: 0 }, { x: 1000, y: 0 }] }, L: 1000 };
+  const cp = { kerbs: [kerb], worst: { assess: { placed: [
+    { kerb: 0, s0: 0, s1: 29.25, bin: { stream: 'garbage', typeId: 'eq_gone', resolvedType: 'b120', wM: 0.585, dM: 0.735 } },
+    { kerb: 0, s0: 36.75, s1: 66, bin: { stream: 'recycling', typeId: 'b240', resolvedType: 'b240', wM: 0.585, dM: 0.735 } },
+  ] } } };
+  const poses = ws.wsCollectKerbBinPoses(cp, 1, mpp);
+  assert.equal(poses.length, 2);
+  assert.equal(poses[0].kerbId, 'kerb_1');
+  assert.equal(poses[0].type, 'b120', 'the RESOLVED type is what gets placed — an unresolvable id would be an invisible bin');
+  assert.equal(poses[1].type, 'b240');
+  assert.equal(poses[0].rot, 0, 'rotated along the kerb tangent');
+  assert.ok(Math.abs(poses[0].x - 14.625) < 1e-6, 'centred on its stretch');
+  assert.ok(Math.abs(poses[0].y - (0.735 / 2 + 0.08) / mpp) < 1e-6, 'offset by half the depth plus the 80 mm stand-off, to the chosen side');
+  assert.ok(ws.wsCollectKerbBinPoses(cp, -1, mpp)[0].y < 0, 'flip side mirrors the offset');
+  assert.deepStrictEqual(ws.wsCollectKerbBinPoses(null, 1, mpp), []);
+  // wiring: commit places them; delete removes them with the kerb; flip re-places; the panel can re-place
+  const fin = extractBlock(/^function wsCollectKerbFinish\(\)/).text;
+  assert.ok(fin.includes('const n = wsCollectPlaceBins([kerb.id]);'), 'a committed kerb gets its bins immediately');
+  const place = extractBlock(/^function wsCollectPlaceBins\(/).text;
+  assert.ok(place.includes('wsLayoutSnapshot();'), 'undoable');
+  assert.ok(place.includes('roomId: null, kerb: p.kerbId'), 'tagged to the kerb, never to a room');
+  assert.ok(extractBlock(/^function wsCollectKerbDelete\(/).text.includes('slot.bins = slot.bins.filter(b => b.kerb !== k.id);'), 'deleting a kerb takes its bins — stated in the button title');
+  assert.ok(SOURCE.includes('title="Remove this kerb and the bins placed along it (Ctrl+Z restores both)"'));
+  assert.ok(extractBlock(/^function wsCollectFlipSide\(\)/).text.includes('wsCollectPlaceBins(withBins)'), 'flip re-places on the other side');
+  const panel = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
+  assert.ok(panel.includes("'↻ Re-place bins along the kerb' : '⤓ Place the bins on the kerb'"), 'a kerb without bins (legacy save) can place them from the panel');
+  // counted apart from room storage everywhere a room count is taken
+  assert.ok(extractBlock(/^function wsLayoutPlacedCount\(/).text.includes('!b.kerb && b.stream === stream'), 'kerb bins never satisfy a room target');
+  assert.ok(extractBlock(/^function wsLayoutUntagged\(\)/).text.includes('!b.calcRoom && !b.kerb'));
+  const stats = extractBlock(/^function wsLayoutUpdateStats\(/).text;
+  assert.ok(stats.includes("if (b.kerb) { onKerb++; return; }") && stats.includes('at the kerb'), 'the status line counts them on their own');
+  assert.ok(extractBlock(/^function wsCollectTargets\(\)/).text.includes('const plan = slot.bins.filter(b => !b.kerb);'), 'kerb bins are never their own schedule');
+  // the drawing: no verdict text, no kerb label, no ghost bins; the kerb line sits on the Bin room layer
+  const render = extractBlock(/^function wsCollectRender\(/).text;
+  assert.ok(!render.includes('fits on the busiest week') && !render.includes("'Kerb ' + String.fromCharCode(65 + i) + ' — '"), 'the two canvas labels are gone');
+  assert.ok(!render.includes('sc.assess.placed.forEach') && !render.includes('const sc = cp.active;'), 'no engine-drawn ghost kerb bins — the bin pass draws the real ones (the bulk AREA pack still draws its own)');
+  assert.ok(render.includes("const gB = document.getElementById('ws-layer-binroom') || gW;") && render.includes("'stroke-linecap': 'round' }, gB);"), 'the kerb line renders into the Bin room layer, so that toggle hides it');
+  assert.ok(render.includes("don’t fit (' + cp.worst.label + ')"), 'a shortfall still shows on the plan');
+  // DXF: real kerb bins on their own layer, drawn once
+  const dxf = SOURCE.slice(SOURCE.indexOf('function wsLayoutDXFEntities'), SOURCE.indexOf('// ── CALC → LAYOUT TARGETS'));
+  assert.ok(dxf.includes("const layer = b.kerb ? 'A-KERB-BINS' : 'BINS_' + st.id.toUpperCase();"));
+  assert.ok(!dxf.includes("rect('A-KERB-BINS'"), 'the ghost rectangles are gone from the export');
 });
