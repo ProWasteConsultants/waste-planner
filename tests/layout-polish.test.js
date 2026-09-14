@@ -690,7 +690,7 @@ test('equipment work lives in the equipment tab, in four distinct sections', () 
   assert.ok(SOURCE.includes("onclick=\"cgbSetMode('equipment');document.getElementById('eqb-files').click()\""),
     'the equipment zone locks itself to spec sheets');
   // batches render under their own uploader, never under the other one
-  assert.ok(SOURCE.includes("cgbRenderInto('cgb-rows', 'cgb-actions', r => r.mode !== 'equipment');") &&
+  assert.ok(SOURCE.includes("cgbRenderInto('cgb-rows', null, r => r.mode !== 'equipment');") &&
             SOURCE.includes("cgbRenderInto('eqb-rows', 'eqb-actions', r => r.mode === 'equipment');"),
     'rows render into the host matching their own mode');
   assert.ok(!SOURCE.includes('use the bulk uploader (Rates'), 'no stale pointer to the old location');
@@ -712,20 +712,33 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   // already have a guideline (that was a catch-22)
   assert.ok(SOURCE.includes("sb.from('councils').select('label,state')"),
     'the uploader datalist reads the registry');
-  assert.ok(SOURCE.includes('const CGB_COUNCIL_STATE = {}') && SOURCE.includes('function cgbSetCouncil(i, el)'),
-    'picking a known council fills its state');
+  assert.ok(SOURCE.includes('const CGB_COUNCIL_STATE = {}') && !SOURCE.includes('function cgbSetCouncil(i, el)'),
+    'no council is picked per file any more — the Scope bar decides, and the state autofill map still serves the scope');
   assert.ok(!SOURCE.includes("const names = [...new Set((data || []).map(r => r.council_name).filter(Boolean))].sort();"),
     'the guidelines-only datalist source is gone');
   // admin ordering + the stored-guideline card on a council's rates
   const rates = SOURCE.slice(SOURCE.indexOf('id="stab-rates"'), SOURCE.indexOf('<!-- ANALYTICS TAB -->'));
   // two jobs live in this tab and must not read as one: setup/library first
   // (registry -> documents -> clause review), then the database that publishes
-  const order = ['adm-group adm-setup', 'Council registry', 'Council Guidelines',
+  const order = ['id="rdb-council"', 'adm-group adm-setup', 'Council Guidelines',
                  'adm-group adm-db', 'State &amp; council info', 'Residential rates']
     .map(m => rates.indexOf(m));
   assert.ok(order.every(i => i >= 0), 'every section is present');
   for (let i = 1; i < order.length; i++)
-    assert.ok(order[i] > order[i - 1], 'registry, then documents, then the database — info above rates');
+    assert.ok(order[i] > order[i - 1], 'scope, then documents, then the database — info above rates');
+  // council management lives ON the Scope bar — there is no registry section
+  assert.ok(!rates.includes('Council registry') && !rates.includes('id="rdb-councils-list"'), 'the standalone Council Registry section is gone');
+  const scope = rates.slice(0, rates.indexOf('adm-group adm-setup'));
+  assert.ok(scope.includes('id="rdb-council-actions"') && scope.includes('onclick="rdbRenameCouncil()"') && scope.includes('onclick="rdbDeleteSelectedCouncil()"'),
+    'rename and delete sit next to the council dropdown, for the selected council');
+  assert.ok(scope.includes('onclick="rdbAddCouncilToggle(true)"') && scope.includes('id="rdb-new-council-label"'), 'add council is an inline form on the Scope bar');
+  assert.ok(!/rdb-state[^]*?(Delete|Remove) state/i.test(scope), 'states have no delete action');
+  const sync = SOURCE.slice(SOURCE.indexOf('function admScopeSync()'), SOURCE.indexOf('function admScopeChanged()'));
+  assert.ok(sync.includes("acts.style.display = label ? 'inline-flex' : 'none';"), 'the actions show only when a council (not State defaults) is selected');
+  const ren = SOURCE.slice(SOURCE.indexOf('async function rdbRenameCouncil()'), SOURCE.indexOf('async function rdbDeleteSelectedCouncil()'));
+  assert.ok(ren.includes(".update({ label }).eq('id', c.id)") && ren.includes(".update({ council_name: label }).eq('council_name', c.label)"),
+    'a rename keeps the value (the rates key) and carries the guideline rows with it');
+  assert.ok(SOURCE.includes("RDB._selectAfterLoad = value;   // the new council becomes the scope"), 'a new council is selected as soon as it is added');
   // State & council info is two label/value pairs wide; the free-text fields
   // span both, because a two-line textarea in a half column is unusable
   assert.ok(SOURCE.includes('.rdb-meta{display:grid;grid-template-columns:170px 1fr 170px 1fr;'),
@@ -749,7 +762,6 @@ test('council registry is one list: uploader, checker and rates DB all read it',
     'the card resolves the same serving row the checker uses — one source of truth');
   assert.ok(SOURCE.includes('_glBridgeAll = null;   // re-read guidelines'),
     'a Load re-reads, so a just-uploaded guideline shows');
-  assert.ok(SOURCE.includes('Council registry <span'), 'the councils list says what it is for');
 });
 
 test('a device-local text extract never shadows a stored library PDF', () => {
@@ -842,9 +854,12 @@ test('storing a guideline document does not depend on AI extraction', () => {
     'and it is the upload row\'s only action — extraction moved to the Library row');
   const fn = SOURCE.slice(SOURCE.indexOf('async function cgStoreDocument()'), SOURCE.indexOf('async function cgSave()'));
   assert.ok(!/aiFetch|api-key|cgExtract|CG\.current/.test(fn), 'it never touches extraction or its state');
-  assert.ok(fn.includes("const path = `guidelines/${key}/${Date.now()}_${safe}`;") &&
-            fn.includes('await cgInsertVersion({'), 'it stores the PDF and creates the version');
-  assert.ok(fn.includes('requirements: [],          // clauses come from extraction + approval (C3)'),
+  // the storing itself is the ONE upload path (cgbUploadOne): PDF to storage, then a version
+  const one = SOURCE.slice(SOURCE.indexOf('async function cgbUploadOne(r)'), SOURCE.indexOf('async function cgbUploadAll()'));
+  assert.ok(fn.includes('if (await cgbUploadOne(r)) ok++;') &&
+            one.includes("const path = `guidelines/${key}/${Date.now()}_${safe}`;") &&
+            one.includes('await cgInsertVersion({'), 'it stores the PDF and creates the version through the shared path');
+  assert.ok(one.includes('requirements: [],     // structured rows come from extraction + review (C3)'),
     'with no clauses — approval still gates what a scan may cite');
   assert.ok(fn.includes("_glBridgeAll = null;         // the serving row changed") &&
             fn.includes('rdbGuidelineCard();'), 'and every surface refreshes to the new version');

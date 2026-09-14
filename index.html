@@ -987,21 +987,25 @@ body.wp-anon .ws-top-chip{display:none;}
             <select id="rdb-council" onchange="admScopeChanged()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:220px;">
               <option value="">State defaults</option>
             </select>
-            <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Everything on this page follows this one selection: the registry list, which council a saved guideline belongs to, what the library and review queue show, and whose rates are edited below. "State defaults" scopes the rates to the state-wide baseline that councils inherit from.</span></span>
+            <!-- council management lives HERE, on the selection itself — there is
+                 no separate registry list. Add is an inline form; rename and
+                 delete act on whichever council is selected. States are fixed. -->
+            <span id="rdb-council-actions" style="display:none;gap:4px;">
+              <button class="btn" style="padding:4px 8px;font-size:11px;" title="Rename the selected council (its rates and guidelines follow the rename)" onclick="rdbRenameCouncil()">✎ Rename</button>
+              <button class="btn" style="padding:4px 8px;font-size:11px;color:#EF8080;" title="Remove the selected council from every picker — its rate overrides and guidelines are kept" onclick="rdbDeleteSelectedCouncil()">🗑 Delete</button>
+            </span>
+            <button class="btn" id="rdb-add-council-btn" style="padding:4px 8px;font-size:11px;" title="Add a council to the selected state" onclick="rdbAddCouncilToggle(true)">+ Add council</button>
+            <span id="rdb-add-council-wrap" style="display:none;gap:6px;align-items:center;">
+              <input id="rdb-new-council-label" type="text" placeholder="Council label, e.g. City of Camden" onkeydown="if(event.key==='Enter'){rdbAddCouncil();}else if(event.key==='Escape'){rdbAddCouncilToggle(false);}" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:220px;">
+              <button class="btn" style="padding:4px 8px;font-size:11px;background:var(--teal);color:#fff;" onclick="rdbAddCouncil()">Add</button>
+              <button class="btn" style="padding:4px 8px;font-size:11px;" onclick="rdbAddCouncilToggle(false)">Cancel</button>
+            </span>
+            <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Everything on this page follows this one selection: which council a saved guideline belongs to, what the library and review queue show, and whose rates are edited below. Councils are added, renamed and removed right here — this list is the one every council picker reads (project setup, the compliance checker, the rate overrides). "State defaults" scopes the rates to the state-wide baseline that councils inherit from.</span></span>
           </div>
 
           <div class="adm-group adm-setup">
-            <div class="adm-group-head">🗂 Council registry, documents &amp; review<span class="adm-group-sub">who exists, which guideline PDFs are on file, and the clauses awaiting approval</span></div>
+            <div class="adm-group-head">🗂 Council documents &amp; review<span class="adm-group-sub">which guideline PDFs are on file for the scoped council, and the clauses awaiting approval</span></div>
             <div class="adm-group-body">
-          <div class="dc-title" style="margin-top:20px;">Council registry <span class="adm-help" tabindex="0">?<span class="adm-help-pop">The one list every council picker reads — project setup, the compliance checker, the guideline uploader and the rate overrides. Add a council once and it appears in all of them; removing one hides it everywhere (its rates and guidelines are kept).</span></span></div>
-          <div id="rdb-councils-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <input id="rdb-new-council-label" type="text" placeholder="Council label, e.g. City of Camden" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:240px;">
-            <button class="btn" onclick="rdbAddCouncil()">+ Add council</button>
-          </div>
-
-            <div class="adm-rule"></div>
-
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Council Guidelines
               <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Upload a council's waste guideline or DCP chapter (PDF). <b>Save document</b> stores it against the scoped council straight away — the compliance checker then shows it beside the WMP for every user, on any device. Extracting clauses happens afterwards, from the Library row: 🧾 <b>Extract to queue</b> — a document must be saved before it can be extracted, and only approved clauses are ever cited.</span></span>
@@ -1009,24 +1013,21 @@ body.wp-anon .ws-top-chip{display:none;}
             <div id="cg-status" style="font-size:11px;color:var(--muted);"></div>
           </div>
 
-          <!-- C2: bulk upload — drop many PDFs, assign each to a council BY HAND.
-               Guidelines only: equipment spec sheets are uploaded in the
-               Equipment Library tab, next to the library they land in. -->
+          <!-- ONE upload flow. The council is the Scope selection — never
+               chosen per file. Drop or pick PDFs (one or many), fill the shared
+               fields, Save. Every file becomes a new version of the scoped
+               council's guideline through the same cgInsertVersion path.
+               Equipment spec sheets are uploaded in the Equipment Library tab. -->
           <div id="cgb-drop" ondragover="event.preventDefault();this.style.borderColor='var(--teal)';"
                ondragleave="this.style.borderColor='var(--border)';"
                ondrop="event.preventDefault();this.style.borderColor='var(--border)';cgbSetMode('guidelines');cgbAddFiles(event.dataTransfer.files);"
                onclick="cgbSetMode('guidelines');document.getElementById('cgb-files').click()"
                style="border:1px dashed var(--border);border-radius:8px;padding:14px;text-align:center;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:8px;">
-            <span id="cgb-drop-hint">⇪ Drop guideline PDFs here (or click) — assign each file to its council below. Filenames are never auto-matched.</span>
+            <span id="cgb-drop-hint">⇪ Drop guideline PDFs here (or click to choose) — they are saved to the council selected in Scope above.</span>
             <input type="file" id="cgb-files" accept=".pdf,application/pdf" multiple style="display:none;" onchange="cgbSetMode('guidelines');cgbAddFiles(this.files);this.value='';">
           </div>
-          <datalist id="cgb-councils"></datalist>
           <div id="cgb-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px;"></div>
-          <div id="cgb-actions" style="display:none;gap:8px;align-items:center;margin-bottom:14px;">
-            <button class="btn" style="background:var(--teal);color:#fff;font-weight:700;" onclick="cgbUploadAll()">⇪ Upload assigned files</button>
-            <span style="font-size:10.5px;color:var(--muted);">Each upload becomes a NEW version of that council's guideline — the previous version is superseded, and its structured requirements stop being served until a new extraction is approved.</span>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
             <!-- council + state come from the shared Scope bar; these hidden
                  inputs keep the many readers (cgStoreDocument, cgSave, the
                  rates bridge) on their existing element contract -->
@@ -1036,9 +1037,9 @@ body.wp-anon .ws-top-chip{display:none;}
             <input type="text" id="cg-version" placeholder="Doc label, e.g. 2023 DCP" title="Free-text label from the document — the integer version number is sequenced automatically" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;width:130px;">
             <input type="date" id="cg-effective" title="Effective date, if the document states one" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;">
             <input type="url" id="cg-source-url" placeholder="Source URL (optional)" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;color:var(--text);font-family:inherit;min-width:200px;">
-            <input type="file" id="cg-file" accept=".pdf,application/pdf" style="font-size:11px;color:var(--text);max-width:240px;">
-            <button class="btn btn-primary" style="background:var(--teal);color:#fff;font-weight:700;" title="Store this PDF against the scoped council now. The checker shows it side by side immediately; extract clauses afterwards with 🧾 Extract to queue on its Library row." onclick="cgStoreDocument()">⇪ Save document</button>
+            <button class="btn btn-primary" style="background:var(--teal);color:#fff;font-weight:700;" title="Store the dropped PDF(s) against the scoped council now. The checker shows the document side by side immediately; extract clauses afterwards with 🧾 Extract to queue on its Library row." onclick="cgStoreDocument()">⇪ Save document</button>
           </div>
+          <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;">Each saved PDF becomes a NEW version of the scoped council's guideline — the previous version is superseded, and its structured requirements stop being served until a new extraction is approved.</div>
           <div id="cg-review"></div>
           <div id="cg-council-card" style="margin:14px 0 0;"></div>
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:18px 0 6px;">Library <span id="cg-scope-label" style="font-weight:400;font-size:10px;text-transform:none;letter-spacing:0;color:var(--muted);"></span></div>
@@ -10671,9 +10672,8 @@ async function rdbLoad() {
     sel.innerHTML = '<option value="">State defaults</option>' +
       RDB.councils.map(c => `<option value="${c.value}">${c.label}</option>`).join('');
     sel.value = [...sel.options].some(o => o.value === cur) ? cur : '';
-    document.getElementById('rdb-councils-list').innerHTML = RDB.councils.length
-      ? RDB.councils.map(c => `<div style="display:flex;align-items:center;gap:10px;font-size:12px;"><span style="flex:0 0 260px;">${c.label}</span><code style="background:#182121;padding:1px 6px;border-radius:4px;font-size:10px;color:var(--muted);">${c.value}</code><button class="btn" style="padding:2px 8px;font-size:10px;color:#EF8080;" onclick="rdbDeleteCouncil('${c.id}')">remove</button></div>`).join('')
-      : '<div style="font-size:12px;color:var(--muted);">No councils yet for this state.</div>';
+    if (RDB._selectAfterLoad && [...sel.options].some(o => o.value === RDB._selectAfterLoad)) sel.value = RDB._selectAfterLoad;
+    RDB._selectAfterLoad = null;
     admScopeSync();
     await rdbLoadRates();
   } catch(err) { rdbMsg('Load failed: ' + (err.message || err) + ' — have you run the schema SQL?', false); }
@@ -10878,10 +10878,31 @@ function admScopeSync() {
     echo.textContent = label ? 'for: ' + label : 'pick a council in Scope above';
     echo.style.color = label ? '#7FD8D8' : 'var(--flag)';
   }
+  // rename / delete act on the selected council only; State defaults has neither
+  const acts = document.getElementById('rdb-council-actions');
+  if (acts) acts.style.display = label ? 'inline-flex' : 'none';
   if (typeof cgScopeChanged === 'function') cgScopeChanged(label);
 }
 function admScopeChanged() { admScopeSync(); rdbLoadRates(); }
 
+// ── council management, on the Scope bar itself ─────────────────────────────
+// The councils table is the one list every picker reads. Adding selects the
+// new council straight away (the page is about to be used for it); renaming
+// keeps the value (the rates key) and carries the guideline rows' council_name
+// with it, so the library and the checker keep finding them; deleting hides
+// the council everywhere and keeps its data, as before.
+function rdbSelectedCouncil() {
+  const sel = document.getElementById('rdb-council');
+  if (!sel || !sel.value) return null;
+  return (RDB.councils || []).find(c => c.value === sel.value) || null;
+}
+function rdbAddCouncilToggle(show) {
+  const wrap = document.getElementById('rdb-add-council-wrap'), btn = document.getElementById('rdb-add-council-btn');
+  if (wrap) wrap.style.display = show ? 'inline-flex' : 'none';
+  if (btn) btn.style.display = show ? 'none' : '';
+  const inp = document.getElementById('rdb-new-council-label');
+  if (inp) { if (show) inp.focus(); else inp.value = ''; }
+}
 async function rdbAddCouncil() {
   const st = document.getElementById('rdb-state').value;
   const label = document.getElementById('rdb-new-council-label').value.trim();
@@ -10890,17 +10911,45 @@ async function rdbAddCouncil() {
   try {
     const { error } = await sb.from('councils').insert({ state: st, value, label });
     if (error) throw error;
-    document.getElementById('rdb-new-council-label').value = '';
-    rdbLoad();
+    rdbAddCouncilToggle(false);
+    RDB._selectAfterLoad = value;   // the new council becomes the scope
+    await rdbLoad();
+    rdbMsg('✓ ' + label + ' added to ' + st + ' and selected.');
   } catch(err) { rdbMsg('Add failed: ' + (err.message || err), false); }
 }
-
-async function rdbDeleteCouncil(id) {
-  if (!confirm('Remove this council? Its rate overrides remain until deleted.')) return;
+async function rdbRenameCouncil() {
+  const c = rdbSelectedCouncil(); if (!c) return;
+  const label = (prompt('Rename ' + c.label + ' to:', c.label) || '').trim();
+  if (!label || label === c.label) return;
+  try {
+    const { error } = await sb.from('councils').update({ label }).eq('id', c.id);
+    if (error) throw error;
+    // guideline rows are keyed by the council NAME — carry them across so the
+    // library, the checker and the rates bridge keep finding them
+    let moved = 0, note = '';
+    try {
+      const { data, error: e2 } = await sb.from('council_guidelines').update({ council_name: label }).eq('council_name', c.label).select('id');
+      if (e2) throw e2;
+      moved = (data || []).length;
+    } catch (e2) { note = ' — its guideline documents could not be renamed (' + (e2.message || e2) + '); they stay filed under the old name'; }
+    _glBridgeAll = null;
+    RDB._selectAfterLoad = c.value;
+    await rdbLoad();
+    rdbMsg('✓ Renamed to ' + label + (moved ? ' (' + moved + ' guideline version' + (moved === 1 ? '' : 's') + ' follow)' : '') + note, !note);
+  } catch(err) { rdbMsg('Rename failed: ' + (err.message || err), false); }
+}
+async function rdbDeleteSelectedCouncil() {
+  const c = rdbSelectedCouncil(); if (!c) return;
+  await rdbDeleteCouncil(c.id, c.label);
+}
+async function rdbDeleteCouncil(id, label) {
+  if (!confirm('Remove ' + (label || 'this council') + ' from every council picker? Its rate overrides and guideline documents are kept.')) return;
   try {
     const { error } = await sb.from('councils').delete().eq('id', id);
     if (error) throw error;
-    rdbLoad();
+    const sel = document.getElementById('rdb-council'); if (sel) sel.value = '';   // scope falls back to State defaults
+    await rdbLoad();
+    rdbMsg('✓ ' + (label || 'Council') + ' removed. Scope is back on State defaults.');
   } catch(err) { rdbMsg('Delete failed: ' + (err.message || err), false); }
 }
 
@@ -11459,26 +11508,15 @@ async function cgbCouncilList() {
   const dl = document.getElementById('cgb-councils');
   if (dl) dl.innerHTML = [...names].sort().map(n => `<option value="${cgbEsc(n)}">`).join('');
 }
-// Picking a known council fills its state — the state select stays editable,
-// it is just no longer a second thing to remember.
-function cgbSetCouncil(i, el) {
-  const r = CGB.rows[i];
-  if (!r) return;
-  r.council = el.value;
-  const st = CGB_COUNCIL_STATE[el.value];
-  if (!st || r.state === st) return;
-  r.state = st;
-  // set the sibling select directly rather than re-rendering — a re-render
-  // mid-type would steal focus from the field being edited
-  const sel = el.parentElement && el.parentElement.querySelector('select');
-  if (sel) sel.value = st;
-}
+// A guideline row carries no council of its own: the Scope bar's council is
+// stamped on at save time (cgStoreDocument). Nothing is ever picked per file.
 function cgbAddFiles(files) {
+  const scoped = (document.getElementById('cg-name') || {}).value || '';
   [...(files || [])].forEach(f => {
     if (!/\.pdf$/i.test(f.name)) return;
     if (f.size > 25 * 1024 * 1024) { CGB.rows.push({ file: f, mode: CGB.mode, status: 'Too large (25 MB max)', dead: true }); return; }
     CGB.rows.push({ file: f, mode: CGB.mode, council: '', state: '', effective: '',
-      status: CGB.mode === 'equipment' ? 'spec sheet — ready to extract' : 'assign a council' });
+      status: CGB.mode === 'equipment' ? 'spec sheet — ready to extract' : (scoped ? 'ready — saves to ' + scoped : 'pick a council in Scope above') });
   });
   cgbCouncilList();
   cgbRender();
@@ -11487,7 +11525,7 @@ function cgbRender() {
   // Guideline batches render under the council uploader, spec-sheet batches
   // under the equipment one — each row carries its own mode, so a mixed batch
   // still lands in the right place instead of one list swallowing both.
-  cgbRenderInto('cgb-rows', 'cgb-actions', r => r.mode !== 'equipment');
+  cgbRenderInto('cgb-rows', null, r => r.mode !== 'equipment');   // guideline rows: Save document is the action
   cgbRenderInto('eqb-rows', 'eqb-actions', r => r.mode === 'equipment');
 }
 function cgbRenderInto(rowsId, actionsId, pick) {
@@ -11495,26 +11533,21 @@ function cgbRenderInto(rowsId, actionsId, pick) {
   if (!wrap) return;
   const mine = CGB.rows.map((r, i) => [r, i]).filter(([r]) => pick(r));
   wrap.innerHTML = mine.map(([r, i]) => `
-    <div style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,1.2fr) 70px 130px minmax(120px,1fr) 26px;gap:6px;align-items:center;border:1px solid var(--border);border-radius:7px;background:#182121;padding:6px 8px;">
+    <div style="display:grid;grid-template-columns:minmax(160px,1.2fr) minmax(160px,1fr) minmax(120px,1fr) 26px;gap:6px;align-items:center;border:1px solid var(--border);border-radius:7px;background:#182121;padding:6px 8px;">
       <span style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${cgbEsc(r.file.name)}">📄 ${cgbEsc(r.file.name)}</span>
       ${r.mode === 'equipment' ? `
-      <span style="font-size:10.5px;color:#9FA8DA;">spec sheet → proposals queue</span>
-      <span></span><span></span>` : `
-      <input type="text" list="cgb-councils" placeholder="Council (pick or type)" value="${cgbEsc(r.council)}" ${r.done || r.dead ? 'disabled' : ''}
-             oninput="cgbSetCouncil(${i}, this)" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;">
-      <select ${r.done || r.dead ? 'disabled' : ''} onchange="CGB.rows[${i}].state=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:4px;font-size:11px;color:var(--text);font-family:inherit;">
-        <option value="">St…</option>${['NSW','VIC','QLD','SA','WA','TAS','ACT','NT'].map(s => `<option ${r.state === s ? 'selected' : ''}>${s}</option>`).join('')}
-      </select>
-      <input type="date" ${r.done || r.dead ? 'disabled' : ''} value="${cgbEsc(r.effective)}" title="Effective date, if known"
-             onchange="CGB.rows[${i}].effective=this.value" style="background:#101717;border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:11px;color:var(--text);font-family:inherit;">`}
+      <span style="font-size:10.5px;color:#9FA8DA;">spec sheet → proposals queue</span>` : `
+      <span style="font-size:10.5px;color:#7FD8D8;">guideline → ${cgbEsc(r.council || (document.getElementById('cg-name') || {}).value || 'the scoped council')}</span>`}
       <span style="font-size:10.5px;color:${r.dead ? '#EF8080' : r.done ? '#3DD68C' : 'var(--muted)'};">${cgbEsc(r.status)}</span>
       <button class="btn" title="Remove from the batch" ${r.busy ? 'disabled' : ''} onclick="CGB.rows.splice(${i},1);cgbRender();" style="padding:2px 7px;font-size:10px;">✕</button>
     </div>`).join('');
   if (act) act.style.display = mine.some(([r]) => !r.done && !r.dead) ? 'flex' : 'none';
 }
 async function cgbUploadOne(r) {
+  // Callers run this sequential on purpose: two files for the same council
+  // must version n, n+1 — parallel inserts would race the max(version) read.
   const name = (r.council || '').trim();
-  if (!name) { r.status = 'assign a council'; return false; }
+  if (!name) { r.status = 'pick a council in Scope above'; return false; }
   const key = cgSlug(name);
   r.busy = true; r.status = 'uploading…'; cgbRender();
   try {
@@ -11526,13 +11559,13 @@ async function cgbUploadOne(r) {
     const ins = await cgInsertVersion({
       council_key: key, council_name: name,
       state: r.state || null,
-      version_label: null,
+      version_label: r.versionLabel || null,
       effective_date: r.effective || null,
-      source_url: null,
+      source_url: r.sourceUrl || null,
       uploaded_by: currentUser?.id || null,
       source_file: path,
       requirements: [],     // structured rows come from extraction + review (C3)
-      notes: 'bulk upload',
+      notes: 'document stored from the admin panel',
       updated_at: new Date().toISOString(),
     });
     r.done = true; r.status = `✓ v${ins.version} — extract + review to serve requirements`;
@@ -11543,14 +11576,12 @@ async function cgbUploadOne(r) {
   } finally { r.busy = false; cgbRender(); }
 }
 async function cgbUploadAll() {
-  // sequential on purpose: two files for the same council must version 1, 2 —
-  // parallel inserts would race the max(version) read
+  // the Equipment Library tab's batch. Guideline rows are saved by
+  // cgStoreDocument (the one guideline flow), never from here.
   for (const r of CGB.rows) {
-    if (r.done || r.dead) continue;
-    if (r.mode === 'equipment') await eqpExtractOne(r);
-    else await cgbUploadOne(r);
+    if (r.done || r.dead || r.mode !== 'equipment') continue;
+    await eqpExtractOne(r);
   }
-  cgLoad();
   if (typeof eqpLoad === 'function' && CGB.rows.some(r => r.mode === 'equipment')) eqpLoad();
 }
 
@@ -12431,44 +12462,44 @@ async function cgInsertVersion(row) {
 // failed, found no requirements, or had no API key, there was no save at all
 // and the PDF was never stored — the admin panel looked like it did nothing.
 async function cgStoreDocument() {
-  const f = document.getElementById('cg-file').files[0];
+  // The council is the Scope selection, stamped on every queued file here —
+  // there is no per-file assignment anywhere. Sequential on purpose: two
+  // files for the same council must version n, n+1 — parallel inserts would
+  // race the max(version) read.
   const name = document.getElementById('cg-name').value.trim();
-  if (!name) { cgMsg('Enter or pick a council first.', true); return; }
-  if (!f) { cgMsg('Choose a guideline PDF first.', true); return; }
+  if (!name) { cgMsg('Pick a council in Scope above first — documents are saved to the scoped council.', true); return; }
+  const queue = CGB.rows.filter(r => r.mode !== 'equipment' && !r.done && !r.dead);
+  if (!queue.length) { cgMsg('Drop or choose a guideline PDF first.', true); return; }
   if (!currentUser) { cgMsg('Sign in to store documents in the shared library.', true); return; }
-  cgMsg(`Storing ${f.name}…`);
-  try {
-    const key = cgSlug(name);
-    const safe = f.name.replace(/[^A-Za-z0-9._-]+/g, '_');
-    const path = `guidelines/${key}/${Date.now()}_${safe}`;
-    const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
-      .upload(path, f, { contentType: 'application/pdf' });
-    if (upErr) throw upErr;
-    const ins = await cgInsertVersion({
-      council_key: key, council_name: name,
-      state: document.getElementById('cg-state').value || null,
-      version_label: document.getElementById('cg-version').value.trim() || null,
-      effective_date: document.getElementById('cg-effective')?.value || null,
-      source_url: document.getElementById('cg-source-url')?.value.trim() || null,
-      uploaded_by: currentUser.id,
-      source_file: path,
-      requirements: [],          // clauses come from extraction + approval (C3)
-      notes: 'document stored from the admin panel',
-      updated_at: new Date().toISOString(),
-    });
-    _glBridgeAll = null;         // the serving row changed
-    cgMsg(`✓ ${name} stored as v${ins.version} — the compliance checker shows it side by side now. Run Extract requirements to have its clauses cited.`);
-    document.getElementById('cg-file').value = '';
-    cgScopeChanged(name);
-    await cgLoad();
-    rdbGuidelineCard();
-  } catch (err) {
-    const msg = (err && err.message) ? err.message : String(err);
+  const meta = {
+    state: document.getElementById('cg-state').value || '',
+    versionLabel: document.getElementById('cg-version').value.trim() || null,
+    effective: document.getElementById('cg-effective')?.value || '',
+    sourceUrl: document.getElementById('cg-source-url')?.value.trim() || null,
+  };
+  cgMsg(`Storing ${queue.length} document${queue.length === 1 ? '' : 's'} for ${name}…`);
+  let ok = 0, lastErr = '';
+  for (const r of queue) {
+    Object.assign(r, { council: name }, meta);
+    // cgbUploadOne stores the PDF (`guidelines/${key}/${Date.now()}_${safe}`)
+    // and creates the version through cgInsertVersion with no clauses —
+    // requirements: [],          // clauses come from extraction + approval (C3)
+    if (await cgbUploadOne(r)) ok++; else lastErr = r.status;
+  }
+  _glBridgeAll = null;         // the serving row changed
+  if (ok) {
+    const last = queue.filter(r => r.done).pop();
+    cgMsg(`✓ ${ok} of ${queue.length} stored for ${name}${last ? ' — ' + last.status.replace(/^✓ /, '') : ''}. The compliance checker shows the document side by side now; extract clauses from its Library row.`);
+  } else {
+    const msg = lastErr.replace(/^failed: /, '');
     cgMsg('Could not store the document: ' + msg +
       (/policy|permission|denied|row-level|violat/i.test(msg)
         ? ' — this account may not be permitted to write guideline documents (see sql/2026-08-30-guideline-upload-by-council-officers.sql).'
         : ''), true);
   }
+  cgScopeChanged(name);
+  await cgLoad();
+  rdbGuidelineCard();
 }
 
 async function cgSave() {
