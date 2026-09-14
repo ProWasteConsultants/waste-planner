@@ -282,15 +282,29 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
   each continuation is told which clause/use/stream combinations are already
   captured and returns only what is missing; rows repeated across passes are
   dropped by key, a pass that adds nothing ends the loop, and a failed
-  continuation keeps what was read and says so. The status line reports the
-  pass count and whether anything may still be missing.
+  continuation keeps what was read and says so.
+- **The rate table gets its own SWEEP** (`crqRateSweep`), because a general
+  "extract the requirements" pass reads a 50-row table as *some* rates and
+  a continue-until-nothing-new loop cannot tell finished from bored. Three
+  steps: **list** the table's row labels (a short reply, so it arrives
+  complete), **fill** those labels in batches of 12 (each reply small enough
+  to finish), then **verify** every label came back. Missing labels are
+  retried once and then REPORTED BY NAME — coverage is stated ("48 of 50
+  rows read"), never assumed. A returned premises that was not on the list
+  is dropped, never invented. Sweep rows join the general pass's dedupe.
 - **Generation rates go straight into the rate tables.** A
   `generation_rate` row is a rate, not a clause to list: `crqExtract` hands
   them to `crqWriteRates`, which maps each onto a `res_rates` row (dwelling
   type via `crxResUnit`, L/week per dwelling — per day ×7, per fortnight ÷2)
   or a `com_rates` row (use matched to `com_uses` by label; the unit mapped
   onto the calculator's exact formula keys by `crqComBasis`, per m² → per
-  100 m²) and INSERTs the ones the table does not already hold — never an
+  100 m²) and INSERTs the ones the table does not already hold. **The unit's
+  basis picks between use VARIANTS**: the uses list carries per-bed,
+  per-m² and per-occupant versions of the same premises, so `crqUseBasis` +
+  `CRQ_UNIT_BASIS` keep a per-100 m² rate off the per-bed row, and refuse
+  with the mismatch named when no matching variant exists. A **combined**
+  garbage-and-recycling figure is labelled as such and never split
+  automatically — the split is a judgement call. — never an
   upsert, so an existing rate is never overwritten. Anything that would need
   a guess (no dwelling type, an unknown use, a unit with no formula) is
   reported with the reason and typed in by hand — or resolved in the rates

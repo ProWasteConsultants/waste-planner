@@ -11833,6 +11833,64 @@ Each row:
 Rules: enforceable requirements only (shall / must / minimum / maximum), never advice. Never invent values. generation_rate rows need value_num and unit, and their "use_class" is the SPECIFIC use the rate applies to, exactly as the document's table names it ("Office", "Café / restaurant", "Supermarket", "Hotel (per bed)", "1 bedroom apartment") — one row per table row, one per stream; never a broad class like "commercial" or "residential" unless the document itself gives one rate for the whole class. stream_split rows are the percentage share of one stream for one use_class.
 collection_limit rows describe the council's collection SERVICE, one fact per row: the bin size a stream is supplied or collected in (value_num litres, unit "L"), its collection frequency (value_num with unit "per week" or "per fortnight"), or a cap on the bulk service (say "bulk" / "front-lift" / "rear-lift" in value_text, e.g. maximum bulk bin size in L or maximum services per week). A maximum-size rule must say "maximum" in value_text.`;
 
+// ── RATE TABLE SWEEP: enumerate, then fill, then verify ─────────────────────
+// A council's non-residential rate table is the one place a single pass
+// reliably FAILS: asked for "the requirements", the model summarises a
+// 50-row table instead of transcribing it, and a "continue until nothing
+// new" loop cannot tell finished from bored. So the table is swept in three
+// steps — list its row labels (a short reply, so it comes back complete),
+// fill those labels in small batches (each reply small enough to finish),
+// then check every label came back. Labels still missing are retried once
+// and then REPORTED BY NAME — coverage is stated, never assumed.
+const CRQ_SWEEP_LIST = `You are reading an Australian council waste guideline PDF. Find every table of NON-RESIDENTIAL / commercial waste GENERATION RATES (rates per premises type, e.g. "50L/100m² floor area/day"). Respond with JSON only: {"labels":[...]}. One entry per TABLE ROW that carries a rate, in document order:
+- "label": the premises type exactly as the table prints it ("Office", "Fish and chip shop", "Assembly Rooms — Social"). Where a heading groups indented sub-rows, write "Heading — Sub-row".
+- "clause_ref": the clause/section AND page as printed, e.g. "cl 5.4, p.4". REQUIRED.
+- "combined": true when ONE figure covers garbage and recycling together, false when the row gives a figure per stream.
+Include EVERY row that carries a rate, including rates of 0. Skip headings that carry no rate of their own, and skip residential/dwelling rates. Labels only — no values.`;
+const CRQ_SWEEP_FILL = `You are reading an Australian council waste guideline PDF. For EACH premises type the user lists, return its waste GENERATION RATE rows exactly as the table prints them. Respond with JSON only: {"rows":[...]}. Each row:
+- "label": the premises type, copied EXACTLY from the user's list
+- "stream": "garbage" or "recycling" (or "fogo" / "glass" / "paper" where the table has such a column); null when one figure covers several streams
+- "value_num": the number only (50, 0.25, 3350)
+- "unit": the unit verbatim ("L/100m² floor area/day", "L/bed/per day", "L/seats/screening")
+- "combined": true when this one figure covers garbage and recycling together
+- "clause_ref": the clause/section AND page as printed. REQUIRED.
+One row per stream per premises type; a combined figure is ONE row with "combined": true and "stream": null. Copy every number exactly — never round, never infer a value the table does not print. Omit a listed premises type only if the document gives it no rate.`;
+async function crqRateSweep(call, onProgress) {
+  const out = { labels: [], rows: [], missing: [], error: null };
+  const norm = v => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let manifest;
+  try { manifest = await call(CRQ_SWEEP_LIST, 'List the premises types. JSON only — start your response with {', 'labels'); }
+  catch (e) { out.error = e.message || String(e); return out; }
+  (manifest || []).forEach(x => {
+    const label = String((x && x.label) || '').trim();
+    if (!label || out.labels.some(y => norm(y.label) === norm(label))) return;
+    out.labels.push({ label, clause_ref: String((x && x.clause_ref) || '').trim(), combined: !!(x && x.combined) });
+  });
+  if (!out.labels.length) return out;
+  const got = new Set();
+  const fill = async list => {
+    const text = 'Return the generation rates for EXACTLY these premises types, one row per stream:\n' +
+      list.map(l => '· ' + l.label).join('\n') + '\nJSON only — start your response with {';
+    let rows;
+    try { rows = await call(CRQ_SWEEP_FILL, text, 'rows'); } catch (e) { return; }
+    (rows || []).forEach(r => {
+      const hit = out.labels.find(l => norm(l.label) === norm(r && r.label));
+      if (!hit) return;   // never invent a premises the document did not print
+      got.add(hit.label);
+      out.rows.push({ ...r, label: hit.label, clause_ref: String((r && r.clause_ref) || '').trim() || hit.clause_ref });
+    });
+  };
+  const BATCH = 12;
+  for (let i = 0; i < out.labels.length; i += BATCH) {
+    if (onProgress) onProgress(i, out.labels.length);
+    await fill(out.labels.slice(i, i + BATCH));
+  }
+  const missed = out.labels.filter(l => !got.has(l.label));
+  for (let i = 0; i < missed.length; i += BATCH) await fill(missed.slice(i, i + BATCH));   // one retry, then reported
+  out.missing = out.labels.filter(l => !got.has(l.label)).map(l => l.label);
+  return out;
+}
+
 function crqMsg(t, warn) { const el = document.getElementById('crq-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
 
 // Extract one council's LIVE document into proposed rows. Storage-backed
@@ -11951,6 +12009,28 @@ async function crqExtract(councilKey, localFile) {
       truncated = capped;
       if (!capped || !fresh) break;   // finished, or a pass that added nothing — stop rather than loop
     }
+    // The rate table gets its own sweep: the general pass reads a 50-row
+    // table as "some rates", which is how Office, Supermarket and thirty
+    // others went missing. Rows it finds join the same dedupe.
+    const call = async (system, text, key) => {
+      const resp = await aiProxy({ max_tokens: 16000, system, messages: [{ role: 'user', content: [doc64, { type: 'text', text }] }] });
+      return wsParseExtractionRows(resp, key).rows;
+    };
+    crqMsg(`Extracting ${doc.council_name} v${doc.version} — reading the rate table…`);
+    const sweep = await crqRateSweep(call, (done, total) =>
+      crqMsg(`Extracting ${doc.council_name} v${doc.version} — rate table, ${done} of ${total} rows…`));
+    sweep.rows.forEach(x => {
+      const combined = !!x.combined || (!x.stream && sweep.labels.some(l => l.label === x.label && l.combined));
+      const v = (x.value_num === 0 || x.value_num) && !isNaN(+x.value_num) ? +x.value_num : null;
+      if (v == null) return;   // a rate with no number is not a rate
+      const row = { requirement_type: 'generation_rate', use_class: x.label,
+        stream: combined ? null : (x.stream || null), value_num: v, unit: String(x.unit || '').trim() || null,
+        value_text: `${x.label}: ${v}${x.unit ? ' ' + x.unit : ''}` + (combined ? ' (one figure covers combined garbage and recycling)' : ''),
+        clause_ref: x.clause_ref };
+      const k = seenKey(row);
+      if (seen.has(k)) return;
+      seen.add(k); cand.push(row);
+    });
     let dropped = 0, unresolved = 0;
     const rows = [];
     cand.forEach(r => {
@@ -11998,6 +12078,9 @@ async function crqExtract(councilKey, localFile) {
       (unresolved ? ` · ${unresolved} with a stream to set (flagged in the list)` : '') +
       (dropped ? ` · ${dropped} dropped (no clause reference)` : '') +
       (passes > 1 ? ` · read in ${passes} passes` : '') +
+      (sweep.labels.length ? ` · rate table: ${sweep.labels.length - sweep.missing.length} of ${sweep.labels.length} rows read` +
+        (sweep.missing.length ? ` — NOT read: ${sweep.missing.slice(0, 6).join(', ')}${sweep.missing.length > 6 ? ', …' : ''}; re-run to try again` : '') : '') +
+      (sweep.error ? ` · ⚠ the rate table could not be listed (${sweep.error})` : '') +
       (truncated ? ' · ⚠ still hit the length cap after ' + passes + ' passes — complete rows were kept, but requirements late in the document may be missing; re-run to continue' : '') +
       '. Existing rows were left as they were — look for ≈ possible duplicate flags.');
     crqLoad();
@@ -12081,6 +12164,20 @@ function crxResUnit(useClass) {
 // unit is read for its basis (per 100 m², per bed, per occupant…) and period
 // (day / week) and mapped onto one of those keys; a per-m² figure becomes
 // per 100 m² (×100 — a format conversion, not a guess). Anything else → null.
+// Which input a commercial use is measured by, read from its own label —
+// "Backpackers accommodation (per bed)" vs "(per m²)" are two rows of the
+// uses list, and only the unit can say which one a rate belongs to. Pure.
+const CRQ_UNIT_BASIS = { 'L/Day/100m2': 'area', 'L/Week/100m2': 'area', 'L/Bed/Day': 'bed', 'L/Bed/Week': 'bed',
+  'L/Occupant/Week': 'occupant', 'L/Apartment/Week': 'apartment', 'L/Student/Week': 'student' };
+function crqUseBasis(label) {
+  const s = crxNorm(label);
+  if (/bed/.test(s)) return 'bed';
+  if (/occupant/.test(s)) return 'occupant';
+  if (/student|pupil/.test(s)) return 'student';
+  if (/apartment|dwelling/.test(s)) return 'apartment';
+  if (/m2|floorarea/.test(s)) return 'area';
+  return null;
+}
 function crqComBasis(unit) {
   const u = String(unit || '').toLowerCase().replace(/²/g, '2').replace(/\s+/g, '');
   if (!u) return null;
@@ -12098,11 +12195,11 @@ function crqComBasis(unit) {
 // specific use is usually in its wording ("Office: 50 L/100m² per day").
 // Match the commercial uses' label words against that text — longest word
 // wins; nothing shorter than four letters counts. Pure.
-function crqUseFromText(text, uses) {
+function crqUseFromText(text, uses, wantBasis) {
   const t = ' ' + crxNorm(text) + ' ';
   if (t.trim().length < 3) return null;
   let best = null, bestLen = 0;
-  (uses || []).forEach(u => {
+  (uses || []).filter(u => { if (!wantBasis) return true; const b = crqUseBasis(u.label); return !b || b === wantBasis; }).forEach(u => {
     const label = String(u.label || '');
     const words = [label].concat(label.split(/[\/(),&+-]| and | or /i)).map(w => crxNorm(w)).filter(w => w.length >= 4);
     words.forEach(w => { if (w.length > bestLen && t.includes(w)) { best = u; bestLen = w.length; } });
@@ -12116,7 +12213,9 @@ function crqRateToTable(r, ctx) {
   if (!ctx || !ctx.state) return no('the document has no state recorded');
   if (!ctx.councilValue) return no('the council is not in the councils list — add it in Scope first');
   const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
-  if (!streamKey) return no('no stream — pick the stream below');
+  if (!streamKey) return no(/combined/i.test(String(r.value_text || '') + ' ' + String(r.unit || ''))
+    ? 'one figure covers garbage and recycling together — the split is a judgement call, so enter it by hand (or pick one stream below)'
+    : 'no stream — pick the stream below');
   if (['GW', 'REC', 'ORG', 'GLS'].indexOf(streamKey) < 0) return no(`stream “${r.stream}” has no column in the rate tables (GW/REC/ORG/GLS)`);
   const unit = String(r.unit || '').toLowerCase();
   const perWeek = /week|wk|weekly|\/w(\b|\/|$)/.test(unit), perDay = /day|daily|\/d(\b|\/|$)/.test(unit), perFortnight = /fortnight/.test(unit);
@@ -12141,14 +12240,29 @@ function crqRateToTable(r, ctx) {
   }
   if (!uc) return no('no use class');
   const uses = ctx.uses || [];
-  const broad = /^(commercial|nonresidential|retail|business|mixeduse|industrial|other)$/.test(uc);
-  let use = broad ? null : (uses.find(u => crxNorm(u.label) === uc) || uses.find(u => crxNorm(u.label).includes(uc) || uc.includes(crxNorm(u.label))));
-  let viaText = false;
-  if (!use) { use = crqUseFromText(r.value_text, uses); viaText = !!use; }
-  if (!use) return no(broad ? `use class “${r.use_class}” is a broad class and the wording names no commercial use in the table — pick the use below`
-                            : `use class “${r.use_class}” matches no commercial use in the table — pick the use below`);
   const basis = crqComBasis(r.unit);
   if (!basis) return no(`unit “${r.unit || '?'}” has no formula in the commercial table (per 100 m² / bed / occupant / apartment / student, per day or week)`);
+  // The uses list carries per-bed / per-m² / per-occupant VARIANTS of the same
+  // premises. A floor-area rate landing on the per-bed variant reads 6 L per
+  // bed where the council said 6 L per 100 m² — so the unit's basis decides
+  // between variants, and a basis with no variant is refused, never forced.
+  const wantBasis = CRQ_UNIT_BASIS[basis.unit] || null;
+  const pick = list => {
+    if (!list.length) return null;
+    const fit = list.filter(u => { const b = crqUseBasis(u.label); return !b || b === wantBasis; });
+    return (fit.length ? fit : list)[0];
+  };
+  const broad = /^(commercial|nonresidential|retail|business|mixeduse|industrial|other)$/.test(uc);
+  const exact = broad ? [] : uses.filter(u => crxNorm(u.label) === uc);
+  const near = broad ? [] : uses.filter(u => crxNorm(u.label).includes(uc) || uc.includes(crxNorm(u.label)));
+  let use = pick(exact) || pick(near);
+  let viaText = false;
+  if (!use) { use = crqUseFromText(r.value_text, uses, wantBasis); viaText = !!use; }
+  if (!use) return no(broad ? `use class “${r.use_class}” is a broad class and the wording names no commercial use in the table — pick the use below`
+                            : `use class “${r.use_class}” matches no commercial use in the table — pick the use below`);
+  const gotBasis = crqUseBasis(use.label);
+  if (gotBasis && wantBasis && gotBasis !== wantBasis)
+    return no(`“${use.label}” is measured per ${gotBasis} but the rate is per ${wantBasis} — add a per-${wantBasis} version of this use, or pick one below`);
   return { ok: true, table: 'com_rates', key: use.use_code + '|' + streamKey, viaText,
     row: { state: ctx.state, council_value: ctx.councilValue, use_code: use.use_code, stream: streamKey,
            rate: +(+r.value_num * basis.mult).toFixed(3), unit_value: basis.unit_value, unit: basis.unit } };
