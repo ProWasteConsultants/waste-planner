@@ -11830,7 +11830,7 @@ Each row:
 - "unit": its unit verbatim ("L/dwelling/week", "mm", "m2", "per week", "%"), else null
 - "value_text": the requirement wording, short but verbatim enough to verify
 - "clause_ref": clause/section AND page as printed, e.g. "cl 4.2.1, p.12". REQUIRED — a row you cannot cite must not be returned.
-Rules: enforceable requirements only (shall / must / minimum / maximum), never advice. Never invent values. generation_rate rows need value_num and unit. stream_split rows are the percentage share of one stream for one use_class.
+Rules: enforceable requirements only (shall / must / minimum / maximum), never advice. Never invent values. generation_rate rows need value_num and unit, and their "use_class" is the SPECIFIC use the rate applies to, exactly as the document's table names it ("Office", "Café / restaurant", "Supermarket", "Hotel (per bed)", "1 bedroom apartment") — one row per table row, one per stream; never a broad class like "commercial" or "residential" unless the document itself gives one rate for the whole class. stream_split rows are the percentage share of one stream for one use_class.
 collection_limit rows describe the council's collection SERVICE, one fact per row: the bin size a stream is supplied or collected in (value_num litres, unit "L"), its collection frequency (value_num with unit "per week" or "per fortnight"), or a cap on the bulk service (say "bulk" / "front-lift" / "rear-lift" in value_text, e.g. maximum bulk bin size in L or maximum services per week). A maximum-size rule must say "maximum" in value_text.`;
 
 function crqMsg(t, warn) { const el = document.getElementById('crq-status'); if (el) { el.textContent = t || ''; el.style.color = warn ? '#EF8080' : 'var(--muted)'; } }
@@ -12073,6 +12073,21 @@ function crqComBasis(unit) {
   if (/cat/.test(u)) return week ? { unit: 'L/Cat/Week', unit_value: 1, mult: 1 } : null;
   return null;
 }
+// When an extracted row carries only a broad class ("commercial") the
+// specific use is usually in its wording ("Office: 50 L/100m² per day").
+// Match the commercial uses' label words against that text — longest word
+// wins; nothing shorter than four letters counts. Pure.
+function crqUseFromText(text, uses) {
+  const t = ' ' + crxNorm(text) + ' ';
+  if (t.trim().length < 3) return null;
+  let best = null, bestLen = 0;
+  (uses || []).forEach(u => {
+    const label = String(u.label || '');
+    const words = [label].concat(label.split(/[\/(),&+-]| and | or /i)).map(w => crxNorm(w)).filter(w => w.length >= 4);
+    words.forEach(w => { if (w.length > bestLen && t.includes(w)) { best = u; bestLen = w.length; } });
+  });
+  return best;
+}
 function crqRateToTable(r, ctx) {
   const no = why => ({ ok: false, why });
   if (!r || r.requirement_type !== 'generation_rate') return no('not a generation rate');
@@ -12080,7 +12095,7 @@ function crqRateToTable(r, ctx) {
   if (!ctx || !ctx.state) return no('the document has no state recorded');
   if (!ctx.councilValue) return no('the council is not in the councils list — add it in Scope first');
   const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
-  if (!streamKey) return no('no stream');
+  if (!streamKey) return no('no stream — pick the stream below');
   if (['GW', 'REC', 'ORG', 'GLS'].indexOf(streamKey) < 0) return no(`stream “${r.stream}” has no column in the rate tables (GW/REC/ORG/GLS)`);
   const unit = String(r.unit || '').toLowerCase();
   const perWeek = /week|wk|weekly|\/w(\b|\/|$)/.test(unit), perDay = /day|daily|\/d(\b|\/|$)/.test(unit), perFortnight = /fortnight/.test(unit);
@@ -12105,11 +12120,15 @@ function crqRateToTable(r, ctx) {
   }
   if (!uc) return no('no use class');
   const uses = ctx.uses || [];
-  const use = uses.find(u => crxNorm(u.label) === uc) || uses.find(u => crxNorm(u.label).includes(uc) || uc.includes(crxNorm(u.label)));
-  if (!use) return no(`use class “${r.use_class}” matches no commercial use in the table`);
+  const broad = /^(commercial|nonresidential|retail|business|mixeduse|industrial|other)$/.test(uc);
+  let use = broad ? null : (uses.find(u => crxNorm(u.label) === uc) || uses.find(u => crxNorm(u.label).includes(uc) || uc.includes(crxNorm(u.label))));
+  let viaText = false;
+  if (!use) { use = crqUseFromText(r.value_text, uses); viaText = !!use; }
+  if (!use) return no(broad ? `use class “${r.use_class}” is a broad class and the wording names no commercial use in the table — pick the use below`
+                            : `use class “${r.use_class}” matches no commercial use in the table — pick the use below`);
   const basis = crqComBasis(r.unit);
   if (!basis) return no(`unit “${r.unit || '?'}” has no formula in the commercial table (per 100 m² / bed / occupant / apartment / student, per day or week)`);
-  return { ok: true, table: 'com_rates', key: use.use_code + '|' + streamKey,
+  return { ok: true, table: 'com_rates', key: use.use_code + '|' + streamKey, viaText,
     row: { state: ctx.state, council_value: ctx.councilValue, use_code: use.use_code, stream: streamKey,
            rate: +(+r.value_num * basis.mult).toFixed(3), unit_value: basis.unit_value, unit: basis.unit } };
 }
@@ -12140,6 +12159,7 @@ async function crqWriteRates(rateRows, doc) {
   let uses = RDB.uses && RDB.uses.length ? RDB.uses : [];
   if (!uses.length) { try { const { data } = await sb.from('com_uses').select('use_code,label'); uses = data || []; } catch (e) {} }
   const ctx = { state, councilValue, uses };
+  out.uses = uses;
   const plans = rateRows.map(r => ({ r, plan: crqRateToTable(r, ctx) }));
   plans.filter(x => !x.plan.ok).forEach(x => out.unplaced.push({ r: x.r, why: x.plan.why }));
   const want = plans.filter(x => x.plan.ok);
@@ -12190,13 +12210,43 @@ function crqRatesReport(rr) {
   const li = (txt, col) => '<div style="font-size:11px;color:' + col + ';line-height:1.5;">' + txt + '</div>';
   const total = rr.added.length + rr.kept.length + rr.unplaced.length;
   if (!total) { el.innerHTML = li('The guideline has no generation-rate rows extracted yet — 🧾 Extract to list on its document (Council documents section) reads them.', 'var(--muted)'); return; }
-  el.innerHTML = '<div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 12px;">' +
+  const uses = rr.uses || RDB.uses || [];
+  const fix = u => {
+    const needUse = /pick the use below/.test(u.why), needStream = /pick the stream below/.test(u.why);
+    if (!needUse && !needStream) return '';
+    const sel = 'background:#101717;border:1px solid var(--border);border-radius:6px;padding:2px 4px;font-size:10.5px;color:var(--text);font-family:inherit;';
+    return ' <span style="display:inline-flex;gap:4px;align-items:center;">' +
+      (needUse ? `<select id="crq-fix-use-${u.r.id}" style="${sel}"><option value="">use…</option>${uses.map(x => `<option value="${cgbEsc(x.use_code)}">${cgbEsc(x.label)}</option>`).join('')}</select>` : '') +
+      (needStream ? `<select id="crq-fix-stream-${u.r.id}" style="${sel}"><option value="">stream…</option>${CRQ_STREAMS.map(x => `<option>${x}</option>`).join('')}</select>` : '') +
+      `<button class="btn" style="padding:1px 7px;font-size:10px;" onclick="crqPlaceFixed('${u.r.id}')">Place</button></span>`;
+  };
+  el.innerHTML = '<div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 12px;max-height:360px;overflow:auto;">' +
     li('<b>Generation rates from ' + cgbEsc(rr.council || 'the guideline') + '</b>' + (rr.councilValue ? '' : ' — <b style="color:#EF8080;">not in the councils list for ' + cgbEsc(rr.state || 'this state') + ' (Scope → + Add council), so nothing could be placed</b>'), 'var(--text)') +
     rr.added.map(a => li('✓ added · ' + cgbEsc(cell(a)) + ' <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', '#3DD68C')).join('') +
     rr.kept.map(a => li('· kept · ' + cgbEsc(cell(a)) + ' — the table already has a rate for this cell <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', 'var(--muted)')).join('') +
-    rr.unplaced.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>', '#FFB74D')).join('') +
+    rr.unplaced.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + (u.r.value_text ? ' <i style="color:var(--muted);">' + cgbEsc(String(u.r.value_text).slice(0, 90)) + '</i>' : '') + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + fix(u), '#FFB74D')).join('') +
     (rr.added.length ? li('⬆ Publish to live pushes the added rates to the calculator.', 'var(--muted)') : '') +
     '</div>';
+}
+// A row the mapper could not place because its use or stream was not
+// stated: the human names them here, the requirement row is corrected (so
+// the citation reads right too) and the pull runs again — add-only.
+async function crqPlaceFixed(rowId) {
+  const useSel = document.getElementById('crq-fix-use-' + rowId), stSel = document.getElementById('crq-fix-stream-' + rowId);
+  const patch = {};
+  if (useSel) {
+    if (!useSel.value) { rdbMsg('Pick the use first.', false); return; }
+    const u = (RDB.uses || []).find(x => x.use_code === useSel.value);
+    patch.use_class = u ? u.label : useSel.value;
+  }
+  if (stSel) {
+    if (!stSel.value) { rdbMsg('Pick the stream first.', false); return; }
+    patch.stream = stSel.value;
+  }
+  patch.reviewed_by = currentUser?.id || null; patch.reviewed_at = new Date().toISOString();
+  const { error } = await sb.from('council_requirements').update(patch).eq('id', rowId);
+  if (error) { rdbMsg('Could not update the row: ' + error.message, false); return; }
+  await crqPullRatesForScope();
 }
 // Place the rates already extracted for the scoped council — every
 // generation_rate row across its document versions — without re-running
@@ -12217,6 +12267,7 @@ async function crqPullRatesForScope() {
     const live = mine.slice().sort((a, b) => (b.version || 0) - (a.version || 0)).find(d => !d.superseded_at) || mine[0];
     const doc = { ...live, state: live.state || mine.find(d => d.state)?.state || null };
     const rr = await crqWriteRates(rows || [], doc);
+    if (rr.uses && rr.uses.length && !(RDB.uses || []).length) RDB.uses = rr.uses;
     crqRatesReport(rr);
     rdbMsg(rr.added.length ? `✓ ${rr.added.length} rate${rr.added.length === 1 ? '' : 's'} added to the tables — ⬆ Publish to live to push them to the calculator.` : (rows || []).length ? 'Nothing new to add — see the note above for what was kept or could not be placed.' : 'The guideline has no generation-rate rows extracted yet.', !!rr.added.length || !(rows || []).length);
     await rdbLoadRates();

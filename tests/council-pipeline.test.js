@@ -218,7 +218,7 @@ test('the list reaches consumers automatically — crqSyncServe projects the WHO
 test('extracted generation rates map onto the rate tables in their exact row format — or say why not', () => {
   const { loadEngine } = require('./extract.js');
   const w = loadEngine({ blocks: [['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /], ['crxNorm', /^function crxNorm\(/],
-    ['crxResUnit', /^function crxResUnit\(/], ['crqComBasis', /^function crqComBasis\(/], ['crqRateToTable', /^function crqRateToTable\(/]] });
+    ['crxResUnit', /^function crxResUnit\(/], ['crqComBasis', /^function crqComBasis\(/], ['crqUseFromText', /^function crqUseFromText\(/], ['crqRateToTable', /^function crqRateToTable\(/]] });
   const ctx = { state: 'NSW', councilValue: 'camden', uses: [{ use_code: 'cafe', label: 'Cafe / restaurant' }, { use_code: 'hotel_beds', label: 'Hotel (per bed)' }] };
   const gr = o => ({ requirement_type: 'generation_rate', clause_ref: 'cl 4', ...o });
   // residential → res_rates, L/week per dwelling
@@ -243,6 +243,14 @@ test('extracted generation rates map onto the rate tables in their exact row for
   assert.equal(w.crqRateToTable(gr({ use_class: 'Café / restaurant', stream: 'garbage', value_num: 240, unit: 'L/100m2/day' }), { ...ctx, uses: [{ use_code: 'cafe', label: 'Café / restaurant' }] }).row.use_code, 'cafe', 'accent-insensitive use matching');
   assert.match(w.crqRateToTable(gr({ use_class: 'cafe', stream: 'garbage', value_num: 5, unit: 'L/employee/day' }), ctx).why, /no formula/);
   assert.match(w.crqRateToTable(gr({ use_class: 'nail salon', stream: 'garbage', value_num: 5, unit: 'L/100m2/day' }), ctx).why, /matches no commercial use/);
+  // a broad class with the real use in the wording — the case the Northern Beaches table produced
+  const viaText = w.crqRateToTable(gr({ use_class: 'commercial', stream: 'garbage', value_num: 50, unit: 'L/100m² floor area/day', value_text: 'Cafe / restaurant: 50 L per 100 m² floor area per day' }), ctx);
+  assert.ok(viaText.ok && viaText.viaText && viaText.row.use_code === 'cafe', 'the use is recovered from the wording');
+  assert.match(w.crqRateToTable(gr({ use_class: 'commercial', stream: 'garbage', value_num: 50, unit: 'L/100m2/day', value_text: '50 L per 100 m² per day' }), ctx).why, /broad class.*pick the use below/);
+  assert.equal(w.crqUseFromText('Hotel rooms generate 5 L per bed per day', ctx.uses).use_code, 'hotel_beds');
+  assert.equal(w.crqUseFromText('nothing here', ctx.uses), null);
+  assert.ok(SOURCE.includes('async function crqPlaceFixed(rowId)') && SOURCE.includes("onclick=\"crqPlaceFixed('${u.r.id}')\""), 'an unplaced row can be given its use / stream in the report and placed');
+  assert.ok(SOURCE.includes('never a broad class like "commercial" or "residential" unless the document itself gives one rate for the whole class'), 'the prompt asks for the specific use');
   assert.match(w.crqRateToTable(gr({ use_class: '2 bed', stream: 'paper', value_num: 5, unit: 'L/dwelling/week' }), ctx).why, /no column/);
   assert.match(w.crqRateToTable(gr({ use_class: '2 bed', stream: 'garbage', value_num: 5, unit: 'L/dwelling/week' }), { ...ctx, councilValue: null }).why, /not in the councils list/);
   assert.match(w.crqRateToTable(gr({ use_class: '2 bed', stream: 'garbage', value_num: null, unit: 'L/dwelling/week' }), ctx).why, /no numeric value/);
