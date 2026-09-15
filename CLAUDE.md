@@ -65,6 +65,25 @@ Consequences to keep in mind:
 - Do not split `index.html` into modules or add a bundler without an explicit
   decision to change the deployment model.
 
+## Where state lives (standing rule)
+
+**localStorage is only for trivial per-device UI state** — a remembered tab, a
+collapsed panel, an unsent draft, viewport/zoom position, the chosen org
+context. **Anything that is user-created content, shared configuration, a team
+standard, or billing/audit-relevant lives in Supabase**, scoped to the
+organisation (`org_id`) or to the user where genuinely personal
+(`org_id null` + `user_id`, the split the `projects` table uses). When in
+doubt, it goes server-side. *"Add a shared table as a follow-up"* is not an
+acceptable reason to ship content in localStorage first — it manufactures a
+migration instead of avoiding one, and it is how WMP text presets briefly
+ended up per-device (fixed 2026-09-16: `wmp_text_presets`).
+
+Confirmed 2026-09-16: **projects are server-authoritative.** `loadProjectsFromDB`
+merges cloud rows over the `pw_projects` cache (a cache, not a store), and
+the free-project cap reads `profiles.projects_created`, a monotonic counter
+kept by trigger (`sql/2026-09-07-free-tier-enforcement.sql`) — clearing the
+browser cannot reset it.
+
 ## Supabase
 
 - **The client binding is `sb`.** Always `sb.from(...)`, `sb.auth`, `sb.rpc(...)`.
@@ -372,8 +391,16 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   The library editor sets `cond` per snippet (`TB_CONDS`). **Presets**: the
   built-ins are project *shapes* (`shapeHint` fills only what the project has
   not said — project data always wins); saved presets are exact on/off + edit
-  maps, stored per device in localStorage. Council-wide defaults stay
-  server-side (`tbSaveCouncilDefaults`).
+  maps in **`wmp_text_presets`, server-side and org-scoped**
+  (`sql/2026-09-16-wmp-text-presets.sql`; `org_id null` = personal, the
+  projects split). Anyone in the org may create; changing or deleting a
+  preset someone else created needs the org `admin` role — RLS enforces it,
+  `tbPresetCanEdit` (pure) mirrors it for the UI. Loaded per open
+  (`tbLoadPresets`) because the org context can change between opens. The
+  brief per-device era is handled by a **one-time import offer**
+  (`tbOfferLocalImport`, `tbPresetImportPlan` pure — clashes renamed, never
+  merged over); the legacy key is then cleared or parked, never read again.
+  Council-wide defaults stay server-side (`tbSaveCouncilDefaults`).
 - **The preview is the workspace.** `tbNodes` tags nodes with their group;
   `wmpgBuildHtml` (screen only — `forPrint` sees plain nodes) wraps runs in
   `.tbsec` with a hover control: **⇄ swap text** opens a popover rendered by
@@ -381,8 +408,9 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   polish / edit, **✎ edit** jumps to the field (`data-path` on every input).
   One selection, two places to reach it.
 
-Not built: presets shared across devices/staff (a `wmp_text_presets` table),
-and access-path facts beyond the manual travel-path token and ramp gradient.
+Not built: per-user overrides on top of the org preset baseline (add only on
+demand), and access-path facts beyond the manual travel-path token and ramp
+gradient.
 
 ## Council requirements list (C3, revised 2026-09-15)
 

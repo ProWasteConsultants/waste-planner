@@ -30632,6 +30632,7 @@ async function openWmpGenerator() {
                  : '⚠ Council rates unavailable — enter generation rates manually.', !ok);
   }
   await tbLoad();
+  await tbLoadPresets();   // per open: the org context can change between opens
   WMPG.data.text = WMPG.data.text || { off:{}, edit:{} };
   creqLoad(WMPG.data).then(() => { creqRun(); wmpgLiveNotes(); });
   WMPG.data.tokens = WMPG.data.tokens || {};
@@ -33265,21 +33266,43 @@ function tbCondMet(cond, d) {
   });
 }
 
-// ── PRESETS: whole text selections in one click ────────────────────────────
+// ── PRESETS: whole text selections in one click — server-side, org-scoped ──
+// A preset is a team asset, the house style for repeat WMP work, so it lives
+// in Supabase (`wmp_text_presets`) where every member of the organisation
+// sees it — not in one person's browser. Scope follows the projects table:
+// org_id set = shared by the org; org_id null = a personal preset for a user
+// working outside any organisation. Anyone may create; changing or deleting
+// a preset someone else created needs the org admin role, so one person
+// cannot silently rewrite the team's standard. RLS enforces that — the client
+// only mirrors it (tbPresetCanEdit) for the UI.
 // Built-in presets describe a project SHAPE; applying one resets the per-WMP
 // overrides and hands the conditions a hint that fills only what the project
-// has not said (project data always wins where it exists). Saved presets
-// capture the exact on/off map and edits — the house style for repeat work.
-// Stored per device (localStorage); the council-wide default set is the
-// server-side one (tbSaveCouncilDefaults).
-const WMPG_TEXT_PRESETS_KEY = 'pw_wmp_text_presets';
+// has not said (project data always wins where it exists).
+// Presets shipped briefly in localStorage: that key is read exactly once, for
+// the import offer below, and never written again.
+const WMPG_TEXT_PRESETS_LEGACY_KEY = 'pw_wmp_text_presets';
 const WMPG_TEXT_PRESETS_BUILTIN = [
   { name: 'Standard kerbside residential', builtin: true, shape: { method: 'kerbside_shared', provider: 'council' } },
   { name: 'Commercial bulk bin — private collection', builtin: true, shape: { method: 'bulk', provider: 'private contractor', commercial: true } },
   { name: 'Mixed-use with chute', builtin: true, shape: { chutes: true, commercial: true } },
 ];
-function tbSavedPresets() { try { return (JSON.parse(localStorage.getItem(WMPG_TEXT_PRESETS_KEY) || '[]') || []).filter(p => p && p.name); } catch (e) { return []; } }
-function tbPresets() { return WMPG_TEXT_PRESETS_BUILTIN.concat(tbSavedPresets()); }
+function tbPresetScope() {
+  // Signed out (or the session block not yet evaluated) reads as no scope —
+  // the same guard wmpgIsStaff takes, for the same reason.
+  try {
+    const org = (typeof currentOrg !== 'undefined' && currentOrg) ? currentOrg : null;
+    const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null;
+    return { orgId: org ? org.id : null, orgName: org ? org.name : null, role: org ? org.role : null, userId: uid };
+  } catch (e) { return { orgId: null, orgName: null, role: null, userId: null }; }
+}
+// Pure: may this person change (edit or delete) this preset? The creator
+// always may; on an org preset so may an org admin; nobody else. Built-ins
+// are code, not rows.
+function tbPresetCanEdit(preset, scope) {
+  if (!preset || preset.builtin || !scope || !scope.userId) return false;
+  if (preset.created_by === scope.userId) return true;
+  return !!preset.org_id && scope.role === 'admin';
+}
 // Pure: what applying a preset does to the draft's text state.
 function tbPresetApply(d, preset) {
   d.text = { off: Object.assign({}, preset.off || {}), edit: Object.assign({}, preset.edit || {}) };
@@ -33287,33 +33310,121 @@ function tbPresetApply(d, preset) {
   d.textPreset = preset.name;
   return d;
 }
+// Pure: the per-device presets against what the scope already holds — a
+// name clash is renamed, never merged over and never dropped.
+function tbPresetImportPlan(local, existing) {
+  const taken = new Set((existing || []).map(p => String(p.name || '').toLowerCase()));
+  return (local || []).filter(p => p && p.name && String(p.name).trim()).map(p => {
+    const base = String(p.name).trim();
+    let name = base, n = 2;
+    if (taken.has(name.toLowerCase())) name = base + ' (imported)';
+    while (taken.has(name.toLowerCase())) name = base + ' (imported ' + (n++) + ')';
+    taken.add(name.toLowerCase());
+    return { name, shape: p.shape || null, off: p.off || {}, edit: p.edit || {} };
+  });
+}
+function tbPresetRow(r, names) {
+  return { id: r.id, name: r.name, org_id: r.org_id || null, user_id: r.user_id, created_by: r.created_by,
+           created_by_name: (names && names[r.created_by]) || null,
+           shape: r.shape || null, off: r.off || {}, edit: r.edit || {}, updated_at: r.updated_at || null };
+}
+async function tbFetchPresets() {
+  const sc = TB.presetsScope = tbPresetScope();
+  TB.presets = []; TB.presetsError = null;
+  if (!sc.userId) return TB.presets;
+  try {
+    if (typeof sb === 'undefined' || !sb) return TB.presets;   // inside the try, as tbLoad does
+    let q = sb.from('wmp_text_presets').select('id,org_id,user_id,name,shape,off,edit,created_by,updated_at').order('name');
+    q = sc.orgId ? q.eq('org_id', sc.orgId) : q.is('org_id', null).eq('user_id', sc.userId);
+    const { data, error } = await q;
+    if (error) throw error;
+    let names = {};
+    if (sc.orgId && typeof getOrgMembers === 'function') {
+      try { (await getOrgMembers(sc.orgId) || []).forEach(m => { names[m.user_id] = m.full_name || m.email; }); } catch (e) {}
+    }
+    TB.presets = (data || []).map(r => tbPresetRow(r, names));
+  } catch (e) { TB.presetsError = e.message || String(e); }
+  return TB.presets;
+}
+async function tbLoadPresets() {
+  await tbFetchPresets();
+  await tbOfferLocalImport();
+  return TB.presets;
+}
+function tbPresets() { return WMPG_TEXT_PRESETS_BUILTIN.concat(TB.presets || []); }
 function tbApplyPreset(name) {
   const p = tbPresets().find(x => x.name === name); if (!p || !WMPG.data) return;
   tbPresetApply(WMPG.data, p);
   tbRenderPanel(); wmpgQueuePreview();
   wmpgFlash(`Preset “${name}” applied${p.builtin ? ' — project data still decides; the preset fills only what the project has not said' : ''}.`);
 }
-function tbSavePreset() {
+async function tbSavePreset() {
   const d = WMPG.data; if (!d) return;
+  const sc = tbPresetScope();
+  if (!sc.userId) { wmpgFlash('Sign in to save a preset.', true); return; }
   const cur = d.textPreset && !WMPG_TEXT_PRESETS_BUILTIN.some(b => b.name === d.textPreset) ? d.textPreset : '';
-  const name = prompt('Name this preset — your current text selection, one click next time:', cur);
+  const where = sc.orgId ? 'shared with everyone in ' + sc.orgName : 'your personal preset — no organisation selected';
+  const name = prompt(`Name this preset (${where}):`, cur);
   if (!name || !name.trim()) return;
+  const clean = name.trim();
+  const existing = (TB.presets || []).find(p => p.name.toLowerCase() === clean.toLowerCase());
+  if (existing && !tbPresetCanEdit(existing, sc)) {
+    wmpgFlash(`“${existing.name}” was created by ${existing.created_by_name || 'a colleague'} — only they or an organisation admin can change it. Save under another name.`, true); return;
+  }
   // The FULL on/off state of every snippet, not just the deltas, so a preset
   // means the same thing whatever council default it lands on.
   const off = {};
   (TB.bank || []).forEach(r => { const on = (d.text.off[r.t] != null) ? !d.text.off[r.t] : tbDefaultOn(r, d); off[r.t] = !on; });
-  const saved = tbSavedPresets().filter(p => p.name !== name.trim());
-  saved.push({ name: name.trim(), off, edit: Object.assign({}, d.text.edit || {}), shape: d.shapeHint || null, savedAt: Date.now() });
-  try { localStorage.setItem(WMPG_TEXT_PRESETS_KEY, JSON.stringify(saved)); } catch (e) { wmpgFlash('Could not save the preset: ' + (e.message || e), true); return; }
-  d.textPreset = name.trim();
-  tbRenderPanel(); wmpgFlash(`✓ Preset “${name.trim()}” saved on this device.`);
+  const row = { name: clean, shape: d.shapeHint || null, off, edit: Object.assign({}, d.text.edit || {}), updated_by: sc.userId, updated_at: new Date().toISOString() };
+  try {
+    if (existing) { const { error } = await sb.from('wmp_text_presets').update(row).eq('id', existing.id); if (error) throw error; }
+    else { const { error } = await sb.from('wmp_text_presets').insert(Object.assign({ org_id: sc.orgId, user_id: sc.userId, created_by: sc.userId }, row)); if (error) throw error; }
+  } catch (e) { wmpgFlash('Could not save the preset: ' + (e.message || e) + ' — has sql/2026-09-16-wmp-text-presets.sql been run?', true); return; }
+  await tbFetchPresets();
+  d.textPreset = clean;
+  tbRenderPanel();
+  wmpgFlash(`✓ Preset “${clean}” ${existing ? 'updated' : 'saved'}${sc.orgId ? ' — shared with everyone in ' + sc.orgName : ''}.`);
 }
-function tbDeletePreset() {
+async function tbDeletePreset() {
   const d = WMPG.data; const name = d && d.textPreset;
-  if (!name || WMPG_TEXT_PRESETS_BUILTIN.some(b => b.name === name)) return;
-  if (!confirm(`Delete the preset “${name}” from this device?`)) return;
-  try { localStorage.setItem(WMPG_TEXT_PRESETS_KEY, JSON.stringify(tbSavedPresets().filter(p => p.name !== name))); } catch (e) {}
-  d.textPreset = null; tbRenderPanel();
+  const p = (TB.presets || []).find(x => x.name === name); if (!p) return;
+  const sc = tbPresetScope();
+  if (!tbPresetCanEdit(p, sc)) { wmpgFlash(`“${p.name}” was created by ${p.created_by_name || 'a colleague'} — only they or an organisation admin can delete it.`, true); return; }
+  if (!confirm(`Delete the preset “${name}”${p.org_id ? ' for everyone in ' + (sc.orgName || 'the organisation') : ''}?`)) return;
+  try { const { error } = await sb.from('wmp_text_presets').delete().eq('id', p.id); if (error) throw error; }
+  catch (e) { wmpgFlash('Could not delete the preset: ' + (e.message || e), true); return; }
+  d.textPreset = null;
+  await tbFetchPresets();
+  tbRenderPanel();
+}
+// One-time offer for presets saved on this device before they moved to the
+// server. OK imports them into the current scope (renamed on a clash) and
+// clears the key; Cancel parks them under an archived key that nothing
+// reads. Either way the legacy key is never read again — and nothing is
+// destroyed without the person choosing it.
+async function tbOfferLocalImport() {
+  let local = [];
+  try { local = JSON.parse(localStorage.getItem(WMPG_TEXT_PRESETS_LEGACY_KEY) || '[]') || []; } catch (e) { local = []; }
+  if (!Array.isArray(local) || !local.length) return;
+  const sc = TB.presetsScope || tbPresetScope();
+  if (!sc.userId || TB.presetsError) return;   // offer again when saving is actually possible
+  const plan = tbPresetImportPlan(local, TB.presets);
+  if (!plan.length) { try { localStorage.removeItem(WMPG_TEXT_PRESETS_LEGACY_KEY); } catch (e) {} return; }
+  const where = sc.orgId ? 'your organisation (' + sc.orgName + ')' : 'your account (no organisation selected)';
+  const ok = confirm(`${plan.length} text preset${plan.length === 1 ? '' : 's'} saved on this device: ${plan.map(p => p.name).join(', ')}.\n\nPresets now live on the server, shared with your team. Import ${plan.length === 1 ? 'it' : 'them'} to ${where}?\n\nOK = import.  Cancel = keep a copy on this device only; it will not be used.`);
+  try {
+    if (ok) {
+      const rows = plan.map(p => ({ org_id: sc.orgId, user_id: sc.userId, created_by: sc.userId, updated_by: sc.userId, name: p.name, shape: p.shape, off: p.off, edit: p.edit }));
+      const { error } = await sb.from('wmp_text_presets').insert(rows);
+      if (error) throw error;
+      localStorage.removeItem(WMPG_TEXT_PRESETS_LEGACY_KEY);
+      await tbFetchPresets();
+      wmpgFlash(`✓ Imported ${plan.length} preset${plan.length === 1 ? '' : 's'} to ${where}.`);
+    } else {
+      localStorage.setItem(WMPG_TEXT_PRESETS_LEGACY_KEY + '_archived', localStorage.getItem(WMPG_TEXT_PRESETS_LEGACY_KEY));
+      localStorage.removeItem(WMPG_TEXT_PRESETS_LEGACY_KEY);
+    }
+  } catch (e) { wmpgFlash('Import failed: ' + (e.message || e) + ' — the presets are still on this device; the offer will repeat.', true); }
 }
 function tbResetAuto() {
   const d = WMPG.data; if (!d) return;
@@ -33364,6 +33475,9 @@ function tbRenderPanel() {
   const shown = groups.filter(g => (TB.byGroup[g] || []).some(r => tbCondMet(r.c, d)));
   const hidden = groups.length - shown.length;
   const presets = tbPresets();
+  const scope = TB.presetsScope || tbPresetScope();
+  const selPreset = d.textPreset ? (TB.presets || []).find(p => p.name === d.textPreset) : null;
+  const canEdit = selPreset ? tbPresetCanEdit(selPreset, scope) : false;
   el.innerHTML = `
     <div style="border:1px solid #24403c;border-radius:9px;background:#141c1c;padding:9px 11px;margin-bottom:9px;">
       <div style="font-size:11px;font-weight:800;color:#4FC3C3;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Auto-selected for this project</div>
@@ -33372,12 +33486,15 @@ function tbRenderPanel() {
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:7px;">
         <select onchange="if(this.value)tbApplyPreset(this.value);this.value='';" style="background:#0D1313;border:1px solid #344444;border-radius:6px;padding:6px 8px;font-size:13px;color:#F2F7F7;font-family:inherit;">
           <option value="">Apply a preset…</option>
-          ${presets.map(p => `<option value="${wmpgEsc(p.name)}">${wmpgEsc(p.name)}${p.builtin ? '' : ' (saved)'}</option>`).join('')}
+          ${presets.map(p => `<option value="${wmpgEsc(p.name)}">${wmpgEsc(p.name)}${p.builtin ? '' : (p.org_id ? ' (' + wmpgEsc(scope.orgName || 'organisation') + ')' : ' (personal)')}</option>`).join('')}
         </select>
-        <button class="wmpg-addrow" style="margin:0;" onclick="tbSavePreset()" title="Save the current selection as a one-click preset on this device">☆ Save as preset</button>
-        ${d.textPreset && !WMPG_TEXT_PRESETS_BUILTIN.some(b => b.name === d.textPreset) ? `<button class="wmpg-addrow" style="margin:0;color:#EF8080;" onclick="tbDeletePreset()">✕ Delete preset</button>` : ''}
+        <button class="wmpg-addrow" style="margin:0;" onclick="tbSavePreset()" title="${scope.orgId ? 'Saved to the server, shared with everyone in ' + wmpgEsc(scope.orgName) : 'Saved to the server as your personal preset — select an organisation to share it'}">☆ Save as preset</button>
+        ${selPreset ? `<button class="wmpg-addrow" style="margin:0;color:${canEdit ? '#EF8080' : '#6E8484'};" ${canEdit ? '' : 'disabled'} onclick="tbDeletePreset()" title="${canEdit ? 'Delete for everyone who can see it' : wmpgEsc('Created by ' + (selPreset.created_by_name || 'a colleague') + ' — only they or an organisation admin can change it')}">✕ Delete preset</button>` : ''}
         <button class="wmpg-addrow" style="margin:0;" onclick="tbResetAuto()" ${overrides || d.shapeHint ? '' : 'disabled style="margin:0;opacity:.5;"'}>↺ Reset to auto</button>
       </div>
+      <div class="wmpg-note">${TB.presetsError ? `<span class="wmpg-err">Presets could not be loaded: ${wmpgEsc(TB.presetsError)} — has sql/2026-09-16-wmp-text-presets.sql been run?</span>`
+        : scope.orgId ? `Saved presets are shared with everyone in <b>${wmpgEsc(scope.orgName)}</b>; anyone can add one, and a preset is changed or deleted by whoever created it or an organisation admin.`
+        : scope.userId ? 'Saved presets are personal until you select an organisation — then they are shared with the team.' : 'Sign in to save presets.'}</div>
     </div>` +
   shown.map(g => {
     const vis = (TB.byGroup[g] || []).filter(r => tbCondMet(r.c, d));
