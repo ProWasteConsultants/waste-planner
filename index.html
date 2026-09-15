@@ -31858,7 +31858,7 @@ function wmpgBuildHtml(forPrint) {
   .cover .addr{font-size:14pt;font-weight:700;margin:0 0 4px;color:#d7efee;}
   .cover .doc{font-size:26pt;font-weight:800;margin:0;}
   .cover .sub{font-size:11pt;color:#bfe3e1;margin:0;}
-  .cover .low{position:relative;min-height:300px;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0;}
+  .cover .low{position:relative;aspect-ratio:11906/5954;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;padding:0 0 8%;}
   .cover .low img.photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;}
   .cover .low .scrim{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(14,33,31,0) 0%,rgba(14,33,31,.18) 55%,rgba(14,33,31,.55) 100%);}
   .cover .low .logo{position:relative;z-index:2;}
@@ -31901,7 +31901,7 @@ function wmpgBuildHtml(forPrint) {
       <div class="band mid">
         ${d.address ? `<div class="addr" data-src="address">${esc(d.address)}</div>` : ''}
         <div class="doc" data-src="title" data-pri>${esc(d.title || 'Waste Management Plan')}</div>
-        ${(d.projectName || d.address) ? `<div class="rule thin"></div><div class="sub" data-src="address">${esc([d.projectName, d.address].filter(Boolean).join(' | '))}</div>` : ''}
+        <div class="rule thin"></div>
       </div>
       <div class="band low" data-src="cover" data-pri>
         ${cover && cover.dataUrl ? `<img class="photo" src="${cover.dataUrl}" alt="">${d.cover && d.cover.scrim !== false ? '<div class="scrim"></div>' : ''}` : ''}
@@ -32743,18 +32743,18 @@ async function wmpgUploadTemplate(ev) {
 // override convention. Image bytes live in IndexedDB (a ~1 MB photo has no
 // business in the project record); WMPG.data keeps only the metadata.
 //
-// GEOMETRY. The lower band's box comes from the template: page size from
-// its sectPr, and — where the master anchors the logo page-relative — the
-// logo's own position, which the box is centred on. When the logo cannot be
-// located the box falls back to WMPG_COVER_BOX (fractions of the page, set
-// from the master's band layout) and the export note says so, so a blind
-// placement is never silent. Behind-text z-order is used when the logo is an
-// inline picture; a floating logo keeps its own layer and the photo goes
-// just beneath it.
-const WMPG_COVER_BOX = { top: 0.50, bottom: 0.905 };   // lower band, fractions of page height; full page width
+// GEOMETRY — read from the master itself, as the Flinders St example does it.
+// The cover is one table of shaded cells; the lower band is the cell whose
+// paragraph hosts the anchored ProWaste logo, and its row has an exact
+// height. The photo goes into THAT paragraph as an INLINE picture, page-wide
+// and row-high; the template's own anchored logo (and the credit box) draw
+// above inline content, so nothing about layers or page offsets is guessed.
+// If the lower band cannot be located the image is not placed, and the
+// export note says so — never a blind placement.
+const WMPG_COVER_BAND_H = 4253230;                     // EMU, the example's picture height, when the row states none
 const WMPG_COVER_MAX_BYTES = 4 * 1024 * 1024;
 const WMPG_COVER_OUT_W = 1800;                          // px across the band — plenty at A4, keeps the .docx small
-const EMU_PER_TWIP = 635, EMU_PER_PX_96 = 9525;
+const EMU_PER_TWIP = 635;
 function wmpgCoverKey(projectId) { return 'wmp:cover:' + projectId; }
 
 // Pure: cover-fit crop of a w×h source into a box of aspect bw:bh — the
@@ -32772,40 +32772,29 @@ function wmpgTplPageSize(xml) {
   return { wEmu: w * EMU_PER_TWIP, hEmu: h * EMU_PER_TWIP, wTwip: w, hTwip: h };
 }
 function wmpgTplCoverEnd(xml) { const i = xml.indexOf('w:name="BM_ProjectID"'); return i < 0 ? xml.length : i; }
-// Pure: where the master's logo sits. The cover references two pictures —
-// the circles panel then the wordmark (wmpgLoadCoverArt reads them the same
-// way). Returns page-relative geometry when the logo is anchored so, the
-// anchor kind, and its z-order.
-function wmpgTplLogoAnchor(xml) {
-  const cover = xml.slice(0, wmpgTplCoverEnd(xml));
-  const embeds = [...cover.matchAll(/r:embed="(rId\d+)"/g)];
-  if (embeds.length < 2) return null;
-  const at = embeds[1].index;
-  const drawingStart = cover.lastIndexOf('<w:drawing>', at);
-  if (drawingStart < 0) return null;
-  const drawing = cover.slice(drawingStart, cover.indexOf('</w:drawing>', at) + 12);
-  const inline = drawing.includes('<wp:inline');
-  const ext = /<wp:extent cx="(\d+)" cy="(\d+)"/.exec(drawing);
-  const out = { inline, cx: ext ? +ext[1] : null, cy: ext ? +ext[2] : null, relHeight: null, yEmu: null, xEmu: null, rId: embeds[1][1] };
-  if (inline) return out;
-  const rh = /relativeHeight="(\d+)"/.exec(drawing); if (rh) out.relHeight = +rh[1];
-  const pv = /<wp:positionV relativeFrom="page">\s*<wp:posOffset>(-?\d+)<\/wp:posOffset>/.exec(drawing); if (pv) out.yEmu = +pv[1];
-  const ph = /<wp:positionH relativeFrom="page">\s*<wp:posOffset>(-?\d+)<\/wp:posOffset>/.exec(drawing); if (ph) out.xEmu = +ph[1];
+// Pure: top-level paragraphs in a range (table-cell paragraphs count; a text
+// box's inner paragraphs stay with their box). Word writes an empty
+// paragraph as a self-closing <w:p …/> — nine of them on the master's cover —
+// and each is a whole paragraph, not an opener.
+function wmpgTplParagraphs(xml, from, to) {
+  const out = []; let depth = 0, start = -1;
+  const re = /<w:p\b[^>]*>|<\/w:p>/g; re.lastIndex = from;
+  let m;
+  while ((m = re.exec(xml)) && m.index < to) {
+    if (m[0] === '</w:p>') { depth--; if (depth === 0 && start >= 0) { out.push({ start, end: m.index + 6 }); start = -1; } }
+    else if (m[0].endsWith('/>')) { if (depth === 0) out.push({ start: m.index, end: m.index + m[0].length, empty: true }); }
+    else { if (depth === 0) start = m.index; depth++; }
+  }
   return out;
 }
-// Pure: the lower band's box in EMU. Default fractions, re-centred on the
-// logo when the master gives its page position; `confirmed` says which.
-function wmpgCoverBox(xml) {
-  const pg = wmpgTplPageSize(xml);
-  let top = Math.round(pg.hEmu * WMPG_COVER_BOX.top), bottom = Math.round(pg.hEmu * WMPG_COVER_BOX.bottom);
-  const logo = wmpgTplLogoAnchor(xml);
-  let confirmed = false;
-  if (logo && logo.yEmu != null && logo.cy) {
-    const c = logo.yEmu + logo.cy / 2, half = (bottom - top) / 2;
-    if (c < top || c > bottom) { top = Math.max(0, Math.round(c - half)); bottom = Math.min(pg.hEmu, Math.round(c + half)); }
-    confirmed = true;
-  }
-  return { x: 0, y: top, w: pg.wEmu, h: bottom - top, confirmed, logo, page: pg };
+function wmpgTplJoinText(pXml) { return (pXml.match(/<w:t(?: [^>]*)?>([^<]*)<\/w:t>/g) || []).map(t => t.replace(/<[^>]+>/g, '')).join(''); }
+function wmpgTplRewriteParagraph(pXml, text) {
+  const ppr = (/<w:pPr>[\s\S]*?<\/w:pPr>/.exec(pXml) || [''])[0];
+  const open = /^<w:p\b[^>]*?\/?>/.exec(pXml)[0].replace(/\/>$/, '>');
+  const bookmarks = (pXml.match(/<w:bookmark(?:Start|End)[^>]*\/>/g) || []).join('');
+  const rpr = (/<w:r(?: [^>]*)?>\s*<w:rPr>([\s\S]*?)<\/w:rPr>/.exec(pXml) || [null, ''])[1];
+  const body = String(text || '').trim() ? tplRuns(text, rpr) : '';
+  return open + ppr + bookmarks + body + '</w:p>';
 }
 // Pure: the master's bracketed placeholders, filled or removed, cover only.
 // Runs may split a placeholder, so each paragraph's text is joined first;
@@ -32818,36 +32807,23 @@ const WMPG_COVER_PLACEHOLDERS = [
   [/\[\s*Street\s+Address,?\s*Suburb\s*\]/gi, 'address'],
   [/\[\s*Site\s+address\s*\]/gi, 'address'],
 ];
-function wmpgTplParagraphs(xml, from, to) {
-  // top-level paragraphs only: a text box's inner paragraphs stay with their box
-  const out = []; let i = from, depth = 0, start = -1;
-  const re = /<w:p[ >]|<\/w:p>/g; re.lastIndex = from;
-  let m;
-  while ((m = re.exec(xml)) && m.index < to) {
-    if (m[0] === '</w:p>') { depth--; if (depth === 0 && start >= 0) { out.push({ start, end: m.index + 6 }); start = -1; } }
-    else { if (depth === 0) start = m.index; depth++; }
-  }
-  return out;
-}
-function wmpgTplJoinText(pXml) { return (pXml.match(/<w:t(?: [^>]*)?>([^<]*)<\/w:t>/g) || []).map(t => t.replace(/<[^>]+>/g, '')).join(''); }
-function wmpgTplRewriteParagraph(pXml, text) {
-  const ppr = (/<w:pPr>[\s\S]*?<\/w:pPr>/.exec(pXml) || [''])[0];
-  const open = /^<w:p(?: [^>]*)?>/.exec(pXml)[0];
-  const bookmarks = (pXml.match(/<w:bookmark(?:Start|End)[^>]*\/>/g) || []).join('');
-  const rpr = (/<w:r>\s*<w:rPr>([\s\S]*?)<\/w:rPr>/.exec(pXml) || [null, ''])[1];
-  const body = String(text || '').trim() ? tplRuns(text, rpr) : '';
-  return open + ppr + bookmarks + body + '</w:p>';
-}
 function wmpgTplCoverPlaceholders(xml, values) {
   const end = wmpgTplCoverEnd(xml);
-  const paras = wmpgTplParagraphs(xml, 0, end).reverse();   // rewrite from the back so offsets hold
+  const paras = wmpgTplParagraphs(xml, 0, end).filter(p => !p.empty).reverse();   // from the back so offsets hold
   let out = xml, changed = 0;
   paras.forEach(p => {
     const pXml = out.slice(p.start, p.end);
     const joined = wmpgTplJoinText(pXml);
     if (!WMPG_COVER_PLACEHOLDERS.some(([re]) => { re.lastIndex = 0; return re.test(joined); })) return;
     let t = joined;
-    WMPG_COVER_PLACEHOLDERS.forEach(([re, key]) => { re.lastIndex = 0; t = t.replace(re, String((values && values[key]) || '')); });
+    // The master's title band is an exact-height row: it can show the address
+    // line above the heading OR the "[Development Name] | [Street Address]"
+    // line beneath the rule, not both — the Flinders St example shows the
+    // former with the latter pushed out of sight. When the address line is
+    // printed, that line is emptied rather than filled-and-hidden.
+    const devLine = /Development\s+Name/i.test(joined) && /Street\s+Address/i.test(joined);
+    if (devLine && values && values.addressLineAbove) t = '';
+    else WMPG_COVER_PLACEHOLDERS.forEach(([re, key]) => { re.lastIndex = 0; t = t.replace(re, String((values && values[key]) || '')); });
     t = t.replace(/^\s*\|\s*|\s*\|\s*$/g, '').replace(/\s*\|\s*\|\s*/g, ' | ').replace(/\s{2,}/g, ' ').trim();
     out = out.slice(0, p.start) + wmpgTplRewriteParagraph(pXml, t) + out.slice(p.end);
     changed++;
@@ -32860,9 +32836,34 @@ function wmpgTplCoverPlaceholders(xml, values) {
 function wmpgTplCoverTitle(xml, title) {
   if (!title || title === 'Waste Management Plan' || /w:name="BM_DocTitle"/.test(xml)) return xml;
   const end = wmpgTplCoverEnd(xml);
-  const p = wmpgTplParagraphs(xml, 0, end).find(q => wmpgTplJoinText(xml.slice(q.start, q.end)).trim() === 'Waste Management Plan');
+  const p = wmpgTplParagraphs(xml, 0, end).find(q => !q.empty && wmpgTplJoinText(xml.slice(q.start, q.end)).trim() === 'Waste Management Plan');
   if (!p) return xml;
   return xml.slice(0, p.start) + wmpgTplRewriteParagraph(xml.slice(p.start, p.end), title) + xml.slice(p.end);
+}
+// Pure: the lower band — the cover paragraph hosting the logo (the second
+// picture the cover references; wmpgLoadCoverArt reads them the same way),
+// its row's exact height, and the page width.
+function wmpgTplCoverBand(xml) {
+  const end = wmpgTplCoverEnd(xml);
+  const cover = xml.slice(0, end);
+  const embeds = [...cover.matchAll(/r:embed="(rId\d+)"/g)];
+  if (embeds.length < 2) return null;
+  const at = embeds[1].index;
+  const p = wmpgTplParagraphs(xml, 0, end).find(q => !q.empty && q.start < at && q.end > at);
+  if (!p) return null;
+  const pXml = xml.slice(p.start, p.end);
+  const openLen = /^<w:p\b[^>]*>/.exec(pXml)[0].length;
+  const pprEnd = pXml.indexOf('</w:pPr>');
+  const insertAt = p.start + (pprEnd >= 0 && pprEnd < pXml.length ? pprEnd + 8 : openLen);
+  const rowStart = cover.lastIndexOf('<w:tr ', p.start), rowStart2 = cover.lastIndexOf('<w:tr>', p.start);
+  const rs = Math.max(rowStart, rowStart2);
+  let hEmu = WMPG_COVER_BAND_H, exact = false;
+  if (rs >= 0) {
+    const trPr = /<w:trPr>([\s\S]*?)<\/w:trPr>/.exec(cover.slice(rs, p.start));
+    const th = trPr && /<w:trHeight[^>]*w:val="(\d+)"/.exec(trPr[1]);
+    if (th) { hEmu = +th[1] * EMU_PER_TWIP; exact = /w:hRule="exact"/.test(trPr[1]); }
+  }
+  return { pStart: p.start, pEnd: p.end, insertAt, wEmu: wmpgTplPageSize(xml).wEmu, hEmu, exact, logoRId: embeds[1][1] };
 }
 // Pure: package plumbing for an added picture.
 function wmpgTplAddImageRel(rels, rId, target) {
@@ -32873,51 +32874,38 @@ function wmpgTplEnsureContentType(ct, ext, mime) {
   if (new RegExp('Extension="' + ext + '"', 'i').test(ct)) return ct;
   return ct.replace('<Default ', `<Default Extension="${ext}" ContentType="${mime}"/><Default `);
 }
-// Pure: the anchored picture — full-band, behind the text layer (or just
-// beneath a floating logo), position and size in EMU relative to the page.
+// Pure: the inline picture, page-wide and row-high — the run the Flinders St
+// example carries, minus its editor noise.
 function wmpgCoverPictureXml(o) {
-  const behind = o.behind ? 1 : 0;
-  return `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${o.z}" behindDoc="${behind}" locked="0" layoutInCell="1" allowOverlap="1">` +
-    `<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>${o.x}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>${o.y}</wp:posOffset></wp:positionV>` +
-    `<wp:extent cx="${o.w}" cy="${o.h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="${o.id}" name="Cover image" descr="${tplEsc(o.descr || '')}"/>` +
-    `<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
+  return `<w:r><w:rPr><w:noProof/></w:rPr><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${o.w}" cy="${o.h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
+    `<wp:docPr id="${o.id}" name="Cover image" descr="${tplEsc(o.descr || '')}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
     `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
-    `<pic:nvPicPr><pic:cNvPr id="${o.id}" name="cover.jpg"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${o.rId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
-    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${o.w}" cy="${o.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>`;
+    `<pic:nvPicPr><pic:cNvPr id="${o.id}" name="cover_image.jpeg"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${o.rId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${o.w}" cy="${o.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
 }
-// Pure: the source credit — a text box the height of the band, rotated to
-// run up the image's right edge (reads bottom to top), small white type.
+// Pure: the source credit — the example's "Text Box 2": anchored to the band
+// paragraph, rotated 270° so it reads bottom-to-top up the right edge, 9pt
+// white Segoe UI, its lower end a little above the band's bottom edge.
 function wmpgCoverCreditXml(o) {
-  const strip = 228600;   // 0.25" strip; rotated, that is the text's line height
-  const cx = o.h, cy = strip;
-  const centreX = o.x + o.w - strip / 2, centreY = o.y + o.h / 2;
-  const left = Math.round(centreX - cx / 2), top = Math.round(centreY - cy / 2);
-  return `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${o.z}" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">` +
-    `<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>${left}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>${top}</wp:posOffset></wp:positionV>` +
-    `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="${o.id}" name="Cover image credit"/>` +
+  const cy = 252095, edge = 47625, lift = 108268, ins = 182880;   // the example's box, measured against the band row
+  const cx = Math.max(400000, Math.min(o.h - lift - 100000, Math.round(String(o.text).length * 53000 + ins)));
+  const cxCentre = o.w - edge - cy / 2, cyCentre = o.h - lift - cx / 2;
+  const left = Math.round(cxCentre - cx / 2), top = Math.round(cyCentre - cy / 2);
+  return `<w:r><w:rPr><w:noProof/></w:rPr><w:drawing><wp:anchor distT="45720" distB="45720" distL="114300" distR="114300" simplePos="0" relativeHeight="${o.z}" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">` +
+    `<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>${left}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>${top}</wp:posOffset></wp:positionV>` +
+    `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="${o.id}" name="Cover image credit"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/></wp:cNvGraphicFramePr>` +
     `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">` +
-    `<wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm rot="16200000"><a:off x="${left}" y="${top}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>` +
-    `<wps:txbx><w:txbxContent><w:p><w:pPr><w:jc w:val="right"/><w:spacing w:before="0" w:after="0"/></w:pPr><w:r><w:rPr><w:color w:val="FFFFFF"/><w:sz w:val="14"/><w:szCs w:val="14"/></w:rPr><w:t xml:space="preserve">${tplEsc(o.text)}</w:t></w:r></w:p></w:txbxContent></wps:txbx>` +
-    `<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="0" tIns="0" rIns="45720" bIns="0" anchor="ctr" anchorCtr="0"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>`;
+    `<wps:cNvSpPr txBox="1"><a:spLocks noChangeArrowheads="1"/></wps:cNvSpPr><wps:spPr bwMode="auto"><a:xfrm rot="16200000"><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="9525"><a:noFill/></a:ln></wps:spPr>` +
+    `<wps:txbx><w:txbxContent><w:p><w:pPr><w:rPr><w:color w:val="FFFFFF"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Segoe UI" w:eastAsia="Segoe UI" w:hAnsi="Segoe UI" w:cs="Segoe UI"/><w:color w:val="FFFFFF"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t xml:space="preserve">${tplEsc(o.text)}</w:t></w:r></w:p></w:txbxContent></wps:txbx>` +
+    `<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>`;
 }
-// Put the picture (and credit) into the cover: the first top-level
-// paragraph of the body hosts the anchors. Returns the note for the export.
+// Put the picture (and credit) into the lower band. Returns the note for the export.
 function wmpgTplCoverImage(xml, opts) {
-  const box = wmpgCoverBox(xml);
-  const logo = box.logo;
-  // z-order: behind the text layer when the logo is inline text; beneath a
-  // floating logo's own layer otherwise
-  const behind = !logo || logo.inline || logo.relHeight == null;
-  const z = behind ? 1 : Math.max(1, logo.relHeight - 2);
-  const first = wmpgTplParagraphs(xml, 0, wmpgTplCoverEnd(xml))[0];
-  if (!first) return { xml, note: 'cover image not placed — no cover paragraph found' };
-  const pXml = xml.slice(first.start, first.end);
-  const insertAt = first.start + (pXml.indexOf('</w:pPr>') >= 0 ? pXml.indexOf('</w:pPr>') + 8 : /^<w:p(?: [^>]*)?>/.exec(pXml)[0].length);
-  let add = wmpgCoverPictureXml({ id: 9001, rId: opts.rId, x: box.x, y: box.y, w: box.w, h: box.h, behind, z, descr: opts.descr });
-  if (opts.credit) add += wmpgCoverCreditXml({ id: 9002, x: box.x, y: box.y, w: box.w, h: box.h, z: (behind ? 2 : z + 1), text: opts.credit });
-  const out = xml.slice(0, insertAt) + add + xml.slice(insertAt);
-  const note = box.confirmed ? '' : ' — cover image placed at the default band geometry (the master’s logo position could not be read); check the cover';
-  return { xml: out, note, box, behind };
+  const band = wmpgTplCoverBand(xml);
+  if (!band) return { xml, note: ' — cover image NOT placed: the master’s lower band (the paragraph carrying the logo) was not found in this template', band: null };
+  let add = wmpgCoverPictureXml({ id: 9001, rId: opts.rId, w: band.wEmu, h: band.hEmu, descr: opts.descr });
+  if (opts.credit) add = wmpgCoverCreditXml({ id: 9002, w: band.wEmu, h: band.hEmu, z: 251685888, text: opts.credit }) + add;
+  return { xml: xml.slice(0, band.insertAt) + add + xml.slice(band.insertAt), note: '', band };
 }
 // Browser: the uploaded photo → the band-shaped, cover-fit JPEG that goes into
 // the .docx, with the optional scrim baked in so the white logo stays crisp.
@@ -32989,16 +32977,20 @@ async function wmpgBuildTemplateBlob(buf) {
   // The cover: the master's placeholders filled or removed, the editable
   // title, and the optional project image + credit.
   xml = wmpgTplCoverTitle(xml, d.title);
-  xml = wmpgTplCoverPlaceholders(xml, { client: d.client, date: d.date, projectName: d.projectName, address: d.address }).xml;
+  xml = wmpgTplCoverPlaceholders(xml, { client: d.client, date: d.date, projectName: d.projectName, address: d.address,
+    addressLineAbove: !!(d.address || d.projectName) && /w:name="BM_SiteAddress"/.test(xml) }).xml;
   WMPG.exportNote = '';
   if (d.cover && d.cover.image && WMPG.coverImg && WMPG.coverImg.buf) {
-    const box = wmpgCoverBox(xml);
-    const img = await wmpgCoverRender(WMPG.coverImg.buf, WMPG.coverImg.type, box.w, box.h, d.cover.scrim !== false);
-    zip.file('word/media/cover_image.jpeg', await img.blob.arrayBuffer());
-    const relsFile = zip.file('word/_rels/document.xml.rels');
-    if (relsFile) zip.file('word/_rels/document.xml.rels', wmpgTplAddImageRel(await relsFile.async('string'), 'rIdWmpCover', 'media/cover_image.jpeg'));
-    const r = wmpgTplCoverImage(xml, { rId: 'rIdWmpCover', credit: (d.cover.credit || '').trim(), descr: d.cover.image.name });
-    xml = r.xml; WMPG.exportNote = r.note || '';
+    const band = wmpgTplCoverBand(xml);
+    if (!band) WMPG.exportNote = wmpgTplCoverImage(xml, { rId: 'x' }).note;
+    else {
+      const img = await wmpgCoverRender(WMPG.coverImg.buf, WMPG.coverImg.type, band.wEmu, band.hEmu, d.cover.scrim !== false);
+      zip.file('word/media/cover_image.jpeg', await img.blob.arrayBuffer());
+      const relsFile = zip.file('word/_rels/document.xml.rels');
+      if (relsFile) zip.file('word/_rels/document.xml.rels', wmpgTplAddImageRel(await relsFile.async('string'), 'rIdWmpCover', 'media/cover_image.jpeg'));
+      const r = wmpgTplCoverImage(xml, { rId: 'rIdWmpCover', credit: (d.cover.credit || '').trim(), descr: d.cover.image.name });
+      xml = r.xml; WMPG.exportNote = r.note || '';
+    }
   }
   zip.file('word/document.xml', xml);
   const ctFile = zip.file('[Content_Types].xml');
