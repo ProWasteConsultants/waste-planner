@@ -17973,6 +17973,45 @@ const WS_RECV_SPECS = {
   CAROUSEL_4: { label: '4×1100L carousel', w: 4.35, d: 4.35, h: 1.33, keepoutR: 2.175, render: 'carousel', dia: 3.75 },
   COMPACTOR:  { label: 'Compactor',        w: null, d: null, h: null, keepoutR: 0,     render: 'box' },
 };
+// Accessors for the WMP generator, which lives in another script block and
+// must not reach for these consts directly (function declarations cross
+// blocks; const/let are not relied on to).
+function wsChuteTypes() {
+  return Object.keys(WS_CHUTE_SPECS).map(k => ({ key: k, label: WS_CHUTE_SPECS[k].label, openings: WS_CHUTE_SPECS[k].offsets.length }));
+}
+// MIRRORS RECV_BY_STREAM / RECV_STREAM_ID / rebuildRecvLib / recvOptsFor in
+// the calculator srcdoc, which is sandboxed and cannot be called from here.
+// The generator must offer exactly the receiver set the calculator offers —
+// a test pins the two copies together, as councilKey/glBridgeNorm are.
+const WS_RECV_BY_STREAM = {
+  GW: ['BIN_660','BIN_1100','INDEX_2','CAROUSEL_4','COMPACTOR','NONE'],
+  REC:['BIN_660','BIN_1100','INDEX_2','CAROUSEL_4','NONE'],
+  ORG:['BIN_240','NONE'],
+};
+const WS_RECV_STREAM_ID = { GW: 'garbage', REC: 'recycling', ORG: 'fogo', GLS: 'glass' };
+function wsRecvLibFromEquip(db) {
+  const out = {};
+  (db || []).forEach(r => {
+    if (!r || r.category !== 'chute_receiver' || r.active === false) return;
+    const comp = (Number(r.compactionRatio) || 0) > 1 || /compactor/i.test(String(r.label || ''));
+    out['LIB_' + r.code] = { label: r.label || r.code, compactor: comp, lib: true,
+      streams: Array.isArray(r.streams) ? r.streams.filter(Boolean) : [],
+      w: r.w > 0 ? r.w : null, d: r.d > 0 ? r.d : null, h: r.heightM || null };
+  });
+  return out;
+}
+function wsRecvOptsFor(stream, lib) {
+  const out = (WS_RECV_BY_STREAM[stream] || ['NONE']).slice();
+  const want = WS_RECV_STREAM_ID[stream];
+  Object.entries(lib || {}).forEach(([k, v]) => {
+    if (v.compactor && stream !== 'GW') return;   // compactor is garbage only, always
+    if (v.streams.length && v.streams.indexOf(want) < 0) return;
+    out.splice(out.length - 1, 0, k);             // library items sit above 'None'
+  });
+  return out;
+}
+function wsRecvOf(key, lib) { return (lib && lib[key]) || WS_RECV_SPECS[key] || null; }
+function wsRecvIsCompactor(key, lib) { const r = wsRecvOf(key, lib); return r ? !!(r.compactor || key === 'COMPACTOR') : false; }
 const WS_RECV_GAP = 0.6; // clear gap between the chute opening and its receiver
 function wsRecvDims(recvKey, fpM2, lib) {
   // library-backed receiver: the opening carries the record's dimensions, so
@@ -26666,6 +26705,7 @@ async function wsLoadVehiclesDB() {
 }
 function wsVehAll() { return [...(WS_VEH_DB || []), ...WS_VEH]; }
 function wsVehById(id) { return wsVehAll().find(x => x.id === id) || WS_VEH[0]; }
+function wsVehEnsureLoaded() { return WS_VEH_DB === null ? wsLoadVehiclesDB() : Promise.resolve(WS_VEH_DB); }
 function wsVehContext() {
   const x = WS.extractData || {};
   return {
@@ -29965,7 +30005,9 @@ function wmpgShape(d) {
     tug: rooms.some(r => r.extras?.tug?.on), textiles: rooms.some(r => r.extras?.textiles?.on),
     bulky: rooms.some(r => r.extras?.bulky?.on), wash: rooms.some(r => r.extras?.wash?.on),
     clinical: !!d.hasClinical,
-    compaction: (d.reconciliation || []).some(x => (x.streams || []).some(s => s.compacted)),
+    chute_compactor: rooms.some(r => r.chute && r.chute.on && (r.chute.openings || []).some(o => o && o.recv && (typeof wmpgRecvIsCompactor === 'function' ? wmpgRecvIsCompactor(o.recv) : o.recv === 'COMPACTOR'))),
+    compaction: (d.reconciliation || []).some(x => (x.streams || []).some(s => s.compacted))
+      || rooms.some(r => r.chute && r.chute.on && (r.chute.openings || []).some(o => o && o.recv && (typeof wmpgRecvIsCompactor === 'function' ? wmpgRecvIsCompactor(o.recv) : o.recv === 'COMPACTOR'))),
   };
 }
 function wmpgShapeWords(sh) {
@@ -29975,7 +30017,7 @@ function wmpgShapeWords(sh) {
   if (sh.kerbside_shared) w.push('kerbside shared');
   if (sh.bulk) w.push('on-site bulk collection');
   w.push(sh.private && !sh.council_collection ? 'private contractor' : sh.private ? 'council + private' : 'council collection');
-  if (sh.chutes) w.push('chutes'); if (sh.compaction) w.push('compaction'); if (sh.tug) w.push('bin tug');
+  if (sh.chutes) w.push(sh.chute_compactor ? 'chutes + compactor' : 'chutes'); if (sh.compaction) w.push('compaction'); if (sh.tug) w.push('bin tug');
   if (sh.bulky) w.push('hard waste'); if (sh.textiles) w.push('textiles');
   return w;
 }
@@ -30220,21 +30262,219 @@ function wmpgApplyToDesign(i, j) {
   wmpgRenderForm(); wmpgQueuePreview(); wmpgPersist();
   wmpgFlash('Applied to the Design tab — ' + room.name + ' ' + WMPG_STREAMS[b.stream].doc + ' now matches this WMP.');
 }
-// The vehicle: from the swept path tool by default; an edit here is a local
-// override, flagged against the drawing. There is no apply-to-design for it
-// — the swept path was DRAWN for a vehicle, and renaming it on the project
-// would not redraw the path.
-function wmpgVehicleSource(d, room) {
-  const v = (room.collection && room.collection.vehicle) || '';
-  if (!v) return 'none';
-  if (d.vehicleSrc === 'swept' && d.vehicleMeta && d.vehicleMeta.name) return v === d.vehicleMeta.name ? 'swept' : 'wmp';
-  return d.vehicleSrc === 'preset' ? 'preset' : 'wmp';
+// ── VEHICLE · BULKY WASTE · CHUTES: the generator reads the app's own models ─
+// None of these is free text in the generator any more. The vehicle is the
+// vehicle database (the swept path tool's own list); bulky waste is the bin
+// calculator's Additional storage figure; the chute is the calculator's own
+// configuration (type, openings, receivers). Each defaults from the project
+// and is editable under the one override convention: local to the WMP, marked
+// as differing from its source, with an explicit apply-to-design.
+
+// vehicle ----------------------------------------------------------------
+function wmpgVehList() { try { return (typeof wsVehAll === 'function' ? wsVehAll() : []) || []; } catch (e) { return []; } }
+function wmpgVehRecord(id, d) {
+  if (!id) return null;
+  const v = wmpgVehList().find(x => x.id === id);
+  if (v) return v;
+  // the swept path's vehicle when the database has not loaded — never a blank
+  const m = d && d.vehicleMeta;
+  return (m && m.id === id) ? { id: m.id, name: m.name, minR: m.minR, rww: m.rww, source: m.source, unlisted: true } : null;
 }
-function wmpgVehicleReset(i) {
+function wmpgVehLabel(v) {
+  if (!v) return '';
+  const r = v.rww ? v.rww + 'm w2w' : (v.minR ? v.minR + 'm' : null);
+  return v.name + (v.verified ? ' ✓' : '') + (v.source === 'contractor' ? ' [contractor]' : '') + (r ? ' — R ' + r : '');
+}
+// Pure: where this room's vehicle came from, against the swept path's.
+function wmpgVehicleSource(d, room) {
+  const id = room.collection && room.collection.vehicleId;
+  if (!id) return 'none';
+  const sw = d.vehicleMeta && d.vehicleMeta.id;
+  if (sw && id === sw) return 'swept';
+  return 'wmp';
+}
+function wmpgVehSelect(i, id) {
   const d = WMPG.data, room = d.rooms[i]; if (!room) return;
-  room.collection.vehicle = (d.vehicleMeta && d.vehicleMeta.name) || d.defaults.vehicle || '';
+  const v = wmpgVehRecord(id, d);
+  room.collection.vehicleId = v ? v.id : null;
+  room.collection.vehicle = v ? v.name : '';          // the name everything prints; only ever set from a record
+  wmpgFollow(`rooms.${i}.collection.vehicle`);
   wmpgRenderForm(); wmpgQueuePreview();
 }
+function wmpgVehicleReset(i) {
+  const d = WMPG.data;
+  wmpgVehSelect(i, (d.vehicleMeta && d.vehicleMeta.id) || null);
+}
+// Push the WMP's vehicle back onto the project — the swept path tool's own
+// nomination. Explicit, and it says the obvious cost: a path drawn for the
+// old vehicle is a path for the old vehicle until it is redrawn.
+function wmpgApplyVehicleToDesign(i) {
+  const d = WMPG.data, room = d.rooms[i]; if (!room) return;
+  const v = wmpgVehRecord(room.collection.vehicleId, d);
+  if (!v) { wmpgFlash('Choose a vehicle from the database first.', true); return; }
+  if (!confirm(`Nominate “${v.name}” as the project’s collection vehicle?\n\nThe swept path tool will select it — but a swept path already drawn for “${(d.vehicleMeta && d.vehicleMeta.name) || 'the previous vehicle'}” must be redrawn for it.`)) return;
+  const projects = getProjects();
+  const p = projects.find(x => x.id === WMPG.projectId); if (!p) return;
+  p.vehicle = { id: v.id, name: v.name, minR: v.minR || null, rww: v.rww || null, source: v.source || null, council: v.council || null, ts: Date.now() };
+  saveProjects(projects);
+  if (typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(p);
+  try { const sel = document.getElementById('ws-swept-vehicle'); if (sel && [...sel.options].some(o => o.value === v.id)) sel.value = v.id; } catch (e) {}
+  d.vehicleMeta = p.vehicle; d.vehicleSrc = 'swept'; d.defaults.vehicle = v.name;
+  d.rooms.forEach(r => { if (!r.collection.vehicleId) { r.collection.vehicleId = v.id; r.collection.vehicle = v.name; } });
+  wmpgRenderForm(); wmpgQueuePreview(); wmpgPersist();
+  wmpgFlash(`Nominated “${v.name}” on the project. Redraw the swept path for it before issuing.`);
+}
+
+// bulky waste / textiles (the calculator's Additional storage) -----------
+const WMPG_ALLOW_CODES = { bulky: 'ALLOW_HARD', textiles: 'ALLOW_TEXTILE' };
+const WMPG_ALLOW_IDS = { bulky: 'HARD', textiles: 'TEXTILE' };
+// Pure: has the WMP departed from the calculator's figure for this extra?
+function wmpgExtraDiff(x) {
+  if (!x || !x.design) return [];
+  const out = [];
+  if (!!x.on !== !!x.design.on) out.push({ field: 'on', from: x.design.on, to: !!x.on });
+  if (x.on && x.design.on && x.design.areaM2 != null && +x.areaM2 !== +x.design.areaM2) out.push({ field: 'areaM2', from: x.design.areaM2, to: +x.areaM2 });
+  return out;
+}
+function wmpgExtraDiffWords(x) {
+  return wmpgExtraDiff(x).map(z => z.field === 'on' ? (z.to ? 'added in WMP' : 'removed in WMP') : `${z.from}→${z.to} m²`).join(', ');
+}
+function wmpgExtraSet(i, key, field, val) {
+  const x = WMPG.data.rooms[i] && WMPG.data.rooms[i].extras[key]; if (!x) return;
+  x[field] = field === 'areaM2' ? Math.max(0, +val || 0) : !!val;
+  wmpgFollow(`rooms.${i}.extras.${key}`);
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+function wmpgExtraReset(i, key) {
+  const x = WMPG.data.rooms[i] && WMPG.data.rooms[i].extras[key]; if (!x || !x.design) return;
+  x.on = !!x.design.on; if (x.design.areaM2 != null) x.areaM2 = x.design.areaM2;
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+// Write the area back onto the calculator's Additional storage for this room
+// (summary.bin_rooms[..].allow — the calculator's own persisted shape) and the
+// stored calc_rooms units the layout reads.
+function wmpgApplyExtraToDesign(i, key) {
+  const d = WMPG.data, room = d.rooms[i], x = room && room.extras[key]; if (!x) return;
+  const id = WMPG_ALLOW_IDS[key], code = WMPG_ALLOW_CODES[key];
+  const diff = wmpgExtraDiffWords(x);
+  if (!diff) { wmpgFlash('Nothing to apply — this matches the calculator.'); return; }
+  const projects = getProjects();
+  const p = projects.find(z => z.id === WMPG.projectId); if (!p) return;
+  const s = getProjectSummary(p);
+  const br = (s.bin_rooms || []).find(r => (room.srcId && r.id === room.srcId) || r.name === room.name);
+  if (!br) { wmpgFlash('The calculator has no room matching ' + room.name + ' to apply to.', true); return; }
+  if (!confirm(`Apply to the bin calculator?\n\n${room.name} — ${x.type}: ${diff}.\n\nThe calculator’s Additional storage for this room becomes ${x.on ? x.areaM2 + ' m²' : 'off'}.`)) return;
+  br.allow = br.allow || {};
+  br.allow[id] = { on: !!x.on, m2: x.on ? +x.areaM2 : null };
+  (p.calc_rooms || []).forEach(cr => {
+    if (!((room.srcId && cr.id === room.srcId) || cr.name === room.name)) return;
+    cr.units = (cr.units || []).filter(u => u.code !== code);
+    if (x.on) cr.units.push({ code, label: x.type, qty: 1, fpM2: +x.areaM2, ratio: null, stream: null });
+  });
+  writeProjectSummary(p.id, { bin_rooms: s.bin_rooms });
+  const p2 = getProjects().find(z => z.id === WMPG.projectId); if (p2) { p2.calc_rooms = p.calc_rooms; saveProjects(getProjects().map(z => z.id === p2.id ? p2 : z)); }
+  if (typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(p2 || p);
+  try { if (typeof WS !== 'undefined' && WS && WS.extractData) { WS.extractData.bin_rooms = s.bin_rooms; if (typeof wsPushSummaryToCalc === 'function') wsPushSummaryToCalc(); } } catch (e) {}
+  x.design = { on: !!x.on, areaM2: x.on ? +x.areaM2 : x.design.areaM2 };
+  wmpgRenderForm(); wmpgQueuePreview(); wmpgPersist();
+  wmpgFlash(`Applied — the calculator’s ${x.type} for ${room.name} now matches this WMP.`);
+}
+
+// chutes (the calculator's own configuration) ----------------------------
+function wmpgChuteTypes() { try { return typeof wsChuteTypes === 'function' ? wsChuteTypes() : []; } catch (e) { return []; } }
+function wmpgRecvLib() { try { return typeof WS_EQUIP_DB !== 'undefined' && typeof wsRecvLibFromEquip === 'function' ? wsRecvLibFromEquip(WS_EQUIP_DB) : {}; } catch (e) { return {}; } }
+function wmpgRecvOpts(stream) { try { return wsRecvOptsFor(stream, wmpgRecvLib()); } catch (e) { return ['NONE']; } }
+function wmpgRecvLabel(key) { try { const r = wsRecvOf(key, wmpgRecvLib()); return r ? r.label : key; } catch (e) { return key; } }
+function wmpgRecvIsCompactor(key) { try { return wsRecvIsCompactor(key, wmpgRecvLib()); } catch (e) { return key === 'COMPACTOR'; } }
+const WMPG_CHUTE_STREAMS = ['GW', 'REC', 'ORG'];
+const WMPG_CHUTE_OPENINGS = { SINGLE: 1, TWIN: 2, TRIPLE: 3 };   // offline fallback for wsChuteTypes
+// Pure: a chute config in the calculator's shape — type, and one
+// {stream, recv} per opening the type has. Extra fields (FFH, slab, angle)
+// ride through untouched; they are the calculator's to edit.
+function wmpgChuteNorm(c, types) {
+  const list = types && types.length ? types : Object.keys(WMPG_CHUTE_OPENINGS).map(k => ({ key: k, openings: WMPG_CHUTE_OPENINGS[k] }));
+  const t = list.find(x => x.key === (c && c.type)) ? c.type : list[0].key;
+  const n = (list.find(x => x.key === t) || {}).openings || 1;
+  const src = (c && Array.isArray(c.openings)) ? c.openings : [];
+  const openings = [];
+  for (let k = 0; k < n; k++) {
+    const o = src[k] || {};
+    const stream = WMPG_CHUTE_STREAMS.indexOf(o.stream) >= 0 ? o.stream : WMPG_CHUTE_STREAMS[Math.min(k, 2)];
+    openings.push({ stream, recv: o.recv || 'NONE' });
+  }
+  return Object.assign({}, c || {}, { on: !!(c && c.on), type: t, openings });
+}
+function wmpgChuteKey(c) { const n = wmpgChuteNorm(c); return n.on ? [n.type].concat(n.openings.map(o => o.stream + ':' + o.recv)).join('|') : 'off'; }
+// Pure: has the WMP departed from the calculator's chute?
+function wmpgChuteDiff(room) {
+  if (!room || room.chuteDesign === undefined) return [];
+  const a = wmpgChuteKey(room.chuteDesign), b = wmpgChuteKey(room.chute);
+  return a === b ? [] : [{ from: a, to: b }];
+}
+// The arrangement sentence, from the configuration — the same words for the
+// summary, §4 and the .docx. The author may still overwrite it; ↺ regenerates.
+function wmpgChuteText(room, labelOf) {
+  const c = wmpgChuteNorm(room.chute);
+  if (!c.on) return '';
+  const types = wmpgChuteTypes();
+  const tl = (types.find(t => t.key === c.type) || {}).label || (c.type.charAt(0) + c.type.slice(1).toLowerCase() + ' chute');
+  const sw = s => ((WMPG_STREAMS[s] && WMPG_STREAMS[s].doc) || s).toLowerCase();
+  const lab = labelOf || wmpgRecvLabel;
+  const streams = c.openings.map(o => sw(o.stream));
+  const ends = c.openings.filter(o => o.recv && o.recv !== 'NONE').map(o => `${sw(o.stream)} terminating into ${/^[aeiou]/i.test(lab(o.recv)) ? 'an' : 'a'} ${lab(o.recv)}`);
+  return `${room.name} — ${tl} (${streams.join(' & ')}), servicing all residential levels` +
+    (ends.length ? `; ${ends.join(', ')} within the waste room.` : ', terminating into spare bins within the waste room.');
+}
+function wmpgChuteSet(i, field, val, k) {
+  const room = WMPG.data.rooms[i]; if (!room) return;
+  room.chute = wmpgChuteNorm(room.chute, wmpgChuteTypes());
+  if (field === 'on') room.chute.on = !!val;
+  else if (field === 'type') { room.chute.type = val; room.chute = wmpgChuteNorm(room.chute, wmpgChuteTypes()); }
+  else if (field === 'stream') { room.chute.openings[k].stream = val; const ok = wmpgRecvOpts(val); if (ok.indexOf(room.chute.openings[k].recv) < 0) room.chute.openings[k].recv = ok[0]; }
+  else if (field === 'recv') room.chute.openings[k].recv = val;
+  room.chutesOn = room.chute.on;
+  if (!room.chuteTextEdited) room.chuteText = wmpgChuteText(room);
+  wmpgFollow(`rooms.${i}.chute`);
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+function wmpgChuteReset(i) {
+  const room = WMPG.data.rooms[i]; if (!room || room.chuteDesign === undefined) return;
+  room.chute = JSON.parse(JSON.stringify(room.chuteDesign || { on: false }));
+  room.chutesOn = !!room.chute.on; room.chuteTextEdited = false; room.chuteText = wmpgChuteText(room);
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+function wmpgChuteTextReset(i) {
+  const room = WMPG.data.rooms[i]; if (!room) return;
+  room.chuteTextEdited = false; room.chuteText = wmpgChuteText(room);
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+// Write the chute back onto the calculator's room (summary.bin_rooms — the
+// shape the calculator restores from, so it reopens with this configuration)
+// and the stored calc_rooms the layout's chute sync reads.
+function wmpgApplyChuteToDesign(i) {
+  const d = WMPG.data, room = d.rooms[i]; if (!room) return;
+  if (!wmpgChuteDiff(room).length) { wmpgFlash('Nothing to apply — this matches the calculator.'); return; }
+  const projects = getProjects();
+  const p = projects.find(z => z.id === WMPG.projectId); if (!p) return;
+  const s = getProjectSummary(p);
+  const br = (s.bin_rooms || []).find(r => (room.srcId && r.id === room.srcId) || r.name === room.name);
+  if (!br) { wmpgFlash('The calculator has no room matching ' + room.name + ' to apply to.', true); return; }
+  const c = wmpgChuteNorm(room.chute, wmpgChuteTypes());
+  if (!confirm(`Apply to the bin calculator?\n\n${room.name}: ${c.on ? wmpgChuteText(room) : 'no chute'}.\n\nThe calculator and the layout’s chute placement will use this configuration.`)) return;
+  br.chute = Object.assign({}, br.chute || {}, { on: c.on, type: c.type, openings: c.openings.map(o => ({ stream: o.stream, recv: o.recv })) });
+  (p.calc_rooms || []).forEach(cr => {
+    if (!((room.srcId && cr.id === room.srcId) || cr.name === room.name)) return;
+    cr.chute = c.on ? Object.assign({}, cr.chute || {}, { on: true, type: c.type, openings: c.openings.map(o => ({ stream: o.stream, recv: o.recv })) }) : null;
+  });
+  writeProjectSummary(p.id, { bin_rooms: s.bin_rooms });
+  const all = getProjects(); const p2 = all.find(z => z.id === WMPG.projectId); if (p2) { p2.calc_rooms = p.calc_rooms; saveProjects(all); }
+  if (typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(p2 || p);
+  try { if (typeof WS !== 'undefined' && WS && WS.extractData) { WS.extractData.bin_rooms = s.bin_rooms; if (typeof wsPushSummaryToCalc === 'function') wsPushSummaryToCalc(); } } catch (e) {}
+  room.chuteDesign = JSON.parse(JSON.stringify(br.chute));
+  wmpgRenderForm(); wmpgQueuePreview(); wmpgPersist();
+  wmpgFlash(`Applied — the calculator’s chute for ${room.name} now matches this WMP. Re-run the calculator to refresh receiver bins and footprints.`);
+}
+
 // Older saved drafts predate title, provenance and complianceSrc.
 function wmpgUpgradeDraft(d, p) {
   if (!d.title) d.title = wmpgTitleDefault(p, d);
@@ -30243,6 +30483,15 @@ function wmpgUpgradeDraft(d, p) {
     if (b.design === undefined) b.design = b.src === 'auto' ? null : { sizeL: b.sizeL, qty: b.qty, colWk: b.colWk, provider: b.provider, method: b.method || null };
     if (b.src === undefined) b.src = 'calc';
   }));
+  (d.rooms || []).forEach(r => {
+    r.collection = r.collection || {};
+    if (r.collection.vehicleId === undefined) {
+      const byName = r.collection.vehicle ? wmpgVehList().find(v => v.name === r.collection.vehicle) : null;
+      r.collection.vehicleId = byName ? byName.id : ((d.vehicleMeta && d.vehicleMeta.name === r.collection.vehicle) ? d.vehicleMeta.id : null);
+    }
+    ['bulky', 'textiles'].forEach(k => { if (r.extras && r.extras[k] && r.extras[k].design === undefined) r.extras[k].design = null; });
+    if (r.chute === undefined) { r.chute = { on: !!r.chutesOn, type: 'SINGLE', openings: [] }; r.chuteDesign = null; r.chuteTextEdited = !!(r.chuteText && r.chutesOn); }
+  });
   d.tokens = d.tokens || {};
   d.text = d.text || { off: {}, edit: {} };
   return d;
@@ -30328,12 +30577,13 @@ function wmpgHydrateRooms(d, p, s) {
       room.srcId = r.id;
       room.component = r.component || 'Residential';
       WMPG_UNITS.forEach(u => room.alloc[u.key] = Math.max(0, +(r.alloc?.[u.key]) || 0));
-      if (r.chute?.on) {
-        room.chutesOn = true;
-        const streams = (r.chute.openings || []).map(o => (WMPG_STREAMS[o.stream]?.doc || o.stream).toLowerCase());
-        const label = ({ SINGLE:'Single chute', DUAL:'Dual chutes', TRIPLE:'Triple chutes' })[r.chute.type] || 'Chute';
-        room.chuteText = `${room.name} — ${label}${streams.length ? ' (' + streams.join(' & ') + ')' : ''}, servicing all residential levels and terminating into spare bins within the waste room.`;
-      }
+      // The calculator's chute configuration — type, openings, receivers —
+      // carried whole, with a copy as the Design baseline. The generator
+      // offers the same options; an edit here is an override.
+      room.chute = r.chute ? JSON.parse(JSON.stringify(r.chute)) : { on: false, type: 'SINGLE', openings: [] };
+      room.chuteDesign = r.chute ? JSON.parse(JSON.stringify(r.chute)) : null;
+      room.chutesOn = !!(r.chute && r.chute.on);
+      room.chuteText = wmpgChuteText(room);
       return room;
     });
   } else {
@@ -30376,19 +30626,33 @@ function wmpgHydrateRooms(d, p, s) {
     }
   }
 
-  // Footprints / recommended areas from the layout-facing results
+  // Footprints / recommended areas from the layout-facing results — and the
+  // calculator's Additional storage (hard waste, textiles) as the Design
+  // value for the matching extras, so the WMP starts from the calculator's
+  // own m², not a blank or a house default.
   d.rooms.forEach(room => {
     const cr = calcRooms.find(x => (room.srcId && x.id === room.srcId) || x.name === room.name);
     if (cr) { room.fpM2 = +cr.fpM2 || 0; room.areaM2 = +cr.areaM2 || 0; }
+    Object.keys(WMPG_ALLOW_CODES).forEach(key => {
+      const x = room.extras[key];
+      if (!cr) { x.design = null; return; }
+      const u = (cr.units || []).find(z => z.code === WMPG_ALLOW_CODES[key]);
+      if (u && +u.fpM2 > 0) { x.on = true; x.areaM2 = +u.fpM2; x.design = { on: true, areaM2: +u.fpM2 }; }
+      else x.design = { on: false, areaM2: null };
+    });
   });
 
   // Sensible per-room defaults: room 1 carries the shared amenities.
   d.rooms.forEach((room, i) => {
     room.location = room.location || (i === 0 ? 'Basement' : '');
     room.collection.vehicle = d.defaults.vehicle;
+    room.collection.vehicleId = (p.vehicle && p.vehicle.id) || null;
     room.collection.point = d.defaults.point;
-    if (i === 0) { room.extras.bulky.on = true; room.extras.textiles.on = true; room.extras.wash.on = true; }
-    else room.extras.wash.on = true;
+    // the house default (bulky + textiles in room 1) applies only when the
+    // calculator has said nothing — a calculator figure, on or off, stands
+    if (i === 0 && !room.extras.bulky.design) room.extras.bulky.on = true;
+    if (i === 0 && !room.extras.textiles.design) room.extras.textiles.on = true;
+    room.extras.wash.on = true;
   });
 }
 
@@ -30504,6 +30768,10 @@ function wmpgQA(d) {
       else if (cap > v[s] * 2.5) wrn(`${room.name} — ${WMPG_STREAMS[s].doc}: capacity is ${(cap/v[s]).toFixed(1)}× generation — likely over-provisioned.`);
     });
     if (room.chutesOn && !room.chuteText.trim()) err(`${room.name}: chutes are on but the chute arrangement is blank.`);
+    if (room.chutesOn && wmpgChuteNorm(room.chute).openings.every(o => !o.recv || o.recv === 'NONE')) wrn(`${room.name}: chute openings have no receiver at the base — choose one, or the chute terminates onto nothing.`);
+    if (wmpgChuteDiff(room).length) wrn(`${room.name}: chute configuration edited in WMP — differs from the bin calculator. Apply to design, or accept that the drawing and the WMP differ.`);
+    Object.keys(WMPG_ALLOW_CODES).forEach(k => { const x = room.extras[k]; const w = wmpgExtraDiffWords(x); if (w) wrn(`${room.name} — ${x.type}: ${w} — differs from the calculator’s Additional storage.`); });
+    if (room.collection.vehicleId && !wmpgVehList().some(v => v.id === room.collection.vehicleId)) wrn(`${room.name}: the collection vehicle is not in the vehicle database as loaded — check the swept path tool.`);
     (room.bins || []).forEach(b => {
       if (b.manual && !b.manualWhy)
         err(`${room.name} — ${WMPG_STREAMS[b.stream].doc}: bin count was overridden in the calculator with no reason recorded. Add one there so the WMP can justify it.`);
@@ -30511,7 +30779,7 @@ function wmpgQA(d) {
     const fp = wmpgRoomFootprint(d, room);
     if (room.areaM2 > 0 && fp > room.areaM2)
       wrn(`${room.name}: equipment footprint ${fp.toFixed(1)} m² exceeds the ${room.areaM2.toFixed(1)} m² room area the calculator recommends — check Appendix A.`);
-    if (!room.collection.vehicle) wrn(`${room.name}: no collection vehicle nominated — the narrative prints “[collection vehicle not yet selected]”. Choose one in the swept path tool or type it in.`);
+    if (!room.collection.vehicleId) wrn(`${room.name}: no collection vehicle selected — the narrative prints “[collection vehicle not yet selected]”. Choose one from the vehicle database (swept path tool or here).`);
     else if (d.vehicleSrc === 'swept' && d.vehicleMeta?.name && room.collection.vehicle !== d.vehicleMeta.name)
       wrn(`${room.name}: vehicle edited in WMP — “${room.collection.vehicle}” differs from the swept path drawing (“${d.vehicleMeta.name}”). Redraw the swept path for it, or reset to the drawn vehicle.`);
     if (!room.collection.point) wrn(`${room.name}: no collection point — the narrative prints “[collection point not yet set]”.`);
@@ -30634,6 +30902,7 @@ async function openWmpGenerator() {
   }
   await tbLoad();
   await tbLoadPresets();   // per open: the org context can change between opens
+  try { if (typeof wsVehEnsureLoaded === 'function') await wsVehEnsureLoaded(); } catch (e) {}   // the vehicle dropdown reads the same list the swept tool does
   WMPG.data.text = WMPG.data.text || { off:{}, edit:{} };
   creqLoad(WMPG.data).then(() => { creqRun(); wmpgLiveNotes(); });
   WMPG.data.tokens = WMPG.data.tokens || {};
@@ -30671,8 +30940,10 @@ function wmpgRepull() {
     if (!old) return;
     nr.location = old.location || nr.location;
     nr.collection = { ...nr.collection, ...old.collection };
-    nr.extras = old.extras;
-    if (old.chuteText) nr.chuteText = old.chuteText;
+    const freshEx = nr.extras; nr.extras = old.extras;
+    Object.keys(WMPG_ALLOW_CODES).forEach(k => { if (freshEx[k] && nr.extras[k]) { const wasEdited = wmpgExtraDiff(nr.extras[k]).length > 0; nr.extras[k].design = freshEx[k].design; if (!wasEdited && freshEx[k].design) { nr.extras[k].on = freshEx[k].on; nr.extras[k].areaM2 = freshEx[k].areaM2; } } });
+    if (old.chute && wmpgChuteDiff(old).length) { nr.chute = old.chute; nr.chutesOn = !!old.chute.on; }
+    if (old.chuteTextEdited) { nr.chuteText = old.chuteText; nr.chuteTextEdited = true; } else nr.chuteText = wmpgChuteText(nr);
   });
   WMPG.data = fresh;
   wmpgFlash(`Re-pulled — ${fresh.rooms.length} room${fresh.rooms.length>1?'s':''}, ${fresh.rooms.reduce((a,r)=>a+r.bins.length,0)} bin rows.`);
@@ -30967,25 +31238,63 @@ function wmpgRoomBlock(r, i) {
         <a href="#" onclick="wmpgOpenCalculator();return false;" style="color:#4FC3C3;display:inline-block;margin-top:3px;">Open bin calculator →</a></div>
 
       <div style="margin-top:4px;">
-        ${['bulky|Bulky / hard waste zone','textiles|Textiles charity bin','tug|Bin tug','wash|Bin wash'].map(x=>{
-          const [k,lbl]=x.split('|');
-          return `<label class="wmpg-chk"><input type="checkbox" ${r.extras[k].on?'checked':''} onchange="wmpgSet('rooms.${i}.extras.${k}.on',this.checked);wmpgLiveNotes()"> ${lbl}</label>`;
+        ${['bulky|Bulky / hard waste zone','textiles|Textiles charity bin'].map(x=>{
+          const [k,lbl]=x.split('|'); const ex=r.extras[k]; const diff=wmpgExtraDiffWords(ex);
+          const pill = diff ? `<span class="wmpg-pill warn" style="text-transform:none;">edited in WMP — differs from calculator (${wmpgEsc(diff)})</span>`
+            : ex.design ? `<span class="wmpg-pill" style="text-transform:none;">${ex.design.on ? 'from calculator' : 'not in calculator'}</span>`
+            : `<span class="wmpg-pill warn" style="text-transform:none;" title="No calculator run for this room — house default">house default</span>`;
+          return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0;">
+            <label class="wmpg-chk" style="margin:0;"><input type="checkbox" ${ex.on?'checked':''} onchange="wmpgExtraSet(${i},'${k}','on',this.checked);wmpgLiveNotes()"> ${lbl}</label>
+            ${ex.on ? `<input data-path="rooms.${i}.extras.${k}.areaM2" type="number" min="0" step="0.5" value="${+ex.areaM2||0}" style="width:74px;background:#0D1313;border:1px solid #344444;border-radius:6px;padding:5px 7px;font-size:13px;color:#F2F7F7;font-family:inherit;" onchange="wmpgExtraSet(${i},'${k}','areaM2',this.value);wmpgLiveNotes()"><span style="font-size:12px;color:#A9BDBD;">m²</span>` : ''}
+            ${pill}
+            ${diff ? `<button class="wmpg-addrow" style="margin:0;padding:2px 7px;" onclick="wmpgExtraReset(${i},'${k}')" title="Back to the calculator's figure">↺ calculator</button><button class="wmpg-addrow" style="margin:0;padding:2px 7px;" onclick="wmpgApplyExtraToDesign(${i},'${k}')" title="Write this onto the calculator's Additional storage for this room">⇉ apply to design</button>` : ''}
+          </div>`;
         }).join('')}
-        <label class="wmpg-chk"><input type="checkbox" ${r.chutesOn?'checked':''} onchange="wmpgSet('rooms.${i}.chutesOn',this.checked);wmpgRenderForm()"> Chutes</label>
+        ${['tug|Bin tug','wash|Bin wash'].map(x=>{ const [k,lbl]=x.split('|');
+          return `<label class="wmpg-chk"><input type="checkbox" ${r.extras[k].on?'checked':''} onchange="wmpgSet('rooms.${i}.extras.${k}.on',this.checked);wmpgLiveNotes()"> ${lbl}</label>`; }).join('')}
       </div>
-      ${r.chutesOn ? wmpgTa('Chute arrangement','rooms.'+i+'.chuteText',r.chuteText,3,'Dual chutes (general waste & recycling) servicing ground to level 04, terminating into spare 1100L bins.') : ''}
+      ${(()=>{ const c = wmpgChuteNorm(r.chute, wmpgChuteTypes()); const types = wmpgChuteTypes(); const diff = wmpgChuteDiff(r).length > 0;
+        const pill = diff ? `<span class="wmpg-pill warn" style="text-transform:none;">edited in WMP — differs from calculator</span>`
+          : r.chuteDesign !== null && r.chuteDesign !== undefined ? `<span class="wmpg-pill" style="text-transform:none;">from calculator</span>`
+          : `<span class="wmpg-pill warn" style="text-transform:none;" title="No calculator run for this room">not set in calculator</span>`;
+        return `<div style="margin-top:8px;border:1px solid #24403c;border-radius:8px;padding:8px 10px;background:#121919;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <label class="wmpg-chk" style="margin:0;"><input type="checkbox" ${c.on?'checked':''} onchange="wmpgChuteSet(${i},'on',this.checked)"> Chutes</label>
+            ${c.on ? `<select data-path="rooms.${i}.chute.type" style="background:#0D1313;border:1px solid #344444;border-radius:6px;padding:5px 7px;font-size:13px;color:#F2F7F7;font-family:inherit;" onchange="wmpgChuteSet(${i},'type',this.value)">${(types.length?types:Object.keys(WMPG_CHUTE_OPENINGS).map(k=>({key:k,label:k}))).map(t=>`<option value="${t.key}" ${t.key===c.type?'selected':''}>${wmpgEsc(t.label)}</option>`).join('')}</select>` : ''}
+            ${pill}
+            ${diff ? `<button class="wmpg-addrow" style="margin:0;padding:2px 7px;" onclick="wmpgChuteReset(${i})" title="Back to the calculator's configuration">↺ calculator</button><button class="wmpg-addrow" style="margin:0;padding:2px 7px;" onclick="wmpgApplyChuteToDesign(${i})" title="Write this configuration onto the calculator's room">⇉ apply to design</button>` : ''}
+          </div>
+          ${c.on ? `<div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:4px 8px;align-items:center;margin-top:6px;">
+            <span style="font-size:10.5px;color:#B4C6C6;text-transform:uppercase;">Opening</span><span style="font-size:10.5px;color:#B4C6C6;text-transform:uppercase;">Stream</span><span style="font-size:10.5px;color:#B4C6C6;text-transform:uppercase;">Receiver at the base</span>
+            ${c.openings.map((o,k)=>{ const opts = wmpgRecvOpts(o.stream); const known = opts.indexOf(o.recv) >= 0;
+              return `<span style="font-size:12px;color:#A9BDBD;">${k+1}</span>
+                <select data-path="rooms.${i}.chute.openings.${k}.stream" style="background:#0D1313;border:1px solid #344444;border-radius:6px;padding:5px 7px;font-size:13px;color:#F2F7F7;font-family:inherit;" onchange="wmpgChuteSet(${i},'stream',this.value,${k})">${WMPG_CHUTE_STREAMS.map(st=>`<option value="${st}" ${st===o.stream?'selected':''}>${WMPG_STREAMS[st].doc}</option>`).join('')}</select>
+                <select data-path="rooms.${i}.chute.openings.${k}.recv" style="background:#0D1313;border:1px solid #344444;border-radius:6px;padding:5px 7px;font-size:13px;color:#F2F7F7;font-family:inherit;" onchange="wmpgChuteSet(${i},'recv',this.value,${k})">${opts.map(rk=>`<option value="${rk}" ${rk===o.recv?'selected':''}>${wmpgEsc(wmpgRecvLabel(rk))}${wmpgRecvIsCompactor(rk)?' (compaction)':''}</option>`).join('')}${known?'':`<option value="${wmpgEsc(o.recv)}" selected>${wmpgEsc(wmpgRecvLabel(o.recv))} (saved — not in library)</option>`}</select>`; }).join('')}
+          </div>
+          <div class="wmpg-f" style="margin-top:6px;"><label>Chute arrangement <span class="wmpg-pill" style="text-transform:none;">${r.chuteTextEdited ? 'edited' : 'from the configuration'}</span></label>
+            <textarea data-path="rooms.${i}.chuteText" rows="2" oninput="wmpgSet('rooms.${i}.chuteText', this.value); WMPG.data.rooms[${i}].chuteTextEdited = true;">${wmpgEsc(r.chuteText)}</textarea>
+            ${r.chuteTextEdited ? `<button class="wmpg-addrow" style="margin:4px 0 0;padding:2px 7px;" onclick="wmpgChuteTextReset(${i})">↺ from the configuration</button>` : ''}</div>
+          <div class="wmpg-note">The same chute types, openings and receivers the bin calculator offers, from the same definitions. A compactor receiver switches the compaction text on.</div>` : ''}
+        </div>`; })()}
 
       <div class="wmpg-grid2">
-        ${(()=>{ const vs = wmpgVehicleSource(d, r);
+        ${(()=>{ const vs = wmpgVehicleSource(d, r); const rec = wmpgVehRecord(r.collection.vehicleId, d); const list = wmpgVehList();
           const pill = vs==='swept' ? '<span class="wmpg-pill" style="text-transform:none;">from swept path</span>'
-            : vs==='wmp' && d.vehicleSrc==='swept' ? `<span class="wmpg-pill warn" style="text-transform:none;" title="${wmpgEsc('Swept path drawn for: '+(d.vehicleMeta?.name||''))}">edited in WMP — differs from swept path</span>`
-            : vs==='wmp' ? '<span class="wmpg-pill warn" style="text-transform:none;">entered in WMP</span>'
-            : vs==='preset' ? '<span class="wmpg-pill" style="text-transform:none;">your default</span>' : '<span class="wmpg-pill bad" style="text-transform:none;">not selected</span>';
-          const note = vs==='swept' ? `Nominated in the swept path tool${d.vehicleMeta?.minR ? ' · min R ' + d.vehicleMeta.minR + 'm' : ''}. Editing here overrides the WMP only.`
-            : vs==='wmp' && d.vehicleSrc==='swept' ? `The swept path was drawn for “${wmpgEsc(d.vehicleMeta?.name||'')}”. No apply-to-design for a vehicle — the path would need redrawing. <a href="#" onclick="wmpgVehicleReset(${i});return false;" style="color:#4FC3C3;">↺ use the swept path vehicle</a>`
-            : 'No vehicle nominated in the swept path tool yet — the narrative shows a placeholder until one is chosen or typed here.';
+            : vs==='wmp' && d.vehicleMeta ? `<span class="wmpg-pill warn" style="text-transform:none;" title="${wmpgEsc('Swept path drawn for: '+(d.vehicleMeta.name||''))}">edited in WMP — differs from swept path</span>`
+            : vs==='wmp' ? '<span class="wmpg-pill warn" style="text-transform:none;">chosen in WMP — no swept path yet</span>'
+            : '<span class="wmpg-pill bad" style="text-transform:none;">not selected</span>';
+          // vehicle facts come from the record, never carried as text
+          const facts = rec ? [rec.minR ? 'min R ' + rec.minR + ' m' : null, rec.rww ? 'wall-to-wall R ' + rec.rww + ' m' : null, rec.source === 'contractor' ? 'contractor vehicle — not a design standard' : null].filter(Boolean).join(' · ') : '';
+          const note = vs==='swept' ? `Nominated in the swept path tool. ${facts}` : vs==='wmp' && d.vehicleMeta ? `The swept path was drawn for “${wmpgEsc(d.vehicleMeta.name||'')}”. ${facts} <a href="#" onclick="wmpgVehicleReset(${i});return false;" style="color:#4FC3C3;">↺ swept path vehicle</a> · <a href="#" onclick="wmpgApplyVehicleToDesign(${i});return false;" style="color:#4FC3C3;">⇉ nominate on the project</a> (then redraw the path)`
+            : vs==='wmp' ? `${facts} <a href="#" onclick="wmpgApplyVehicleToDesign(${i});return false;" style="color:#4FC3C3;">⇉ nominate on the project</a>` : 'Choose the collection vehicle from the vehicle database — the same list the swept path tool selects from. A vehicle that is not here is added to the database, never typed in.';
+          const groups = [['Council / industry', list.filter(v => v.sourceType && v.sourceType !== 'contractor')], ['Contractor vehicles', list.filter(v => v.sourceType === 'contractor')], ['Built-in presets', list.filter(v => !v.sourceType)]].filter(g => g[1].length);
+          const opt = v => `<option value="${wmpgEsc(v.id)}" ${rec && rec.id === v.id ? 'selected' : ''}>${wmpgEsc(wmpgVehLabel(v))}</option>`;
           return `<div class="wmpg-f"><label>Collection vehicle ${pill}</label>
-            <input type="text" value="${wmpgEsc(r.collection.vehicle)}" placeholder="[collection vehicle not yet selected]" oninput="wmpgSet('rooms.${i}.collection.vehicle', this.value)" onchange="wmpgRenderForm()">
+            <select data-path="rooms.${i}.collection.vehicle" onchange="wmpgVehSelect(${i}, this.value)">
+              <option value="" ${!rec ? 'selected' : ''}>— choose from the vehicle database —</option>
+              ${rec && rec.unlisted ? `<option value="${wmpgEsc(rec.id)}" selected>${wmpgEsc(wmpgVehLabel(rec))} (from swept path)</option>` : ''}
+              ${groups.map(g => `<optgroup label="${wmpgEsc(g[0])}">${g[1].map(opt).join('')}</optgroup>`).join('')}
+            </select>
             <div class="wmpg-note">${note}</div></div>`; })()}
         ${wmpgIn('Street / stop','rooms.'+i+'.collection.street',r.collection.street,{ph:'Hutchinson Place, entering from Fitzroy St'})}
       </div>
@@ -31151,7 +31460,7 @@ function wmpgDocModel() {
     'rooms.*.name', 'rooms.*.location', 'rooms.*.component', 'rooms.*.extras', 'rooms'));
   if (anyChute) {
     M.push({ k:'kv', t:'Chute requirements:', v:'' });
-    M.push(S({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) }, 'rooms.*.chuteText', 'rooms.*.chutesOn'));
+    M.push(S({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) }, 'rooms.*.chuteText', 'rooms.*.chutesOn', 'rooms.*.chute'));
   }
   M.push({ k:'kv', t:'Collection:', v:'' });
   M.push(S({ k:'bullets', items: rooms.map(collectionSentence) }, 'rooms.*.collection'));
@@ -31298,7 +31607,7 @@ function wmpgDocModel() {
     M.push({ k:'h2', t:s4() + ' Residential chute requirements' });
     M.push({ k:'p', t:'The proposed development is to incorporate the following residential chute requirements:' });
     if (tbHas('4.2 Residential chute requirements (if required)')) {
-      M.push(P({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) }, 'rooms.*.chuteText', 'rooms.*.chutesOn'));
+      M.push(P({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) }, 'rooms.*.chuteText', 'rooms.*.chutesOn', 'rooms.*.chute'));
       rooms.filter(r => r.chutesOn).forEach(r =>
         tbNodes('4.2 Residential chute requirements (if required)', tbCtxFor('chute', d, r)).forEach(n => M.push(n)));
     } else
@@ -31308,7 +31617,7 @@ function wmpgDocModel() {
       'General waste chutes to not exceed 45 degrees and commingled recycling to not exceed 22.5 degrees from the vertical plane to minimise chute blockages.',
       'Chute access rooms sized and ventilated in accordance with council requirements and Australian Standards.',
       'Signage and labelling provided at chute openings to guide correct disposal.',
-      'Operational management of chutes, including cleaning and maintenance, remains the responsibility of the building management.'] }, 'rooms.*.chuteText', 'rooms.*.chutesOn'));
+      'Operational management of chutes, including cleaning and maintenance, remains the responsibility of the building management.'] }, 'rooms.*.chuteText', 'rooms.*.chutesOn', 'rooms.*.chute'));
   }
   M.push({ k:'h2', t:s4() + ' Bin storage area design requirements' });
   M.push({ k:'p', t:`The following design requirements should be incorporated into ${multi?'each of the bin storage areas':'the bin storage area'} to ensure compliance, safe operation, and ease of use:` });
@@ -33346,7 +33655,7 @@ const TB_CONDS = [['', '— always —'], ['residential', 'Residential component
   ['mixed', 'Mixed-use'], ['chutes', 'Chutes'], ['!chutes', 'No chutes'], ['multiroom', 'More than one waste room'],
   ['kerbside', 'Kerbside collection'], ['kerbside_individual', 'Kerbside — individual bins'], ['kerbside_shared', 'Kerbside — shared bins'],
   ['bulk', 'On-site bulk / private collection point'], ['private', 'Private contractor'], ['council_collection', 'Council collection'],
-  ['organics', 'Organics / FOGO stream'], ['glass', 'Glass stream'], ['compaction', 'Compaction equipment'],
+  ['organics', 'Organics / FOGO stream'], ['glass', 'Glass stream'], ['compaction', 'Compaction equipment'], ['chute_compactor', 'Compactor beneath a chute'],
   ['tug', 'Bin tug'], ['bulky', 'Hard waste zone'], ['textiles', 'Textiles bin'], ['wash', 'Bin wash'], ['clinical', 'Clinical waste']];
 function tbCondMet(cond, d) {
   if (!cond) return true;
