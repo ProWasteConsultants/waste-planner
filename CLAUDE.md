@@ -447,6 +447,36 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   `chute_compactor` true so the compaction text switches on. Apply-to-design
   writes `summary.bin_rooms[].chute` keeping the calculator's FFH/slab/angle
   fields and re-pushes the summary to the calculator.
+- **The cover is the PWC master, filled — never rebuilt in code.** At export
+  the master's cover keeps its bands, art, colours and fonts; the code only
+  (1) fills or removes the bracketed placeholders (`wmpgTplCoverPlaceholders`,
+  pure — paragraph text is joined first, so a placeholder split across runs
+  is still found; a paragraph left with only separators is emptied, keeping
+  its mark so the band's spacing holds; **no `[…]` survives on the cover**,
+  visible or hidden), (2) rewrites the literal heading with the editable
+  title when the master has no `BM_DocTitle` bookmark, and (3) optionally
+  drops a project image into the lower band. Page 2 is untouched. The date
+  is DD/MM/YYYY throughout, matching the revision table.
+- **Cover image + credit are WMP-local presentation** (`d.cover`: metadata,
+  credit, scrim) — no Design-tab source, no override convention. Bytes live
+  in IndexedDB (`wmp:cover:<projectId>`), never in the project record.
+  JPEG/PNG, 4 MB cap. The embedded picture is rendered band-shaped and
+  cover-fit (`wmpgCoverFit`, pure — cropped and centred, never stretched)
+  with a light bottom-weighted scrim baked in, on by default, so the white
+  logo stays crisp. No image → the template is untouched: no frame, no
+  placeholder picture.
+- **Band geometry is read from the template at export**, not hard-coded:
+  page size from `sectPr`; where the master anchors the logo page-relative
+  (`wmpgTplLogoAnchor`), the box is centred on it and marked confirmed, and
+  the photo sits just beneath a floating logo's z-order; an inline logo gets
+  a behind-text picture at the `WMPG_COVER_BOX` fractions and the **export
+  note says the geometry was not confirmed** — a blind placement is never
+  silent. The credit is a rotated (`rot="16200000"`, reads bottom-to-top)
+  white 7pt text box up the image's right edge; blank → no box at all.
+  Calibrated against the brief's description of `xxxPW_Address_WMP_Master`;
+  the master and the Flinders St example were not reachable from this
+  environment, so `WMPG_COVER_BOX` and the z-order rule are the two
+  parameters to re-check against the real files.
 
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
