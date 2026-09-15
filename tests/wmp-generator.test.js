@@ -248,3 +248,70 @@ test('layout: the generator opens full-screen with larger, higher-contrast contr
 test('the presentation block is kept on the project, so apply-to-design can re-feed the layout with its cadence source', () => {
   assert.ok(/if \(e\.data\.presentation\) p\.presentation = e\.data\.presentation;/.test(SOURCE));
 });
+
+// ── §7 presets live on the server, scoped to the organisation ──
+function loadPresets() {
+  const code = [/^const WMPG_TEXT_PRESETS_LEGACY_KEY = /, /^const WMPG_TEXT_PRESETS_BUILTIN = /, /^function tbPresetCanEdit\(/,
+    /^function tbPresetApply\(/, /^function tbPresetImportPlan\(/, /^function tbPresetRow\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function(code + ';return { tbPresetCanEdit, tbPresetImportPlan, tbPresetRow, WMPG_TEXT_PRESETS_LEGACY_KEY };')();
+}
+
+test('a preset is changed by its creator or an org admin — never by a plain member on a colleague’s', () => {
+  const P = loadPresets();
+  const org = { id: 'p1', name: 'House', org_id: 'org1', created_by: 'alice' };
+  assert.equal(P.tbPresetCanEdit(org, { userId: 'alice', orgId: 'org1', role: 'member' }), true, 'the creator always may');
+  assert.equal(P.tbPresetCanEdit(org, { userId: 'bob', orgId: 'org1', role: 'admin' }), true, 'an org admin may');
+  assert.equal(P.tbPresetCanEdit(org, { userId: 'bob', orgId: 'org1', role: 'member' }), false, 'a colleague may not silently rewrite the team standard');
+  const personal = { id: 'p2', name: 'Mine', org_id: null, created_by: 'alice' };
+  assert.equal(P.tbPresetCanEdit(personal, { userId: 'bob', orgId: null, role: 'admin' }), false, 'admin means nothing on a personal preset');
+  assert.equal(P.tbPresetCanEdit({ name: 'Built', builtin: true }, { userId: 'alice', role: 'admin' }), false, 'built-ins are code, not rows');
+  assert.equal(P.tbPresetCanEdit(org, { userId: null }), false, 'signed out');
+});
+
+test('importing per-device presets renames a clash, never merges over it and never drops one', () => {
+  const P = loadPresets();
+  const plan = P.tbPresetImportPlan(
+    [{ name: 'House', off: { A: true } }, { name: 'house', off: { B: true } }, { name: 'Other', edit: { C: 'x' } }, { name: '  ' }, null],
+    [{ name: 'House' }]);
+  assert.deepStrictEqual(plan.map(p => p.name), ['House (imported)', 'house (imported 2)', 'Other'], 'case-insensitive clashes get numbered names, the author’s casing kept; junk is dropped');
+  assert.deepStrictEqual(plan[0].off, { A: true });
+  assert.deepStrictEqual(plan[2].edit, { C: 'x' });
+  assert.deepStrictEqual(plan[2].off, {}, 'missing maps become empty, not undefined — the column is not null');
+});
+
+test('the client never reads or writes preset localStorage except the one-time import', () => {
+  // The legacy key appears only in the import offer; nothing else touches it,
+  // and no other localStorage key holds presets.
+  const uses = SOURCE.split('\n').filter(l => l.includes('WMPG_TEXT_PRESETS_LEGACY_KEY') || l.includes("'pw_wmp_text_presets"));
+  const offer = extractBlock(/^async function tbOfferLocalImport\(/).text;
+  uses.forEach(l => assert.ok(offer.includes(l.trim()) || /^const WMPG_TEXT_PRESETS_LEGACY_KEY = /.test(l.trim()) || /WMPG_TEXT_PRESETS_LEGACY_KEY;/.test(l.trim()), 'stray preset localStorage use: ' + l.trim()));
+  assert.ok(!/WMPG_TEXT_PRESETS_KEY\b/.test(SOURCE), 'the old per-device store is gone');
+  assert.ok(/localStorage\.removeItem\(WMPG_TEXT_PRESETS_LEGACY_KEY\)/.test(offer), 'after the offer the key is cleared');
+  assert.ok(/_archived/.test(offer), 'a declined import is parked, not destroyed');
+  ['tbSavePreset', 'tbDeletePreset', 'tbFetchPresets'].forEach(fn => {
+    const t = extractBlock(new RegExp('^async function ' + fn + '\\(')).text;
+    assert.ok(/from\('wmp_text_presets'\)/.test(t), fn + ' goes to the server');
+    assert.ok(!/localStorage/.test(t), fn + ' never touches localStorage');
+  });
+  assert.ok(/tbPresetCanEdit\(existing, sc\)/.test(extractBlock(/^async function tbSavePreset\(/).text), 'saving over someone else’s preset is refused client-side too');
+  assert.ok(/await tbLoadPresets\(\)/.test(extractBlock(/^async function openWmpGenerator\(/).text), 'presets load per open, for the current org context');
+});
+
+test('the migration scopes and gates presets the way the client assumes', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-09-16-wmp-text-presets.sql'), 'utf8');
+  assert.ok(/create table if not exists public\.wmp_text_presets/.test(sql));
+  assert.ok(/grant select, insert, update, delete on public\.wmp_text_presets to authenticated/.test(sql), 'RLS filters rows; the GRANT confers the privilege — both ship');
+  assert.ok(/enable row level security/.test(sql));
+  ['wmp_text_presets_read', 'wmp_text_presets_insert', 'wmp_text_presets_update', 'wmp_text_presets_delete'].forEach(p => assert.ok(sql.includes(p), p));
+  assert.ok(/wp_is_org_admin\(org_id\)/.test(sql) && /created_by = auth\.uid\(\)/.test(sql), 'update/delete: creator or org admin, the same rule tbPresetCanEdit mirrors');
+  assert.ok(/org_id is null and user_id = auth\.uid\(\)/.test(sql), 'personal presets are the owner’s only');
+  assert.ok(/where org_id is not null/.test(sql) && /where org_id is null/.test(sql), 'one name per org, one per personal owner');
+});
+
+test('projects are server-authoritative — the free-project cap cannot be reset by clearing the browser', () => {
+  const load = extractBlock(/^async function loadProjectsFromDB\(/).text;
+  assert.ok(/from\('projects'\)/.test(load) && /byId\[p\.id\] = \{ \.\.\.prev,/.test(load), 'cloud rows are merged OVER the local cache');
+  assert.ok(/profiles\.projects_created, kept by trigger\) is authoritative/.test(SOURCE), 'the cap reads the trigger-kept counter, not a local count');
+  const ft = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-09-07-free-tier-enforcement.sql'), 'utf8');
+  assert.ok(/projects_created/.test(ft) && /trigger/i.test(ft));
+});
