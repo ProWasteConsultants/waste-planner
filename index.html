@@ -17456,6 +17456,7 @@ window.addEventListener('message', (e) => {
         // the WMP generator reads these later, without the calculator open
         if (e.data.schedule) { p.schedule = e.data.schedule; p.scheduleTs = Date.now(); }
         if (e.data.rooms) p.calc_rooms = e.data.rooms;
+        if (e.data.presentation) p.presentation = e.data.presentation;
         // Which residential method produced those numbers, stored WITH them:
         // the WMP is written later, with the calculator closed, and a state
         // fallback that is not carried here is a fallback nobody is told about.
@@ -29843,6 +29844,7 @@ function wmpgAutoBins(d, room) {
   const size = { GW:1100, REC:1100, ORG:240, GLS:360 };
   return WMPG_ORDER.filter(s => v[s] > 0).map(s => ({
     stream:s, sizeL:size[s], qty: Math.max(1, Math.ceil(v[s] / size[s])), colWk:1, provider:'council',
+    method:null, cycle:null, src:'auto', design:null,
   }));
 }
 function wmpgRoomFootprint(d, room) {
@@ -29850,6 +29852,399 @@ function wmpgRoomFootprint(d, room) {
   room.bins.forEach(b => { const dim = WMPG_BIN_DIMS[b.sizeL] || [0,0,0]; fp += dim[1]*dim[2]/1e6 * (+b.qty||0); });
   Object.values(room.extras).forEach(x => { if (x.on) fp += (x.areaM2 != null ? x.areaM2 : x.w*x.d/1e6); });
   return fp;
+}
+
+// ── DOCUMENT TITLE ─────────────────────────────────────────────────────────
+// Editable, defaulting to the project name (or the address when the project
+// has no name yet) — never a fixed string on the cover of an issued document.
+function wmpgTitleDefault(p, d) {
+  const name = String((p && p.name) || (d && d.projectName) || (d && d.address) || (p && p.address) || '').trim();
+  return name ? name + ' — Waste Management Plan' : 'Waste Management Plan';
+}
+
+// ── COMPLIANCE DOCUMENT FROM THE GUIDELINES LIBRARY ────────────────────────
+// The "compliance document" is the council's CURRENT guideline in the shared
+// library — the same versioned document the compliance checker runs against —
+// so it fills itself when the council is known. A manual entry replaces it
+// (complianceSrc.kind = 'manual') and is never overwritten; no document on
+// file is an explicit state the field shows, not an empty box.
+// wmpgPickGuideline is pure: the newest non-superseded version for the
+// council, matched by registry key then normalised name (glBridgeNorm — the
+// one normaliser every council match in the app shares).
+function wmpgPickGuideline(rows, council) {
+  const norm = typeof glBridgeNorm === 'function' ? glBridgeNorm : (s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''));
+  const want = norm(council);
+  if (!want) return null;
+  const mine = (rows || []).filter(r => {
+    const k = norm(r.council_key || ''), n = norm(r.council_name || '');
+    return k === want || n === want || (n && (n.includes(want) || want.includes(n)));
+  });
+  if (!mine.length) return null;
+  const live = mine.filter(r => !r.superseded_at);
+  const pool = live.length ? live : mine;
+  return pool.slice().sort((a, b) => (+b.version || 0) - (+a.version || 0))[0] || null;
+}
+function wmpgGuidelineLabel(row) {
+  if (!row) return '';
+  const ver = row.version != null ? 'v' + row.version + (row.version_label ? ' ' + row.version_label : '') : (row.version_label || '');
+  const when = row.effective_date ? 'effective ' + row.effective_date : (row.uploaded_at ? 'uploaded ' + String(row.uploaded_at).slice(0, 10) : '');
+  return [(row.council_name || 'Council') + ' — waste management guidelines', ver, when].filter(Boolean).join(', ');
+}
+async function wmpgLoadGuideline(d) {
+  if (!d || !d.council) { d.complianceSrc = { kind: 'none', council: '' }; return null; }
+  if (d.complianceSrc && d.complianceSrc.kind === 'manual') return null;   // the author's entry stands
+  let rows = WMPG.guidelineRows || null;
+  if (!rows) {
+    try {
+      if (typeof sb === 'undefined' || !sb) throw new Error('offline');
+      const { data, error } = await sb.from('council_guidelines')
+        .select('id,council_key,council_name,state,version,version_label,effective_date,uploaded_at,superseded_at');
+      if (error) throw error;
+      rows = WMPG.guidelineRows = data || [];
+    } catch (e) { rows = []; }
+  }
+  const hit = wmpgPickGuideline(rows, d.council);
+  if (hit) {
+    d.compliance = wmpgGuidelineLabel(hit);
+    d.complianceSrc = { kind: 'library', guidelineId: hit.id || null, councilName: hit.council_name,
+                        version: hit.version ?? null, versionLabel: hit.version_label || null, council: d.council };
+  } else {
+    // Council database free text is the second source — typed by someone who
+    // knows it. Nothing at all is an explicit state, not a blank.
+    const metaTxt = WMPG.meta && WMPG.meta.guidelines;
+    if (metaTxt) { d.compliance = metaTxt; d.complianceSrc = { kind: 'council_db', council: d.council }; }
+    else { if (!d.compliance || (d.complianceSrc && d.complianceSrc.kind !== 'manual')) d.compliance = ''; d.complianceSrc = { kind: 'none', council: d.council }; }
+  }
+  return hit;
+}
+// The council changed in the generator: the guideline, the council
+// requirements pack, the text-library council defaults all key off it.
+async function wmpgCouncilChanged() {
+  const d = WMPG.data; if (!d) return;
+  if (d.complianceSrc && d.complianceSrc.kind !== 'manual' && d.complianceSrc.council !== d.council) d.complianceSrc = null;
+  await wmpgLoadGuideline(d);
+  try { CREQ.loadedFor = null; await creqLoad(d); creqRun(); } catch (e) {}
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+function wmpgComplianceNote(d) {
+  const s = d.complianceSrc || {};
+  if (s.kind === 'library') return `<span class="wmpg-pill">from guidelines library</span> ${s.versionLabel || s.version != null ? 'v' + (s.version ?? '') + (s.versionLabel ? ' ' + wmpgEsc(s.versionLabel) : '') + ' — ' : ''}the version the compliance checker uses. Type over it to cite something else.`;
+  if (s.kind === 'council_db') return `<span class="wmpg-pill warn">council database text</span> no document in the guidelines library for ${wmpgEsc(d.council)} — this wording comes from the council card.`;
+  if (s.kind === 'manual') return `<span class="wmpg-pill warn">entered by hand</span> replaces the library document. <a href="#" onclick="WMPG.data.complianceSrc=null;wmpgCouncilChanged();return false;" style="color:#4FC3C3;">↺ use the library document</a>`;
+  if (d.council) return `<span class="wmpg-pill bad">no guideline on file for ${wmpgEsc(d.council)}</span> upload it in the Guidelines library, or name the document here.`;
+  return 'Set the council to load its guideline automatically.';
+}
+
+// ── PROJECT SHAPE (drives text-library auto-selection) ─────────────────────
+// One pure reading of the project — development type, collection methods,
+// provider, streams, equipment — that the text library's conditions and the
+// presets both key off. Project data wins; a preset's shape hint fills only
+// what the project has not said.
+function wmpgShape(d) {
+  d = d || {};
+  const rooms = d.rooms || [];
+  const bins = rooms.flatMap(r => r.bins || []);
+  const hint = d.shapeHint || {};
+  const methods = new Set(bins.map(b => b.method).filter(Boolean));
+  if (!methods.size && hint.method) methods.add(hint.method);
+  const providers = new Set(bins.map(b => b.provider).concat(rooms.map(r => r.collection && r.collection.provider)).filter(Boolean));
+  if (!providers.size && hint.provider) providers.add(hint.provider);
+  const streams = new Set(bins.filter(b => (+b.qty || 0) > 0).map(b => b.stream));
+  const commercial = rooms.some(r => (r.component || '').toLowerCase().includes('commercial')) || !!d.hasCommercial || !!hint.commercial;
+  const residential = rooms.some(r => (r.component || 'Residential').toLowerCase().includes('resid')) || rooms.some(r => Object.values(r.alloc || {}).some(v => +v > 0)) || (!commercial);
+  const kerbside = [...methods].some(m => /^kerbside/.test(m));
+  const bulk = methods.has('bulk') || methods.has('self_haul');
+  return {
+    residential, commercial, mixed: residential && commercial,
+    chutes: rooms.some(r => r.chutesOn) || !!hint.chutes,
+    multiroom: rooms.length > 1,
+    kerbside, kerbside_individual: methods.has('kerbside_individual'), kerbside_shared: methods.has('kerbside_shared'),
+    bulk, private: [...providers].some(p => p && p !== 'council') || methods.has('self_haul'),
+    council_collection: providers.has('council') || (!providers.size && !hint.provider),
+    organics: streams.has('ORG'), glass: streams.has('GLS'), recycling: streams.has('REC'),
+    tug: rooms.some(r => r.extras?.tug?.on), textiles: rooms.some(r => r.extras?.textiles?.on),
+    bulky: rooms.some(r => r.extras?.bulky?.on), wash: rooms.some(r => r.extras?.wash?.on),
+    clinical: !!d.hasClinical,
+    compaction: (d.reconciliation || []).some(x => (x.streams || []).some(s => s.compacted)),
+  };
+}
+function wmpgShapeWords(sh) {
+  const w = [];
+  w.push(sh.mixed ? 'mixed-use' : sh.commercial ? 'commercial' : 'residential');
+  if (sh.kerbside_individual) w.push('kerbside individual');
+  if (sh.kerbside_shared) w.push('kerbside shared');
+  if (sh.bulk) w.push('on-site bulk collection');
+  w.push(sh.private && !sh.council_collection ? 'private contractor' : sh.private ? 'council + private' : 'council collection');
+  if (sh.chutes) w.push('chutes'); if (sh.compaction) w.push('compaction'); if (sh.tug) w.push('bin tug');
+  if (sh.bulky) w.push('hard waste'); if (sh.textiles) w.push('textiles');
+  return w;
+}
+
+// ── COLLECTION NARRATIVE (template-assembled, deterministic) ───────────────
+// Every fact the narrative states is already in the project — method,
+// provider, cycles, bins, vehicle, collection point, street — so it is
+// ASSEMBLED from templates, never written from scratch and never generated.
+// A missing fact prints as a visible [placeholder], never a guess and never
+// a dropped sentence. The output is a draft: the author edits it freely in
+// the narrative field, and wmpgNarrativeText prefers that edit.
+const WMPG_METHOD_LABEL = { kerbside_individual: 'kerbside (individual bins)', kerbside_shared: 'kerbside (shared bins)',
+                            bulk: 'on-site bulk bin collection point', self_haul: 'private shared bin collection' };
+function wmpgStreamWord(s) { return ((WMPG_STREAMS[s] && WMPG_STREAMS[s].doc) || s).toLowerCase(); }
+function wmpgList(items) {
+  const a = items.filter(Boolean);
+  return a.length <= 1 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+}
+// The cadence sentence, from the same cycle letters the Collection Point
+// tab reads: W weekly · A/B fortnightly on alternating weeks · F fortnightly
+// · M monthly. Streams that share a letter are grouped; A against B is
+// stated as alternating, because that is the fact the busiest-week check
+// depends on.
+function wmpgCycleWords(bins) {
+  const by = { W: [], A: [], B: [], F: [], M: [], OFF: [], other: [] };
+  const seen = new Set();
+  (bins || []).forEach(b => {
+    if (!b || !b.stream || seen.has(b.stream) || !(+b.qty > 0)) return;
+    seen.add(b.stream);
+    const cw = +b.colWk;
+    const c = b.cycle && by[b.cycle] ? b.cycle : cw >= 2 ? 'other' : cw === 1 ? 'W' : cw === 0.5 ? 'F' : cw === 0.25 ? 'M' : cw === 0 ? 'OFF' : 'other';
+    by[c].push(c === 'other' ? { s: b.stream, cw } : b.stream);
+  });
+  const parts = [];
+  const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+  if (by.W.length) parts.push(`${wmpgList(by.W.map(wmpgStreamWord))} ${by.W.length > 1 ? 'are' : 'is'} collected weekly`);
+  by.other.forEach(x => parts.push(`${wmpgStreamWord(x.s)} is collected ${wmpgFreqLabel(x.cw)}`));
+  if (by.A.length && by.B.length) parts.push(`${wmpgList(by.A.map(wmpgStreamWord))} and ${wmpgList(by.B.map(wmpgStreamWord))} are collected fortnightly on alternating weeks`);
+  else if (by.A.length || by.B.length) parts.push(`${wmpgList(by.A.concat(by.B).map(wmpgStreamWord))} ${by.A.length + by.B.length > 1 ? 'are' : 'is'} collected fortnightly`);
+  if (by.F.length) parts.push(`${wmpgList(by.F.map(wmpgStreamWord))} ${by.F.length > 1 ? 'are' : 'is'} collected fortnightly`);
+  if (by.M.length) parts.push(`${wmpgList(by.M.map(wmpgStreamWord))} ${by.M.length > 1 ? 'are' : 'is'} collected monthly`);
+  if (by.OFF.length) parts.push(`${wmpgList(by.OFF.map(wmpgStreamWord))} ${by.OFF.length > 1 ? 'are' : 'is'} not collected at the kerb`);
+  return parts.length ? cap(parts.join('; ')) + '.' : '';
+}
+function wmpgBinWords(bins) {
+  const rows = (bins || []).filter(b => b && (+b.qty || 0) > 0);
+  if (!rows.length) return '';
+  return 'The following bins are provided: ' + wmpgList(rows.map(b => `${b.qty} × ${b.sizeL}L ${wmpgStreamWord(b.stream)}`)) + '.';
+}
+// Which collection method the room runs on: the bins' own method (from the
+// calculator) by majority, else read from the provider — council collects at
+// the kerb, a contractor collects on site.
+function wmpgRoomMethod(room) {
+  const c = {};
+  (room.bins || []).forEach(b => { if (b.method) c[b.method] = (c[b.method] || 0) + 1; });
+  const top = Object.keys(c).sort((a, b) => c[b] - c[a])[0];
+  if (top) return top;
+  const prov = (room.collection && room.collection.provider) || 'council';
+  return prov === 'council' ? 'kerbside_shared' : 'bulk';
+}
+function wmpgNarrative(d, room) {
+  const rooms = (d && d.rooms) || [];
+  const multi = rooms.length > 1;
+  const col = (room && room.collection) || {};
+  const method = wmpgRoomMethod(room);
+  const provider = col.provider || 'council';
+  const roomName = multi ? room.name : 'the waste room';
+  const vehicle = col.vehicle || '[collection vehicle not yet selected]';
+  const point = col.point || '[collection point not yet set]';
+  const street = col.street || '[street not yet set]';
+  const tug = room.extras && room.extras.tug && room.extras.tug.on ? ', using the bin tug provided within the bin room' : '';
+  const path = d.tokens && d.tokens.travel_path ? ` A clear travel path of ${d.tokens.travel_path} is provided between ${roomName} and the collection point.` : '';
+  const ramp = col.rampGrade ? ` The transfer route includes a ramp at a gradient of ${col.rampGrade}.` : '';
+  const cycles = wmpgCycleWords(room.bins);
+  const binsTxt = wmpgBinWords(room.bins);
+  const P = [];
+  if (method === 'kerbside_individual') {
+    P.push(`Each dwelling is provided with its own bins. Residents will present their bins at the kerb on ${street} for ${provider} collection on the scheduled collection day and return them to their property once serviced. Bins are not to be left on the street at any other time.`);
+    if (cycles) P.push(cycles);
+    if (binsTxt) P.push(binsTxt);
+    P.push(`Waste will be collected by ${provider} using a ${vehicle}.`);
+  } else if (method === 'kerbside_shared') {
+    P.push(`Bins will be transferred by the building manager from ${roomName} to ${point}${tug} and presented at the kerb on ${street} for ${provider} collection.${path}${ramp}`);
+    P.push('Bins will be presented the evening prior to each scheduled collection day and returned to the bin room by the building manager once servicing is complete. Bins are not to be left outside the property at any other time.');
+    if (cycles) P.push(cycles);
+    if (binsTxt) P.push(binsTxt);
+    P.push(`Waste will be collected by ${provider} using a ${vehicle}.`);
+    P.push('Transfer will be undertaken outside peak hours to minimise disruption, and is estimated to take 10 to 15 minutes per collection. Minimal disruption is therefore expected.');
+  } else {
+    const who = provider === 'council' ? 'council' : (provider === 'private contractor' ? 'a private waste contractor' : provider);
+    P.push(`Waste will be collected on site by ${who} from ${point}${multi ? ' serving ' + room.name : ''}. The ${vehicle} will enter the site via ${street}, service the bins at the collection point and exit the site in a forward direction, as demonstrated by the swept path assessment in the appendices.${path}${ramp}`);
+    if (method === 'self_haul') P.push('Bins are serviced in situ under a private collection contract; no bins are presented at the kerb.');
+    else P.push(`Bins will be transferred by the building manager from ${roomName} to the collection point${tug} ahead of each scheduled service and returned once servicing is complete.`);
+    if (cycles) P.push(cycles);
+    if (binsTxt) P.push(binsTxt);
+    P.push('Servicing will be undertaken outside peak hours to minimise disruption to residents and neighbouring properties.');
+  }
+  return P.join('\n\n');
+}
+// What the document prints: the author's own text if they have edited it,
+// else the assembled draft.
+function wmpgNarrativeText(d, room) {
+  return (room.collection && room.collection.narrative) || wmpgNarrative(d, room);
+}
+function wmpgNarrativeReset(i) {
+  const room = WMPG.data.rooms[i]; if (!room) return;
+  room.collection.narrative = '';
+  wmpgRenderForm(); wmpgQueuePreview();
+  wmpgFlash('Collection narrative rebuilt from the project data.');
+}
+// AI polish: wording only. The draft's facts — every number, every stream,
+// the vehicle, every [placeholder] — must survive verbatim, and the guard
+// checks that BEFORE the polished text replaces anything. A polish that
+// changed a figure is refused with the figure named; nothing else in this
+// app lets a model near a number a council will check, and this does not
+// either.
+function wmpgPolishGuard(draft, polished) {
+  const nums = s => (String(s || '').match(/\d+(?:[.,]\d+)?/g) || []).map(x => x.replace(/,/g, ''));
+  const count = a => a.reduce((m, x) => { m[x] = (m[x] || 0) + 1; return m; }, {});
+  const want = count(nums(draft)), got = count(nums(polished));
+  const missing = Object.keys(want).filter(k => (got[k] || 0) < want[k]);
+  const invented = Object.keys(got).filter(k => (want[k] || 0) < got[k]);
+  const ph = String(draft || '').match(/\[[^\]]+\]/g) || [];
+  const lostPh = ph.filter(p => !String(polished || '').includes(p));
+  const shortened = String(polished || '').trim().length < String(draft || '').trim().length * 0.5;
+  const ok = !missing.length && !invented.length && !lostPh.length && !shortened && String(polished || '').trim().length > 0;
+  return { ok, missing, invented, lostPlaceholders: lostPh, shortened };
+}
+const WMPG_POLISH_SYSTEM = `You are a technical editor polishing one section of an Australian waste management plan. Improve tone and flow ONLY.
+Rules you must not break:
+- Keep every number, unit, quantity, bin size, frequency, stream name, vehicle name, street name and place name exactly as written.
+- Keep every [bracketed placeholder] exactly as written — they mark facts not yet known.
+- Do not add facts, examples, assumptions or recommendations. Do not remove a sentence's fact.
+- Keep the same paragraphs, in the same order. Australian English.
+Reply with the polished text only.`;
+async function wmpgPolishNarrative(i) {
+  const d = WMPG.data, room = d.rooms[i]; if (!room) return;
+  const draft = wmpgNarrativeText(d, room);
+  wmpgFlash('Polishing the wording — the facts are checked before anything changes…');
+  try {
+    const resp = await aiProxy({ max_tokens: 2000, system: WMPG_POLISH_SYSTEM, messages: [{ role: 'user', content: [{ type: 'text', text: draft }] }] });
+    const polished = (resp.content?.[0]?.text || '').trim();
+    const g = wmpgPolishGuard(draft, polished);
+    if (!g.ok) {
+      const why = g.missing.length ? 'it dropped ' + g.missing.join(', ') : g.invented.length ? 'it introduced ' + g.invented.join(', ')
+        : g.lostPlaceholders.length ? 'it removed ' + g.lostPlaceholders.join(', ') : g.shortened ? 'it cut the text in half' : 'it returned nothing';
+      wmpgFlash('Polish refused — ' + why + '. The draft is unchanged.', true); return;
+    }
+    room.collection.narrative = polished;
+    room.collection.polished = true;
+    wmpgRenderForm(); wmpgQueuePreview();
+    wmpgFlash('Wording polished. Every figure, stream, vehicle and placeholder from the draft is still present.');
+  } catch (e) { wmpgFlash('Polish failed: ' + (e.message || e) + ' — the draft is unchanged.', true); }
+}
+
+// ── BIN / COLLECTION / VEHICLE OVERRIDES (provenance-with-the-numbers) ─────
+// The Design tab (the calculator's schedule) is the default source and every
+// bin row keeps that value as `design`. An edit in the generator is an
+// OVERRIDE: it stays local to the WMP, is marked wherever the figure shows
+// ("edited in WMP — differs from Design tab"), and never writes back on its
+// own. "Apply to design" is the one explicit way across. Same shape as the
+// residential-method provenance: a figure is always traceable to where it
+// came from — calculator, calculator manual override, WMP edit, or a bin the
+// generator invented because no schedule existed.
+const WMPG_BIN_FIELDS = ['sizeL', 'qty', 'colWk', 'provider', 'method'];
+function wmpgBinDiff(b) {
+  if (!b || !b.design) return [];
+  return WMPG_BIN_FIELDS.filter(k => b.design[k] != null && String(b[k]) !== String(b.design[k]))
+    .map(k => ({ field: k, from: b.design[k], to: b[k] }));
+}
+function wmpgBinEdited(b) { return wmpgBinDiff(b).length > 0; }
+function wmpgBinDiffWords(b) {
+  const lbl = { sizeL: 'size', qty: 'qty', colWk: 'frequency', provider: 'provider', method: 'method' };
+  return wmpgBinDiff(b).map(x => `${lbl[x.field]} ${x.field === 'colWk' ? wmpgFreqLabel(x.from) : x.from}→${x.field === 'colWk' ? wmpgFreqLabel(x.to) : x.to}`).join(', ');
+}
+function wmpgBinSource(b) {
+  if (wmpgBinEdited(b)) return 'wmp';
+  if (b.src === 'auto') return 'auto';
+  return b.manual ? 'manual' : 'calc';
+}
+function wmpgBinSet(i, j, field, val) {
+  const b = WMPG.data.rooms[i].bins[j]; if (!b) return;
+  b[field] = field === 'sizeL' || field === 'qty' || field === 'colWk' ? (+val || 0) : val;
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+function wmpgBinReset(i, j) {
+  const b = WMPG.data.rooms[i].bins[j]; if (!b || !b.design) return;
+  WMPG_BIN_FIELDS.forEach(k => { if (b.design[k] != null) b[k] = b.design[k]; });
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+function wmpgBinAdd(i) {
+  const room = WMPG.data.rooms[i]; if (!room) return;
+  const used = new Set(room.bins.map(b => b.stream));
+  const stream = WMPG_ORDER.find(s => !used.has(s)) || 'GW';
+  room.bins.push({ stream, sizeL: 240, qty: 1, colWk: 1, provider: room.collection.provider || 'council', method: null, cycle: null, src: 'auto', design: null });
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+function wmpgBinRemove(i, j) {
+  const room = WMPG.data.rooms[i]; if (!room) return;
+  const b = room.bins[j];
+  if (b && b.design && !confirm('Remove this bin row from the WMP?\n\nThe Design tab keeps its row; only this document changes.')) return;
+  room.bins.splice(j, 1);
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+// Write one WMP edit back onto the Design tab's schedule — the project's
+// stored calculator schedule, which the layout, the Collection Point and the
+// packager all read. Marked as a manual override with its origin named, the
+// same way a calculator override carries its reason. Explicit, per row,
+// never automatic.
+function wmpgApplyToDesign(i, j) {
+  const room = WMPG.data.rooms[i], b = room && room.bins[j];
+  if (!b) return;
+  const diff = wmpgBinDiff(b);
+  if (!diff.length) { wmpgFlash('Nothing to apply — this row matches the Design tab.'); return; }
+  const projects = getProjects();
+  const p = projects.find(x => x.id === WMPG.projectId);
+  if (!p || !Array.isArray(p.schedule)) { wmpgFlash('No calculator schedule on this project to apply to.', true); return; }
+  const rows = p.schedule.filter(x => x.sec === 'r' && x.stream === b.stream &&
+    ((room.srcId && x.room === room.srcId) || (!room.srcId && (x.roomName || '') === room.name)));
+  if (!rows.length) { wmpgFlash('The Design tab has no matching row for ' + WMPG_STREAMS[b.stream].doc + ' in ' + room.name + '.', true); return; }
+  if (!confirm(`Apply to the Design tab?\n\n${room.name} — ${WMPG_STREAMS[b.stream].doc}: ${wmpgBinDiffWords(b)}.\n\nThe layout and Collection Point will use these figures. The bin calculator does not keep this override — re-running it will recalculate.`)) return;
+  rows.forEach(x => {
+    x.sizeL = b.sizeL; x.qty = b.qty; x.colWk = b.colWk;
+    if (b.method) x.method = b.method;
+    x.manual = true; x.manualWhy = 'Set in the WMP generator' + (b.manualWhy ? ' — ' + b.manualWhy : '');
+    if (x.calcQty == null && b.design && b.design.qty != null) x.calcQty = b.design.qty;
+  });
+  (p.calc_rooms || []).forEach(cr => {
+    if (!((room.srcId && cr.id === room.srcId) || cr.name === room.name)) return;
+    (cr.bins || []).forEach(x => { if (x.stream === b.stream) { x.sizeL = b.sizeL; x.qty = b.qty; x.perWeek = b.colWk; } });
+  });
+  p.scheduleTs = Date.now();
+  saveProjects(projects);
+  if (typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(p);
+  if (typeof wsLayoutSetTargets === 'function' && typeof WS !== 'undefined' && WS && WS.projectId === p.id) {
+    try { wsLayoutSetTargets(p.schedule, p.calc_rooms || [], p.presentation || null); } catch (e) {}
+  }
+  b.design = { sizeL: b.sizeL, qty: b.qty, colWk: b.colWk, provider: b.provider, method: b.method };
+  b.manual = true; b.manualWhy = b.manualWhy || 'Set in the WMP generator'; b.calcQty = rows[0].calcQty ?? b.calcQty;
+  WMPG.data.capturedAt = p.scheduleTs;
+  wmpgRenderForm(); wmpgQueuePreview(); wmpgPersist();
+  wmpgFlash('Applied to the Design tab — ' + room.name + ' ' + WMPG_STREAMS[b.stream].doc + ' now matches this WMP.');
+}
+// The vehicle: from the swept path tool by default; an edit here is a local
+// override, flagged against the drawing. There is no apply-to-design for it
+// — the swept path was DRAWN for a vehicle, and renaming it on the project
+// would not redraw the path.
+function wmpgVehicleSource(d, room) {
+  const v = (room.collection && room.collection.vehicle) || '';
+  if (!v) return 'none';
+  if (d.vehicleSrc === 'swept' && d.vehicleMeta && d.vehicleMeta.name) return v === d.vehicleMeta.name ? 'swept' : 'wmp';
+  return d.vehicleSrc === 'preset' ? 'preset' : 'wmp';
+}
+function wmpgVehicleReset(i) {
+  const d = WMPG.data, room = d.rooms[i]; if (!room) return;
+  room.collection.vehicle = (d.vehicleMeta && d.vehicleMeta.name) || d.defaults.vehicle || '';
+  wmpgRenderForm(); wmpgQueuePreview();
+}
+// Older saved drafts predate title, provenance and complianceSrc.
+function wmpgUpgradeDraft(d, p) {
+  if (!d.title) d.title = wmpgTitleDefault(p, d);
+  if (d.complianceSrc === undefined) d.complianceSrc = d.compliance ? { kind: 'manual', council: d.council } : null;
+  (d.rooms || []).forEach(r => (r.bins || []).forEach(b => {
+    if (b.design === undefined) b.design = b.src === 'auto' ? null : { sizeL: b.sizeL, qty: b.qty, colWk: b.colWk, provider: b.provider, method: b.method || null };
+    if (b.src === undefined) b.src = 'calc';
+  }));
+  d.tokens = d.tokens || {};
+  d.text = d.text || { off: {}, edit: {} };
+  return d;
 }
 
 // ── DATA ASSEMBLY ──────────────────────────────────────────────────────────
@@ -29869,7 +30264,8 @@ function wmpgDefaultData(p) {
     council: s.council || p.council || '',
     state: s.state || p.state || 'NSW',
     devTypeText: [p.levels ? p.levels + '-level' : '', (p.devType || 'multi-unit residential development')].filter(Boolean).join(' '),
-    siteContext: '', background: '', compliance: '', guidelines: [],
+    title: wmpgTitleDefault(p, { projectName: p.name || '', address: s.address || p.address || '' }),
+    siteContext: '', background: '', compliance: '', complianceSrc: null, guidelines: [],
     unitTypes: WMPG_UNITS.map(u => ({ ...u })),
     rates: Object.fromEntries(WMPG_UNITS.map(u => [u.key, { GW:0, REC:0, ORG:0, GLS:0 }])),
     ratesSource: '',
@@ -29952,20 +30348,30 @@ function wmpgHydrateRooms(d, p, s) {
   if (sched.length) {
     d.rooms.forEach(room => {
       const rows = sched.filter(x => (room.srcId && x.room === room.srcId) || (x.roomName || '') === room.name);
-      room.bins = rows.filter(x => WMPG_STREAMS[x.stream]).map(x => ({
-        stream:x.stream, sizeL:+x.sizeL || 1100, qty:+x.qty || 0,
-        colWk:(x.colWk == null ? 1 : +x.colWk), provider:'council',
-        // provenance from the calculator — the generator displays it, never edits it
-        src:'calc', manual:!!x.manual, manualWhy:x.manualWhy || null,
-        calcQty:(x.calcQty == null ? null : +x.calcQty),
-      }));
+      room.bins = rows.filter(x => WMPG_STREAMS[x.stream]).map(x => {
+        const prov = (x.method === 'self_haul') ? 'private contractor' : 'council';
+        const b = { stream:x.stream, sizeL:+x.sizeL || 1100, qty:+x.qty || 0,
+          colWk:(x.colWk == null ? 1 : +x.colWk), provider:prov,
+          // the presentation structure the Collection Point reads — method +
+          // cycle letter — carried so the narrative states the same cadence
+          method:x.method || null, cycle:x.cycle || null,
+          // provenance from the calculator, shown wherever the figure prints
+          src:'calc', manual:!!x.manual, manualWhy:x.manualWhy || null,
+          calcQty:(x.calcQty == null ? null : +x.calcQty) };
+        // the Design-tab value, kept so a WMP edit is always visible as one
+        b.design = { sizeL:b.sizeL, qty:b.qty, colWk:b.colWk, provider:b.provider, method:b.method };
+        return b;
+      });
     });
     // Schedule rows that matched nothing (rooms renamed since the calculator
     // ran) fall back onto the single room, rather than silently vanishing.
     if (!d.rooms.some(r => r.bins.length) && d.rooms.length === 1) {
-      d.rooms[0].bins = sched.filter(x => WMPG_STREAMS[x.stream]).map(x => ({
-        stream:x.stream, sizeL:+x.sizeL || 1100, qty:+x.qty || 0,
-        colWk:(x.colWk == null ? 1 : +x.colWk), provider:'council' }));
+      d.rooms[0].bins = sched.filter(x => WMPG_STREAMS[x.stream]).map(x => {
+        const b = { stream:x.stream, sizeL:+x.sizeL || 1100, qty:+x.qty || 0,
+          colWk:(x.colWk == null ? 1 : +x.colWk), provider:'council', method:x.method || null, cycle:x.cycle || null, src:'calc' };
+        b.design = { sizeL:b.sizeL, qty:b.qty, colWk:b.colWk, provider:b.provider, method:b.method };
+        return b;
+      });
     }
   }
 
@@ -30067,7 +30473,8 @@ function wmpgQA(d) {
   if (!d.projId || d.projId === 'xxxPW') err('Project ID is still the placeholder — the filename and document control will be wrong.');
   if (!d.address) err('No site address.');
   if (!d.council) err('No council — compliance, rates and collection assumptions cannot be attributed.');
-  if (!d.compliance) wrn('No compliance document named — section 2.1 falls back to generic wording.');
+  if (!d.title || !d.title.trim()) wrn('No document title — the cover will read "Waste Management Plan" with no project name.');
+  if (!d.compliance) wrn(d.council ? `No guideline on file for ${d.council} in the guidelines library and none named here — section 2.1 falls back to generic wording.` : 'No compliance document named — section 2.1 falls back to generic wording.');
   if (!d.rooms.length) err('No waste storage areas defined.');
 
   const summary = getProjectSummary(getProjects().find(x => x.id === WMPG.projectId) || {});
@@ -30103,9 +30510,15 @@ function wmpgQA(d) {
     const fp = wmpgRoomFootprint(d, room);
     if (room.areaM2 > 0 && fp > room.areaM2)
       wrn(`${room.name}: equipment footprint ${fp.toFixed(1)} m² exceeds the ${room.areaM2.toFixed(1)} m² room area the calculator recommends — check Appendix A.`);
-    if (!room.collection.vehicle) wrn(`${room.name}: no collection vehicle nominated — choose one in the swept path tool.`);
+    if (!room.collection.vehicle) wrn(`${room.name}: no collection vehicle nominated — the narrative prints “[collection vehicle not yet selected]”. Choose one in the swept path tool or type it in.`);
     else if (d.vehicleSrc === 'swept' && d.vehicleMeta?.name && room.collection.vehicle !== d.vehicleMeta.name)
-      err(`${room.name}: the WMP names “${room.collection.vehicle}” but the swept path was drawn for “${d.vehicleMeta.name}” — they must match.`);
+      wrn(`${room.name}: vehicle edited in WMP — “${room.collection.vehicle}” differs from the swept path drawing (“${d.vehicleMeta.name}”). Redraw the swept path for it, or reset to the drawn vehicle.`);
+    if (!room.collection.point) wrn(`${room.name}: no collection point — the narrative prints “[collection point not yet set]”.`);
+    if (!room.collection.street && wmpgRoomMethod(room) !== 'self_haul') wrn(`${room.name}: no street / stop — the narrative prints “[street not yet set]”.`);
+    (room.bins || []).forEach(b => {
+      if (wmpgBinEdited(b)) wrn(`${room.name} — ${WMPG_STREAMS[b.stream].doc}: edited in WMP (${wmpgBinDiffWords(b)}) — differs from the Design tab. Apply to design, or accept that the drawing and the WMP differ.`);
+      if (b.src === 'auto') wrn(`${room.name} — ${WMPG_STREAMS[b.stream].doc}: no calculator schedule — this row is a generator estimate. Run the bin calculator for a defensible figure.`);
+    });
   });
 
   if (d.rooms.length > 1) {
@@ -30202,13 +30615,17 @@ async function openWmpGenerator() {
   }
 
   if (p.wmp && p.wmp.rooms?.length) {
-    WMPG.data = p.wmp;                       // resume where the author left off
+    WMPG.data = wmpgUpgradeDraft(p.wmp, p);  // resume where the author left off
     WMPG.data.date = WMPG.data.date || wmpgToday();
     wmpgFlash(`Resumed the saved draft (${new Date(p.wmp.savedAt || Date.now()).toLocaleString('en-AU')}). Use “Re-pull from calculator” to refresh bins.`);
   } else {
     WMPG.data = wmpgDefaultData(p);
     const ok = wmpgApplyRates(WMPG.data);
     await wmpgLoadMeta(WMPG.data);
+    // the compliance document fills itself from the guidelines library —
+    // the council card's free text is the fallback wmpgLoadMeta just set
+    WMPG.data.complianceSrc = WMPG.data.compliance ? { kind: 'council_db', council: WMPG.data.council } : null;
+    await wmpgLoadGuideline(WMPG.data);
     WMPG.data.rooms.forEach(room => { if (!room.bins.length) room.bins = wmpgAutoBins(WMPG.data, room); });
     WMPG.data.guidelines = wmpgDefaultGuidelines(WMPG.data);
     wmpgFlash(ok ? `Rates loaded — ${WMPG.data.ratesSource}. ${WMPG.data.rooms.length} waste storage area${WMPG.data.rooms.length>1?'s':''} from the calculator.`
@@ -30244,7 +30661,7 @@ function wmpgRepull() {
   wmpgApplyRates(fresh);
   fresh.rooms.forEach(room => { if (!room.bins.length) room.bins = wmpgAutoBins(fresh, room); });
   // carry the author's writing across
-  const keep = ['projId','client','ver','status','author','date','history','siteContext','background','compliance','guidelines','suppliers','contractors','colours','devTypeText','daRef'];
+  const keep = ['projId','client','ver','status','author','date','history','title','siteContext','background','compliance','complianceSrc','guidelines','suppliers','contractors','colours','devTypeText','daRef','text','tokens','shapeHint'];
   keep.forEach(k => fresh[k] = WMPG.data[k]);
   // and per-room narrative, matched by name
   fresh.rooms.forEach(nr => {
@@ -30272,46 +30689,52 @@ function wmpgEnsureModal() {
   if (document.getElementById('wmpg-overlay')) return;
   const css = document.createElement('style');
   css.textContent = `
-  #wmpg-overlay{color-scheme:dark;position:fixed;inset:0;background:rgba(10,14,14,.85);z-index:900;display:none;align-items:center;justify-content:center;padding:16px;}
-  .wmpg-modal{background:#131A1A;border:1px solid #2A3838;border-radius:14px;width:min(1580px,100%);height:min(940px,100%);display:flex;flex-direction:column;overflow:hidden;}
-  .wmpg-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2A3838;}
-  .wmpg-title{font-size:14px;font-weight:800;color:#E7EFEF;white-space:nowrap;}
+  /* Full screen: a report-preparation tool used for hours, with inputs AND
+     a document preview — a boxed modal gave neither room. Larger type and
+     higher contrast on every control for the same reason. */
+  #wmpg-overlay{color-scheme:dark;position:fixed;inset:0;background:#131A1A;z-index:900;display:none;align-items:stretch;justify-content:stretch;padding:0;}
+  .wmpg-modal{background:#131A1A;border:0;border-radius:0;width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;}
+  .wmpg-head{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #2A3838;}
+  .wmpg-title{font-size:15px;font-weight:800;color:#E7EFEF;white-space:nowrap;}
   .wmpg-body{flex:1;display:flex;min-height:0;}
-  .wmpg-form{width:480px;min-width:400px;overflow-y:auto;padding:12px 14px 60px;border-right:1px solid #2A3838;}
-  .wmpg-preview{flex:1;background:#3a4040;display:flex;flex-direction:column;min-width:0;}
+  .wmpg-form{width:clamp(560px,40%,780px);min-width:480px;overflow-y:auto;padding:14px 18px 80px;border-right:1px solid #2A3838;font-size:13px;}
+  .wmpg-preview{flex:1;background:#3a4040;display:flex;flex-direction:column;min-width:0;position:relative;}
+  .wmpg-pop{position:absolute;top:12px;right:12px;width:min(520px,calc(100% - 24px));max-height:calc(100% - 24px);overflow-y:auto;background:#182121;border:1px solid #2A3838;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.5);padding:12px 14px;z-index:5;font-size:13px;color:#E7EFEF;}
+  .wmpg-pop h4{margin:0 0 8px;font-size:12px;font-weight:800;color:#4FC3C3;text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between;align-items:center;}
   .wmpg-preview iframe{flex:1;border:0;width:100%;background:#fff;}
   .wmpg-sec{margin-bottom:10px;border:1px solid #2A3838;border-radius:10px;background:#182121;}
-  .wmpg-sec>summary{cursor:pointer;list-style:none;padding:8px 11px;font-size:10.5px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#4FC3C3;display:flex;justify-content:space-between;align-items:center;gap:8px;}
+  .wmpg-sec>summary{cursor:pointer;list-style:none;padding:9px 12px;font-size:12px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#4FC3C3;display:flex;justify-content:space-between;align-items:center;gap:8px;}
   .wmpg-sec>summary::-webkit-details-marker{display:none;}
   .wmpg-sec>summary::after{content:'▾';color:#9BB0B0;font-size:9px;}
   .wmpg-sec:not([open])>summary::after{content:'▸';}
   .wmpg-sec-in{padding:0 11px 11px;}
   .wmpg-room{border:1px solid #24403c;border-radius:9px;background:#141c1c;margin-bottom:9px;}
-  .wmpg-room>summary{padding:7px 10px;font-size:11.5px;font-weight:700;color:#E7EFEF;text-transform:none;letter-spacing:0;}
+  .wmpg-room>summary{padding:8px 10px;font-size:13px;font-weight:700;color:#E7EFEF;text-transform:none;letter-spacing:0;}
   .wmpg-room>summary::-webkit-details-marker{display:none;}
-  .wmpg-pill{font-size:9px;font-weight:700;padding:1px 7px;border-radius:20px;background:rgba(79,195,195,.14);color:#4FC3C3;letter-spacing:.3px;}
+  .wmpg-pill{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(79,195,195,.16);color:#6FD6D6;letter-spacing:.3px;}
   .wmpg-pill.bad{background:rgba(198,40,40,.18);color:#EF8080;}
   .wmpg-pill.warn{background:rgba(239,176,128,.15);color:#EFB080;}
   .wmpg-grid2{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
   .wmpg-grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;}
-  .wmpg-f label{display:block;font-size:9.5px;font-weight:700;color:#9BB0B0;margin:7px 0 3px;text-transform:uppercase;letter-spacing:.4px;}
-  .wmpg-f input,.wmpg-f select,.wmpg-f textarea{width:100%;background:#101717;border:1px solid #2A3838;border-radius:6px;padding:5px 7px;font-size:12px;color:#E7EFEF;font-family:inherit;box-sizing:border-box;}
+  .wmpg-f label{display:block;font-size:11px;font-weight:700;color:#B4C6C6;margin:9px 0 4px;text-transform:uppercase;letter-spacing:.4px;}
+  .wmpg-f input,.wmpg-f select,.wmpg-f textarea{width:100%;background:#0D1313;border:1px solid #344444;border-radius:6px;padding:7px 9px;font-size:14px;color:#F2F7F7;font-family:inherit;box-sizing:border-box;}
+  .wmpg-f input:focus,.wmpg-f select:focus,.wmpg-f textarea:focus,table.wmpg-t input:focus,table.wmpg-t select:focus{outline:none;border-color:#4FC3C3;box-shadow:0 0 0 2px rgba(79,195,195,.2);}
   .wmpg-f textarea{resize:vertical;line-height:1.5;}
   table.wmpg-t{width:100%;border-collapse:collapse;margin-top:5px;}
-  table.wmpg-t th{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:#9BB0B0;text-align:left;padding:3px 3px;border-bottom:1px solid #2A3838;font-weight:700;}
-  table.wmpg-t td{padding:2px;}
-  table.wmpg-t input,table.wmpg-t select{width:100%;background:#101717;border:1px solid #2A3838;border-radius:5px;padding:4px 5px;font-size:11.5px;color:#E7EFEF;font-family:inherit;box-sizing:border-box;}
-  .wmpg-addrow{font-size:10.5px;color:#4FC3C3;background:none;border:1px dashed #2A3838;border-radius:6px;padding:4px 9px;cursor:pointer;margin:6px 5px 0 0;font-family:inherit;}
+  table.wmpg-t th{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:#B4C6C6;text-align:left;padding:4px 4px;border-bottom:1px solid #2A3838;font-weight:700;}
+  table.wmpg-t td{padding:3px;font-size:13px;}
+  table.wmpg-t input,table.wmpg-t select{width:100%;background:#0D1313;border:1px solid #344444;border-radius:5px;padding:6px 7px;font-size:13.5px;color:#F2F7F7;font-family:inherit;box-sizing:border-box;}
+  .wmpg-addrow{font-size:12px;color:#6FD6D6;background:none;border:1px dashed #3a4a4a;border-radius:6px;padding:5px 10px;cursor:pointer;margin:6px 5px 0 0;font-family:inherit;}
   .wmpg-addrow:hover{border-color:#4FC3C3;}
   .wmpg-x{background:none;border:0;color:#EF8080;cursor:pointer;font-size:13px;padding:0 2px;}
-  .wmpg-note{font-size:10px;color:#9BB0B0;margin-top:5px;line-height:1.5;}
+  .wmpg-note{font-size:11.5px;color:#A9BDBD;margin-top:5px;line-height:1.5;}
   .wmpg-warn{color:#EFB080;}
   .wmpg-err{color:#EF8080;}
-  .wmpg-chk{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:#E7EFEF;margin:7px 12px 0 0;}
+  .wmpg-chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#E7EFEF;margin:7px 12px 0 0;}
   .wmpg-chk input{accent-color:#4FC3C3;}
   .wmpg-foot{display:flex;gap:8px;align-items:center;padding:9px 14px;border-top:1px solid #2A3838;flex-wrap:wrap;}
   .wmpg-qa li{margin:4px 0;line-height:1.45;}
-  .wmpg-kbd{font-size:9.5px;color:#9BB0B0;border:1px solid #2A3838;border-radius:4px;padding:1px 5px;}
+  .wmpg-kbd{font-size:10.5px;color:#9BB0B0;border:1px solid #2A3838;border-radius:4px;padding:1px 5px;}
   @media(max-width:1020px){.wmpg-body{flex-direction:column;overflow-y:auto;}.wmpg-form{width:auto;min-width:0;border-right:0;border-bottom:1px solid #2A3838;}.wmpg-preview{min-height:520px;}}
   
   #wmpg-overlay input,#wmpg-overlay select,#wmpg-overlay textarea{color:#E7EFEF !important;caret-color:#4FC3C3;}
@@ -30334,7 +30757,7 @@ function wmpgEnsureModal() {
     </div>
     <div class="wmpg-body">
       <div class="wmpg-form" id="wmpg-form"></div>
-      <div class="wmpg-preview"><iframe id="wmpg-iframe" title="WMP preview"></iframe></div>
+      <div class="wmpg-preview"><iframe id="wmpg-iframe" title="WMP preview"></iframe><div id="wmpg-pop" class="wmpg-pop" style="display:none;"></div></div>
     </div>
     <div class="wmpg-foot">
       <button class="btn btn-primary" onclick="wmpgExportDocx()" style="background:var(--green,#4BED12);color:var(--dark,#0F1414);border-color:var(--green,#4BED12);font-weight:800;">⬇ Word (.docx) — save to project</button>
@@ -30353,11 +30776,10 @@ function wmpgEnsureModal() {
     </div>
   </div>`;
   document.body.appendChild(el);
-  el.addEventListener('click', ev => { if (ev.target === el) closeWmpGenerator(); });
   document.addEventListener('keydown', ev => {
     const open = document.getElementById('wmpg-overlay')?.style.display === 'flex';
     if (!open) return;
-    if (ev.key === 'Escape') { closeWmpGenerator(); }
+    if (ev.key === 'Escape') { if (document.getElementById('wmpg-pop')?.style.display !== 'none') wmpgPopClose(); else closeWmpGenerator(); }
     else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') { ev.preventDefault(); wmpgExportDocx(); }
     else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'p') { ev.preventDefault(); wmpgPrint(); }
   });
@@ -30380,11 +30802,11 @@ function wmpgQueuePreview() {
 }
 function wmpgIn(label, path, val, o) {
   o = o || {};
-  return `<div class="wmpg-f"><label>${label}</label><input ${o.num?'type="number" step="any"':'type="text"'} value="${wmpgEsc(val)}" placeholder="${wmpgEsc(o.ph||'')}"
+  return `<div class="wmpg-f"><label>${label}</label><input data-path="${path}" ${o.num?'type="number" step="any"':'type="text"'} value="${wmpgEsc(val)}" placeholder="${wmpgEsc(o.ph||'')}"
     oninput="wmpgSet('${path}', ${o.num?'parseFloat(this.value)||0':'this.value'})"></div>`;
 }
 function wmpgTa(label, path, val, rows, ph) {
-  return `<div class="wmpg-f"><label>${label}</label><textarea rows="${rows||2}" placeholder="${wmpgEsc(ph||'')}"
+  return `<div class="wmpg-f"><label>${label}</label><textarea data-path="${path}" rows="${rows||2}" placeholder="${wmpgEsc(ph||'')}"
     oninput="wmpgSet('${path}', this.value)">${wmpgEsc(val)}</textarea></div>`;
 }
 function wmpgSecOpen(id){ return WMPG.open.has(id) ? 'open' : ''; }
@@ -30408,6 +30830,7 @@ function wmpgRenderForm() {
       ${wmpgIn('Status','status',d.status,{ph:'Draft / Final'})}
       ${wmpgIn('Date','date',d.date)}
     </div>
+    ${wmpgIn('Document title','title',d.title,{ph:wmpgTitleDefault(null, d)})}
     ${d.history.length ? `<div class="wmpg-note">Revision history: ${d.history.map(h=>`${wmpgEsc(h.ver)} (${wmpgEsc(h.date)})`).join(' · ')}</div>` : ''}
     <div class="wmpg-note">Exporting records this revision in the document control table and bumps the revision for next time.</div>
   </details>
@@ -30416,11 +30839,14 @@ function wmpgRenderForm() {
     <summary>Site &amp; development</summary><div class="wmpg-sec-in">
     ${wmpgIn('Site address','address',d.address)}
     <div class="wmpg-grid2">
-      ${wmpgIn('Council','council',d.council)}
+      <div class="wmpg-f"><label>Council</label><input type="text" value="${wmpgEsc(d.council)}" oninput="wmpgSet('council', this.value)" onchange="wmpgCouncilChanged()"></div>
       ${wmpgIn('DA / planning reference','daRef',d.daRef,{ph:'optional'})}
     </div>
     ${wmpgIn('Development type (one line)','devTypeText',d.devTypeText,{ph:'8-level multi-unit development with basement parking'})}
-    ${wmpgIn('Compliance document','compliance',d.compliance,{ph:d.council?d.council+' waste guidelines':'Council waste guidelines'})}
+    <div class="wmpg-f"><label>Compliance document</label>
+      <input type="text" value="${wmpgEsc(d.compliance)}" placeholder="${wmpgEsc(d.council ? 'no guideline on file for ' + d.council : 'Council waste guidelines')}"
+        oninput="wmpgSet('compliance', this.value); WMPG.data.complianceSrc = this.value.trim() ? { kind:'manual', council: WMPG.data.council } : null;" onchange="wmpgRenderForm()">
+      <div class="wmpg-note" id="wmpg-compliance-note">${wmpgComplianceNote(d)}</div></div>
   </details>
 
   <details class="wmpg-sec" id="s-rates" ${wmpgSecOpen('rates')} ontoggle="wmpgToggleSec('rates',this)">
@@ -30508,22 +30934,32 @@ function wmpgRoomBlock(r, i) {
       <table class="wmpg-t"><thead><tr>${units.map(u=>`<th>${wmpgEsc(u.label.replace(' apartment','').replace('-bedroom','br'))}</th>`).join('')}</tr></thead>
       <tbody><tr>${units.map(u=>`<td><input type="number" min="0" value="${+r.alloc[u.key]||0}" oninput="wmpgSet('rooms.${i}.alloc.${u.key}',parseInt(this.value)||0);wmpgLiveNotes()"></td>`).join('')}</tr></tbody></table>
 
-      <div class="wmpg-f"><label>Bins &amp; collection</label></div>
-      <table class="wmpg-t"><thead><tr><th>Stream</th><th>Size</th><th>Qty</th><th>Frequency</th><th>Provider</th><th>Source</th></tr></thead>
-      <tbody>${r.bins.map((b,j)=>`<tr>
-        <td style="font-size:11.5px;color:#E7EFEF;padding-left:4px;">${WMPG_STREAMS[b.stream].doc}</td>
-        <td style="font-size:11.5px;color:#E7EFEF;">${b.sizeL}L</td>
-        <td style="font-size:11.5px;color:#E7EFEF;font-weight:700;">${b.qty}</td>
-        <td style="font-size:11.5px;color:#E7EFEF;">${wmpgFreqLabel(b.colWk)}</td>
-        <td><select oninput="wmpgSet('rooms.${i}.bins.${j}.provider',this.value)"><option value="council" ${b.provider==='council'?'selected':''}>council</option><option value="private contractor" ${b.provider!=='council'?'selected':''}>private</option></select></td>
-        <td>${b.manual
-          ? `<span class="wmpg-pill warn" title="${wmpgEsc(b.manualWhy || 'No reason recorded — add one in the bin calculator')}">manual${b.calcQty!=null?' · calc '+b.calcQty:''}</span>`
-          : `<span class="wmpg-pill" style="opacity:.7;">calculated</span>`}</td></tr>`).join('')}</tbody></table>
-      ${r.bins.some(b=>b.manual&&!b.manualWhy) ? `<div class="wmpg-note wmpg-warn">⚠ A manual bin count has no recorded reason. Add one in the bin calculator — it prints in the WMP as justification.</div>` : ''}
+      <div class="wmpg-f"><label>Bins &amp; collection <span class="wmpg-pill" style="text-transform:none;">Design tab is the default — edits here are marked as WMP overrides</span></label></div>
+      <table class="wmpg-t"><thead><tr><th>Stream</th><th>Size</th><th>Qty</th><th>Frequency</th><th>Method</th><th>Provider</th><th>Source</th><th></th></tr></thead>
+      <tbody>${r.bins.map((b,j)=>{
+        const sizes=[...new Set(Object.keys(WMPG_BIN_DIMS).map(Number).concat([+b.sizeL]))].sort((a,b)=>a-b);
+        const src=wmpgBinSource(b), diff=wmpgBinDiffWords(b);
+        const srcCell = src==='wmp'
+          ? `<span class="wmpg-pill warn" title="${wmpgEsc('Design tab: '+diff)}">edited in WMP — differs from Design tab</span><div style="font-size:10.5px;color:#EFB080;margin-top:2px;">${wmpgEsc(diff)}</div>
+             <div style="display:flex;gap:4px;margin-top:3px;flex-wrap:wrap;"><button class="wmpg-addrow" style="margin:0;padding:2px 7px;" onclick="wmpgBinReset(${i},${j})" title="Back to the Design tab value">↺ design value</button><button class="wmpg-addrow" style="margin:0;padding:2px 7px;" onclick="wmpgApplyToDesign(${i},${j})" title="Write this figure onto the project schedule the layout and Collection Point read">⇉ apply to design</button></div>`
+          : src==='manual' ? `<span class="wmpg-pill warn" title="${wmpgEsc(b.manualWhy || 'No reason recorded — add one in the bin calculator')}">calculator override${b.calcQty!=null?' · calc '+b.calcQty:''}</span>`
+          : src==='auto' ? `<span class="wmpg-pill warn" title="No calculator schedule — sized here from the generation rates">generator estimate</span>`
+          : `<span class="wmpg-pill" style="opacity:.8;">Design tab</span>`;
+        return `<tr>
+        <td style="color:#E7EFEF;padding-left:4px;white-space:nowrap;">${WMPG_STREAMS[b.stream].doc}</td>
+        <td><select onchange="wmpgBinSet(${i},${j},'sizeL',this.value)">${sizes.map(z=>`<option value="${z}" ${z===+b.sizeL?'selected':''}>${z}L</option>`).join('')}</select></td>
+        <td><input type="number" min="0" value="${b.qty}" style="width:58px;font-weight:700;" onchange="wmpgBinSet(${i},${j},'qty',this.value)"></td>
+        <td><select onchange="wmpgBinSet(${i},${j},'colWk',this.value)">${WMPG_FREQ.concat(WMPG_FREQ.some(f=>f[0]===+b.colWk)?[]:[[+b.colWk,wmpgFreqLabel(b.colWk)]]).map(f=>`<option value="${f[0]}" ${f[0]===+b.colWk?'selected':''}>${f[1]}</option>`).join('')}</select></td>
+        <td><select onchange="wmpgBinSet(${i},${j},'method',this.value||null)"><option value="" ${!b.method?'selected':''}>—</option>${Object.keys(WMPG_METHOD_LABEL).map(m=>`<option value="${m}" ${b.method===m?'selected':''}>${WMPG_METHOD_LABEL[m]}</option>`).join('')}</select></td>
+        <td><select onchange="wmpgBinSet(${i},${j},'provider',this.value)"><option value="council" ${b.provider==='council'?'selected':''}>council</option><option value="private contractor" ${b.provider!=='council'?'selected':''}>private</option></select></td>
+        <td>${srcCell}</td>
+        <td><button class="wmpg-x" title="Remove this row from the WMP" onclick="wmpgBinRemove(${i},${j})">✕</button></td></tr>`;}).join('')}</tbody></table>
+      <button class="wmpg-addrow" onclick="wmpgBinAdd(${i})">＋ Bin row</button>
+      ${r.bins.some(b=>b.manual&&!b.manualWhy) ? `<div class="wmpg-note wmpg-warn">⚠ A calculator override has no recorded reason. Add one in the bin calculator — it prints in the WMP as justification.</div>` : ''}
       ${r.bins.filter(b=>b.manual&&b.manualWhy).map(b=>`<div class="wmpg-note">✎ ${WMPG_STREAMS[b.stream].doc}: ${wmpgEsc(b.manualWhy)}</div>`).join('')}
       <div class="wmpg-note" id="wmpg-cap-${i}"></div>
-      <div class="wmpg-note" style="border-left:2px solid #2A3838;padding-left:8px;margin-top:6px;">Bin sizes, counts and frequencies come from the bin calculator, so the WMP, the layout drawing and the schedule can never disagree. Change them there — including deliberate overrides, which carry their reason through to the document.
-        <a href="#" onclick="wmpgOpenCalculator();return false;" style="color:#4FC3C3;display:inline-block;margin-top:3px;">Edit in bin calculator →</a></div>
+      <div class="wmpg-note" style="border-left:2px solid #2A3838;padding-left:8px;margin-top:6px;">The Design tab (bin calculator schedule) is the source; a row edited here is an override that stays in this WMP and is marked wherever it prints. <b>⇉ apply to design</b> writes it onto the project schedule the layout and Collection Point read — the calculator itself does not keep it, so a re-run recalculates.
+        <a href="#" onclick="wmpgOpenCalculator();return false;" style="color:#4FC3C3;display:inline-block;margin-top:3px;">Open bin calculator →</a></div>
 
       <div style="margin-top:4px;">
         ${['bulky|Bulky / hard waste zone','textiles|Textiles charity bin','tug|Bin tug','wash|Bin wash'].map(x=>{
@@ -30535,15 +30971,30 @@ function wmpgRoomBlock(r, i) {
       ${r.chutesOn ? wmpgTa('Chute arrangement','rooms.'+i+'.chuteText',r.chuteText,3,'Dual chutes (general waste & recycling) servicing ground to level 04, terminating into spare 1100L bins.') : ''}
 
       <div class="wmpg-grid2">
-        ${d.vehicleSrc === 'swept'
-          ? `<div class="wmpg-f"><label>Collection vehicle <span class="wmpg-pill" style="text-transform:none;">from swept path</span></label>
-             <div style="font-size:12px;color:#E7EFEF;padding:5px 7px;border:1px solid #2A3838;border-radius:6px;background:#101717;">${wmpgEsc(r.collection.vehicle || d.defaults.vehicle)}${d.vehicleMeta?.minR ? ` <span style="color:#9BB0B0;">· min R ${d.vehicleMeta.minR}m</span>` : ''}</div>
-             <div class="wmpg-note">Nominated in the swept path tool — change it there so the drawing and the WMP stay in step.</div></div>`
-          : wmpgIn('Collection vehicle','rooms.'+i+'.collection.vehicle',r.collection.vehicle)}
+        ${(()=>{ const vs = wmpgVehicleSource(d, r);
+          const pill = vs==='swept' ? '<span class="wmpg-pill" style="text-transform:none;">from swept path</span>'
+            : vs==='wmp' && d.vehicleSrc==='swept' ? `<span class="wmpg-pill warn" style="text-transform:none;" title="${wmpgEsc('Swept path drawn for: '+(d.vehicleMeta?.name||''))}">edited in WMP — differs from swept path</span>`
+            : vs==='wmp' ? '<span class="wmpg-pill warn" style="text-transform:none;">entered in WMP</span>'
+            : vs==='preset' ? '<span class="wmpg-pill" style="text-transform:none;">your default</span>' : '<span class="wmpg-pill bad" style="text-transform:none;">not selected</span>';
+          const note = vs==='swept' ? `Nominated in the swept path tool${d.vehicleMeta?.minR ? ' · min R ' + d.vehicleMeta.minR + 'm' : ''}. Editing here overrides the WMP only.`
+            : vs==='wmp' && d.vehicleSrc==='swept' ? `The swept path was drawn for “${wmpgEsc(d.vehicleMeta?.name||'')}”. No apply-to-design for a vehicle — the path would need redrawing. <a href="#" onclick="wmpgVehicleReset(${i});return false;" style="color:#4FC3C3;">↺ use the swept path vehicle</a>`
+            : 'No vehicle nominated in the swept path tool yet — the narrative shows a placeholder until one is chosen or typed here.';
+          return `<div class="wmpg-f"><label>Collection vehicle ${pill}</label>
+            <input type="text" value="${wmpgEsc(r.collection.vehicle)}" placeholder="[collection vehicle not yet selected]" oninput="wmpgSet('rooms.${i}.collection.vehicle', this.value)" onchange="wmpgRenderForm()">
+            <div class="wmpg-note">${note}</div></div>`; })()}
         ${wmpgIn('Street / stop','rooms.'+i+'.collection.street',r.collection.street,{ph:'Hutchinson Place, entering from Fitzroy St'})}
       </div>
-      ${wmpgIn('Collection point','rooms.'+i+'.collection.point',r.collection.point)}
-      ${wmpgTa('Collection narrative (§5.1)','rooms.'+i+'.collection.narrative',r.collection.narrative,3,'Blank = standard wording built from the fields above.')}
+      <div class="wmpg-grid2">
+        ${wmpgIn('Collection point','rooms.'+i+'.collection.point',r.collection.point)}
+        ${wmpgIn('Ramp gradient on the transfer route','rooms.'+i+'.collection.rampGrade',r.collection.rampGrade||'',{ph:'e.g. 1:14 — blank if level'})}
+      </div>
+      <div class="wmpg-f"><label>Collection narrative (§5.1) <span class="wmpg-pill" style="text-transform:none;">${r.collection.narrative ? (r.collection.polished ? 'polished — facts checked' : 'edited') : 'assembled from project data — ' + wmpgEsc(WMPG_METHOD_LABEL[wmpgRoomMethod(r)] || '')}</span></label>
+        <textarea data-path="rooms.${i}.collection.narrative" rows="7" placeholder="" oninput="wmpgSet('rooms.${i}.collection.narrative', this.value); WMPG.data.rooms[${i}].collection.polished=false;">${wmpgEsc(wmpgNarrativeText(d, r))}</textarea>
+        <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;">
+          <button class="wmpg-addrow" style="margin:0;" onclick="wmpgNarrativeReset(${i})" title="Rebuild from method, provider, cycles, bins, vehicle and street">↺ Rebuild from project data</button>
+          <button class="wmpg-addrow" style="margin:0;" onclick="wmpgPolishNarrative(${i})" title="Wording only — every number, stream, vehicle and placeholder is checked against the draft before anything changes">✨ Polish wording</button>
+        </div>
+        <div class="wmpg-note">Assembled from the collection method, provider, cycles, bins, vehicle and street on this room. Anything not yet known prints as a [placeholder] — fill the field, never the sentence.</div></div>
 
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
         <button class="wmpg-addrow" onclick="wmpgCopyRoomSettings(${i})" title="Copy this room's collection details and equipment toggles to every other room">⇉ Apply collection to all rooms</button>
@@ -30677,7 +31128,7 @@ function wmpgDocModel() {
     return out.join('\n');
   };
   const collectionSentence = room =>
-    `${multi ? room.name + ' — w' : 'W'}aste will be collected from ${room.collection.point || 'the designated bin collection zone'} by ${room.collection.provider || 'council'} with a ${room.collection.vehicle || '[vehicle]'}${room.collection.street ? ', which will stop on ' + room.collection.street : ''}.`;
+    `${multi ? room.name + ' — w' : 'W'}aste will be collected from ${room.collection.point || '[collection point not yet set]'} by ${room.collection.provider || 'council'} with a ${room.collection.vehicle || '[collection vehicle not yet selected]'}${room.collection.street ? ', which will stop on ' + room.collection.street : ''}.`;
 
   // ── Waste management summary ────────────────────────────────────────────
   M.push({ k:'h1', t:'Waste management summary' });
@@ -30719,10 +31170,10 @@ function wmpgDocModel() {
   }
   M.push({ k:'h2', t:'1.2. Site context' });
   if (!d.siteContext && tbHas('1.2 Site context')) tbNodes('1.2 Site context', tbCtxFor('1.2 Site context', d)).forEach(n => M.push(n));
-  else M.push({ k:'p', t: d.siteContext || `The subject site is located at ${d.address || '[address]'} within the ${councilTxt} municipality. The site is surrounded by a mix of residential and commercial land uses. [Insert site location figure]` });
+  else M.push({ k:'p', field:'siteContext', t: d.siteContext || `The subject site is located at ${d.address || '[address]'} within the ${councilTxt} municipality. The site is surrounded by a mix of residential and commercial land uses. [Insert site location figure]` });
   M.push({ k:'h2', t:'1.3. Background' });
   if (!d.background && tbHas('1.3 Background')) tbNodes('1.3 Background', tbCtxFor('1.3 Background', d)).forEach(n => M.push(n));
-  else M.push({ k:'p', t: d.background || `${d.daRef ? 'This site is the subject of planning application ' + d.daRef + '. ' : ''}The site is proposed to be developed as ${d.devTypeText ? (/^\d/.test(d.devTypeText) ? 'an ' : 'a ') + d.devTypeText : 'a multi-unit residential development'}.` });
+  else M.push({ k:'p', field:'background', t: d.background || `${d.daRef ? 'This site is the subject of planning application ' + d.daRef + '. ' : ''}The site is proposed to be developed as ${d.devTypeText ? (/^\d/.test(d.devTypeText) ? 'an ' : 'a ') + d.devTypeText : 'a multi-unit residential development'}.` });
   M.push({ k:'h2', t:'1.4. Development summary' });
   M.push({ k:'p', t:'The following table provides a summary of the proposed development, outlining the key components and scale of the project as relevant to waste management.' });
   cap('Residential development summary');
@@ -30889,14 +31340,11 @@ function wmpgDocModel() {
     cap(`${roomLabel(room)}: Waste collection summary`);
     M.push({ k:'table', header:['Waste stream','Bin/equipment type','Qty.','Collection frequency','Weekly volume (L)','Service capacity (L/week)','Collection provider'], rows:rws });
   });
-  rooms.forEach(room => {
+  rooms.forEach((room, ri) => {
     M.push({ k:'p', t: multi ? `${room.name} — collection process` : 'Residential collection process', b:true });
-    M.push({ k:'p', t: room.collection.narrative || [
-      `Bins will be transferred by the building manager from ${multi ? room.name.toLowerCase() : 'the waste room'} to ${room.collection.point || 'the bin collection zone'}${room.extras.tug.on ? ', using the bin tug provided within the bin room' : ''}.`,
-      'Bins will be presented the evening prior to each scheduled collection day and returned to the bin room by the building manager once servicing is complete. Bins are not to be left outside the property at any time.',
-      `Waste will be collected by ${room.collection.provider || 'council'} using a ${room.collection.vehicle || '[vehicle]'}.${room.collection.street ? ' The vehicle will stop on ' + room.collection.street + ' to service the presented bins.' : ''}`,
-      'Transfer will be undertaken outside peak hours to minimise disruption, and is estimated to take 10 to 15 minutes per collection. Minimal disruption is therefore expected.'
-    ].join('\n\n') });
+    // Template-assembled from the project's own facts (wmpgNarrative); the
+    // author's edit wins. Tagged so the preview offers rebuild/polish inline.
+    M.push({ k:'p', t: wmpgNarrativeText(d, room), narrative: ri });
     // B3: obligations that follow from the plant actually placed in this room.
     // Silent when nothing applies, so a simple room reads exactly as before.
     try {
@@ -31010,7 +31458,7 @@ function wmpgBuildHtml(forPrint) {
   const esc = wmpgEsc;
   const toc = M.filter(n => n.k === 'h1' || n.k === 'h2')
     .map(n => `<div class="toc-${n.k}">${esc(n.t)}</div>`).join('');
-  const body = M.map(n => {
+  const render = n => {
     switch (n.k) {
       case 'h1': return `<h1>${esc(n.t)}</h1>`;
       case 'h2': return `<h2>${esc(n.t)}</h2>`;
@@ -31027,7 +31475,29 @@ function wmpgBuildHtml(forPrint) {
       }
     }
     return '';
-  }).join('\n');
+  };
+  // Screen preview only: consecutive nodes from one text-library group, one
+  // narrative or one hand-written field are wrapped with a hover control that
+  // reaches back into the generator. Print and export see plain nodes.
+  const parts = [];
+  let run = null;
+  const flush = () => { if (run) { parts.push(run.html + '</div>'); run = null; } };
+  const q = v => String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  M.forEach(n => {
+    const h = render(n);
+    if (forPrint) { parts.push(h); return; }
+    const key = n.tb ? 'tb:' + n.tb : n.narrative != null ? 'nar:' + n.narrative : n.field ? 'field:' + n.field : null;
+    if (!key) { flush(); parts.push(h); return; }
+    if (run && run.key === key) { run.html += '\n' + h; return; }
+    flush();
+    const kind = key.slice(0, key.indexOf(':')), val = key.slice(key.indexOf(':') + 1);
+    const btn = kind === 'tb' ? `<button class="tbx" onclick="parent.wmpgSwap('${q(val)}')" title="Choose alternative wording from the text library">⇄ swap text</button>`
+      : kind === 'nar' ? `<button class="tbx" onclick="parent.wmpgNarrativeMenu(${+val})" title="Rebuild, polish or edit this narrative">✎ narrative</button>`
+      : `<button class="tbx" onclick="parent.wmpgFocus('${q(val)}')" title="Edit this paragraph">✎ edit</button>`;
+    run = { key, html: `<div class="tbsec" data-kind="${kind}">${btn}\n${h}` };
+  });
+  flush();
+  const body = parts.join('\n');
 
   const hist = (d.history || []).concat([{ ver:d.ver, status:d.status || 'Draft', date:d.date, author:d.author }]);
 
@@ -31062,13 +31532,17 @@ function wmpgBuildHtml(forPrint) {
   .toc-h2{margin:2px 0 2px 22px;color:#555;}
   .toc-note{font-size:8.5pt;color:#8a9a9a;margin-top:10px;}
   .foot{margin-top:38px;padding-top:8px;border-top:1px solid #d9e2e2;font-size:8pt;color:#8a9a9a;text-align:right;}
+  ${forPrint ? '' : `.tbsec{position:relative;border-left:2px solid transparent;margin-left:-12px;padding-left:10px;border-radius:3px;}
+  .tbsec:hover{border-left-color:${teal};background:#f2f8f8;}
+  .tbx{position:absolute;right:0;top:-4px;font:600 8.5pt 'Segoe UI',system-ui,sans-serif;color:${teal};background:#fff;border:1px solid ${teal};border-radius:4px;padding:2px 8px;cursor:pointer;opacity:0;transition:opacity .12s;z-index:2;}
+  .tbsec:hover .tbx{opacity:1;}`}
   </style></head><body><div class="sheet">
     <div class="cover">
       <div class="pre"><span>Prepared for<b>${esc(d.client || '—')}</b></span><span style="text-align:right;">Date<b>${esc(d.date)}</b></span></div>
       <div class="rule"></div>
       ${art?.panel ? `<img class="cover-art" src="${art.panel}" alt="">` : ''}
       <div class="addr">${esc(d.address || d.projectName || '[Site address]')}</div>
-      <div class="doc">Waste Management Plan</div>
+      <div class="doc">${esc(d.title || 'Waste Management Plan')}</div>
       <div class="brand">${art?.logo
         ? `<img src="${art.logo}" alt="Pro Waste Consultants" style="height:34px;">`
         : `<span><b style="font-size:12pt;">Pro</b><b style="font-size:12pt;color:${green};">Waste</b> <span style="opacity:.7;">Consultants</span></span>`}<span>www.prowaste.au · info@prowaste.au</span></div>
@@ -31407,8 +31881,8 @@ function wmpgTplPayload(d) {
     return out.join('\n');
   };
   const collectionSentence = room =>
-    (multi ? room.name + ' — w' : 'W') + 'aste will be collected from ' + (room.collection.point || 'the designated bin collection zone') +
-    ' by ' + (room.collection.provider || 'council') + ' with a ' + (room.collection.vehicle || '[vehicle]') +
+    (multi ? room.name + ' — w' : 'W') + 'aste will be collected from ' + (room.collection.point || '[collection point not yet set]') +
+    ' by ' + (room.collection.provider || 'council') + ' with a ' + (room.collection.vehicle || '[collection vehicle not yet selected]') +
     (room.collection.street ? ', which will stop on ' + room.collection.street : '') + '.';
 
   // diversion estimate, same simple basis as the VBA chart module:
@@ -31418,6 +31892,7 @@ function wmpgTplPayload(d) {
 
   const text = {
     BM_ClientName: d.client || '—',
+    BM_DocTitle: d.title || 'Waste Management Plan',
     BM_Date: d.date, BM_Date_P2: d.date,
     BM_SiteAddress: { v: (d.address || d.projectName || '[Site address]') + '\n',
       rpr: '<w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI" w:cs="Segoe UI"/><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="52"/>' },
@@ -31613,14 +32088,7 @@ function wmpgTplPayload(d) {
   });
   rooms.forEach(room => {
     add('BM_Sec_RESI_COLLECTION', tplP((multi ? room.name + ' — collection process' : 'Residential collection process'), WMPG_TPL_STYLE.h3));
-    add('BM_Sec_RESI_COLLECTION', tplP(room.collection.narrative || [
-      'Bins will be transferred by the building manager from ' + (multi ? room.name.toLowerCase() : 'the waste room') + ' to ' +
-        (room.collection.point || 'the bin collection zone') + (room.extras.tug.on ? ', using the bin tug provided within the bin room' : '') + '.',
-      'Bins will be presented the evening prior to each scheduled collection day and returned to the bin room by the building manager once servicing is complete. Bins are not to be left outside the property at any time.',
-      'Waste will be collected by ' + (room.collection.provider || 'council') + ' using a ' + (room.collection.vehicle || '[vehicle]') + '.' +
-        (room.collection.street ? ' The vehicle will stop on ' + room.collection.street + ' to service the presented bins.' : ''),
-      'Transfer will be undertaken outside peak hours to minimise disruption, and is estimated to take 10 to 15 minutes per collection. Minimal disruption is therefore expected.'
-    ].join('\n')));
+    add('BM_Sec_RESI_COLLECTION', tplP(wmpgNarrativeText(d, room).replace(/\n\n/g, '\n')));
   });
   add('BM_Sec_CollectionProcess_Comm', NA);
   if (tbHas('Waste collection times')) tbXml('Waste collection times', tbCtxFor('Waste collection times', d), add, 'BM_COLLECTION_TIMES'); else
@@ -32693,24 +33161,8 @@ async function tbSaveCouncilDefaults() {
 
 // Snippets for a group, honouring per-WMP overrides held on WMPG.data.text.
 // Shape: { off:{tag:true}, edit:{tag:'replacement body'} }
-// A snippet may carry a condition; if the project doesn't satisfy it, the
-// snippet never appears. Keeps "only if there are chutes" in the library where
-// it can be edited, rather than buried in code.
-function tbCondMet(cond, d) {
-  if (!cond) return true;
-  d = d || WMPG.data || {};
-  const rooms = d.rooms || [];
-  switch (cond) {
-    case 'chutes':     return rooms.some(r => r.chutesOn);
-    case 'multiroom':  return rooms.length > 1;
-    case 'commercial': return rooms.some(r => (r.component || '').toLowerCase().includes('commercial')) || !!d.hasCommercial;
-    case 'clinical':   return !!d.hasClinical;
-    case 'tug':        return rooms.some(r => r.extras?.tug?.on);
-    case 'textiles':   return rooms.some(r => r.extras?.textiles?.on);
-    case 'bulky':      return rooms.some(r => r.extras?.bulky?.on);
-    default: return true;
-  }
-}
+// A snippet may carry a condition (see tbCondMet below) — kept in the
+// library where it can be edited, rather than buried in code.
 function tbGroup(groupName, ctx) {
   const ov = (WMPG.data && WMPG.data.text) || { off:{}, edit:{} };
   return (TB.byGroup?.[groupName] || [])
@@ -32728,6 +33180,7 @@ function tbNodes(groupName, ctx) {
     else { flush(); out.push({ k:'p', t:s.text, b:s.style === 'h' }); }
   });
   flush();
+  out.forEach(n => { n.tb = groupName; });
   return out;
 }
 // Does the library have usable content for this group on this project?
@@ -32783,59 +33236,215 @@ function tbContext(d, room) {
 // changes what a token means, so this is just the context (optionally per-room).
 function tbCtxFor(section, d, room) { return tbContext(d, room); }
 
-// ── Text tab in the generator: what's on, what's off, edited for this WMP ──
+// ── CONDITIONS: which snippets apply to THIS project ───────────────────────
+// A snippet's `cond` is read against wmpgShape(d) — one pure reading of the
+// project (development type, collection method, provider, streams,
+// equipment). A section the project has no use for is not shown, not
+// offered, not printed: no chute → no chute text anywhere. Syntax: tokens
+// joined by commas all hold; a leading ! negates ("commercial,!chutes").
+// An unknown token never hides a snippet — a typo in the library must not
+// silently drop a paragraph from an issued document.
+const TB_COND_ALIASES = { council: 'council_collection', councilcollection: 'council_collection', kerb: 'kerbside',
+                          onsite: 'bulk', chute: 'chutes', multi: 'multiroom', fogo: 'organics' };
+const TB_CONDS = [['', '— always —'], ['residential', 'Residential component'], ['commercial', 'Commercial component'],
+  ['mixed', 'Mixed-use'], ['chutes', 'Chutes'], ['!chutes', 'No chutes'], ['multiroom', 'More than one waste room'],
+  ['kerbside', 'Kerbside collection'], ['kerbside_individual', 'Kerbside — individual bins'], ['kerbside_shared', 'Kerbside — shared bins'],
+  ['bulk', 'On-site bulk / private collection point'], ['private', 'Private contractor'], ['council_collection', 'Council collection'],
+  ['organics', 'Organics / FOGO stream'], ['glass', 'Glass stream'], ['compaction', 'Compaction equipment'],
+  ['tug', 'Bin tug'], ['bulky', 'Hard waste zone'], ['textiles', 'Textiles bin'], ['wash', 'Bin wash'], ['clinical', 'Clinical waste']];
+function tbCondMet(cond, d) {
+  if (!cond) return true;
+  d = d || WMPG.data || {};
+  const shape = wmpgShape(d);
+  return String(cond).split(/[,&]/).map(t => t.trim()).filter(Boolean).every(tok => {
+    const neg = tok.charAt(0) === '!';
+    const k0 = tok.replace(/^!/, '').toLowerCase().replace(/[\s-]+/g, '_');
+    const key = TB_COND_ALIASES[k0] || k0;
+    if (!(key in shape)) return true;
+    return neg ? !shape[key] : !!shape[key];
+  });
+}
+
+// ── PRESETS: whole text selections in one click ────────────────────────────
+// Built-in presets describe a project SHAPE; applying one resets the per-WMP
+// overrides and hands the conditions a hint that fills only what the project
+// has not said (project data always wins where it exists). Saved presets
+// capture the exact on/off map and edits — the house style for repeat work.
+// Stored per device (localStorage); the council-wide default set is the
+// server-side one (tbSaveCouncilDefaults).
+const WMPG_TEXT_PRESETS_KEY = 'pw_wmp_text_presets';
+const WMPG_TEXT_PRESETS_BUILTIN = [
+  { name: 'Standard kerbside residential', builtin: true, shape: { method: 'kerbside_shared', provider: 'council' } },
+  { name: 'Commercial bulk bin — private collection', builtin: true, shape: { method: 'bulk', provider: 'private contractor', commercial: true } },
+  { name: 'Mixed-use with chute', builtin: true, shape: { chutes: true, commercial: true } },
+];
+function tbSavedPresets() { try { return (JSON.parse(localStorage.getItem(WMPG_TEXT_PRESETS_KEY) || '[]') || []).filter(p => p && p.name); } catch (e) { return []; } }
+function tbPresets() { return WMPG_TEXT_PRESETS_BUILTIN.concat(tbSavedPresets()); }
+// Pure: what applying a preset does to the draft's text state.
+function tbPresetApply(d, preset) {
+  d.text = { off: Object.assign({}, preset.off || {}), edit: Object.assign({}, preset.edit || {}) };
+  d.shapeHint = preset.shape ? Object.assign({}, preset.shape) : null;
+  d.textPreset = preset.name;
+  return d;
+}
+function tbApplyPreset(name) {
+  const p = tbPresets().find(x => x.name === name); if (!p || !WMPG.data) return;
+  tbPresetApply(WMPG.data, p);
+  tbRenderPanel(); wmpgQueuePreview();
+  wmpgFlash(`Preset “${name}” applied${p.builtin ? ' — project data still decides; the preset fills only what the project has not said' : ''}.`);
+}
+function tbSavePreset() {
+  const d = WMPG.data; if (!d) return;
+  const cur = d.textPreset && !WMPG_TEXT_PRESETS_BUILTIN.some(b => b.name === d.textPreset) ? d.textPreset : '';
+  const name = prompt('Name this preset — your current text selection, one click next time:', cur);
+  if (!name || !name.trim()) return;
+  // The FULL on/off state of every snippet, not just the deltas, so a preset
+  // means the same thing whatever council default it lands on.
+  const off = {};
+  (TB.bank || []).forEach(r => { const on = (d.text.off[r.t] != null) ? !d.text.off[r.t] : tbDefaultOn(r, d); off[r.t] = !on; });
+  const saved = tbSavedPresets().filter(p => p.name !== name.trim());
+  saved.push({ name: name.trim(), off, edit: Object.assign({}, d.text.edit || {}), shape: d.shapeHint || null, savedAt: Date.now() });
+  try { localStorage.setItem(WMPG_TEXT_PRESETS_KEY, JSON.stringify(saved)); } catch (e) { wmpgFlash('Could not save the preset: ' + (e.message || e), true); return; }
+  d.textPreset = name.trim();
+  tbRenderPanel(); wmpgFlash(`✓ Preset “${name.trim()}” saved on this device.`);
+}
+function tbDeletePreset() {
+  const d = WMPG.data; const name = d && d.textPreset;
+  if (!name || WMPG_TEXT_PRESETS_BUILTIN.some(b => b.name === name)) return;
+  if (!confirm(`Delete the preset “${name}” from this device?`)) return;
+  try { localStorage.setItem(WMPG_TEXT_PRESETS_KEY, JSON.stringify(tbSavedPresets().filter(p => p.name !== name))); } catch (e) {}
+  d.textPreset = null; tbRenderPanel();
+}
+function tbResetAuto() {
+  const d = WMPG.data; if (!d) return;
+  d.text = { off: {}, edit: {} }; d.shapeHint = null; d.textPreset = null;
+  tbRenderPanel(); wmpgQueuePreview(); wmpgFlash('Text selection reset to the automatic choice for this project.');
+}
+
+// One renderer for a group's snippets — the Text library panel and the
+// preview's inline "swap text" popover show exactly the same thing.
+function tbGroupHtml(g, d) {
+  const items = (TB.byGroup && TB.byGroup[g]) || [];
+  const vis = items.filter(r => tbCondMet(r.c, d));
+  if (!vis.length) return '';
+  return vis.map(r => {
+    const on = (d.text.off[r.t] != null) ? !d.text.off[r.t] : tbDefaultOn(r, d);
+    const body = (d.text.edit[r.t] != null) ? d.text.edit[r.t] : r.b;
+    const filled = tbFill(body, tbCtxFor(g, d, d.rooms[0]));
+    const gap = tbHasGaps(filled);
+    return `<div style="border-bottom:1px solid #202c2c;padding:7px 0;">
+      <label class="wmpg-chk" style="align-items:flex-start;">
+        <input type="checkbox" ${on ? 'checked' : ''} onchange="tbToggle('${r.t}',this.checked)">
+        <span style="flex:1;">
+          <span style="font-size:10.5px;color:#6E8484;letter-spacing:.4px;">${r.t}${r.s === 'b' ? ' · bullet' : r.s === 'h' ? ' · heading' : ''}${r.c ? ' · <span title="Shown because the project matches this condition">if ' + wmpgEsc(r.c) + '</span>' : ''}</span><br>
+          <span style="font-size:13px;line-height:1.45;color:${on ? '#E7EFEF' : '#6E8484'};">${wmpgEsc(filled)}</span>
+          ${gap && on ? '<br><span style="font-size:11px;color:#EFB080;">⚠ unresolved placeholder — edit this snippet or fill the project field it needs</span>' : ''}
+          ${d.text.edit[r.t] != null ? '<br><span style="font-size:10.5px;color:#4FC3C3;">edited for this WMP</span>' : ''}
+        </span>
+        <button class="wmpg-x" style="color:#4FC3C3;" title="Edit for this WMP only" onclick="event.preventDefault();tbEdit('${r.t}')">✎</button>
+      </label>
+    </div>`;
+  }).join('');
+}
+
+// ── Text tab in the generator ──────────────────────────────────────────────
+// The job is reviewing exceptions, not choosing everything: the selection is
+// made automatically from the project shape and the council defaults, only
+// sections that apply are shown, and a preset sets the lot in one click.
 function tbRenderPanel() {
   const el = document.getElementById('wmpg-text-panel');
   if (!el) return;
   if (!TB.loaded) { el.innerHTML = '<div class="wmpg-note">Loading text library…</div>'; return; }
   const d = WMPG.data;
-  d.text = d.text || { off:{}, edit:{} };
+  d.text = d.text || { off: {}, edit: {} };
   const groups = Object.keys(TB.byGroup || {});
-  el.innerHTML = groups.map(g => {
-    const items = TB.byGroup[g];
-    const vis = items.filter(r => tbCondMet(r.c, d));
+  const shape = wmpgShape(d);
+  const words = wmpgShapeWords(shape);
+  const overrides = Object.keys(d.text.off || {}).length + Object.keys(d.text.edit || {}).length;
+  const shown = groups.filter(g => (TB.byGroup[g] || []).some(r => tbCondMet(r.c, d)));
+  const hidden = groups.length - shown.length;
+  const presets = tbPresets();
+  el.innerHTML = `
+    <div style="border:1px solid #24403c;border-radius:9px;background:#141c1c;padding:9px 11px;margin-bottom:9px;">
+      <div style="font-size:11px;font-weight:800;color:#4FC3C3;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Auto-selected for this project</div>
+      <div style="font-size:13px;color:#E7EFEF;">${words.map(w => `<span class="wmpg-pill" style="text-transform:none;margin:0 4px 4px 0;">${wmpgEsc(w)}</span>`).join('')}</div>
+      <div class="wmpg-note">${shown.length} section${shown.length === 1 ? '' : 's'} apply${hidden ? `; ${hidden} hidden because the project has no use for them` : ''}${overrides ? ` · <span style="color:#EFB080;">${overrides} exception${overrides === 1 ? '' : 's'} set on this WMP</span>` : ' · no exceptions yet'}${d.textPreset ? ` · preset <b>${wmpgEsc(d.textPreset)}</b>` : ''}</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:7px;">
+        <select onchange="if(this.value)tbApplyPreset(this.value);this.value='';" style="background:#0D1313;border:1px solid #344444;border-radius:6px;padding:6px 8px;font-size:13px;color:#F2F7F7;font-family:inherit;">
+          <option value="">Apply a preset…</option>
+          ${presets.map(p => `<option value="${wmpgEsc(p.name)}">${wmpgEsc(p.name)}${p.builtin ? '' : ' (saved)'}</option>`).join('')}
+        </select>
+        <button class="wmpg-addrow" style="margin:0;" onclick="tbSavePreset()" title="Save the current selection as a one-click preset on this device">☆ Save as preset</button>
+        ${d.textPreset && !WMPG_TEXT_PRESETS_BUILTIN.some(b => b.name === d.textPreset) ? `<button class="wmpg-addrow" style="margin:0;color:#EF8080;" onclick="tbDeletePreset()">✕ Delete preset</button>` : ''}
+        <button class="wmpg-addrow" style="margin:0;" onclick="tbResetAuto()" ${overrides || d.shapeHint ? '' : 'disabled style="margin:0;opacity:.5;"'}>↺ Reset to auto</button>
+      </div>
+    </div>` +
+  shown.map(g => {
+    const vis = (TB.byGroup[g] || []).filter(r => tbCondMet(r.c, d));
     const onCount = vis.filter(r => (d.text.off[r.t] != null) ? !d.text.off[r.t] : tbDefaultOn(r, d)).length;
-    return `<details class="wmpg-room">
-      <summary><span>${wmpgEsc(g || 'Ungrouped')} <span class="wmpg-pill">${onCount}/${vis.length}</span></span></summary>
-      <div style="padding:0 10px 10px;">
-        ${vis.map(r => {
-          const on = (d.text.off[r.t] != null) ? !d.text.off[r.t] : tbDefaultOn(r, d);
-          const body = (d.text.edit[r.t] != null) ? d.text.edit[r.t] : r.b;
-          const filled = tbFill(body, tbCtxFor(g, d, d.rooms[0]));
-          const gap = tbHasGaps(filled);
-          return `<div style="border-bottom:1px solid #202c2c;padding:6px 0;">
-            <label class="wmpg-chk" style="align-items:flex-start;">
-              <input type="checkbox" ${on?'checked':''} onchange="tbToggle('${r.t}',this.checked)">
-              <span style="flex:1;">
-                <span style="font-size:9.5px;color:#5E7272;letter-spacing:.4px;">${r.t}${r.s==='b'?' · bullet':r.s==='h'?' · heading':''}</span><br>
-                <span style="font-size:11.5px;color:${on?'#E7EFEF':'#5E7272'};">${wmpgEsc(filled)}</span>
-                ${gap && on ? '<br><span style="font-size:10px;color:#EFB080;">⚠ unresolved placeholder — edit this snippet or fill the project field it needs</span>' : ''}
-                ${d.text.edit[r.t] != null ? '<br><span style="font-size:9.5px;color:#4FC3C3;">edited for this WMP</span>' : ''}
-              </span>
-              <button class="wmpg-x" style="color:#4FC3C3;" title="Edit for this WMP only" onclick="event.preventDefault();tbEdit('${r.t}')">✎</button>
-            </label>
-          </div>`;
-        }).join('')}
-      </div></details>`;
+    const touched = vis.some(r => d.text.off[r.t] != null || d.text.edit[r.t] != null);
+    return `<details class="wmpg-room" data-tb-group="${wmpgEsc(g)}">
+      <summary><span>${wmpgEsc(g || 'Ungrouped')} <span class="wmpg-pill">${onCount}/${vis.length}</span>${touched ? ' <span class="wmpg-pill warn">exception</span>' : ''}</span></summary>
+      <div style="padding:0 10px 10px;">${tbGroupHtml(g, d)}</div></details>`;
   }).join('') +
    (wmpgIsStaff() && d.council ? `<button class="wmpg-addrow" onclick="tbSaveCouncilDefaults()" title="Make this selection the starting point for every future ${wmpgEsc(d.council)} WMP">★ Save this selection as the ${wmpgEsc(d.council)} default</button>` : '') +
-   `<div class="wmpg-note" style="margin-top:8px;">Toggles and edits here apply to <b>this WMP only</b>. To change the wording for every future WMP, edit the shared library${wmpgIsStaff()?' — <a href="#" onclick="tbOpenLibrary();return false;" style="color:#4FC3C3;">open Text Library</a>':''}.</div>`;
+   `<div class="wmpg-note" style="margin-top:8px;">Toggles and edits here apply to <b>this WMP only</b>. The document preview is the faster place to do this: hover a section and use <b>⇄ swap text</b>. To change the wording for every future WMP, edit the shared library${wmpgIsStaff() ? ' — <a href="#" onclick="tbOpenLibrary();return false;" style="color:#4FC3C3;">open Text Library</a>' : ''}.</div>`;
 }
 function tbToggle(tag, on) {
   WMPG.data.text = WMPG.data.text || { off:{}, edit:{} };
   const r0 = tbGet(tag);
   const def = r0 ? tbDefaultOn(r0, WMPG.data) : false;
   if (on === def) delete WMPG.data.text.off[tag]; else WMPG.data.text.off[tag] = !on;
-  tbRenderPanel(); wmpgQueuePreview();
+  tbRenderPanel(); wmpgPopRefresh(); wmpgQueuePreview();
 }
 function tbEdit(tag) {
   const r = tbGet(tag); if (!r) return;
   WMPG.data.text = WMPG.data.text || { off:{}, edit:{} };
   const cur = WMPG.data.text.edit[tag] != null ? WMPG.data.text.edit[tag] : r.b;
-  const v = prompt('Edit for this WMP only (placeholders <AAA>–<DDD> are filled from project data):', cur);
+  const v = prompt('Edit for this WMP only ({tokens} are filled from project data):', cur);
   if (v === null) return;
   if (v.trim() === r.b.trim()) delete WMPG.data.text.edit[tag]; else WMPG.data.text.edit[tag] = v;
-  tbRenderPanel(); wmpgQueuePreview();
+  tbRenderPanel(); wmpgPopRefresh(); wmpgQueuePreview();
+}
+
+// ── The document preview as the workspace ──────────────────────────────────
+// Hover a section in the preview: text-library sections get "⇄ swap text",
+// the collection narrative gets its rebuild / polish menu, and a hand-written
+// paragraph gets "✎ edit". The popover renders the same group HTML as the
+// panel, so there is one selection and two places to reach it.
+function wmpgPopShow(title, html) {
+  const pop = document.getElementById('wmpg-pop'); if (!pop) return;
+  pop.innerHTML = `<h4><span>${title}</span><button class="wmpg-x" onclick="wmpgPopClose()" title="Close (Esc)">✕</button></h4>${html}`;
+  pop.style.display = 'block';
+}
+function wmpgPopClose() { const pop = document.getElementById('wmpg-pop'); if (pop) { pop.style.display = 'none'; pop.innerHTML = ''; } WMPG.pop = null; }
+function wmpgPopRefresh() { if (WMPG.pop && WMPG.pop.kind === 'tb') wmpgSwap(WMPG.pop.g); }
+function wmpgSwap(g) {
+  const d = WMPG.data; if (!d || !TB.loaded) return;
+  WMPG.pop = { kind: 'tb', g };
+  const html = tbGroupHtml(g, d) || '<div class="wmpg-note">No snippets apply to this project in this section.</div>';
+  wmpgPopShow('⇄ ' + wmpgEsc(g), html + `<div class="wmpg-note" style="margin-top:8px;">Tick the wording you want here; ✎ edits it for this WMP only. Changes show in the preview as you make them.</div>`);
+}
+function wmpgNarrativeMenu(i) {
+  const d = WMPG.data, room = d && d.rooms[i]; if (!room) return;
+  WMPG.pop = { kind: 'nar', i };
+  wmpgPopShow('Collection narrative — ' + wmpgEsc(room.name), `
+    <div class="wmpg-note" style="margin-top:0;">${room.collection.narrative ? (room.collection.polished ? 'Polished wording — every figure checked against the assembled draft.' : 'Edited by hand for this WMP.') : 'Assembled from the project data: ' + wmpgEsc(WMPG_METHOD_LABEL[wmpgRoomMethod(room)] || '') + ', ' + wmpgEsc(room.collection.provider || 'council') + ' collection.'}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+      <button class="wmpg-addrow" style="margin:0;" onclick="wmpgFocus('rooms.${i}.collection.narrative')">✎ Edit the text</button>
+      <button class="wmpg-addrow" style="margin:0;" onclick="wmpgNarrativeReset(${i});wmpgPopClose()">↺ Rebuild from project data</button>
+      <button class="wmpg-addrow" style="margin:0;" onclick="wmpgPolishNarrative(${i}).then(()=>wmpgPopClose())">✨ Polish wording</button>
+    </div>`);
+}
+function wmpgFocus(path) {
+  wmpgPopClose();
+  const f = document.getElementById('wmpg-form'); if (!f) return;
+  const el = f.querySelector(`[data-path="${path}"]`);
+  if (!el) return;
+  let p = el.parentElement;
+  while (p && p !== f) { if (p.tagName === 'DETAILS') p.open = true; p = p.parentElement; }
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => el.focus(), 250);
 }
 
 // ── Staff text library editor ──────────────────────────────────────────────
@@ -32885,6 +33494,9 @@ function tbRenderLibrary() {
         <option value="b" ${r.s==='b'?'selected':''}>Bullet</option>
         <option value="h" ${r.s==='h'?'selected':''}>Heading</option>
       </select>
+      <select onchange="tbLibSet('${r.t}','c',this.value)" title="Only offer this snippet when the project matches" style="background:#101717;border:1px solid #2A3838;border-radius:5px;padding:4px;font-size:11px;color:#E7EFEF;margin-top:14px;max-width:150px;">
+        ${TB_CONDS.concat(r.c && !TB_CONDS.some(c => c[0] === r.c) ? [[r.c, r.c]] : []).map(([v, l]) => `<option value="${wmpgEsc(v)}" ${(r.c || '') === v ? 'selected' : ''}>${wmpgEsc(l)}</option>`).join('')}
+      </select>
     </div>`;
   }).join('') || '<div style="font-size:12px;color:#9BB0B0;">No snippets match.</div>';
 }
@@ -32894,6 +33506,7 @@ function tbLibSet(tag, field, val) {
   TB.dirty[tag][field] = val;
   if (field === 'on') r.on = val ? 1 : 0;
   if (field === 's') r.s = val;
+  if (field === 'c') r.c = val || null;
   const st = document.getElementById('tb-status');
   if (st) st.textContent = Object.keys(TB.dirty).length + ' unsaved change' + (Object.keys(TB.dirty).length===1?'':'s');
 }
@@ -32906,12 +33519,12 @@ async function tbSaveLibrary() {
     const payload = tags.map(t => {
       const r = tbGet(t), dd = TB.dirty[t];
       return { tag:t, grp:r.g, body: dd.b != null ? dd.b : r.b, style: dd.s != null ? dd.s : r.s,
-               enabled: dd.on != null ? !!dd.on : !!r.on,
+               enabled: dd.on != null ? !!dd.on : !!r.on, cond: dd.c !== undefined ? (dd.c || null) : (r.c || null),
                updated_at: new Date().toISOString(), updated_by: (currentUser?.email || 'staff') };
     });
     const { error } = await sb.from('wmp_content').upsert(payload, { onConflict:'tag' });
     if (error) throw error;
-    payload.forEach(p => { const r = tbGet(p.tag); if (r) { r.b = p.body; r.s = p.style; r.on = p.enabled ? 1 : 0; } });
+    payload.forEach(p => { const r = tbGet(p.tag); if (r) { r.b = p.body; r.s = p.style; r.on = p.enabled ? 1 : 0; r.c = p.cond; } });
     TB.dirty = {};
     if (st) st.textContent = '✓ Saved — applies to every future WMP.';
     tbRenderLibrary(); tbRenderPanel(); wmpgQueuePreview();

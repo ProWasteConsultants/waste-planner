@@ -178,6 +178,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/anon-entry.test.js` | Anonymous compliance entry, shared claim store, signup gate |
 | `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
 | `tests/residential-method.test.js` | Residential method types: stepped-table lookup, review gate, state fallback |
+| `tests/wmp-generator.test.js` | WMP generator: title, guideline auto-load, assembled narrative, polish guard, override provenance, text-library conditions and presets |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -316,6 +317,72 @@ own key> }`. Rules, all tested in `tests/residential-method.test.js`:
 Not built (its own brief, per the architecture brief's own sequencing):
 equipment **categories** with distinct calculation branches — see the Equipment
 section.
+
+## WMP generator (revised 2026-09-15)
+
+Full-screen, two panes (inputs / preview), larger higher-contrast controls.
+Rules, all tested in `tests/wmp-generator.test.js`:
+
+- **Every figure is traceable to where it came from.** A bin row carries
+  `design` — the Design-tab (calculator schedule) value it was hydrated with —
+  and `src` (`calc` · calculator `manual` override · generator `auto` estimate
+  when no schedule exists). An edit in the generator is an **override**: it
+  stays local to the WMP, is marked *"edited in WMP — differs from Design tab"*
+  wherever it shows (`wmpgBinDiff`, pure), and **never writes back on its
+  own**. `wmpgApplyToDesign` is the one explicit way across: per row, asks
+  first, writes the project's `p.schedule` / `p.calc_rooms` as a named manual
+  override (`manualWhy: 'Set in the WMP generator'`) and re-feeds an open
+  layout. The bin calculator does not keep it — a re-run recalculates — and
+  the UI says so. The **vehicle** has no apply-to-design: the swept path was
+  *drawn* for a vehicle, so an edit is flagged against the drawing and offers
+  a reset, never a rename. The parent keeps `p.presentation` from
+  `ws-calc-results` so the re-feed carries the cadence source.
+- **The compliance document is the guidelines library's current version**
+  (`wmpgPickGuideline`, pure: newest **non-superseded** row for the council,
+  matched through `glBridgeNorm`). Fills on open and on council change
+  (`wmpgCouncilChanged`, which also re-loads the requirements pack). A
+  hand-typed entry is `complianceSrc.kind = 'manual'` and is never overwritten;
+  no document on file is an explicit *"no guideline on file for X"* state, with
+  the council card's free text as the second source (`council_db`).
+- **The document title is editable** (`d.title`, default
+  `"<project> — Waste Management Plan"` via `wmpgTitleDefault`); it prints on
+  the cover and lands in the .docx as `BM_DocTitle`.
+- **The collection narrative is template-assembled, never generated**
+  (`wmpgNarrative`, pure): one template per method — kerbside individual /
+  kerbside shared / on-site bulk / private shared (`self_haul`) — with slots
+  filled from the room's bins (count, size, **cycle letters** — the same
+  `W`/`A`/`B`/`F`/`M` the Collection Point reads, rendered by `wmpgCycleWords`
+  so A-against-B reads *"fortnightly on alternating weeks"*), provider,
+  vehicle, collection point, street, tug and ramp gradient. A missing fact is a
+  visible `[collection vehicle not yet selected]`-style placeholder, never a
+  guess and never a dropped sentence; the pre-flight QA names each one. The
+  author's edit (`room.collection.narrative`) wins; ↺ rebuilds. Preview and
+  .docx both read `wmpgNarrativeText`, so they cannot differ.
+- **AI polishes wording only, and is checked before it lands.**
+  `wmpgPolishGuard` (pure) refuses a polish that drops or invents any number,
+  loses a `[placeholder]`, or halves the text — the refusal names the figure.
+  Same rule as rates and residential methods: deterministic for anything a
+  council will check, AI only for presentation.
+- **Text library: review exceptions, don't choose everything.** `wmpgShape(d)`
+  is one pure reading of the project (development type, methods, provider,
+  streams, equipment); `tbCondMet` reads snippet conditions against it —
+  comma-joined tokens all hold, `!` negates, aliases resolve, and an **unknown
+  token never hides a snippet** (a library typo must not drop a paragraph from
+  an issued document). Groups with nothing applicable are hidden and counted.
+  The library editor sets `cond` per snippet (`TB_CONDS`). **Presets**: the
+  built-ins are project *shapes* (`shapeHint` fills only what the project has
+  not said — project data always wins); saved presets are exact on/off + edit
+  maps, stored per device in localStorage. Council-wide defaults stay
+  server-side (`tbSaveCouncilDefaults`).
+- **The preview is the workspace.** `tbNodes` tags nodes with their group;
+  `wmpgBuildHtml` (screen only — `forPrint` sees plain nodes) wraps runs in
+  `.tbsec` with a hover control: **⇄ swap text** opens a popover rendered by
+  the same `tbGroupHtml` the panel uses, **✎ narrative** opens rebuild /
+  polish / edit, **✎ edit** jumps to the field (`data-path` on every input).
+  One selection, two places to reach it.
+
+Not built: presets shared across devices/staff (a `wmp_text_presets` table),
+and access-path facts beyond the manual travel-path token and ramp gradient.
 
 ## Council requirements list (C3, revised 2026-09-15)
 
