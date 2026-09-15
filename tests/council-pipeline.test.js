@@ -538,7 +538,11 @@ test('wsParseExtractionRows: clean parse, salvage, or an error that names the ca
 
 test('extraction CONTINUES past the length cap — a 100-row rate table is read in full', () => {
   const fn = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
-  assert.equal((SOURCE.match(/max_tokens: 16000,/g) || []).length, 2, 'the general pass and the rate-table sweep both carry the raised cap');
+  // The general pass, the commercial rate-table sweep, and the residential
+  // stepped-table sweep. Every extraction that reads a table out of a
+  // guideline PDF carries the raised cap — a document-length table silently
+  // cut in half is the failure this guards.
+  assert.equal((SOURCE.match(/max_tokens: 16000,/g) || []).length, 3, 'every table extraction carries the raised cap');
   assert.ok(!SOURCE.includes('max_tokens: 8192'), 'no extraction is left on the old cap');
   assert.ok(fn.includes("for (let pass = 0; pass < 6; pass++)"), 'a capped reply is continued, with a safety limit');
   assert.ok(fn.includes('do not repeat any of these clause/use/stream combinations'),
