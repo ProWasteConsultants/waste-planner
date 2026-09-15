@@ -162,14 +162,21 @@ test('a bin row keeps its Design-tab value, and an edit is visible as one wherev
   assert.ok(form.includes('edited in WMP — differs from Design tab'), 'the form says so in those words');
 });
 
-test('the vehicle: from the swept path by default, an edit is flagged against the drawing, no write-back', () => {
+test('the vehicle is a database record, never text: from the swept path by default, an edit is a flagged override', () => {
   const G = load();
-  const d = { vehicleSrc: 'swept', vehicleMeta: { name: '10.6 m rear loader' }, defaults: { vehicle: '10.6 m rear loader' } };
-  assert.equal(G.wmpgVehicleSource(d, room({ collection: { vehicle: '10.6 m rear loader' } })), 'swept');
-  assert.equal(G.wmpgVehicleSource(d, room({ collection: { vehicle: '8.8 m rear loader' } })), 'wmp');
-  assert.equal(G.wmpgVehicleSource(d, room({ collection: { vehicle: '' } })), 'none');
-  assert.ok(!/wmpgApplyToDesign/.test(extractBlock(/^function wmpgVehicleReset\(/).text));
-  assert.ok(/No apply-to-design for a vehicle/.test(SOURCE), 'the swept path was DRAWN for a vehicle; renaming it would not redraw the path');
+  const d = { vehicleMeta: { id: 'hino300', name: '10.6 m rear loader' } };
+  assert.equal(G.wmpgVehicleSource(d, room({ collection: { vehicleId: 'hino300', vehicle: '10.6 m rear loader' } })), 'swept');
+  assert.equal(G.wmpgVehicleSource(d, room({ collection: { vehicleId: 'rl_std', vehicle: 'Rear Loader — Standard' } })), 'wmp');
+  assert.equal(G.wmpgVehicleSource(d, room({ collection: { vehicleId: null, vehicle: 'typed name' } })), 'none', 'a name with no record is no vehicle');
+  const form = extractBlock(/^function wmpgRoomBlock\(/).text;
+  assert.ok(/<select data-path="rooms\.\$\{i\}\.collection\.vehicle" onchange="wmpgVehSelect/.test(form), 'the vehicle is a dropdown');
+  assert.ok(!/placeholder="\[collection vehicle not yet selected\]" oninput="wmpgSet\('rooms\.\$\{i\}\.collection\.vehicle'/.test(form), 'the free-text vehicle input is gone');
+  assert.ok(/wmpgVehList\(\)/.test(form) && /wsVehAll/.test(extractBlock(/^function wmpgVehList\(/).text), 'populated from the swept path tool’s own list');
+  assert.ok(/rec\.minR \? 'min R ' \+ rec\.minR/.test(form), 'vehicle facts come from the selected record, not carried text');
+  const sel = extractBlock(/^function wmpgVehSelect\(/).text;
+  assert.ok(/room\.collection\.vehicle = v \? v\.name : ''/.test(sel), 'the printed name is only ever set from a record');
+  const ap = extractBlock(/^function wmpgApplyVehicleToDesign\(/).text;
+  assert.ok(/p\.vehicle = \{ id: v\.id/.test(ap) && /confirm\(/.test(ap) && /must be redrawn/.test(ap), 'nominating on the project is explicit and says the path must be redrawn');
   const qa = extractBlock(/^function wmpgQA\(/).text;
   assert.ok(/wrn\(`\$\{room\.name\}: vehicle edited in WMP/.test(qa), 'a deliberate override is a warning to review, not an error that blocks issue');
 });
@@ -384,4 +391,88 @@ test('the preview carries the mapping both ways: data-src on nodes (screen only)
     assert.ok(model.includes(t), 'doc model tags ' + t));
   assert.ok(/tokens\.add\('tokens\.' \+ t\.slice\(1, -1\)\)/.test(extractBlock(/^function tbNodes\(/).text), 'a text-library section is tagged with every {token} it uses, so editing a token lands on the text that prints it');
   assert.ok(/data-path\^="\$\{path\}\."/.test(extractBlock(/^function wmpgFocus\(/).text), 'a general path (rooms.0.bins) lands on the first input beneath it');
+});
+
+// ── §9 bulky waste and chutes read the calculator's own models ──
+function loadInputs() {
+  const code = [/^const WMPG_STREAMS = /, /^function wmpgEsc\(/, /^const WMPG_ALLOW_CODES = /, /^const WMPG_ALLOW_IDS = /,
+    /^function wmpgExtraDiff\(/, /^function wmpgExtraDiffWords\(/, /^const WMPG_CHUTE_STREAMS = /, /^const WMPG_CHUTE_OPENINGS = /,
+    /^function wmpgChuteNorm\(/, /^function wmpgChuteKey\(/, /^function wmpgChuteDiff\(/, /^function wmpgChuteText\(/,
+    /^const WS_RECV_SPECS = /, /^const WS_RECV_BY_STREAM = /, /^const WS_RECV_STREAM_ID = /, /^function wsRecvLibFromEquip\(/,
+    /^function wsRecvOptsFor\(/, /^function wsRecvOf\(/, /^function wsRecvIsCompactor\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function(code + `;const wmpgChuteTypes = () => [{key:'SINGLE',label:'Single chute',openings:1},{key:'TWIN',label:'Twin chute',openings:2},{key:'TRIPLE',label:'Triple chute',openings:3}];
+    const wmpgRecvLabel = k => (wsRecvOf(k, {}) || {}).label || k;
+    return { wmpgExtraDiff, wmpgExtraDiffWords, wmpgChuteNorm, wmpgChuteKey, wmpgChuteDiff, wmpgChuteText, wsRecvLibFromEquip, wsRecvOptsFor, wsRecvIsCompactor, WS_RECV_BY_STREAM, WS_RECV_STREAM_ID };`)();
+}
+
+test('bulky waste defaults from the calculator’s Additional storage, and an edit is a marked override', () => {
+  const I = loadInputs();
+  const x = { on: true, areaM2: 5, type: 'bulky waste zone', design: { on: true, areaM2: 5 } };
+  assert.deepStrictEqual(I.wmpgExtraDiff(x), []);
+  x.areaM2 = 8;
+  assert.equal(I.wmpgExtraDiffWords(x), '5→8 m²');
+  x.on = false;
+  assert.equal(I.wmpgExtraDiffWords(x), 'removed in WMP');
+  assert.deepStrictEqual(I.wmpgExtraDiff({ on: true, areaM2: 6, design: null }), [], 'no calculator run → nothing to diverge from (house default, flagged as such in the form)');
+  const hyd = extractBlock(/^function wmpgHydrateRooms\(/).text;
+  assert.ok(/z\.code === WMPG_ALLOW_CODES\[key\]/.test(hyd) && /x\.areaM2 = \+u\.fpM2/.test(hyd), 'the calculator’s ALLOW_HARD unit is the Design value');
+  assert.ok(/if \(i === 0 && !room\.extras\.bulky\.design\) room\.extras\.bulky\.on = true;/.test(hyd), 'the house default yields to a calculator figure, on or off');
+  const ap = extractBlock(/^function wmpgApplyExtraToDesign\(/).text;
+  assert.ok(/br\.allow\[id\] = \{ on: !!x\.on, m2: x\.on \? \+x\.areaM2 : null \}/.test(ap), 'apply-to-design writes the calculator’s own allow shape (m2 null = calculated)');
+  assert.ok(/writeProjectSummary\(p\.id, \{ bin_rooms: s\.bin_rooms \}\)/.test(ap) && /confirm\(/.test(ap));
+});
+
+test('the chute editor offers exactly the calculator’s options: types × openings × receivers per stream', () => {
+  const I = loadInputs();
+  // the receiver option set is a MIRROR of the calculator's — pinned here
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const calcRbs = /const RECV_BY_STREAM=\{\s*GW: \[([^\]]+)\],\s*REC:\[([^\]]+)\],\s*ORG:\[([^\]]+)\],/.exec(src);
+  assert.ok(calcRbs, 'the calculator’s RECV_BY_STREAM is where it was');
+  const parse = s => s.split(',').map(x => x.trim().replace(/'/g, ''));
+  assert.deepStrictEqual(I.WS_RECV_BY_STREAM, { GW: parse(calcRbs[1]), REC: parse(calcRbs[2]), ORG: parse(calcRbs[3]) }, 'parent mirror equals the calculator’s list — one edit, two places');
+  assert.ok(src.includes("const RECV_STREAM_ID={GW:'garbage',REC:'recycling',ORG:'fogo',GLS:'glass'};"), 'and the stream-id map');
+  assert.deepStrictEqual(I.WS_RECV_STREAM_ID, { GW: 'garbage', REC: 'recycling', ORG: 'fogo', GLS: 'glass' });
+  // library receivers merge above 'None', compactor is garbage only, streams restrict
+  const lib = I.wsRecvLibFromEquip([
+    { code: 'car6', label: '6×1100L carousel', category: 'chute_receiver', active: true, streams: [], w: 5, d: 5 },
+    { code: 'cmp', label: 'Chute compactor', category: 'chute_receiver', active: true, compactionRatio: 3, streams: [] },
+    { code: 'fogo', label: 'FOGO receiver', category: 'chute_receiver', active: true, streams: ['fogo'] },
+    { code: 'old', label: 'Retired', category: 'chute_receiver', active: false },
+    { code: 'bin', label: 'A bin', category: 'bin', active: true },
+  ]);
+  assert.deepStrictEqual(Object.keys(lib), ['LIB_car6', 'LIB_cmp', 'LIB_fogo'], 'active chute_receiver records only');
+  assert.deepStrictEqual(I.wsRecvOptsFor('GW', lib), ['BIN_660', 'BIN_1100', 'INDEX_2', 'CAROUSEL_4', 'COMPACTOR', 'LIB_car6', 'LIB_cmp', 'NONE']);
+  assert.deepStrictEqual(I.wsRecvOptsFor('REC', lib), ['BIN_660', 'BIN_1100', 'INDEX_2', 'CAROUSEL_4', 'LIB_car6', 'NONE'], 'no compactor for recycling — ever');
+  assert.deepStrictEqual(I.wsRecvOptsFor('ORG', lib), ['BIN_240', 'LIB_car6', 'LIB_fogo', 'NONE'], 'a stream-restricted record shows only for its stream');
+  assert.equal(I.wsRecvIsCompactor('LIB_cmp', lib), true); assert.equal(I.wsRecvIsCompactor('COMPACTOR', lib), true); assert.equal(I.wsRecvIsCompactor('CAROUSEL_4', lib), false);
+  // normalisation: openings follow the type; extra fields ride through
+  const n = I.wmpgChuteNorm({ on: true, type: 'TWIN', openings: [{ stream: 'GW', recv: 'COMPACTOR' }], ffh_mm: 3100 });
+  assert.equal(n.openings.length, 2); assert.deepStrictEqual(n.openings[1], { stream: 'REC', recv: 'NONE' }); assert.equal(n.ffh_mm, 3100);
+  assert.equal(I.wmpgChuteNorm({ on: true, type: 'DUAL' }).type, 'SINGLE', 'an unknown type falls to the first real one, never to a made-up one');
+});
+
+test('the chute drives the content: arrangement text from the configuration, compaction when a compactor sits beneath it', () => {
+  const I = loadInputs();
+  const r = { name: 'Bin room', chute: { on: true, type: 'TWIN', openings: [{ stream: 'GW', recv: 'COMPACTOR' }, { stream: 'REC', recv: 'CAROUSEL_4' }] } };
+  assert.equal(I.wmpgChuteText(r), 'Bin room — Twin chute (general waste & commingled recycling), servicing all residential levels; general waste terminating into a Compactor, commingled recycling terminating into a 4×1100L carousel within the waste room.');
+  assert.equal(I.wmpgChuteText({ name: 'R', chute: { on: false } }), '');
+  assert.ok(I.wmpgChuteText({ name: 'R', chute: { on: true, type: 'SINGLE', openings: [{ stream: 'GW', recv: 'NONE' }] } }).endsWith('terminating into spare bins within the waste room.'));
+  // diff against the calculator's configuration
+  r.chuteDesign = { on: true, type: 'TWIN', openings: [{ stream: 'GW', recv: 'COMPACTOR' }, { stream: 'REC', recv: 'CAROUSEL_4' }] };
+  assert.deepStrictEqual(I.wmpgChuteDiff(r), []);
+  r.chute.openings[1].recv = 'BIN_1100';
+  assert.equal(I.wmpgChuteDiff(r).length, 1, 'a receiver change is a departure from the calculator');
+  assert.deepStrictEqual(I.wmpgChuteDiff({ chute: { on: true }, chuteDesign: undefined }), [], 'legacy draft with no baseline: nothing to compare');
+  // shape: compaction and its own condition
+  const G = load();
+  const sh = G.wmpgShape({ rooms: [room({ chutesOn: true, chute: { on: true, type: 'SINGLE', openings: [{ stream: 'GW', recv: 'COMPACTOR' }] }, bins: [bin()] })] });
+  assert.ok(sh.chutes && sh.compaction && sh.chute_compactor, 'a compactor at the base of a chute is compaction, and answers its own condition');
+  assert.equal(G.wmpgShape({ rooms: [room({ chutesOn: true, chute: { on: true, type: 'SINGLE', openings: [{ stream: 'GW', recv: 'BIN_1100' }] }, bins: [bin()] })] }).compaction, false);
+  assert.ok(G.TB_CONDS.some(c => c[0] === 'chute_compactor'), 'the library editor offers it');
+  // the form
+  const form = extractBlock(/^function wmpgRoomBlock\(/).text;
+  assert.ok(!/onchange="wmpgSet\('rooms\.\$\{i\}\.chutesOn'/.test(form), 'the yes/no checkbox is gone');
+  assert.ok(/wmpgChuteSet\(\$\{i\},'type'/.test(form) && /wmpgChuteSet\(\$\{i\},'recv'/.test(form) && /wmpgRecvOpts\(o\.stream\)/.test(form), 'type, stream and receiver per opening, from the shared option set');
+  const ap = extractBlock(/^function wmpgApplyChuteToDesign\(/).text;
+  assert.ok(/br\.chute = Object\.assign\(\{\}, br\.chute \|\| \{\}, \{ on: c\.on, type: c\.type/.test(ap), 'apply-to-design writes the calculator’s own chute shape, keeping its FFH/slab/angle fields');
 });

@@ -423,6 +423,30 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   render with no fresh edit **restores the scroll position** instead of
   throwing the reader to the top. Reverse: clicking a section calls
   `wmpgFocus` on its first input path. Print sees no `data-src`.
+- **Vehicle, bulky waste and chutes read the app's own models — never free
+  text.** The collection vehicle is a dropdown over `wsVehAll()` (the swept
+  path tool's list: DB rows + `WS_VEH` built-ins, loaded via
+  `wsVehEnsureLoaded` before the form renders); `room.collection.vehicleId`
+  is the truth and the printed name is only ever set from a record, so facts
+  like min R come from the record, not carried text. Default is the swept
+  path's nomination; another pick is a flagged override, and *nominate on the
+  project* writes `p.vehicle` and says the path must be redrawn. **Bulky
+  waste / textiles** default from the calculator's Additional storage
+  (`calc_rooms[].units` `ALLOW_HARD` / `ALLOW_TEXTILE`) as the Design value
+  (`wmpgExtraDiff`, pure); the room-1 house default yields to a calculator
+  figure, on or off; apply-to-design writes the calculator's own
+  `summary.bin_rooms[].allow[id] = {on, m2}` shape. **Chutes** carry the
+  calculator's whole configuration (`room.chute`: type, openings, receivers,
+  FFH…) with `room.chuteDesign` as baseline; the editor offers exactly the
+  calculator's set — `wsChuteTypes()` from `WS_CHUTE_SPECS`, and receivers per
+  stream from `wsRecvOptsFor`, a **mirror** of the calculator's
+  `RECV_BY_STREAM`/`recvOptsFor` (library `chute_receiver` records above
+  *None*, compactor garbage-only) pinned by a test. `chutesOn` is derived,
+  `chuteText` is generated from the configuration (`wmpgChuteText`) unless
+  edited, and a compactor receiver makes `wmpgShape.compaction` and
+  `chute_compactor` true so the compaction text switches on. Apply-to-design
+  writes `summary.bin_rooms[].chute` keeping the calculator's FFH/slab/angle
+  fields and re-pushes the summary to the calculator.
 
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
