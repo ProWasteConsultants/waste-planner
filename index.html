@@ -30158,6 +30158,7 @@ function wmpgBinSource(b) {
 }
 function wmpgBinSet(i, j, field, val) {
   const b = WMPG.data.rooms[i].bins[j]; if (!b) return;
+  wmpgFollow(`rooms.${i}.bins.${j}.${field}`);
   b[field] = field === 'sizeL' || field === 'qty' || field === 'colWk' ? (+val || 0) : val;
   wmpgRenderForm(); wmpgQueuePreview();
 }
@@ -30751,6 +30752,7 @@ function wmpgEnsureModal() {
     <div class="wmpg-head">
       <div class="wmpg-title">📄 WMP Generator</div>
       <span id="wmpg-qa-chip"></span>
+      <label class="wmpg-chk" style="margin:0;font-size:12px;white-space:nowrap;" title="After an edit, the preview scrolls to the section that input feeds and highlights it. Off = the preview stays where you scrolled it."><input type="checkbox" id="wmpg-follow" onchange="wmpgSetFollow(this.checked)"> Preview follows edits</label>
       <span id="wmpg-status" style="font-size:11px;color:var(--muted,#9BB0B0);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
       <button class="btn" onclick="wmpgRepull()" title="Pull rooms, allocation and bins from the latest calculator run" style="font-size:11px;">↻ Re-pull from calculator</button>
       <button class="btn" onclick="requestWMP()" title="Have a Pro Waste consultant prepare the WMP instead" style="font-size:11px;">Request consultant WMP</button>
@@ -30777,6 +30779,7 @@ function wmpgEnsureModal() {
     </div>
   </div>`;
   document.body.appendChild(el);
+  wmpgSetFollow(wmpgFollowOn());
   document.addEventListener('keydown', ev => {
     const open = document.getElementById('wmpg-overlay')?.style.display === 'flex';
     if (!open) return;
@@ -30791,6 +30794,7 @@ function wmpgEnsureModal() {
 // typing never re-renders the form and never loses focus. Structural changes
 // (add/remove a row or room) re-render explicitly.
 function wmpgSet(path, val) {
+  wmpgFollow(path);
   const parts = path.split('.');
   let o = WMPG.data;
   for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]];
@@ -30854,8 +30858,8 @@ function wmpgRenderForm() {
     <summary>Generation rates <span class="wmpg-pill">${d.ratesSource ? wmpgEsc(d.ratesSource) : 'manual'}</span></summary><div class="wmpg-sec-in">
     <table class="wmpg-t"><thead><tr><th style="width:38%;">Unit type</th>${WMPG_ORDER.map(s=>`<th>${s}</th>`).join('')}</tr></thead>
     <tbody>${units.map((u,i)=>`<tr>
-      <td><input value="${wmpgEsc(u.label)}" oninput="wmpgSet('unitTypes.${i}.label',this.value)"></td>
-      ${WMPG_ORDER.map(s=>`<td><input type="number" step="any" min="0" value="${d.rates[u.key]?.[s]||0}" title="${WMPG_STREAMS[s].doc} L/dwelling/week" oninput="wmpgSet('rates.${u.key}.${s}',parseFloat(this.value)||0);wmpgLiveNotes()"></td>`).join('')}
+      <td><input data-path="unitTypes.${i}.label" value="${wmpgEsc(u.label)}" oninput="wmpgSet('unitTypes.${i}.label',this.value)"></td>
+      ${WMPG_ORDER.map(s=>`<td><input data-path="rates.${u.key}.${s}" type="number" step="any" min="0" value="${d.rates[u.key]?.[s]||0}" title="${WMPG_STREAMS[s].doc} L/dwelling/week" oninput="wmpgSet('rates.${u.key}.${s}',parseFloat(this.value)||0);wmpgLiveNotes()"></td>`).join('')}
     </tr>`).join('')}</tbody></table>
     <div class="wmpg-note">L/dwelling/week, applied to every room. Allocation of dwellings to rooms is set per room below.</div>
     <button class="wmpg-addrow" onclick="wmpgAddUnitType()">＋ Add unit type</button>
@@ -30888,18 +30892,18 @@ function wmpgRenderForm() {
     ${wmpgTa('Site context (§1.2)','siteContext',d.siteContext,3,'Blank = standard wording built from the address and council.')}
     ${wmpgTa('Background (§1.3)','background',d.background,3,'Blank = standard wording built from the DA reference and development type.')}
     <div class="wmpg-f"><label>Guidelines &amp; standards (§1.5) — one per line</label>
-      <textarea rows="6" oninput="WMPG.data.guidelines=this.value.split('\\n').map(x=>x.trim()).filter(Boolean);wmpgQueuePreview()">${wmpgEsc(d.guidelines.join('\n'))}</textarea></div>
+      <textarea data-path="guidelines" rows="6" oninput="WMPG.data.guidelines=this.value.split('\\n').map(x=>x.trim()).filter(Boolean);wmpgFollow('guidelines');wmpgQueuePreview()">${wmpgEsc(d.guidelines.join('\n'))}</textarea></div>
     <div class="wmpg-note">Sorting, design requirements, management, OH&amp;S, circular economy and construction waste use the standard Pro Waste wording.</div>
   </details>
 
   <details class="wmpg-sec" id="s-supp" ${wmpgSecOpen('supp')} ontoggle="wmpgToggleSec('supp',this)">
     <summary>Suppliers &amp; contractors</summary><div class="wmpg-sec-in">
     <table class="wmpg-t"><thead><tr><th>Type</th><th>Model</th><th>Company</th><th>Website</th><th>Phone</th><th></th></tr></thead>
-    <tbody>${d.suppliers.map((r,i)=>`<tr>${['type','model','company','web','phone'].map(k=>`<td><input value="${wmpgEsc(r[k])}" oninput="wmpgSet('suppliers.${i}.${k}',this.value)"></td>`).join('')}
+    <tbody>${d.suppliers.map((r,i)=>`<tr>${['type','model','company','web','phone'].map(k=>`<td><input data-path="suppliers.${i}.${k}" value="${wmpgEsc(r[k])}" oninput="wmpgSet('suppliers.${i}.${k}',this.value)"></td>`).join('')}
       <td><button class="wmpg-x" onclick="WMPG.data.suppliers.splice(${i},1);wmpgRenderForm();wmpgQueuePreview()">✕</button></td></tr>`).join('')}</tbody></table>
     <button class="wmpg-addrow" onclick="WMPG.data.suppliers.push({type:'',model:'',company:'',web:'',phone:''});wmpgRenderForm()">＋ Supplier</button>
     <table class="wmpg-t" style="margin-top:10px;"><thead><tr><th>Service</th><th>Company</th><th>Website</th><th>Phone</th><th></th></tr></thead>
-    <tbody>${d.contractors.map((r,i)=>`<tr>${['type','company','web','phone'].map(k=>`<td><input value="${wmpgEsc(r[k])}" oninput="wmpgSet('contractors.${i}.${k}',this.value)"></td>`).join('')}
+    <tbody>${d.contractors.map((r,i)=>`<tr>${['type','company','web','phone'].map(k=>`<td><input data-path="contractors.${i}.${k}" value="${wmpgEsc(r[k])}" oninput="wmpgSet('contractors.${i}.${k}',this.value)"></td>`).join('')}
       <td><button class="wmpg-x" onclick="WMPG.data.contractors.splice(${i},1);wmpgRenderForm();wmpgQueuePreview()">✕</button></td></tr>`).join('')}</tbody></table>
     <button class="wmpg-addrow" onclick="WMPG.data.contractors.push({type:'',company:'',web:'',phone:''});wmpgRenderForm()">＋ Contractor</button>
   </details>
@@ -30933,7 +30937,7 @@ function wmpgRoomBlock(r, i) {
 
       <div class="wmpg-f"><label>Dwellings in this room</label></div>
       <table class="wmpg-t"><thead><tr>${units.map(u=>`<th>${wmpgEsc(u.label.replace(' apartment','').replace('-bedroom','br'))}</th>`).join('')}</tr></thead>
-      <tbody><tr>${units.map(u=>`<td><input type="number" min="0" value="${+r.alloc[u.key]||0}" oninput="wmpgSet('rooms.${i}.alloc.${u.key}',parseInt(this.value)||0);wmpgLiveNotes()"></td>`).join('')}</tr></tbody></table>
+      <tbody><tr>${units.map(u=>`<td><input data-path="rooms.${i}.alloc.${u.key}" type="number" min="0" value="${+r.alloc[u.key]||0}" oninput="wmpgSet('rooms.${i}.alloc.${u.key}',parseInt(this.value)||0);wmpgLiveNotes()"></td>`).join('')}</tr></tbody></table>
 
       <div class="wmpg-f"><label>Bins &amp; collection <span class="wmpg-pill" style="text-transform:none;">Design tab is the default — edits here are marked as WMP overrides</span></label></div>
       <table class="wmpg-t"><thead><tr><th>Stream</th><th>Size</th><th>Qty</th><th>Frequency</th><th>Method</th><th>Provider</th><th>Source</th><th></th></tr></thead>
@@ -30948,11 +30952,11 @@ function wmpgRoomBlock(r, i) {
           : `<span class="wmpg-pill" style="opacity:.8;">Design tab</span>`;
         return `<tr>
         <td style="color:#E7EFEF;padding-left:4px;white-space:nowrap;">${WMPG_STREAMS[b.stream].doc}</td>
-        <td><select onchange="wmpgBinSet(${i},${j},'sizeL',this.value)">${sizes.map(z=>`<option value="${z}" ${z===+b.sizeL?'selected':''}>${z}L</option>`).join('')}</select></td>
-        <td><input type="number" min="0" value="${b.qty}" style="width:58px;font-weight:700;" onchange="wmpgBinSet(${i},${j},'qty',this.value)"></td>
-        <td><select onchange="wmpgBinSet(${i},${j},'colWk',this.value)">${WMPG_FREQ.concat(WMPG_FREQ.some(f=>f[0]===+b.colWk)?[]:[[+b.colWk,wmpgFreqLabel(b.colWk)]]).map(f=>`<option value="${f[0]}" ${f[0]===+b.colWk?'selected':''}>${f[1]}</option>`).join('')}</select></td>
-        <td><select onchange="wmpgBinSet(${i},${j},'method',this.value||null)"><option value="" ${!b.method?'selected':''}>—</option>${Object.keys(WMPG_METHOD_LABEL).map(m=>`<option value="${m}" ${b.method===m?'selected':''}>${WMPG_METHOD_LABEL[m]}</option>`).join('')}</select></td>
-        <td><select onchange="wmpgBinSet(${i},${j},'provider',this.value)"><option value="council" ${b.provider==='council'?'selected':''}>council</option><option value="private contractor" ${b.provider!=='council'?'selected':''}>private</option></select></td>
+        <td><select data-path="rooms.${i}.bins.${j}.sizeL" onchange="wmpgBinSet(${i},${j},'sizeL',this.value)">${sizes.map(z=>`<option value="${z}" ${z===+b.sizeL?'selected':''}>${z}L</option>`).join('')}</select></td>
+        <td><input data-path="rooms.${i}.bins.${j}.qty" type="number" min="0" value="${b.qty}" style="width:58px;font-weight:700;" onchange="wmpgBinSet(${i},${j},'qty',this.value)"></td>
+        <td><select data-path="rooms.${i}.bins.${j}.colWk" onchange="wmpgBinSet(${i},${j},'colWk',this.value)">${WMPG_FREQ.concat(WMPG_FREQ.some(f=>f[0]===+b.colWk)?[]:[[+b.colWk,wmpgFreqLabel(b.colWk)]]).map(f=>`<option value="${f[0]}" ${f[0]===+b.colWk?'selected':''}>${f[1]}</option>`).join('')}</select></td>
+        <td><select data-path="rooms.${i}.bins.${j}.method" onchange="wmpgBinSet(${i},${j},'method',this.value||null)"><option value="" ${!b.method?'selected':''}>—</option>${Object.keys(WMPG_METHOD_LABEL).map(m=>`<option value="${m}" ${b.method===m?'selected':''}>${WMPG_METHOD_LABEL[m]}</option>`).join('')}</select></td>
+        <td><select data-path="rooms.${i}.bins.${j}.provider" onchange="wmpgBinSet(${i},${j},'provider',this.value)"><option value="council" ${b.provider==='council'?'selected':''}>council</option><option value="private contractor" ${b.provider!=='council'?'selected':''}>private</option></select></td>
         <td>${srcCell}</td>
         <td><button class="wmpg-x" title="Remove this row from the WMP" onclick="wmpgBinRemove(${i},${j})">✕</button></td></tr>`;}).join('')}</tbody></table>
       <button class="wmpg-addrow" onclick="wmpgBinAdd(${i})">＋ Bin row</button>
@@ -31106,7 +31110,11 @@ function wmpgDocModel() {
   const d = WMPG.data;
   const M = [];
   let tableNo = 0;
-  const cap = t => { tableNo++; M.push({ k:'caption', t:`Table ${tableNo} ${t}` }); };
+  // S(node, ...paths) tags a node with the input paths that feed it (`*` = any
+  // index); P(...) is the same but marks the PRIMARY place a path shows.
+  const S = (n, ...src) => { n.src = (n.src || []).concat(src); return n; };
+  const P = (n, ...src) => { n.pri = true; return S(n, ...src); };
+  const cap = (t, ...src) => { tableNo++; M.push(S({ k:'caption', t:`Table ${tableNo} ${t}` }, ...src)); };
 
   const rooms = d.rooms;
   const multi = rooms.length > 1;
@@ -31133,19 +31141,20 @@ function wmpgDocModel() {
 
   // ── Waste management summary ────────────────────────────────────────────
   M.push({ k:'h1', t:'Waste management summary' });
-  M.push({ k:'kv', t:'Site address:', v:d.address || '—' });
-  M.push({ k:'kv', t:'Development type:', v:d.devTypeText || '—' });
-  M.push({ k:'kv', t:'Council:', v:councilTxt });
-  M.push({ k:'kv', t:'Compliance:', v:compliance });
+  M.push(P({ k:'kv', t:'Site address:', v:d.address || '—' }, 'address'));
+  M.push(P({ k:'kv', t:'Development type:', v:d.devTypeText || '—' }, 'devTypeText'));
+  M.push(P({ k:'kv', t:'Council:', v:councilTxt }, 'council'));
+  M.push(P({ k:'kv', t:'Compliance:', v:compliance }, 'compliance'));
   M.push({ k:'kv', t:'Storage:', v:'' });
-  M.push({ k:'table', header:['Development component','Waste storage area','Storage area location','Bins and equipment required'],
-    rows: rooms.map(r => [r.component || 'Residential', r.name, r.location || '—', equipLines(r)]) });
+  M.push(P({ k:'table', header:['Development component','Waste storage area','Storage area location','Bins and equipment required'],
+    rows: rooms.map(r => [r.component || 'Residential', r.name, r.location || '—', equipLines(r)]) },
+    'rooms.*.name', 'rooms.*.location', 'rooms.*.component', 'rooms.*.extras', 'rooms'));
   if (anyChute) {
     M.push({ k:'kv', t:'Chute requirements:', v:'' });
-    M.push({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) });
+    M.push(S({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) }, 'rooms.*.chuteText', 'rooms.*.chutesOn'));
   }
   M.push({ k:'kv', t:'Collection:', v:'' });
-  M.push({ k:'bullets', items: rooms.map(collectionSentence) });
+  M.push(S({ k:'bullets', items: rooms.map(collectionSentence) }, 'rooms.*.collection'));
   M.push({ k:'pagebreak' });
 
   // ── 1. Introduction ─────────────────────────────────────────────────────
@@ -31171,31 +31180,31 @@ function wmpgDocModel() {
   }
   M.push({ k:'h2', t:'1.2. Site context' });
   if (!d.siteContext && tbHas('1.2 Site context')) tbNodes('1.2 Site context', tbCtxFor('1.2 Site context', d)).forEach(n => M.push(n));
-  else M.push({ k:'p', field:'siteContext', t: d.siteContext || `The subject site is located at ${d.address || '[address]'} within the ${councilTxt} municipality. The site is surrounded by a mix of residential and commercial land uses. [Insert site location figure]` });
+  else M.push(S({ k:'p', field:'siteContext', t: d.siteContext || `The subject site is located at ${d.address || '[address]'} within the ${councilTxt} municipality. The site is surrounded by a mix of residential and commercial land uses. [Insert site location figure]` }, 'siteContext', 'address'));
   M.push({ k:'h2', t:'1.3. Background' });
   if (!d.background && tbHas('1.3 Background')) tbNodes('1.3 Background', tbCtxFor('1.3 Background', d)).forEach(n => M.push(n));
-  else M.push({ k:'p', field:'background', t: d.background || `${d.daRef ? 'This site is the subject of planning application ' + d.daRef + '. ' : ''}The site is proposed to be developed as ${d.devTypeText ? (/^\d/.test(d.devTypeText) ? 'an ' : 'a ') + d.devTypeText : 'a multi-unit residential development'}.` });
+  else M.push(S({ k:'p', field:'background', t: d.background || `${d.daRef ? 'This site is the subject of planning application ' + d.daRef + '. ' : ''}The site is proposed to be developed as ${d.devTypeText ? (/^\d/.test(d.devTypeText) ? 'an ' : 'a ') + d.devTypeText : 'a multi-unit residential development'}.` }, 'background', 'daRef', 'devTypeText'));
   M.push({ k:'h2', t:'1.4. Development summary' });
   M.push({ k:'p', t:'The following table provides a summary of the proposed development, outlining the key components and scale of the project as relevant to waste management.' });
-  cap('Residential development summary');
-  M.push({ k:'table', header:['Dwelling type','Residential'],
+  cap('Residential development summary', 'unitTypes');
+  M.push(S({ k:'table', header:['Dwelling type','Residential'],
     rows: usedUnits.map(u => [u.label, String(rooms.reduce((a,r) => a + (+r.alloc[u.key]||0), 0))]),
-    total:['Total dwellings', String(totalDw)] });
+    total:['Total dwellings', String(totalDw)] }, 'unitTypes', 'rooms.*.alloc'));
   if (multi) {
     M.push({ k:'p', t:`The development incorporates ${rooms.length} separate waste storage areas. Dwellings are allocated to each area as follows.` });
-    cap('Dwelling allocation by waste storage area');
-    M.push({ k:'table', header:['Waste storage area','Location', ...usedUnits.map(u => u.label), 'Total dwellings'],
+    cap('Dwelling allocation by waste storage area', 'rooms.*.alloc');
+    M.push(P({ k:'table', header:['Waste storage area','Location', ...usedUnits.map(u => u.label), 'Total dwellings'],
       rows: rooms.map(r => [r.name, r.location || '—', ...usedUnits.map(u => String(+r.alloc[u.key]||0)), String(wmpgRoomQty(r))]),
-      total:['Total','', ...usedUnits.map(u => String(rooms.reduce((a,r)=>a+(+r.alloc[u.key]||0),0))), String(totalDw)] });
+      total:['Total','', ...usedUnits.map(u => String(rooms.reduce((a,r)=>a+(+r.alloc[u.key]||0),0))), String(totalDw)] }, 'rooms.*.alloc'));
   }
   M.push({ k:'h2', t:'1.5. Relevant guidelines and standards' });
-  tbNodesOr('1.5 Relevant guidelines and standards', d, null, [{ k:'bullets', items: d.guidelines.slice() }]).forEach(n => M.push(n));
+  tbNodesOr('1.5 Relevant guidelines and standards', d, null, [{ k:'bullets', items: d.guidelines.slice() }]).forEach(n => M.push(S(n, 'guidelines')));
 
   // ── 2. Waste generation (one table per room) ────────────────────────────
   M.push({ k:'h1', t:'2. Waste generation' });
   M.push({ k:'h2', t:'2.1. Residential waste volume generation' });
   tbNodesOr('2.1 Residential waste volume generation', d, null, [{ k:'p', t:`Residential waste generation rates have been applied with reference to ${compliance}. These rates estimate weekly waste volumes generated by dwellings within the development${multi ? ', presented separately for each waste storage area' : ''}.` }]).forEach(n => M.push(n));
-  rooms.forEach(room => {
+  rooms.forEach((room, ri) => {
     const q = wmpgRoomQty(room); if (!q) return;
     const streams = wmpgRoomStreams(d, room);
     const v = wmpgRoomVols(d, room);
@@ -31208,8 +31217,8 @@ function wmpgDocModel() {
     });
     const tot = ['Total', String(q)];
     streams.forEach(s => { tot.push(''); tot.push(wmpgNum(v[s]||0)); });
-    cap(`${roomLabel(room)}: Waste volume generation`);
-    M.push({ k:'table', header:hdr, rows:rws, total:tot });
+    cap(`${roomLabel(room)}: Waste volume generation`, 'rates', `rooms.${ri}.alloc`);
+    M.push(P({ k:'table', header:hdr, rows:rws, total:tot }, 'rates', `rooms.${ri}.alloc`, 'unitTypes'));
   });
   if (multi) {
     cap('Waste volume generation — development total');
@@ -31239,7 +31248,7 @@ function wmpgDocModel() {
     WMPG_STREAMS[s].recept, disposalFor(s), WMPG_STREAMS[s].notes]);
   if (rooms.some(r => r.extras.bulky.on))
     sortRows.push(['Bulky waste and e-waste','N/A','N/A','via building management','Contact building management for assistance transferring to the waste storage area']);
-  M.push({ k:'table', header:['Waste stream','Bin colour','Max. internal receptacle size','Disposal method','Notes/restrictions'], rows:sortRows });
+  M.push(P({ k:'table', header:['Waste stream','Bin colour','Max. internal receptacle size','Disposal method','Notes/restrictions'], rows:sortRows }, 'colours', 'rooms.*.extras.textiles', 'rooms.*.extras.bulky'));
   M.push({ k:'p', t:'Other considerations:', b:true });
   if (tbHas('3.1 Resi waste other stream sorting text')) {
     tbNodes('3.1 Resi waste other stream sorting text', tbCtxFor('3.1 Resi waste other stream sorting text', d)).forEach(n => M.push(n));
@@ -31256,7 +31265,7 @@ function wmpgDocModel() {
   M.push({ k:'p', t:`This section outlines the proposed bin storage and equipment for the development. Provision has been made to ensure sufficient capacity to accommodate the expected waste volumes, with Appendix A confirming that the bin storage area${multi?'s are':' is'} adequately sized to house the bins and equipment.` });
   M.push({ k:'h2', t:s4() + ' Residential bin storage and equipment' });
   M.push({ k:'p', t:'The proposed residential bin storage and equipment requirements are outlined below. Dimensions are indicative only and may vary slightly between manufacturers; equipment models provided are examples only.' });
-  rooms.forEach(room => {
+  rooms.forEach((room, ri) => {
     let fpTotal = 0;
     const rws = room.bins.map(b => {
       const dim = WMPG_BIN_DIMS[b.sizeL] || [0,0,0];
@@ -31272,9 +31281,9 @@ function wmpgDocModel() {
     if (room.extras.tug.on)      addExtra(room.extras.tug, 'General waste');
     if (room.extras.wash.on)     addExtra(room.extras.wash, 'General waste');
     if (!rws.length) return;
-    cap(`${roomLabel(room)}: Bin storage and equipment`);
-    M.push({ k:'table', header:['Waste stream','Bin/equipment type','Qty.','Height (mm)','Width (mm)','Depth (mm)','Footprint (m²)'],
-      rows:rws, total:['Total footprint (m²)','','','','','', fpTotal.toFixed(2)] });
+    cap(`${roomLabel(room)}: Bin storage and equipment`, `rooms.${ri}.bins`, `rooms.${ri}.extras`);
+    M.push(P({ k:'table', header:['Waste stream','Bin/equipment type','Qty.','Height (mm)','Width (mm)','Depth (mm)','Footprint (m²)'],
+      rows:rws, total:['Total footprint (m²)','','','','','', fpTotal.toFixed(2)] }, `rooms.${ri}.bins`, `rooms.${ri}.extras`));
   });
 
   const ovr = [];
@@ -31289,17 +31298,17 @@ function wmpgDocModel() {
     M.push({ k:'h2', t:s4() + ' Residential chute requirements' });
     M.push({ k:'p', t:'The proposed development is to incorporate the following residential chute requirements:' });
     if (tbHas('4.2 Residential chute requirements (if required)')) {
-      M.push({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) });
+      M.push(P({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) }, 'rooms.*.chuteText', 'rooms.*.chutesOn'));
       rooms.filter(r => r.chutesOn).forEach(r =>
         tbNodes('4.2 Residential chute requirements (if required)', tbCtxFor('chute', d, r)).forEach(n => M.push(n)));
     } else
-    M.push({ k:'bullets', items:[
+    M.push(P({ k:'bullets', items:[
       ...rooms.filter(r => r.chutesOn).map(r => r.chuteText),
       'Each chute is to have a self-closing slide door at the discharge point, with manual override, so the building manager can close the chute off while swapping bins.',
       'General waste chutes to not exceed 45 degrees and commingled recycling to not exceed 22.5 degrees from the vertical plane to minimise chute blockages.',
       'Chute access rooms sized and ventilated in accordance with council requirements and Australian Standards.',
       'Signage and labelling provided at chute openings to guide correct disposal.',
-      'Operational management of chutes, including cleaning and maintenance, remains the responsibility of the building management.'] });
+      'Operational management of chutes, including cleaning and maintenance, remains the responsibility of the building management.'] }, 'rooms.*.chuteText', 'rooms.*.chutesOn'));
   }
   M.push({ k:'h2', t:s4() + ' Bin storage area design requirements' });
   M.push({ k:'p', t:`The following design requirements should be incorporated into ${multi?'each of the bin storage areas':'the bin storage area'} to ensure compliance, safe operation, and ease of use:` });
@@ -31322,30 +31331,31 @@ function wmpgDocModel() {
     'Bin colours must comply with council requirements (AS 4123 where unspecified).'] });
   M.push({ k:'h2', t:s4() + ' Bin storage and equipment suppliers' });
   M.push({ k:'p', t:'To support the implementation of the above bin room design requirements, a range of equipment suppliers are available to provide bins, equipment and associated infrastructure. Final procurement decisions remain the responsibility of the developer.' });
-  cap('Supplier details');
-  M.push({ k:'table', header:['Supplier type','Example model','Company','Website','Phone'],
-    rows: d.suppliers.filter(r => r.company || r.type).map(r => [r.type, r.model, r.company, r.web, r.phone]) });
+  cap('Supplier details', 'suppliers');
+  M.push(P({ k:'table', header:['Supplier type','Example model','Company','Website','Phone'],
+    rows: d.suppliers.filter(r => r.company || r.type).map(r => [r.type, r.model, r.company, r.web, r.phone]) }, 'suppliers'));
 
   // ── 5. Collection (one table per room) ──────────────────────────────────
   M.push({ k:'h1', t:'5. Waste collection process' });
   M.push({ k:'p', t:'This section outlines the proposed waste collection process for the development, including bin provision, collection frequency, vehicle access, and servicing arrangements. It also identifies relevant waste service providers to support ongoing management.' });
   M.push({ k:'h2', t:'5.1. Residential waste collection' });
   M.push({ k:'p', t:'The proposed residential waste collection system, including bin sizes, service frequency, and weekly capacity is outlined below.' });
-  rooms.forEach(room => {
+  rooms.forEach((room, ri) => {
     const v = wmpgRoomVols(d, room);
     const rws = room.bins.map(b => [WMPG_STREAMS[b.stream].doc, `${b.sizeL}L bin`, String(b.qty),
       wmpgFreqLabel(b.colWk), wmpgNum(v[b.stream]||0), wmpgNum(b.sizeL*b.qty*(+b.colWk||0)), b.provider]);
     if (room.extras.bulky.on)    rws.push(['Hard waste', `${room.extras.bulky.areaM2}m² bulky waste zone`, '1', 'on-call', 'N/A', 'N/A', room.collection.provider || 'council']);
     if (room.extras.textiles.on) rws.push(['Textiles', `${room.extras.textiles.areaM2}m² charity bin`, '1', 'on-call', 'N/A', 'N/A', 'charity/council']);
     if (!rws.length) return;
-    cap(`${roomLabel(room)}: Waste collection summary`);
-    M.push({ k:'table', header:['Waste stream','Bin/equipment type','Qty.','Collection frequency','Weekly volume (L)','Service capacity (L/week)','Collection provider'], rows:rws });
+    cap(`${roomLabel(room)}: Waste collection summary`, `rooms.${ri}.bins.*.colWk`, `rooms.${ri}.bins.*.provider`);
+    M.push(P({ k:'table', header:['Waste stream','Bin/equipment type','Qty.','Collection frequency','Weekly volume (L)','Service capacity (L/week)','Collection provider'], rows:rws },
+      `rooms.${ri}.bins.*.colWk`, `rooms.${ri}.bins.*.provider`, `rooms.${ri}.bins`, `rooms.${ri}.extras`));
   });
   rooms.forEach((room, ri) => {
     M.push({ k:'p', t: multi ? `${room.name} — collection process` : 'Residential collection process', b:true });
     // Template-assembled from the project's own facts (wmpgNarrative); the
     // author's edit wins. Tagged so the preview offers rebuild/polish inline.
-    M.push({ k:'p', t: wmpgNarrativeText(d, room), narrative: ri });
+    M.push(P({ k:'p', t: wmpgNarrativeText(d, room), narrative: ri }, `rooms.${ri}.collection`, `rooms.${ri}.bins`, `rooms.${ri}.bins.*.method`, `rooms.${ri}.extras.tug`, 'tokens.travel_path'));
     // B3: obligations that follow from the plant actually placed in this room.
     // Silent when nothing applies, so a simple room reads exactly as before.
     try {
@@ -31362,9 +31372,9 @@ function wmpgDocModel() {
   });
   M.push({ k:'p', t:'Waste service providers', b:true });
   M.push({ k:'p', t:'The ongoing management of waste services may involve a range of specialist contractors, including waste collection providers, bin washing services, and independent auditors. The following contractors can provide these services to support the effective operation and maintenance of the proposed waste management system.' });
-  cap('Contractor details');
-  M.push({ k:'table', header:['Supplier type','Company','Website','Phone'],
-    rows: d.contractors.filter(r => r.company || r.type).map(r => [r.type, r.company, r.web, r.phone]) });
+  cap('Contractor details', 'contractors');
+  M.push(P({ k:'table', header:['Supplier type','Company','Website','Phone'],
+    rows: d.contractors.filter(r => r.company || r.type).map(r => [r.type, r.company, r.web, r.phone]) }, 'contractors'));
 
   // ── 6–9 standard sections ───────────────────────────────────────────────
   M.push({ k:'h1', t:'6. Management responsibilities' });
@@ -31488,14 +31498,15 @@ function wmpgBuildHtml(forPrint) {
     const h = render(n);
     if (forPrint) { parts.push(h); return; }
     const key = n.tb ? 'tb:' + n.tb : n.narrative != null ? 'nar:' + n.narrative : n.field ? 'field:' + n.field : null;
-    if (!key) { flush(); parts.push(h); return; }
+    const srcAttr = n.src && n.src.length ? ` data-src="${esc([...new Set(n.src)].join(' '))}"${n.pri ? ' data-pri' : ''}` : '';
+    if (!key) { flush(); parts.push(srcAttr ? `<div class="wsrc"${srcAttr}>${h}</div>` : h); return; }
     if (run && run.key === key) { run.html += '\n' + h; return; }
     flush();
     const kind = key.slice(0, key.indexOf(':')), val = key.slice(key.indexOf(':') + 1);
     const btn = kind === 'tb' ? `<button class="tbx" onclick="parent.wmpgSwap('${q(val)}')" title="Choose alternative wording from the text library">⇄ swap text</button>`
       : kind === 'nar' ? `<button class="tbx" onclick="parent.wmpgNarrativeMenu(${+val})" title="Rebuild, polish or edit this narrative">✎ narrative</button>`
       : `<button class="tbx" onclick="parent.wmpgFocus('${q(val)}')" title="Edit this paragraph">✎ edit</button>`;
-    run = { key, html: `<div class="tbsec" data-kind="${kind}">${btn}\n${h}` };
+    run = { key, html: `<div class="tbsec" data-kind="${kind}"${srcAttr}>${btn}\n${h}` };
   });
   flush();
   const body = parts.join('\n');
@@ -31536,21 +31547,25 @@ function wmpgBuildHtml(forPrint) {
   ${forPrint ? '' : `.tbsec{position:relative;border-left:2px solid transparent;margin-left:-12px;padding-left:10px;border-radius:3px;}
   .tbsec:hover{border-left-color:${teal};background:#f2f8f8;}
   .tbx{position:absolute;right:0;top:-4px;font:600 8.5pt 'Segoe UI',system-ui,sans-serif;color:${teal};background:#fff;border:1px solid ${teal};border-radius:4px;padding:2px 8px;cursor:pointer;opacity:0;transition:opacity .12s;z-index:2;}
-  .tbsec:hover .tbx{opacity:1;}`}
+  .tbsec:hover .tbx{opacity:1;}
+  .wsrc,.tbsec,[data-src]{transition:background-color .9s ease,box-shadow .9s ease;border-radius:3px;}
+  .wf-hit{background:#e3f4f3 !important;box-shadow:0 0 0 3px #e3f4f3, 0 0 0 5px ${teal};transition:none;}
+  .wf-soft{background:#f2f9f8 !important;transition:none;}
+  [data-src]{cursor:pointer;}`}
   </style></head><body><div class="sheet">
     <div class="cover">
-      <div class="pre"><span>Prepared for<b>${esc(d.client || '—')}</b></span><span style="text-align:right;">Date<b>${esc(d.date)}</b></span></div>
+      <div class="pre"><span data-src="client" data-pri>Prepared for<b>${esc(d.client || '—')}</b></span><span style="text-align:right;" data-src="date" data-pri>Date<b>${esc(d.date)}</b></span></div>
       <div class="rule"></div>
       ${art?.panel ? `<img class="cover-art" src="${art.panel}" alt="">` : ''}
-      <div class="addr">${esc(d.address || d.projectName || '[Site address]')}</div>
-      <div class="doc">${esc(d.title || 'Waste Management Plan')}</div>
+      <div class="addr" data-src="address">${esc(d.address || d.projectName || '[Site address]')}</div>
+      <div class="doc" data-src="title" data-pri>${esc(d.title || 'Waste Management Plan')}</div>
       <div class="brand">${art?.logo
         ? `<img src="${art.logo}" alt="Pro Waste Consultants" style="height:34px;">`
         : `<span><b style="font-size:12pt;">Pro</b><b style="font-size:12pt;color:${green};">Waste</b> <span style="opacity:.7;">Consultants</span></span>`}<span>www.prowaste.au · info@prowaste.au</span></div>
     </div>
     <div class="dc">
-      <p class="kv"><span>Project ID</span><br>${esc(d.projId)}</p>
-      <table><thead><tr><th>Version</th><th>Status</th><th>Date</th><th>Author</th></tr></thead><tbody>
+      <p class="kv" data-src="projId" data-pri><span>Project ID</span><br>${esc(d.projId)}</p>
+      <table data-src="ver status author history" data-pri><thead><tr><th>Version</th><th>Status</th><th>Date</th><th>Author</th></tr></thead><tbody>
       ${hist.map(h=>`<tr><td>${esc(h.ver)}</td><td>${esc(h.status)}</td><td>${esc(h.date)}</td><td>${esc(h.author)}</td></tr>`).join('')}
       </tbody></table>
     </div>
@@ -31558,12 +31573,90 @@ function wmpgBuildHtml(forPrint) {
     <div class="pb"></div>
     ${body}
     <div class="foot">${esc(wmpgFileName('docx'))} — generated with Waste Planner · Pro Waste Consultants Pty Ltd · ABN 88 693 080 349</div>
-  </div>${forPrint?'<scr'+'ipt>window.onload=()=>setTimeout(()=>window.print(),300);</scr'+'ipt>':''}</body></html>`;
+  </div>${forPrint?'<scr'+'ipt>window.onload=()=>setTimeout(()=>window.print(),300);</scr'+'ipt>'
+    // The mapping read the other way: click a section, land on the input that
+    // feeds it (buttons and links keep their own jobs). A text-library-only
+    // section has no single input — its hover control is the way in.
+    : '<scr'+'ipt>document.addEventListener("click",function(e){if(e.target.closest("button,a"))return;var el=e.target.closest("[data-src]");if(!el)return;var src=(el.getAttribute("data-src")||"").split(" ").filter(function(s){return s&&s.indexOf("tb:")!==0;});if(src.length&&parent&&parent.wmpgFocus)parent.wmpgFocus(src[0].replace(/\\*/g,"0"));});</scr'+'ipt>'}</body></html>`;
 }
 
+// ── PREVIEW FOLLOWS THE FIELD BEING EDITED ─────────────────────────────────
+// Every document node carries `src`: the input paths (dot paths into
+// WMPG.data, `*` for any index) that feed it, plus `pri` where that node is
+// the PRIMARY place a path shows. Text-library sections carry `tb:<group>`.
+// It is the same mapping the preview's hover controls use, read the other
+// way: an edit names its path (wmpgFollow), the next preview render scrolls
+// to the most specific node that path feeds and highlights it, and lightly
+// marks the others — a bin count lands on the storage table and glows in the
+// collection table and the narrative, without jumping between them.
+// Follow is on EDIT, never on focus: tabbing through inputs must not fight a
+// preview someone has scrolled deliberately. A small toggle pauses it.
+function wmpgSrcMatch(tag, path) {
+  // Specificity of a node tag against an edited path: the number of segments
+  // it pins, or -1. A `tb:` tag matches only its exact group.
+  if (!tag || !path) return -1;
+  if (tag.startsWith('tb:') || path.startsWith('tb:')) return tag === path ? 99 : -1;
+  const t = tag.split('.'), p = path.split('.');
+  if (t.length > p.length) return -1;
+  for (let i = 0; i < t.length; i++) if (t[i] !== '*' && t[i] !== p[i]) return -1;
+  return t.length;
+}
+function wmpgFollowPick(entries, path) {
+  // entries in document order: [{ src: [...tags], pri: bool }]. Primary is the
+  // most specific match; ties go to a node flagged primary, then to the first
+  // in the document. Every other matching node is a secondary.
+  let best = -1, bestScore = -1, bestPri = false;
+  const hits = [];
+  (entries || []).forEach((e, i) => {
+    const score = Math.max(-1, ...((e && e.src) || []).map(t => wmpgSrcMatch(t, path)));
+    if (score < 0) return;
+    hits.push(i);
+    const pri = !!(e && e.pri);
+    if (score > bestScore || (score === bestScore && pri && !bestPri)) { best = i; bestScore = score; bestPri = pri; }
+  });
+  return { primary: best, others: hits.filter(i => i !== best) };
+}
+function wmpgFollowOn() { try { return localStorage.getItem('wmpg_follow') !== '0'; } catch (e) { return true; } }
+function wmpgSetFollow(on) {
+  try { localStorage.setItem('wmpg_follow', on ? '1' : '0'); } catch (e) {}
+  const el = document.getElementById('wmpg-follow'); if (el) el.checked = !!on;
+}
+function wmpgFollow(path) { if (path) WMPG.follow = { path, ts: Date.now() }; }
+function wmpgScrollPreview(y) {
+  const fr = document.getElementById('wmpg-iframe');
+  try { fr.contentWindow.scrollTo(0, y || 0); } catch (e) {}
+}
+function wmpgApplyFollow(path) {
+  const fr = document.getElementById('wmpg-iframe');
+  let doc; try { doc = fr.contentDocument; } catch (e) { return false; }
+  if (!doc) return false;
+  const els = Array.from(doc.querySelectorAll('[data-src]'));
+  const pick = wmpgFollowPick(els.map(el => ({ src: String(el.getAttribute('data-src') || '').split(' '), pri: el.hasAttribute('data-pri') })), path);
+  if (pick.primary < 0) return false;
+  els.forEach(el => el.classList.remove('wf-hit', 'wf-soft'));
+  const p = els[pick.primary];
+  p.classList.add('wf-hit');
+  pick.others.forEach(i => els[i].classList.add('wf-soft'));
+  try { p.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch (e) { p.scrollIntoView(); }
+  clearTimeout(WMPG.followFade);
+  WMPG.followFade = setTimeout(() => { try { els.forEach(el => el.classList.remove('wf-hit', 'wf-soft')); } catch (e) {} }, 1800);
+  return true;
+}
+
+// Setting srcdoc reloads the iframe, which used to throw the reader back to
+// the top on every debounced keystroke. Now: a fresh edit is followed; any
+// other render restores where the reader was.
 function wmpgRefreshPreview() {
   const fr = document.getElementById('wmpg-iframe');
-  if (fr) fr.srcdoc = wmpgBuildHtml(false);
+  if (!fr) return;
+  let prevY = 0; try { prevY = fr.contentWindow.scrollY || 0; } catch (e) {}
+  fr.onload = () => {
+    const f = WMPG.follow;
+    const fresh = !!(f && (Date.now() - f.ts) < 4000);
+    if (!(fresh && wmpgFollowOn() && wmpgApplyFollow(f.path))) wmpgScrollPreview(prevY);
+    WMPG.follow = null;
+  };
+  fr.srcdoc = wmpgBuildHtml(false);
 }
 function wmpgPrint() {
   const w = window.open('', '_blank');
@@ -33181,7 +33274,9 @@ function tbNodes(groupName, ctx) {
     else { flush(); out.push({ k:'p', t:s.text, b:s.style === 'h' }); }
   });
   flush();
-  out.forEach(n => { n.tb = groupName; });
+  const tokens = new Set();
+  (TB.byGroup && TB.byGroup[groupName] || []).forEach(r => (String(r.b || '').match(/\{(\w+)\}/g) || []).forEach(t => tokens.add('tokens.' + t.slice(1, -1))));
+  out.forEach(n => { n.tb = groupName; n.src = (n.src || []).concat(['tb:' + groupName], [...tokens]); });
   return out;
 }
 // Does the library have usable content for this group on this project?
@@ -33512,6 +33607,7 @@ function tbToggle(tag, on) {
   const r0 = tbGet(tag);
   const def = r0 ? tbDefaultOn(r0, WMPG.data) : false;
   if (on === def) delete WMPG.data.text.off[tag]; else WMPG.data.text.off[tag] = !on;
+  wmpgFollow('tb:' + ((r0 && r0.g) || ''));
   tbRenderPanel(); wmpgPopRefresh(); wmpgQueuePreview();
 }
 function tbEdit(tag) {
@@ -33521,6 +33617,7 @@ function tbEdit(tag) {
   const v = prompt('Edit for this WMP only ({tokens} are filled from project data):', cur);
   if (v === null) return;
   if (v.trim() === r.b.trim()) delete WMPG.data.text.edit[tag]; else WMPG.data.text.edit[tag] = v;
+  wmpgFollow('tb:' + (r.g || ''));
   tbRenderPanel(); wmpgPopRefresh(); wmpgQueuePreview();
 }
 
@@ -33556,7 +33653,7 @@ function wmpgNarrativeMenu(i) {
 function wmpgFocus(path) {
   wmpgPopClose();
   const f = document.getElementById('wmpg-form'); if (!f) return;
-  const el = f.querySelector(`[data-path="${path}"]`);
+  const el = f.querySelector(`[data-path="${path}"]`) || f.querySelector(`[data-path^="${path}."]`) || f.querySelector(`[data-path^="${path}"]`);
   if (!el) return;
   let p = el.parentElement;
   while (p && p !== f) { if (p.tagName === 'DETAILS') p.open = true; p = p.parentElement; }

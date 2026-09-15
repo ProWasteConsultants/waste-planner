@@ -231,7 +231,7 @@ test('the preview is the workspace: sections carry a hover control that reaches 
   const build = extractBlock(/^function wmpgBuildHtml\(/).text;
   assert.ok(/if \(forPrint\) \{ parts\.push\(h\); return; \}/.test(build), 'print and export see plain nodes');
   assert.ok(/parent\.wmpgSwap\(/.test(build) && /parent\.wmpgNarrativeMenu\(/.test(build) && /parent\.wmpgFocus\(/.test(build));
-  assert.ok(/out\.forEach\(n => \{ n\.tb = groupName; \}\)/.test(extractBlock(/^function tbNodes\(/).text), 'text-library nodes are tagged with their group');
+  assert.ok(/out\.forEach\(n => \{ n\.tb = groupName;/.test(extractBlock(/^function tbNodes\(/).text), 'text-library nodes are tagged with their group');
   ['wmpgSwap', 'wmpgNarrativeMenu', 'wmpgFocus', 'wmpgPopClose', 'tbGroupHtml'].forEach(fn =>
     assert.ok(new RegExp('\\nfunction ' + fn + '\\(').test(SOURCE), fn + ' exists as a function declaration'));
   assert.ok(/tbGroupHtml\(g, d\)/.test(extractBlock(/^function wmpgSwap\(/).text) && /tbGroupHtml\(g, d\)/.test(extractBlock(/^function tbRenderPanel\(/).text),
@@ -314,4 +314,74 @@ test('projects are server-authoritative — the free-project cap cannot be reset
   assert.ok(/profiles\.projects_created, kept by trigger\) is authoritative/.test(SOURCE), 'the cap reads the trigger-kept counter, not a local count');
   const ft = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-09-07-free-tier-enforcement.sql'), 'utf8');
   assert.ok(/projects_created/.test(ft) && /trigger/i.test(ft));
+});
+
+// ── §8 the preview follows the field being edited ──
+function loadFollow() {
+  const code = [/^function wmpgSrcMatch\(/, /^function wmpgFollowPick\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function(code + ';return { wmpgSrcMatch, wmpgFollowPick };')();
+}
+
+test('a node tag matches an edited path by segments, with * for any index, and tb: groups exactly', () => {
+  const F = loadFollow();
+  assert.equal(F.wmpgSrcMatch('rooms.0.bins', 'rooms.0.bins.1.qty'), 3, 'a prefix tag matches everything beneath it, scored by how much it pins');
+  assert.equal(F.wmpgSrcMatch('rooms.*.bins.*.colWk', 'rooms.0.bins.1.colWk'), 5, 'wildcards pin a segment without naming it');
+  assert.equal(F.wmpgSrcMatch('rooms.*.bins.*.colWk', 'rooms.0.bins.1.qty'), -1);
+  assert.equal(F.wmpgSrcMatch('rooms.1.bins', 'rooms.0.bins.1.qty'), -1, 'another room’s table is not this room’s');
+  assert.equal(F.wmpgSrcMatch('rooms.0.bins.1.qty', 'rooms.0.bins'), -1, 'a tag more specific than the edit does not match it');
+  assert.equal(F.wmpgSrcMatch('tb:1.1 Scope', 'tb:1.1 Scope'), 99, 'group names contain dots — matched whole, never split');
+  assert.equal(F.wmpgSrcMatch('tb:1.1 Scope', 'tb:1.1'), -1);
+  assert.equal(F.wmpgSrcMatch('', 'x'), -1);
+});
+
+test('the primary is the most specific node; the rest are lightly marked, never jumped between', () => {
+  const F = loadFollow();
+  // In document order: summary table (rooms), §4 storage table (rooms.0.bins,
+  // primary), §5 collection table (colWk/provider specific, plus rooms.0.bins),
+  // narrative (rooms.0.bins light).
+  const doc = [
+    { src: ['rooms.*.name', 'rooms'], pri: true },
+    { src: ['rooms.0.bins', 'rooms.0.extras'], pri: true },
+    { src: ['rooms.0.bins.*.colWk', 'rooms.0.bins.*.provider', 'rooms.0.bins'], pri: true },
+    { src: ['rooms.0.collection', 'rooms.0.bins'], pri: true },
+  ];
+  let pick = F.wmpgFollowPick(doc, 'rooms.0.bins.1.qty');
+  assert.equal(pick.primary, 1, 'a bin COUNT lands on the storage table');
+  assert.deepStrictEqual(pick.others, [0, 2, 3], 'and glows in the summary, the collection table and the narrative');
+  pick = F.wmpgFollowPick(doc, 'rooms.0.bins.1.colWk');
+  assert.equal(pick.primary, 2, 'a FREQUENCY lands on the collection table, where it actually prints');
+  pick = F.wmpgFollowPick(doc, 'rooms.0.collection.street');
+  assert.equal(pick.primary, 3);
+  assert.deepStrictEqual(pick.others, [0], 'the summary knows the room, nothing else does');
+  assert.equal(F.wmpgFollowPick(doc, 'suppliers.0.phone').primary, -1, 'nothing to follow → the caller keeps the scroll position');
+  // equal specificity: a node flagged primary beats an earlier unflagged one
+  const tie = [{ src: ['rooms.*.chuteText'], pri: false }, { src: ['rooms.*.chuteText'], pri: true }];
+  assert.equal(F.wmpgFollowPick(tie, 'rooms.0.chuteText').primary, 1, 'the §4 chute list, not the summary bullet');
+});
+
+test('follow is on EDIT, not focus; it is applied after the reload; otherwise the scroll position is kept', () => {
+  const set = extractBlock(/^function wmpgSet\(/).text;
+  assert.ok(/^\s*wmpgFollow\(path\);/m.test(set), 'every wmpgSet names the path it edited');
+  assert.ok(!/onfocus|focusin/.test(extractBlock(/^function wmpgIn\(/).text), 'inputs never follow on focus — tabbing must not fight the reader');
+  assert.ok(/wmpgFollow\(`rooms\.\$\{i\}\.bins\.\$\{j\}\.\$\{field\}`\)/.test(extractBlock(/^function wmpgBinSet\(/).text));
+  assert.ok(/wmpgFollow\('tb:' \+/.test(extractBlock(/^function tbToggle\(/).text) && /wmpgFollow\('tb:' \+/.test(extractBlock(/^function tbEdit\(/).text), 'a text-library selection follows to its section');
+  const refresh = extractBlock(/^function wmpgRefreshPreview\(/).text;
+  assert.ok(/fr\.onload = \(\) =>/.test(refresh) && /prevY = fr\.contentWindow\.scrollY/.test(refresh), 'srcdoc reloads the iframe — the follow runs after load, and a render without a fresh edit restores where the reader was');
+  assert.ok(/wmpgFollowOn\(\)/.test(refresh), 'the toggle gates it');
+  assert.ok(/WMPG\.followFade = setTimeout/.test(extractBlock(/^function wmpgApplyFollow\(/).text), 'the highlight fades on its own');
+  assert.ok(/id="wmpg-follow"/.test(extractBlock(/^function wmpgEnsureModal\(/).text), 'the pause toggle is in the header');
+});
+
+test('the preview carries the mapping both ways: data-src on nodes (screen only), click lands on the input', () => {
+  const build = extractBlock(/^function wmpgBuildHtml\(/).text;
+  assert.ok(/data-src="\$\{esc\(\[\.\.\.new Set\(n\.src\)\]\.join\(' '\)\)\}"/.test(build), 'every tagged node gets data-src');
+  assert.ok(/if \(forPrint\) \{ parts\.push\(h\); return; \}/.test(build), 'print sees none of it');
+  assert.ok(/parent\.wmpgFocus\(src\[0\]/.test(build), 'clicking a section focuses its input');
+  assert.ok(/closest\("button,a"\)\)return;/.test(build), 'the hover controls keep their own jobs');
+  assert.ok(/data-src="title" data-pri/.test(build) && /data-src="projId" data-pri/.test(build), 'the cover is mapped too');
+  const model = extractBlock(/^function wmpgDocModel\(/).text;
+  ['rooms.${ri}.bins', 'rooms.${ri}.bins.*.colWk', 'rooms.${ri}.collection', "'rates'", "'suppliers'", "'contractors'", "'guidelines'", "'compliance'"].forEach(t =>
+    assert.ok(model.includes(t), 'doc model tags ' + t));
+  assert.ok(/tokens\.add\('tokens\.' \+ t\.slice\(1, -1\)\)/.test(extractBlock(/^function tbNodes\(/).text), 'a text-library section is tagged with every {token} it uses, so editing a token lands on the text that prints it');
+  assert.ok(/data-path\^="\$\{path\}\."/.test(extractBlock(/^function wmpgFocus\(/).text), 'a general path (rooms.0.bins) lands on the first input beneath it');
 });

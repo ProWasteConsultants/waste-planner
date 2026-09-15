@@ -407,6 +407,22 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   the same `tbGroupHtml` the panel uses, **✎ narrative** opens rebuild /
   polish / edit, **✎ edit** jumps to the field (`data-path` on every input).
   One selection, two places to reach it.
+- **The preview follows the field being edited** — the same mapping, read the
+  other way. Every doc node carries `src` (the input paths that feed it, `*`
+  for any index) and `pri` where it is the PRIMARY place a path shows;
+  text-library nodes carry `tb:<group>` plus every `{token}` their bodies
+  use. `wmpgSet` / `wmpgBinSet` / `tbToggle` / `tbEdit` name the edited path
+  (`wmpgFollow`); the next render picks the most specific matching node
+  (`wmpgFollowPick`, pure — ties to a `pri` node, then document order),
+  scrolls to it and highlights it, lightly marking the others: a bin count
+  lands on the storage table and glows in the collection table and narrative,
+  never jumping between them. **On edit, never on focus** — tabbing must not
+  fight a reader who scrolled deliberately — and the header toggle pauses it
+  (`wmpg_follow` in localStorage: per-device UI state, the allowed kind).
+  Setting `srcdoc` reloads the iframe, so the follow runs in `onload`, and a
+  render with no fresh edit **restores the scroll position** instead of
+  throwing the reader to the top. Reverse: clicking a section calls
+  `wmpgFocus` on its first input path. Print sees no `data-src`.
 
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
