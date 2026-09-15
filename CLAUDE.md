@@ -177,6 +177,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/vehicle-profile.test.js` | D2 side-elevation module: axle positions, defaults, SVG output; D3 panel gating |
 | `tests/anon-entry.test.js` | Anonymous compliance entry, shared claim store, signup gate |
 | `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
+| `tests/residential-method.test.js` | Residential method types: stepped-table lookup, review gate, state fallback |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -242,6 +243,79 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    pushes straight to the calculator; ↻ in the calculator re-reads library +
    services. `sql/2026-09-14-kerbside-service-read.sql` lets every signed-in
    user read that one `waste_meta` row (officer contacts stay closed).
+
+### Residential method: rate · stepped table · state fallback (2026-09-15)
+
+Most councils publish a residential generation **rate** and `res_rates` serves
+them — that is the default and nothing below changes it. Some publish a stepped
+**lookup table** instead (dwelling-count bands fixing bin counts and sizes per
+stream; Northern Beaches Appendix A is the case that prompted this). That is a
+different **shape** of answer, not a different number: there is no
+litres-per-dwelling figure to read out of such a table, so forcing it onto the
+rate model would mean inventing one — the same class of error as halving a
+combined rate.
+
+So the method is a per-council **type** with its own payload, stored as one JSON
+`waste_meta` row (`field_key = 'residential_method'`, parsed by
+`wpResMethodParse`, pure): `{ type, status, source, <payload under the type's
+own key> }`. Rules, all tested in `tests/residential-method.test.js`:
+
+- **The type is a registry, not a switch.** `WP_RES_METHOD_TYPES` maps each type
+  to its payload key (`rate` has none; `table` carries `table`). A fourth shape
+  — a hybrid, a per-bedroom table — is **added to the registry**, and every
+  other council's stored row is untouched. That is the whole point of the
+  discriminator. An **unknown type parses to `null`** rather than being coerced
+  onto the nearest known one: a council served by a method this build does not
+  understand falls back and says so, and never silently reads as a rate.
+- **`status` is the human review gate.** Extraction only ever writes `'draft'`;
+  `wpResMethodPick` serves only `'live'`, so a method nobody has signed off is
+  invisible to the calculator however complete it looks. Only the exact word
+  `live` opens the gate. Marking it live is a deliberate act in Admin › Council
+  & state database › *Residential method*, with the document in front of you.
+- **A project outside the published bands is reported, never rounded in.**
+  `wpResTableLookup` returns a miss naming `below`/`above` and the bound it hit;
+  the calculator puts that on the room and the volume path takes over. A council
+  that tabled 3–20 dwellings did not table 40, and answering as though it had is
+  how a figure lands under a council's name that the council never wrote.
+- **The table is gated where it is physically wrong**, and both gates are
+  physical rather than cosmetic: **residential** sections only (commercial keeps
+  its use-based rates), and **shared** collection only. Under kerbside
+  *individual* every dwelling wheels out its own bin — a fact about the
+  development, not a figure a council can table — so `perDwellingUnits` keeps
+  that case. A bulk collection point is not the council's kerbside service at
+  all.
+- **Departing from the table's size carries the council's CAPACITY over**, not
+  the bare count (`resTableCount`): 4 × 660L re-sized to 240L is 11 bins, not 4.
+  Keeping the count would quietly under-provide against the council's own
+  figure. A manual `_binOv` count is still the last word, as on every other path.
+- **Extraction is TRANSCRIBED, not summarised** (`WP_RES_TRANSCRIBE` +
+  `wpResTableLines`, pure), the same lesson `crqRateSweep` learned: one line per
+  stream per band, pipe-delimited, and **our** code decides the structure. A
+  line missing a count, a size or a recognisable stream is **reported by name**
+  in the panel, never half-stored and never inferred. It writes a draft and
+  cannot mark itself live.
+- **The fallback is stated wherever the number appears.** `scope` is `council`,
+  `state` or `none`; a state row standing in for a council reads *"state
+  fallback used — no council-specific method found"* on the calculator's rates
+  line, in the results payload (`residential`), and — because the WMP is written
+  later with the calculator closed — on the project (`p.residential_method`) and
+  in the WMP's own rates pill (`wmpgResMethodNote`).
+- `resTableLookup` in the calculator **mirrors** `wpResTableLookup` in the
+  platform; the srcdoc is sandboxed and cannot call the parent's copy, so a test
+  pins the two together, exactly as `councilKey` and `glBridgeNorm` are pinned.
+- `sql/2026-09-15-residential-method.sql` lets every signed-in user read that one
+  `waste_meta` row (officer contacts stay closed). The review gate is in the
+  **data** (`status`), not in the policy.
+- **The admin panel and the core live in different `<script>` blocks.** Function
+  declarations cross blocks; top-level `const`/`let` are not relied on to. Every
+  cross-block reader goes through `wpResMethodSpec` / `wpResStreams` /
+  `wpResMethodTypeIds`, never `WP_RES_METHOD_TYPES` or `WP_RES_STREAMS`
+  directly — a test enforces it, because the alternative throws only in the
+  browser, only when an admin opens that panel.
+
+Not built (its own brief, per the architecture brief's own sequencing):
+equipment **categories** with distinct calculation branches — see the Equipment
+section.
 
 ## Council requirements list (C3, revised 2026-09-15)
 

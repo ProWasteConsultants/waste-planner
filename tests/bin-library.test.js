@@ -107,6 +107,8 @@ function loadCalc({ rooms = [], councilLabel = '', councilValue = '', state = 'N
     /^let _szOv=\{\},_cwOv=\{\};/, /^function ovKey\(/, /^const DEFAULT_BINSIZES=/, /^const DEFAULT_COLWK=/,
     /^function defSize\(/, /^function defCw\(/, /^function normCw\(/, /^function cwLabel\(/, /^function cycleFor\(/,
     /^function roomById\(/,
+    /^let RES_METHODS=/, /^function resTableLookup\(/, /^function activeResMethodEntry\(/,
+    /^function resTableFor\(/, /^function resTableBin\(/, /^function resTableCount\(/,
   ];
   const code = blocks.map(p => extractSrcdocBlock('calc-iframe', p).text).join('\n\n');
   const g = id => id === 'council'
@@ -116,7 +118,9 @@ function loadCalc({ rooms = [], councilLabel = '', councilValue = '', state = 'N
   const factory = new Function('ROOMS', 'g', code + `
     ;return { COLLECT_METHODS, normMethod, defaultMethod, methodOf, perDwellingUnits, rebuildBinLib, binSizesRaw, binSizesFor, binFP,
               defSize, defCw, normCw, cwLabel, cycleFor, activeSchedule, scheduleFor, ALLOWED_SIZES,
+              resTableLookup, resTableFor, resTableBin, resTableCount, activeResMethodEntry,
               setLib: rows => rebuildBinLib(rows), setSchedules: s => { COUNCIL_SCHEDULES = s; },
+              setResMethods: m => { RES_METHODS = m; },
               setSz: (k, v) => { _szOv[k] = v; }, setCw: (k, v) => { _cwOv[k] = v; }, lib: () => BIN_LIB, rooms: ROOMS };`);
   return factory(rooms, g);
 }
