@@ -476,3 +476,131 @@ test('the chute drives the content: arrangement text from the configuration, com
   const ap = extractBlock(/^function wmpgApplyChuteToDesign\(/).text;
   assert.ok(/br\.chute = Object\.assign\(\{\}, br\.chute \|\| \{\}, \{ on: c\.on, type: c\.type/.test(ap), 'apply-to-design writes the calculator’s own chute shape, keeping its FFH/slab/angle fields');
 });
+
+// ── §10 the cover: the master template, filled — with an optional image ──
+function loadCover() {
+  const code = [/^function tplEsc\(/, /^function tplRuns\(/, /^const WMPG_COVER_BAND_H = /, /^const WMPG_COVER_MAX_BYTES = /, /^const WMPG_COVER_OUT_W = /,
+    /^const EMU_PER_TWIP = /, /^function wmpgCoverFit\(/, /^function wmpgTplPageSize\(/, /^function wmpgTplCoverEnd\(/, /^function wmpgTplParagraphs\(/,
+    /^function wmpgTplJoinText\(/, /^function wmpgTplRewriteParagraph\(/, /^const WMPG_COVER_PLACEHOLDERS = /, /^function wmpgTplCoverPlaceholders\(/,
+    /^function wmpgTplCoverTitle\(/, /^function wmpgTplCoverBand\(/, /^function wmpgTplAddImageRel\(/, /^function wmpgTplEnsureContentType\(/,
+    /^function wmpgCoverPictureXml\(/, /^function wmpgCoverCreditXml\(/, /^function wmpgTplCoverImage\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function(code + ';return { wmpgCoverFit, wmpgTplPageSize, wmpgTplParagraphs, wmpgTplCoverPlaceholders, wmpgTplCoverTitle, wmpgTplCoverBand, wmpgTplAddImageRel, wmpgTplEnsureContentType, wmpgTplCoverImage, WMPG_COVER_BAND_H };')();
+}
+// A synthetic master with the REAL cover's structure: one table of shaded
+// cells, self-closing empty paragraphs, the bookmarked corner fields, the
+// title band (address bookmark, literal heading, empty line, the dev|address
+// placeholder), and the lower band whose exact-height row carries the
+// anchored logo. The circles art is the first picture, the logo the second.
+const R = t => `<w:r><w:rPr><w:color w:val="FFFFFF"/></w:rPr><w:t xml:space="preserve">${t}</w:t></w:r>`;
+const P = (runs, extra) => `<w:p><w:pPr><w:jc w:val="center"/></w:pPr>${extra || ''}${runs.map(R).join('')}</w:p>`;
+const TC = (fill, inner, trH) => `<w:tr><w:trPr>${trH ? `<w:cantSplit/><w:trHeight w:hRule="exact" w:val="${trH}"/>` : ''}</w:trPr><w:tc><w:tcPr><w:shd w:val="clear" w:fill="${fill}"/></w:tcPr>${inner}</w:tc></w:tr>`;
+const COVER_XML = '<w:document><w:body><w:tbl>' +
+  TC('003D3D', '<w:p w:rsidR="00A"/>', 360) +
+  TC('003D3D', P(['PREPARED FOR']) + P(['[Client / ', 'Developer Name]'], '<w:bookmarkStart w:id="1" w:name="BM_ClientName"/><w:bookmarkEnd w:id="1"/>') + P(['DATE']) + P(['[Month Year]'])) +
+  TC('003D3D', '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="7553325" cy="4267200"/><a:blip r:embed="rId9"/></wp:inline></w:drawing></w:r></w:p>', 4600) +
+  TC('4BED12', '<w:p w:rsidR="00B"/>', 55) +
+  TC('005F5F', '<w:p><w:bookmarkStart w:id="2" w:name="BM_SiteAddress"/><w:bookmarkEnd w:id="2"/></w:p>' + P(['Waste Management Plan']) + '<w:p w:rsidR="00C"/>' + P(['[Development Name]', '   |   ', '[Street Address, Suburb]']), 2600) +
+  TC('003D3D', '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:anchor relativeHeight="251683840" behindDoc="0"><wp:positionH relativeFrom="column"><wp:posOffset>1562100</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>2487930</wp:posOffset></wp:positionV><wp:extent cx="4406265" cy="1171575"/><a:blip r:embed="rId10"/></wp:anchor></w:drawing></w:r></w:p>', 5954) +
+  TC('003D3D', P(['www.prowaste.au']) + P(['info@prowaste.au'])) +
+  '</w:tbl><w:p w:rsidR="00D"/><w:tbl><w:tr><w:tc><w:p><w:bookmarkStart w:id="3" w:name="BM_ProjectID"/><w:r><w:t>Project ID</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p></w:tc></w:tr></w:tbl>' +
+  '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:body></w:document>';
+
+test('the image is cover-fit into the band — cropped and centred, never stretched', () => {
+  const C = loadCover();
+  assert.deepStrictEqual(C.wmpgCoverFit(4000, 3000, 2, 1), { sx: 0, sy: 500, sw: 4000, sh: 2000 }, 'a tall source loses top and bottom equally');
+  assert.deepStrictEqual(C.wmpgCoverFit(1000, 3000, 2, 1), { sx: 0, sy: 1250, sw: 1000, sh: 500 });
+  assert.deepStrictEqual(C.wmpgCoverFit(4000, 1000, 2, 1), { sx: 1000, sy: 0, sw: 2000, sh: 1000 }, 'a wide source loses the sides equally');
+  assert.equal(C.wmpgCoverFit(0, 10, 1, 1), null);
+});
+
+test('the paragraph walker reads the master as Word writes it: cell paragraphs count, self-closing ones are whole, text boxes stay inside their box', () => {
+  const C = loadCover();
+  const end = COVER_XML.indexOf('BM_ProjectID');
+  const ps = C.wmpgTplParagraphs(COVER_XML, 0, end);
+  assert.equal(ps.filter(p => p.empty).length, 4, 'every <w:p …/> is one whole empty paragraph, not an opener that skews the depth');
+  const texts = ps.filter(p => !p.empty).map(p => C.wmpgTplParagraphs.length && COVER_XML.slice(p.start, p.end)).map(x => (x.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) || []).map(t => t.replace(/<[^>]+>/g, '')).join(''));
+  assert.ok(texts.includes('PREPARED FOR') && texts.includes('Waste Management Plan') && texts.includes('www.prowaste.au'), 'paragraphs inside table cells are seen');
+  const withBox = COVER_XML.replace('<w:r><w:t>Project ID', '<w:r><w:drawing><wps:txbx><w:txbxContent><w:p><w:r><w:t>inside</w:t></w:r></w:p></w:txbxContent></wps:txbx></w:drawing></w:r><w:r><w:t>Project ID');
+  const all = C.wmpgTplParagraphs(withBox, 0, withBox.length).map(p => withBox.slice(p.start, p.end));
+  assert.ok(!all.some(x => x.startsWith('<w:p><w:r><w:t>inside')), 'a text box’s inner paragraph is not a top-level paragraph');
+});
+
+test('bracketed placeholders are filled from the project, or removed — split across runs or not; page 2 untouched', () => {
+  const C = loadCover();
+  const r = C.wmpgTplCoverPlaceholders(COVER_XML, { client: 'Stasia Property', date: '28/07/2026', projectName: '', address: '117 Flinders St, Surry Hills' });
+  assert.equal(r.changed, 3);
+  assert.ok(r.xml.includes('>Stasia Property<'), 'a placeholder split across two runs is still found and filled');
+  assert.ok(r.xml.includes('>28/07/2026<'), 'the date, in DD/MM/YYYY like the revision table');
+  assert.ok(r.xml.includes('>117 Flinders St, Surry Hills<') && !/>\s*\|\s*117/.test(r.xml), 'a blank development name drops its separator, not just its text');
+  // with the address printed above the heading, the master's exact-height
+  // title band cannot also show the dev|address line — it is emptied, never
+  // filled and hidden (the example's artefact)
+  const above = C.wmpgTplCoverPlaceholders(COVER_XML, { client: 'S', date: 'd', projectName: 'Flinders Apartments', address: '117 Flinders St', addressLineAbove: true });
+  assert.ok(!above.xml.includes('Flinders Apartments') && !/>117 Flinders St<\/w:t>/.test(above.xml), 'the dev|address line is emptied when the address line is above the title');
+  assert.equal(above.changed, 3);
+  assert.ok(!/\[(Client|Month|Development|Street)[^\]]*\]/.test(r.xml.slice(0, r.xml.indexOf('BM_ProjectID'))), 'no bracketed placeholder survives on the cover — the example’s hidden one is exactly what this prevents');
+  assert.ok(r.xml.includes('w:name="BM_ClientName"'), 'bookmarks in a rewritten paragraph survive');
+  const gone = C.wmpgTplCoverPlaceholders(COVER_XML, {});
+  assert.ok(!gone.xml.slice(0, gone.xml.indexOf('BM_ProjectID')).includes('['), 'with nothing to fill, the placeholders are removed outright');
+  assert.ok(/<w:p><w:pPr><w:jc w:val="center"\/><\/w:pPr><\/w:p>/.test(gone.xml), 'the emptied paragraph keeps its mark so the band’s spacing does not move');
+  assert.ok(/<w:rPr><w:color w:val="FFFFFF"\/><\/w:rPr>/.test(r.xml.slice(r.xml.indexOf('Stasia') - 200, r.xml.indexOf('Stasia'))), 'filled text inherits the master’s run formatting');
+});
+
+test('the editable title replaces the master’s literal heading, keeping its formatting', () => {
+  const C = loadCover();
+  const out = C.wmpgTplCoverTitle(COVER_XML, '117 Flinders St — Waste Management Plan');
+  assert.ok(out.includes('>117 Flinders St — Waste Management Plan<') && !out.includes('>Waste Management Plan<'));
+  assert.equal(C.wmpgTplCoverTitle(COVER_XML, 'Waste Management Plan'), COVER_XML, 'the default title leaves the master as it is');
+  assert.equal(C.wmpgTplCoverTitle(COVER_XML.replace('BM_ProjectID', 'BM_DocTitle'), 'X'), COVER_XML.replace('BM_ProjectID', 'BM_DocTitle'), 'a template with a title bookmark is filled through the bookmark instead');
+});
+
+test('the lower band is the paragraph carrying the logo; its size is the page width by the row’s exact height', () => {
+  const C = loadCover();
+  const b = C.wmpgTplCoverBand(COVER_XML);
+  assert.equal(b.wEmu, 11906 * 635, 'page-wide');
+  assert.equal(b.hEmu, 5954 * 635, 'the master’s exact row height (5954 twips), not a guess');
+  assert.equal(b.exact, true); assert.equal(b.logoRId, 'rId10', 'the second picture the cover references is the logo');
+  assert.ok(COVER_XML.slice(b.insertAt - 8, b.insertAt) === '</w:pPr>', 'the picture goes in after the paragraph properties');
+  assert.equal(C.wmpgTplCoverBand(COVER_XML.replace('r:embed="rId10"', 'r:embd="x"')), null, 'no logo → no band → the image is not placed, and the caller says so');
+  const noRow = COVER_XML.replace('<w:trHeight w:hRule="exact" w:val="5954"/>', '');
+  assert.equal(C.wmpgTplCoverBand(noRow).hEmu, C.WMPG_COVER_BAND_H, 'a row with no stated height takes the example’s picture height');
+});
+
+test('the picture goes INLINE into the band paragraph, page-wide, with the credit box up the right edge — the example’s own construction', () => {
+  const C = loadCover();
+  const r = C.wmpgTplCoverImage(COVER_XML, { rId: 'rIdWmpCover', credit: 'Source: SJB Architects, 24/07/2026', descr: 'photo "one".jpg' });
+  assert.equal(r.note, '');
+  const cover = r.xml.slice(0, r.xml.indexOf('BM_ProjectID'));
+  const pic = cover.indexOf('name="Cover image"'), logo = cover.indexOf('r:embed="rId10"');
+  assert.ok(pic > 0 && pic < logo && cover.lastIndexOf('<w:tc>', pic) === cover.lastIndexOf('<w:tc>', logo), 'inline picture in the same cell paragraph as the anchored logo, before it');
+  assert.ok(/<wp:inline [^>]*><wp:extent cx="7560310" cy="3780790"\/>/.test(cover), 'page width × row height');
+  assert.ok(!/behindDoc/.test(cover.slice(pic, pic + 400)), 'inline — no z-order games; the template’s anchored logo draws above inline content');
+  assert.ok(/<a:xfrm rot="16200000">/.test(cover) && cover.includes('Source: SJB Architects, 24/07/2026'), 'the credit is a rotated text box, reading bottom to top');
+  assert.ok(/<wp:positionH relativeFrom="column">/.test(cover) && /<wp:positionV relativeFrom="paragraph">/.test(cover), 'anchored to the band paragraph like the example’s Text Box 2');
+  assert.ok(/<w:sz w:val="18"\/>/.test(cover) && /w:ascii="Segoe UI"/.test(cover.slice(cover.indexOf('Cover image credit'))), '9pt white Segoe UI, as the example');
+  assert.ok(cover.includes('descr="photo &quot;one&quot;.jpg"'), 'attributes are escaped');
+  const r2 = C.wmpgTplCoverImage(COVER_XML, { rId: 'rIdWmpCover', credit: '' });
+  assert.ok(!r2.xml.includes('Cover image credit'), 'no credit → no text box at all');
+  const r3 = C.wmpgTplCoverImage(COVER_XML.replace('r:embed="rId10"', 'r:embd="x"'), { rId: 'x' });
+  assert.ok(/NOT placed/.test(r3.note) && r3.xml === COVER_XML.replace('r:embed="rId10"', 'r:embd="x"'), 'an unrecognised template gets no picture and a plain note');
+  assert.ok(C.wmpgTplAddImageRel('<Relationships></Relationships>', 'rIdWmpCover', 'media/cover_image.jpeg').includes('Target="media/cover_image.jpeg"'));
+  assert.equal(C.wmpgTplAddImageRel('<Relationships><Relationship Id="rIdWmpCover"/></Relationships>', 'rIdWmpCover', 'x'), '<Relationships><Relationship Id="rIdWmpCover"/></Relationships>', 'idempotent');
+  assert.ok(C.wmpgTplEnsureContentType('<Types><Default Extension="png" ContentType="image/png"/></Types>', 'jpeg', 'image/jpeg').includes('Extension="jpeg"'));
+  assert.equal(C.wmpgTplEnsureContentType('<Types><Default Extension="jpeg" ContentType="image/jpeg"/></Types>', 'jpeg', 'image/jpeg').match(/jpeg/g).length, 2, 'no duplicate default');
+});
+
+test('the cover inputs are WMP-local, the bytes live in IndexedDB, and no image means exactly the master', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(/cover: \{ image: null, credit: '', scrim: true \}/.test(src), 'the draft carries metadata + credit + scrim, no bytes');
+  const up = extractBlock(/^async function wmpgCoverUpload\(/).text;
+  assert.ok(/idbPutPdf\(wmpgCoverKey\(WMPG\.projectId\), buf, f\.name\)/.test(up), 'bytes go to IndexedDB under the project');
+  assert.ok(up.includes('/^image\\/(jpeg|png)$/') && /WMPG_COVER_MAX_BYTES/.test(up), 'JPEG/PNG only, with a size cap');
+  const build = extractBlock(/^async function wmpgBuildTemplateBlob\(/).text;
+  assert.ok(/if \(d\.cover && d\.cover\.image && WMPG\.coverImg && WMPG\.coverImg\.buf\)/.test(build), 'no image → the template is untouched: no frame, no placeholder picture');
+  assert.ok(/wmpgCoverRender\(WMPG\.coverImg\.buf, WMPG\.coverImg\.type, band\.wEmu, band\.hEmu/.test(build), 'the photo is rendered to the band’s own aspect before it is embedded');
+  assert.ok(/wmpgTplCoverPlaceholders\(xml/.test(build) && /wmpgTplCoverTitle\(xml, d\.title\)/.test(build), 'placeholders and title are always handled');
+  assert.ok(!/'\[Site address\]'/.test(extractBlock(/^function wmpgTplPayload\(/).text), 'the WMP payload never writes a bracket placeholder');
+  const html = extractBlock(/^function wmpgBuildHtml\(/).text;
+  assert.ok(/class="band low" data-src="cover"/.test(html) && /rotate\(-90deg\)/.test(html) && /class="scrim"/.test(html), 'the preview mirrors the bands, the photo, the scrim and the rotated credit');
+  assert.ok(!/\[Site address\]/.test(html), 'the preview prints no placeholder either');
+});

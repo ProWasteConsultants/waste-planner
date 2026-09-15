@@ -447,6 +447,46 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   `chute_compactor` true so the compaction text switches on. Apply-to-design
   writes `summary.bin_rooms[].chute` keeping the calculator's FFH/slab/angle
   fields and re-pushes the summary to the calculator.
+- **The cover is the PWC master, filled — never rebuilt in code.** At export
+  the master's cover keeps its bands, art, colours and fonts; the code only
+  (1) fills or removes the bracketed placeholders (`wmpgTplCoverPlaceholders`,
+  pure — paragraph text is joined first, so a placeholder split across runs
+  is still found; a paragraph left with only separators is emptied, keeping
+  its mark so the band's spacing holds; **no `[…]` survives on the cover**,
+  visible or hidden), (2) rewrites the literal heading with the editable
+  title when the master has no `BM_DocTitle` bookmark, and (3) optionally
+  drops a project image into the lower band. Page 2 is untouched. The date
+  is DD/MM/YYYY throughout, matching the revision table.
+- **Cover image + credit are WMP-local presentation** (`d.cover`: metadata,
+  credit, scrim) — no Design-tab source, no override convention. Bytes live
+  in IndexedDB (`wmp:cover:<projectId>`), never in the project record.
+  JPEG/PNG, 4 MB cap. The embedded picture is rendered band-shaped and
+  cover-fit (`wmpgCoverFit`, pure — cropped and centred, never stretched)
+  with a light bottom-weighted scrim baked in, on by default, so the white
+  logo stays crisp. No image → the template is untouched: no frame, no
+  placeholder picture.
+- **The photo is placed the way the Flinders St example places it** — read
+  off the real master (`xxxPW_Address_WMP_Master.dotx`): the cover is one
+  table of shaded cells (`003D3D` dark teal, `005F5F` title band, `4BED12`
+  rule); the lower band is the cell whose paragraph carries the anchored
+  ProWaste logo, in a row of **exact height 5954 twips**. `wmpgTplCoverBand`
+  (pure) finds that paragraph (the logo is the second picture the cover
+  references) and the photo goes into it as an **inline** picture, page-wide
+  and row-high; the template's own anchored logo draws above inline content,
+  so nothing about layers or page offsets is guessed. The credit replicates
+  the example's `Text Box 2`: anchored to the same paragraph, `rot="16200000"`
+  (reads bottom-to-top), 9pt white Segoe UI, its lower end ~15 mm above the
+  band's bottom edge. `wmpgTplParagraphs` treats Word's self-closing
+  `<w:p …/>` as whole paragraphs — the master's cover has nine — or every
+  paragraph after the first would read as nested. An unrecognised template
+  gets **no picture and a plain export note**, never a blind placement.
+  **The title band's exact-height row can show the address line above the
+  heading OR the `[Development Name] | [Street Address, Suburb]` line beneath
+  the rule, not both** — the example shows the former with the latter clipped
+  out of sight (the green rule is that empty paragraph's own border, so it
+  cannot be dropped to make room). When the address line is printed, that line
+  is emptied, never filled-and-hidden. Verified by filling the real master and
+  rendering it with LibreOffice beside the example's own render.
 
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
