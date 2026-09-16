@@ -30483,7 +30483,11 @@ function wmpgUpgradeDraft(d, p) {
     if (b.design === undefined) b.design = b.src === 'auto' ? null : { sizeL: b.sizeL, qty: b.qty, colWk: b.colWk, provider: b.provider, method: b.method || null };
     if (b.src === undefined) b.src = 'calc';
   }));
-  d.cover = d.cover || { image: null, credit: '', scrim: true };
+  d.cover = d.cover || { image: null, source: '', received: '', scrim: true };
+  if (d.cover.source === undefined) {   // the brief free-text era: split it once, never read again
+    const c = wmpgCoverCreditParse(d.cover.credit);
+    d.cover.source = c.source; d.cover.received = c.received; delete d.cover.credit;
+  }
   (d.rooms || []).forEach(r => {
     r.collection = r.collection || {};
     if (r.collection.vehicleId === undefined) {
@@ -30516,7 +30520,7 @@ function wmpgDefaultData(p) {
     state: s.state || p.state || 'NSW',
     devTypeText: [p.levels ? p.levels + '-level' : '', (p.devType || 'multi-unit residential development')].filter(Boolean).join(' '),
     title: wmpgTitleDefault(p, { projectName: p.name || '', address: s.address || p.address || '' }),
-    cover: { image: null, credit: '', scrim: true },   // WMP-local presentation; bytes live in IndexedDB
+    cover: { image: null, source: '', received: '', scrim: true },   // WMP-local presentation; bytes live in IndexedDB
     siteContext: '', background: '', compliance: '', complianceSrc: null, guidelines: [],
     unitTypes: WMPG_UNITS.map(u => ({ ...u })),
     rates: Object.fromEntries(WMPG_UNITS.map(u => [u.key, { GW:0, REC:0, ORG:0, GLS:0 }])),
@@ -31061,6 +31065,7 @@ function wmpgEnsureModal() {
     else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') { ev.preventDefault(); wmpgExportDocx(); }
     else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'p') { ev.preventDefault(); wmpgPrint(); }
   });
+  document.addEventListener('paste', wmpgCoverPaste);
 }
 
 // ── FORM ───────────────────────────────────────────────────────────────────
@@ -31081,7 +31086,7 @@ function wmpgQueuePreview() {
 }
 function wmpgIn(label, path, val, o) {
   o = o || {};
-  return `<div class="wmpg-f"><label>${label}</label><input data-path="${path}" ${o.num?'type="number" step="any"':'type="text"'} value="${wmpgEsc(val)}" placeholder="${wmpgEsc(o.ph||'')}"
+  return `<div class="wmpg-f"><label>${label}</label><input data-path="${path}" ${o.num?'type="number" step="any"':o.type?`type="${o.type}"`:'type="text"'} value="${wmpgEsc(val)}" placeholder="${wmpgEsc(o.ph||'')}"
     oninput="wmpgSet('${path}', ${o.num?'parseFloat(this.value)||0':'this.value'})"></div>`;
 }
 function wmpgTa(label, path, val, rows, ph) {
@@ -31117,13 +31122,15 @@ function wmpgRenderForm() {
           <button class="wmpg-addrow" style="margin:0;" onclick="document.getElementById('wmpg-cover-file').click()">Replace…</button>
           <button class="wmpg-addrow" style="margin:0;color:#EF8080;" onclick="wmpgCoverRemove()">✕ Remove</button>`
         : `<button class="wmpg-addrow" style="margin:0;" onclick="document.getElementById('wmpg-cover-file').click()">⬆ Choose image… (JPEG/PNG, up to 4 MB)</button>
-          <span class="wmpg-note" style="margin:0;">Without one, the cover is exactly the master template.</span>`}
+          <span class="wmpg-note" style="margin:0;">or paste one with Ctrl/Cmd+V. Without one, the cover is exactly the master template.</span>`}
         <input type="file" id="wmpg-cover-file" accept="image/jpeg,image/png" style="display:none;" onchange="wmpgCoverUpload(event)">
       </div>
-      ${d.cover && d.cover.image ? `<div class="wmpg-grid2" style="margin-top:6px;">
-        ${wmpgIn('Image source / credit','cover.credit',d.cover.credit||'',{ph:'Source: SJB Architects, 24/07/2026 — printed up the right edge; blank = omitted'})}
-        <label class="wmpg-chk" style="margin-top:26px;"><input type="checkbox" ${d.cover.scrim!==false?'checked':''} onchange="wmpgSet('cover.scrim',this.checked)"> Light dark gradient over the image so the white logo stays readable</label>
-      </div>` : ''}
+      ${d.cover && d.cover.image ? `<div class="wmpg-grid3" style="margin-top:6px;">
+        ${wmpgIn('Image source','cover.source',d.cover.source||'',{ph:'SJB Architects'})}
+        ${wmpgIn('Date received','cover.received',d.cover.received||'',{type:'date'})}
+        <label class="wmpg-chk" style="margin-top:26px;"><input type="checkbox" ${d.cover.scrim!==false?'checked':''} onchange="wmpgSet('cover.scrim',this.checked)"> Light dark gradient so the white logo stays readable</label>
+      </div>
+      <div class="wmpg-note">Printed up the right edge of the image as <i>${wmpgEsc(wmpgCoverCreditText(d.cover) || 'Source: <source>, <DD/MM/YYYY>')}</i>${wmpgCoverCreditText(d.cover) ? '' : ' — nothing prints until one of them is filled'}. Paste a replacement image with Ctrl/Cmd+V.</div>` : ''}
     </div>
     ${d.history.length ? `<div class="wmpg-note">Revision history: ${d.history.map(h=>`${wmpgEsc(h.ver)} (${wmpgEsc(h.date)})`).join(' · ')}</div>` : ''}
     <div class="wmpg-note">Exporting records this revision in the document control table and bumps the revision for next time.</div>
@@ -31792,6 +31799,9 @@ function wmpgBuildHtml(forPrint) {
   const d = WMPG.data;
   const art = WMPG.coverArt || null;
   const cover = (d.cover && d.cover.image && WMPG.coverImg) ? WMPG.coverImg : null;
+  const coverAddr = d.address || d.projectName || '';       // the same line the .docx writes at BM_SiteAddress
+  const coverCredit = wmpgCoverCreditText(d.cover);
+  const coverCss = wmpgCoverCss();
   const M = wmpgDocModel();
   const teal = '#0E7C7B', green = '#4CD415';
   const esc = wmpgEsc;
@@ -31846,25 +31856,7 @@ function wmpgBuildHtml(forPrint) {
   body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;color:#3a3a3a;font-size:10.5pt;line-height:1.55;margin:0;background:#525659;}
   .sheet{background:#fff;max-width:820px;margin:0 auto;padding:52px 62px 70px;box-shadow:0 2px 18px rgba(0,0,0,.35);}
   @media print{body{background:#fff;}.sheet{box-shadow:none;padding:0;max-width:none;}}
-  .cover{background:#0E211F;color:#fff;margin:-52px -62px 34px;padding:0;}
-  .cover .band{padding:0 62px;}
-  .cover .top{padding-top:58px;padding-bottom:0;}
-  .cover .pre{font-size:8pt;letter-spacing:1.5px;color:#9fd9d6;text-transform:uppercase;display:flex;justify-content:space-between;}
-  .cover .pre b{display:block;color:#fff;font-size:10.5pt;letter-spacing:0;margin-top:3px;text-transform:none;}
-  .cover .rule{height:2px;background:${green};margin:16px 0 0;opacity:.85;}
-  .cover .rule.thin{height:1px;margin:10px 0 8px;opacity:.7;}
-  .cover .cover-art{display:block;width:100%;margin:18px 0 0;}
-  .cover .mid{background:#15302E;padding-top:26px;padding-bottom:22px;}
-  .cover .addr{font-size:14pt;font-weight:700;margin:0 0 4px;color:#d7efee;}
-  .cover .doc{font-size:26pt;font-weight:800;margin:0;}
-  .cover .sub{font-size:11pt;color:#bfe3e1;margin:0;}
-  .cover .low{position:relative;aspect-ratio:11906/5954;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;padding:0 0 8%;}
-  .cover .low img.photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;}
-  .cover .low .scrim{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(14,33,31,0) 0%,rgba(14,33,31,.18) 55%,rgba(14,33,31,.55) 100%);}
-  .cover .low .logo{position:relative;z-index:2;}
-  .cover .low .credit{position:absolute;right:6px;top:50%;transform:translateY(-50%) rotate(-90deg);transform-origin:center;white-space:nowrap;font-size:7pt;color:#fff;opacity:.9;z-index:2;letter-spacing:.3px;}
-  .cover .foot{padding-top:0;padding-bottom:26px;}
-  .cover .brand{margin-top:8px;font-size:9pt;color:#bfe3e1;display:flex;justify-content:space-between;}
+  ${coverCss}
   .dc{margin:8px 0 26px;}
   h1{color:${teal};font-size:16.5pt;font-weight:800;margin:26px 0 8px;page-break-after:avoid;}
   h2{color:${teal};font-size:12.5pt;font-weight:800;margin:18px 0 6px;page-break-after:avoid;}
@@ -31894,23 +31886,24 @@ function wmpgBuildHtml(forPrint) {
   </style></head><body><div class="sheet">
     <div class="cover">
       <div class="band top">
-        <div class="pre"><span data-src="client" data-pri>Prepared for<b>${esc(d.client || '')}</b></span><span style="text-align:right;" data-src="date" data-pri>Date<b>${esc(d.date)}</b></span></div>
-        ${art?.panel ? `<img class="cover-art" src="${art.panel}" alt="">` : ''}
-        <div class="rule"></div>
+        <div class="fields"><span data-src="client" data-pri>Prepared for<b>${esc(d.client || '')}</b></span><span class="r" data-src="date" data-pri>Date<b>${esc(d.date)}</b></span></div>
+        <div class="rule fields-rule"></div>
+        <div class="art">${art?.panel ? `<img src="${art.panel}" alt="">` : ''}</div>
       </div>
+      <div class="divider"></div>
       <div class="band mid">
-        ${d.address ? `<div class="addr" data-src="address">${esc(d.address)}</div>` : ''}
+        ${coverAddr ? `<div class="addr" data-src="address projectName">${esc(coverAddr)}</div>` : ''}
         <div class="doc" data-src="title" data-pri>${esc(d.title || 'Waste Management Plan')}</div>
-        <div class="rule thin"></div>
+        <div class="title-rule"></div>
       </div>
       <div class="band low" data-src="cover" data-pri>
-        ${cover && cover.dataUrl ? `<img class="photo" src="${cover.dataUrl}" alt="">${d.cover && d.cover.scrim !== false ? '<div class="scrim"></div>' : ''}` : ''}
-        <div class="logo">${art?.logo
-          ? `<img src="${art.logo}" alt="Pro Waste Consultants" style="height:44px;">`
-          : `<span><b style="font-size:16pt;">Pro</b><b style="font-size:16pt;color:${green};">Waste</b> <span style="opacity:.7;">Consultants</span></span>`}</div>
-        ${cover && cover.dataUrl && d.cover && (d.cover.credit || '').trim() ? `<div class="credit" data-src="cover.credit">${esc(d.cover.credit.trim())}</div>` : ''}
+        ${cover && cover.dataUrl ? `<img class="pic" src="${cover.dataUrl}" alt="">${d.cover && d.cover.scrim !== false ? '<div class="scrim"></div>' : ''}` : ''}
+        ${art?.logo
+          ? `<img class="logo" src="${art.logo}" alt="Pro Waste Consultants">`
+          : `<div class="logo logo-text"><span><b>Pro</b><b style="color:${green};">Waste</b></span><small>Consultants</small></div>`}
+        ${cover && cover.dataUrl && coverCredit ? `<div class="credit" data-src="cover.source cover.received">${esc(coverCredit)}</div>` : ''}
       </div>
-      <div class="band foot"><div class="rule thin"></div><div class="brand"><span>www.prowaste.au</span><span>info@prowaste.au</span></div></div>
+      <div class="band cfoot"><div class="rule foot-rule"></div><div class="brand"><span>www.prowaste.au</span><span class="r">info@prowaste.au</span></div></div>
     </div>
     <div class="dc">
       <p class="kv" data-src="projId" data-pri><span>Project ID</span><br>${esc(d.projId)}</p>
@@ -32756,6 +32749,113 @@ const WMPG_COVER_MAX_BYTES = 4 * 1024 * 1024;
 const WMPG_COVER_OUT_W = 1800;                          // px across the band — plenty at A4, keeps the .docx small
 const EMU_PER_TWIP = 635;
 function wmpgCoverKey(projectId) { return 'wmp:cover:' + projectId; }
+// The master's cover, row by row, in twips (A4 is 11906 × 16838) — read off
+// xxxPW_Address_WMP_Master.dotx, one table of exact-height shaded rows. The
+// preview lays its bands out from THESE numbers, so it cannot drift from what
+// Word prints. Two rows are measured on the example's own Word render rather
+// than copied: `fields` (PREPARED FOR / DATE) is the one auto-height row, and
+// Word lays the 2600-twip title row out at ≈2820 once its 240-twip cell
+// margins and centred content are in.
+const WMPG_COVER_ROWS = { pageW: 11906, pageH: 16838, gutter: 800, spacer: 360, fields: 750, hair: 14, art: 4600, divider: 55,
+  title: 2820, titlePad: 240, photo: 5954, footPad: 260, footLine: 240 };
+// The logo as the master anchors it in the lower band (EMU): 58% of the page
+// width, centred, its top at two-thirds of the band. Not a styling choice —
+// the drawing's own offsets.
+const WMPG_COVER_LOGO = { cx: 4406265, cy: 1171575, x: 1562100, y: 2487930 };
+// Pure: the band geometry the preview draws — every length a fraction of the
+// page width (so a resized preview scales as one piece) except the logo box
+// and the credit lift, which are fractions of the photo band.
+function wmpgCoverGeom(R, L) {
+  R = R || WMPG_COVER_ROWS; L = L || WMPG_COVER_LOGO;
+  const top = R.spacer + R.fields + R.hair + R.art;
+  const bandW = R.pageW * EMU_PER_TWIP, bandH = R.photo * EMU_PER_TWIP;
+  return {
+    pageW: R.pageW, pageH: R.pageH, gutter: R.gutter,
+    top, spacer: R.spacer, fields: R.fields, art: R.art, divider: R.divider,
+    title: R.title, titlePad: R.titlePad, photo: R.photo,
+    footer: R.pageH - top - R.divider - R.title - R.photo,   // the remainder — Word paints it to the page edge
+    footPad: R.footPad,
+    logo: { x: L.x / bandW, y: L.y / bandH, w: L.cx / bandW, h: L.cy / bandH },
+    credit: { lift: 108268 / bandH, edge: 47625 / bandW },  // the example's Text Box 2, measured against the band
+    cellV: { fields: 6548 / R.pageW, foot: 6191 / R.pageW },  // where the two-cell rows split — the table's insideV hairline
+  };
+}
+// Pure: the preview cover's stylesheet, every length derived from
+// wmpgCoverGeom — bands as fractions of the page width (container units, so
+// the cover scales as one piece), type in points on an A4 page, colours the
+// master's own: 003D3D bands, 005F5F title band, 4BED12 rules, B3D9D9 small
+// print. Nothing here is a design choice; change the master, not this.
+function wmpgCoverCss(G) {
+  G = G || wmpgCoverGeom();
+  const tw = n => `calc(100cqw * ${(n / G.pageW).toFixed(5)})`;   // twips → page-relative
+  const pt = n => tw(n * 20);                                        // points → twips
+  const pc = f => (f * 100).toFixed(2) + '%';
+  return `
+  .cover{container-type:inline-size;background:#003D3D;color:#fff;margin:-52px -62px 34px;padding:0;aspect-ratio:${G.pageW}/${G.pageH};display:flex;flex-direction:column;overflow:hidden;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.3;}
+  .cover .band{flex:none;box-sizing:border-box;position:relative;overflow:hidden;}
+  .cover .top{height:${tw(G.top)};background:#003D3D;padding-top:${tw(G.spacer)};}
+  .cover .fields{height:${tw(G.fields)};box-sizing:border-box;display:flex;justify-content:space-between;align-items:flex-end;padding:0 ${tw(G.gutter)};}
+  .cover .fields span{display:block;font-size:${pt(8)};letter-spacing:.04em;text-transform:uppercase;color:#B3D9D9;padding-bottom:${tw(50)};}
+  .cover .fields span.r,.cover .brand .r{text-align:right;}
+  .cover .fields::after,.cover .brand::after{content:'';position:absolute;top:0;bottom:0;width:${pt(0.5)};min-width:1px;background:rgba(255,255,255,.3);}
+  .cover .fields::after{left:${pc(G.cellV.fields)};}
+  .cover .brand::after{left:${pc(G.cellV.foot)};top:${tw(G.footPad)};bottom:auto;height:${pt(12)};}
+  .cover .brand{position:relative;}
+  .cover .fields b{display:block;color:#fff;font-size:${pt(13)};font-weight:700;letter-spacing:0;text-transform:none;margin-top:${tw(50)};}
+  .cover .rule{background:#4BED12;}
+  .cover .fields-rule{height:${pt(1.25)};margin:0 ${tw(G.gutter)};}
+  .cover .art{height:${tw(G.art)};overflow:hidden;position:relative;}
+  .cover .art img{display:block;width:100%;height:auto;}
+  .cover .divider{flex:none;height:${tw(G.divider)};background:#4BED12;}
+  .cover .mid{height:${tw(G.title)};background:#005F5F;padding:${tw(G.titlePad)} ${tw(G.gutter)};display:flex;flex-direction:column;justify-content:safe center;}
+  .cover .addr{font-size:${pt(27)};font-weight:700;color:#fff;margin:0 0 ${tw(120)};line-height:1.33;}
+  .cover .doc{font-size:${pt(34)};font-weight:700;color:#fff;margin:0 0 ${tw(120)};line-height:1.33;}
+  .cover .title-rule{height:${pt(0.75)};background:#4BED12;margin:${pt(18)} 0 ${tw(100)};}
+  .cover .low{height:${tw(G.photo)};background:#003D3D;}
+  .cover .low img.pic{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;}
+  .cover .low .scrim{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(14,33,31,0) 0%,rgba(14,33,31,.18) 55%,rgba(14,33,31,.55) 100%);}
+  .cover .low .logo{position:absolute;left:${pc(G.logo.x)};top:${pc(G.logo.y)};width:${pc(G.logo.w)};height:${pc(G.logo.h)};object-fit:contain;z-index:2;}
+  .cover .low .logo-text{display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:${pt(44)};font-weight:700;line-height:1;}
+  .cover .low .logo-text small{font-size:${pt(14)};font-weight:400;opacity:.85;}
+  .cover .low .credit{position:absolute;left:calc(100% - ${tw(G.pageW * G.credit.edge)});bottom:${pc(G.credit.lift)};transform-origin:left bottom;transform:rotate(-90deg);white-space:nowrap;font-size:${pt(9)};line-height:${pt(13)};padding-right:${pt(6)};color:#fff;z-index:2;}
+  .cover .cfoot{flex:1;background:#003D3D;padding:0 ${tw(G.gutter)};}
+  .cover .foot-rule{height:${pt(1.25)};margin:0 ${tw(-G.gutter)};}
+  .cover .brand{display:flex;justify-content:space-between;padding-top:${tw(G.footPad)};font-size:${pt(9)};color:#B3D9D9;}`;
+}
+// Pure: the one line printed up the right edge of the cover image —
+// "Source: <source>, <DD/MM/YYYY>". Only ever built from what is filled in:
+// no "Source:" with nothing after it, no comma with nothing after it.
+function wmpgCoverDateDMY(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || '').trim();
+}
+function wmpgCoverCreditText(cover) {
+  if (!cover) return '';
+  const parts = [String(cover.source || '').trim(), wmpgCoverDateDMY(cover.received)].filter(Boolean);
+  return parts.length ? 'Source: ' + parts.join(', ') : '';
+}
+// Pure: the pre-2026-09-16 free-text credit ("Source: SJB Architects,
+// 24/07/2026") split back into its two fields, once, on draft upgrade.
+function wmpgCoverCreditParse(str) {
+  let t = String(str || '').trim().replace(/^source\s*:\s*/i, '');
+  const m = /,?\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/.exec(t);
+  const received = m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+  if (m) t = t.slice(0, m.index).trim();
+  return { source: t, received };
+}
+// Pure: the address line's run properties — the master's own title run
+// (Segoe UI, bold, white) at 80% of its size, so the line inherits whatever
+// the master says rather than a size typed here. Null when the paragraph
+// holding BM_SiteAddress carries no run to inherit from.
+function wmpgTplCoverAddressRpr(xml, ratio) {
+  const at = xml.indexOf('w:name="BM_SiteAddress"');
+  if (at === -1) return null;
+  const pEnd = xml.indexOf('</w:p>', at);
+  const m = /<w:rPr>([\s\S]*?)<\/w:rPr>/.exec(xml.slice(at, pEnd === -1 ? undefined : pEnd));
+  if (!m) return null;
+  const f = ratio || 0.8;
+  return m[1].replace(/<w:(sz|szCs) w:val="(\d+)"\/>/g, (_, k, v) => `<w:${k} w:val="${Math.round(Number(v) * f / 2) * 2}"/>`);
+}
 
 // Pure: cover-fit crop of a w×h source into a box of aspect bw:bh — the
 // centred source rectangle to draw, never a stretch.
@@ -32897,7 +32997,7 @@ function wmpgCoverCreditXml(o) {
     `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">` +
     `<wps:cNvSpPr txBox="1"><a:spLocks noChangeArrowheads="1"/></wps:cNvSpPr><wps:spPr bwMode="auto"><a:xfrm rot="16200000"><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="9525"><a:noFill/></a:ln></wps:spPr>` +
     `<wps:txbx><w:txbxContent><w:p><w:pPr><w:rPr><w:color w:val="FFFFFF"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Segoe UI" w:eastAsia="Segoe UI" w:hAnsi="Segoe UI" w:cs="Segoe UI"/><w:color w:val="FFFFFF"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t xml:space="preserve">${tplEsc(o.text)}</w:t></w:r></w:p></w:txbxContent></wps:txbx>` +
-    `<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>`;
+    `<wps:bodyPr rot="0" vert="horz" wrap="none" lIns="91440" tIns="45720" rIns="91440" bIns="45720" anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>`;
 }
 // Put the picture (and credit) into the lower band. Returns the note for the export.
 function wmpgTplCoverImage(xml, opts) {
@@ -32944,7 +33044,29 @@ function wmpgB64(buf) { let s = ''; const b = new Uint8Array(buf); for (let i = 
 async function wmpgCoverUpload(ev) {
   const f = ev.target.files && ev.target.files[0]; ev.target.value = '';
   if (!f) return;
-  const d = WMPG.data; d.cover = d.cover || { image: null, credit: '', scrim: true };
+  return wmpgCoverAccept(f, 'set');
+}
+// Ctrl/Cmd+V anywhere in the generator: an image on the clipboard (a screenshot,
+// a copied picture, a copied image file) goes through exactly the upload path.
+// Text pastes into a field are left alone — only a clipboard carrying an image
+// file is claimed.
+function wmpgCoverPasteFile(items) {
+  for (const it of items || []) {
+    if (it && it.kind === 'file' && /^image\/(jpeg|png)$/.test(it.type)) return it.getAsFile ? it.getAsFile() : null;
+  }
+  return null;
+}
+async function wmpgCoverPaste(ev) {
+  if (document.getElementById('wmpg-overlay')?.style.display !== 'flex' || !WMPG.data) return;
+  const f = wmpgCoverPasteFile(ev.clipboardData && ev.clipboardData.items);
+  if (!f) return;
+  ev.preventDefault();
+  const ext = f.type === 'image/png' ? 'png' : 'jpg';
+  const named = (f.name && !/^image\.(png|jpe?g)$/i.test(f.name)) ? f : new File([f], `pasted-${new Date().toISOString().slice(0, 10)}.${ext}`, { type: f.type });
+  return wmpgCoverAccept(named, 'pasted');
+}
+async function wmpgCoverAccept(f, how) {
+  const d = WMPG.data; d.cover = d.cover || { image: null, source: '', received: '', scrim: true };
   if (!/^image\/(jpeg|png)$/.test(f.type)) { wmpgFlash('Cover image must be a JPEG or PNG.', true); return; }
   if (f.size > WMPG_COVER_MAX_BYTES) { wmpgFlash(`Cover image is ${(f.size / 1048576).toFixed(1)} MB — the cap is ${WMPG_COVER_MAX_BYTES / 1048576} MB so the .docx does not balloon. Resize it first.`, true); return; }
   try {
@@ -32954,7 +33076,7 @@ async function wmpgCoverUpload(ev) {
     d.cover.image = { name: f.name, type: f.type, size: f.size, w: probe.w, h: probe.h, ts: Date.now() };
     await wmpgCoverLoad();
     wmpgRenderForm(); wmpgQueuePreview();
-    wmpgFlash(`Cover image set — ${f.name} (${(f.size / 1024).toFixed(0)} KB). It fills the lower band behind the logo, cover-fit.`);
+    wmpgFlash(`Cover image ${how === 'pasted' ? 'pasted' : 'set'} — ${f.name} (${(f.size / 1024).toFixed(0)} KB). It fills the photo band behind the logo, cover-fit; ✕ Remove takes it off again.`);
   } catch (e) { wmpgFlash('Cover image not usable: ' + (e.message || e), true); }
 }
 async function wmpgCoverRemove() {
@@ -32973,7 +33095,13 @@ async function wmpgBuildTemplateBlob(buf) {
   if (!/w:name="BM_Sec_WasteGen_Resi"/.test(xml))
     throw new Error('This document has no WMP bookmarks — load the PWC WMP master template.');
   const d = WMPG.data;
-  xml = wmpgTplFill(xml, wmpgTplPayload(d));
+  const payload = wmpgTplPayload(d);
+  // The address line inherits the master's own title run at 80% — the
+  // hand-set size in the payload is only the fallback for a template whose
+  // BM_SiteAddress paragraph has no run to read.
+  const addrRpr = wmpgTplCoverAddressRpr(xml, 0.8);
+  if (addrRpr && payload.text.BM_SiteAddress && typeof payload.text.BM_SiteAddress === 'object') payload.text.BM_SiteAddress.rpr = addrRpr;
+  xml = wmpgTplFill(xml, payload);
   // The cover: the master's placeholders filled or removed, the editable
   // title, and the optional project image + credit.
   xml = wmpgTplCoverTitle(xml, d.title);
@@ -32988,7 +33116,7 @@ async function wmpgBuildTemplateBlob(buf) {
       zip.file('word/media/cover_image.jpeg', await img.blob.arrayBuffer());
       const relsFile = zip.file('word/_rels/document.xml.rels');
       if (relsFile) zip.file('word/_rels/document.xml.rels', wmpgTplAddImageRel(await relsFile.async('string'), 'rIdWmpCover', 'media/cover_image.jpeg'));
-      const r = wmpgTplCoverImage(xml, { rId: 'rIdWmpCover', credit: (d.cover.credit || '').trim(), descr: d.cover.image.name });
+      const r = wmpgTplCoverImage(xml, { rId: 'rIdWmpCover', credit: wmpgCoverCreditText(d.cover), descr: d.cover.image.name });
       xml = r.xml; WMPG.exportNote = r.note || '';
     }
   }

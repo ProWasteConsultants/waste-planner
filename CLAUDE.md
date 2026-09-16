@@ -458,13 +458,25 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   drops a project image into the lower band. Page 2 is untouched. The date
   is DD/MM/YYYY throughout, matching the revision table.
 - **Cover image + credit are WMP-local presentation** (`d.cover`: metadata,
-  credit, scrim) — no Design-tab source, no override convention. Bytes live
-  in IndexedDB (`wmp:cover:<projectId>`), never in the project record.
-  JPEG/PNG, 4 MB cap. The embedded picture is rendered band-shaped and
-  cover-fit (`wmpgCoverFit`, pure — cropped and centred, never stretched)
-  with a light bottom-weighted scrim baked in, on by default, so the white
-  logo stays crisp. No image → the template is untouched: no frame, no
-  placeholder picture.
+  `source`, `received`, scrim) — no Design-tab source, no override convention.
+  Bytes live in IndexedDB (`wmp:cover:<projectId>`), never in the project
+  record. JPEG/PNG, 4 MB cap. **Two ways in, one path**: the file picker and
+  Ctrl/Cmd+V anywhere in the open generator (`wmpgCoverPaste` claims a
+  clipboard that carries a JPEG/PNG file and nothing else — text pastes into
+  fields are untouched) both call `wmpgCoverAccept`, so validation, storage,
+  the immediate preview and ✕ Remove are identical. The embedded picture is
+  rendered band-shaped and cover-fit (`wmpgCoverFit`, pure — cropped and
+  centred, never stretched) with a light bottom-weighted scrim baked in, on by
+  default, so the white logo stays crisp. No image → the template is
+  untouched: no frame, no placeholder picture.
+- **The credit is composed, never typed as one string.** *Image source* +
+  *Date received* (a date picker) print up the right edge as
+  `Source: <source>, <DD/MM/YYYY>` via `wmpgCoverCreditText` (pure): built
+  only from what is filled — no bare "Source:", no dangling comma, nothing
+  at all without an image — and read by BOTH the preview and
+  `wmpgTplCoverImage`, so they cannot differ. The brief free-text era is
+  split once on draft upgrade (`wmpgCoverCreditParse`) and the old field
+  dropped.
 - **The photo is placed the way the Flinders St example places it** — read
   off the real master (`xxxPW_Address_WMP_Master.dotx`): the cover is one
   table of shaded cells (`003D3D` dark teal, `005F5F` title band, `4BED12`
@@ -475,18 +487,40 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   and row-high; the template's own anchored logo draws above inline content,
   so nothing about layers or page offsets is guessed. The credit replicates
   the example's `Text Box 2`: anchored to the same paragraph, `rot="16200000"`
-  (reads bottom-to-top), 9pt white Segoe UI, its lower end ~15 mm above the
-  band's bottom edge. `wmpgTplParagraphs` treats Word's self-closing
-  `<w:p …/>` as whole paragraphs — the master's cover has nine — or every
-  paragraph after the first would read as nested. An unrecognised template
-  gets **no picture and a plain export note**, never a blind placement.
-  **The title band's exact-height row can show the address line above the
-  heading OR the `[Development Name] | [Street Address, Suburb]` line beneath
-  the rule, not both** — the example shows the former with the latter clipped
-  out of sight (the green rule is that empty paragraph's own border, so it
-  cannot be dropped to make room). When the address line is printed, that line
-  is emptied, never filled-and-hidden. Verified by filling the real master and
+  (reads bottom-to-top), 9pt white Segoe UI, `wrap="none"` so a substituted
+  font can never fold it, its lower end ~15 mm above the band's bottom edge.
+  `wmpgTplParagraphs` treats Word's self-closing `<w:p …/>` as whole
+  paragraphs — the master's cover has nine — or every paragraph after the
+  first would read as nested. An unrecognised template gets **no picture and
+  a plain export note**, never a blind placement. **The title band's
+  exact-height row can show the address line above the heading OR the
+  `[Development Name] | [Street Address, Suburb]` line beneath the rule, not
+  both** — the example shows the former with the latter clipped out of sight
+  (the green rule is that empty paragraph's own border, so it cannot be
+  dropped to make room). When the address line is printed, that line is
+  emptied, never filled-and-hidden. Verified by filling the real master and
   rendering it with LibreOffice beside the example's own render.
+- **The address line inherits the master's own run.** `BM_SiteAddress` sits
+  inside the heading paragraph, so `wmpgTplCoverAddressRpr` (pure) reads that
+  paragraph's run (Segoe UI, bold, white, sz 68) and rescales `sz`/`szCs` to
+  80% (→ 54, 27pt against the 34pt heading). The hand-set rpr in
+  `wmpgTplPayload` is only the fallback for a template with no run to read.
+- **The preview cover is drawn from the master's numbers, not styled to look
+  like it** (`WMPG_COVER_ROWS` in twips, `WMPG_COVER_LOGO` in EMU,
+  `wmpgCoverGeom` + `wmpgCoverCss`, all pure). Bands are container-unit
+  fractions of the page width, so the cover scales as one piece; colours are
+  the master's four (`003D3D` bands, `005F5F` title band, `4BED12` rules,
+  `B3D9D9` small print — no invented tints); the logo box is the drawing's
+  own offsets (58% of the page width, centred, top at two-thirds of the
+  band); the footer is the page's remainder because Word paints it to the
+  edge. Two rows are **measured on the example's Word render** rather than
+  copied — the auto-height PREPARED FOR / DATE row (≈750) and the title row,
+  which Word lays out at ≈2820 from a 2600 exact row — and the comment says
+  so. The cover's footer is `.cfoot`, not `.foot`: the document footer's
+  global rule (38 px top margin, border) leaked in once. An over-long title
+  clips at the bottom of the band (`safe center`), as Word's exact row does.
+  Verified side by side with the example's own PDF at the same zoom; the only
+  visible difference is Segoe UI vs the fallback face on machines without it.
 
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
