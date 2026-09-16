@@ -673,3 +673,133 @@ test('Ctrl/Cmd+V pastes a cover image through the same accept path as the file p
   assert.ok(/return wmpgCoverAccept\(named, 'pasted'\)/.test(paste), 'same validation, storage, preview and remove as an upload');
   assert.ok(/document\.addEventListener\('paste', wmpgCoverPaste\)/.test(extractBlock(/^function wmpgEnsureModal\(/).text), 'registered once with the modal');
 });
+
+
+// ── §11 the bin rows follow the bin calculator ──
+// Size, cadence and count in the generator come from the same three rules
+// the calculator applies (library · method · council service) through the
+// platform mirrors — tests/bin-library.test.js §5 pins those to the
+// calculator; this pins the generator to the mirrors.
+function loadBins() {
+  const code = [
+    /^function glBridgeNorm\(/, /^const WP_COLLECT_METHODS = /, /^const WP_DEFAULT_METHOD = /, /^const WP_ALLOWED_SIZES = /,
+    /^const WP_LIB_STREAM_KEY = /, /^const WP_DEFAULT_BINSIZES = /, /^const WP_DEFAULT_COLWK = /,
+    /^function wpCollectMethods\(/, /^function wpCollectMethod\(/, /^function wpBinLib\(/, /^function wpBinSizesRaw\(/, /^function wpBinSizesFor\(/,
+    /^function wpBinDefaultMethod\(/, /^function wpCycleCw\(/, /^function wpBinDefSize\(/, /^function wpBinDefCw\(/, /^function wpBinCycleFor\(/,
+    /^function wpCouncilScheduleFor\(/,
+    /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_UNITS = /, /^const WMPG_FREQ = /, /^function wmpgFreqLabel\(/, /^function wmpgEsc\(/,
+    /^const WMPG_METHOD_LABEL = /, /^function wmpgStreamWord\(/, /^function wmpgRoomQty\(/, /^function wmpgRoomVols\(/,
+    /^function wmpgBinCtx\(/, /^function wmpgBinMethod\(/, /^function wmpgBinOffer\(/, /^function wmpgBinCalcQty\(/, /^function wmpgBinResnap\(/,
+    /^function wmpgBinSizeOptions\(/, /^function wmpgBinFreqOptions\(/, /^function wmpgCycleShort\(/, /^function wmpgRoomOfferNote\(/, /^function wmpgAutoBins\(/,
+  ].map(p => extractBlock(p).text).join('\n\n');
+  return new Function('WMPG', 'wpBinLibraryRows', 'wpCouncilScheduleEntries', 'wpBinLibraryLoaded', code + `
+    ;return { wmpgBinCtx, wmpgBinMethod, wmpgBinOffer, wmpgBinCalcQty, wmpgBinResnap, wmpgBinSizeOptions, wmpgBinFreqOptions, wmpgRoomOfferNote, wmpgAutoBins, WMPG_FREQ };`);
+}
+const LIB_ROWS = [
+  { code: 'mgb120', label: '120L MGB', capacity_l: 120, streams: [], is_common: true, width_mm: 480, depth_mm: 555 },
+  { code: 'mgb140', label: '140L MGB', capacity_l: 140, streams: [], is_common: false, width_mm: 500, depth_mm: 560 },
+  { code: 'mgb240', label: '240L MGB', capacity_l: 240, streams: [], is_common: true, width_mm: 585, depth_mm: 735 },
+  { code: 'b660', label: '660L', capacity_l: 660, streams: [], is_common: true, width_mm: 1370, depth_mm: 780 },
+  { code: 'b1100', label: '1100L', capacity_l: 1100, streams: ['garbage', 'recycling'], is_common: true, width_mm: 1245, depth_mm: 1075 },
+  { code: 'fl3000', label: '3m³ front-lift', capacity_l: 3000, streams: [], is_common: false, collection_methods: ['bulk'], width_mm: 1800, depth_mm: 1200 },
+];
+const CAMDEN = { state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', valueKey: 'camden',
+  schedule: { GW: { sizeL: 140, altL: [240], cycle: 'W' }, REC: { sizeL: 240, altL: [], cycle: 'A' }, ORG: { sizeL: 240, altL: [], cycle: 'B' }, bulk: { maxL: 660, maxPerWeek: 2 } } };
+function binsWorld({ council = 'Camden Council', lib = LIB_ROWS, services = [CAMDEN], rooms = [] } = {}) {
+  const data = { council, state: 'NSW', rooms, unitTypes: [{ key: 'apt_1br' }, { key: 'apt_2br' }, { key: 'apt_3br' }, { key: 'townhouse' }],
+    rates: { apt_1br: { GW: 80, REC: 60, ORG: 20, GLS: 0 }, apt_2br: { GW: 100, REC: 80, ORG: 30, GLS: 0 }, apt_3br: { GW: 120, REC: 100, ORG: 40, GLS: 0 }, townhouse: { GW: 140, REC: 120, ORG: 60, GLS: 10 } } };
+  return { G: loadBins()({ data }, () => lib, () => services, () => true), d: data };
+}
+const wroom = (alloc, bins) => ({ name: 'Bin room', alloc: Object.assign({ apt_1br: 0, apt_2br: 0, apt_3br: 0, townhouse: 0 }, alloc), bins: bins || [], collection: { provider: 'council' } });
+
+test('the size dropdown offers what the calculator would — council service under kerbside, the capped library under bulk — and keeps an unoffered size, named', () => {
+  const { G, d } = binsWorld();
+  const th = wroom({ townhouse: 6 }), apts = wroom({ apt_2br: 20 });
+  const kerb = G.wmpgBinOffer(th, { stream: 'GW', sizeL: 1100, method: null });
+  assert.equal(kerb.method, 'kerbside_individual', 'a townhouse-only room defaults to kerbside individual, as the calculator does');
+  assert.deepStrictEqual(kerb.list.map(e => e.sizeL), [140, 240], 'the council service IS the list');
+  assert.equal(kerb.offered, false, '1100L is not among them');
+  assert.equal(kerb.perDwelling, 6, 'one bin per dwelling');
+  const html = G.wmpgBinSizeOptions(kerb, 1100);
+  assert.ok(html.includes('<optgroup label="Council schedule">') && html.includes('>140L<') && html.includes('>240L<'), 'grouped as the calculator groups it');
+  assert.ok(/<optgroup label="Not offered under this method"><option value="1100" selected>1100L<\/option>/.test(html), 'the current size is kept and named, never silently replaced');
+  const bulk = G.wmpgBinOffer(apts, { stream: 'GW', sizeL: 1100, method: null });
+  assert.equal(bulk.method, 'bulk');
+  assert.deepStrictEqual(bulk.list.map(e => e.sizeL), [120, 140, 240, 660], 'every stream-serving library bin within the council’s bulk cap');
+  assert.equal(bulk.perDwelling, null);
+  const b2 = G.wmpgBinSizeOptions(bulk, 240);
+  assert.ok(b2.includes('<optgroup label="Bins">') && b2.includes('<optgroup label="More sizes">') && /More sizes"><option value="140"/.test(b2), 'common sizes lead, the rest under More sizes');
+  // no council service: the method-filtered library, and the note says where to add one
+  const none = binsWorld({ council: 'Nowhere Shire', services: [] });
+  const o = none.G.wmpgBinOffer(th, { stream: 'GW', sizeL: 240, method: null });
+  assert.deepStrictEqual(o.list.map(e => e.sizeL), [120, 140, 240], 'kerbside ceiling on the library');
+  assert.ok(/no kerbside service recorded for Nowhere Shire — add one in Admin/.test(none.G.wmpgRoomOfferNote(none.d, wroom({ townhouse: 6 }, [{ stream: 'GW', sizeL: 240, method: null }]), none.G.wmpgBinCtx())));
+  // no library: the built-in fallback, flagged
+  const bare = loadBins()({ data: d }, () => [], () => [CAMDEN], () => true);
+  assert.deepStrictEqual(bare.wmpgBinOffer(apts, { stream: 'ORG', sizeL: 240, method: 'bulk' }).list.map(e => e.sizeL), [60, 80, 120, 240]);
+  assert.ok(/no bin records — built-in sizes shown/.test(bare.wmpgRoomOfferNote(d, apts, bare.wmpgBinCtx())));
+});
+
+test('frequency: the council’s cadence is named on its option and is the default; a departure is still allowed', () => {
+  const { G } = binsWorld();
+  const th = wroom({ townhouse: 6 });
+  const rec = G.wmpgBinOffer(th, { stream: 'REC', sizeL: 240, method: null });
+  assert.equal(rec.defCw, 0.5, 'fortnightly recycling arrives as 0.5/week');
+  const html = G.wmpgBinFreqOptions(rec, 1);
+  assert.ok(html.includes('>fortnightly (council, week A)<'), 'the council’s week letter on its option');
+  assert.ok(html.includes('<option value="1" selected>weekly<'), 'the row’s own pick is selected, departure and all');
+  assert.ok(G.WMPG_FREQ.some(f => f[0] === 0.25 && f[1] === 'monthly'), 'monthly exists because a council cycle can be M');
+  const bulk = G.wmpgBinOffer(wroom({ apt_2br: 20 }), { stream: 'GW', sizeL: 660, method: null });
+  assert.equal(bulk.defCw, 2, 'kerbside cadence never leaks into a bulk row');
+  assert.ok(!/\(council/.test(G.wmpgBinFreqOptions(bulk, 2)));
+});
+
+test('changing the method re-snaps size, cadence and count as the calculator does, and says what it did', () => {
+  const { G, d } = binsWorld();
+  const th = wroom({ townhouse: 6 });
+  const b = { stream: 'GW', sizeL: 1100, qty: 2, colWk: 2, method: 'bulk', cycle: 'W' };
+  b.method = 'kerbside_individual';
+  const words = G.wmpgBinResnap(d, th, b, G.wmpgBinOffer(th, b));
+  assert.equal(b.sizeL, 140, 'the council’s default bin');
+  assert.equal(b.colWk, 1, 'the council’s cadence');
+  assert.equal(b.qty, 6, 'one per dwelling');
+  assert.equal(b.cycle, 'W');
+  assert.ok(/1100L is not offered under kerbside \(individual bins\) — now 140L \(the council’s default\)/.test(words) && /qty 6 — one bin per dwelling/.test(words), words);
+  // back to bulk: the size is offered again (240 stays), count returns to volume ÷ capacity
+  Object.assign(b, { sizeL: 240, method: 'bulk', colWk: 1 });
+  const w2 = G.wmpgBinResnap(d, th, b, G.wmpgBinOffer(th, b));
+  assert.equal(b.sizeL, 240, 'an offered size stands');
+  assert.equal(b.qty, Math.ceil(6 * 140 / 240), 'volume ÷ (size × collections per week)');
+  assert.ok(/from the room’s volume/.test(w2));
+  // recycling under kerbside shared: fortnightly week A carried as the cycle
+  const r = { stream: 'REC', sizeL: 660, qty: 1, colWk: 1, method: 'kerbside_shared' };
+  G.wmpgBinResnap(d, wroom({ apt_1br: 8 }), r, G.wmpgBinOffer(wroom({ apt_1br: 8 }), r));
+  assert.equal(r.sizeL, 240); assert.equal(r.colWk, 0.5); assert.equal(r.cycle, 'A');
+  assert.equal(r.qty, Math.ceil(8 * 60 / (240 * 0.5)));
+});
+
+test('auto rows (no calculator schedule) and added rows start from the calculator’s defaults, not a fixed 1100L', () => {
+  const { G, d } = binsWorld();
+  const th = wroom({ townhouse: 6 });
+  const auto = G.wmpgAutoBins(d, th);
+  assert.deepStrictEqual(auto.map(b => [b.stream, b.sizeL, b.qty, b.colWk, b.cycle]), [['GW', 140, 6, 1, 'W'], ['ORG', 240, 6, 0.5, 'B'], ['REC', 240, 6, 0.5, 'A'], ['GLS', 240, 6, 1, 'W']],
+    'kerbside individual: the council’s bins, one per dwelling, on the council’s cadence; glass (no service) on the library default');
+  assert.ok(auto.every(b => b.src === 'auto' && b.design === null && b.method === null));
+  const apts = wroom({ apt_2br: 20 });
+  const bulk = G.wmpgAutoBins(d, apts);
+  assert.deepStrictEqual(bulk.find(b => b.stream === 'GW') && [bulk[0].sizeL, bulk[0].colWk, bulk[0].qty], [660, 2, Math.ceil(2000 / (660 * 2))], 'bulk: the 1100L default snaps under the council’s 660L cap, twice-weekly garbage');
+  // wiring
+  const set = extractBlock(/^function wmpgBinSet\(/).text;
+  assert.ok(/if \(field === 'method'\)/.test(set) && /wmpgBinResnap\(WMPG\.data, room, b, wmpgBinOffer\(room, b\)\)/.test(set), 'a method change re-snaps through the one function');
+  assert.ok(/b\.cycle = wpBinCycleFor\(/.test(set), 'a frequency or size edit keeps the presentation cycle in step');
+  const add = extractBlock(/^function wmpgBinAdd\(/).text;
+  assert.ok(/wmpgBinOffer\(room, b\)/.test(add) && /wmpgBinCalcQty\(WMPG\.data, room, b, o\)/.test(add), 'an added row starts from the offer');
+  const form = extractBlock(/^function wmpgRenderForm\(/).text;
+  assert.ok(!/Object\.keys\(WMPG_BIN_DIMS\)\.map\(Number\)/.test(form), 'the fixed size list is gone from the row');
+  const roomFn = SOURCE.slice(SOURCE.indexOf('const binCtx = wmpgBinCtx();'), SOURCE.indexOf('const binCtx = wmpgBinCtx();') + 6000);
+  assert.ok(/wmpgBinSizeOptions\(o,\+b\.sizeL\)/.test(roomFn) && /wmpgBinFreqOptions\(o,\+b\.colWk\)/.test(roomFn) && /wmpgRoomOfferNote\(d, r, binCtx\)/.test(roomFn), 'the row reads the offer, the room states the source');
+  assert.ok(/default — \$\{WMPG_METHOD_LABEL\[wpBinDefaultMethod\(r\.alloc,'r'\)\]\}/.test(roomFn), 'the blank method option names the calculator’s default');
+  assert.ok(/1 per dwelling = \$\{o\.perDwelling\}/.test(roomFn), 'kerbside individual counts dwellings and offers the number');
+  assert.ok(/wpBinLibraryEnsure\(\)/.test(extractBlock(/^async function openWmpGenerator\(/).text), 'the library and council services load before the form renders');
+  assert.ok(extractBlock(/^async function wpBinLibraryEnsure\(/).text.includes('if (WS_EQUIP_DB === null) await wsLoadEquipmentDB();'));
+});

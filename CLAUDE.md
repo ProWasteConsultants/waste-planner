@@ -264,6 +264,12 @@ Three layered constraints decide what a bin-size dropdown offers, in this order
    services. `sql/2026-09-14-kerbside-service-read.sql` lets every signed-in
    user read that one `waste_meta` row (officer contacts stay closed).
 
+The WMP generator's bin rows apply the same three rules through pure platform
+**mirrors** of `binSizesFor` and its defaults (`wpBinSizesFor` and friends),
+pinned to the calculator by `tests/bin-library.test.js` §5 — see the WMP
+generator section. Change the rule in the calculator and the pin fails until
+the mirror follows.
+
 ### Residential method: rate · stepped table · state fallback (2026-09-15)
 
 Most councils publish a residential generation **rate** and `res_rates` serves
@@ -521,6 +527,33 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   clips at the bottom of the band (`safe center`), as Word's exact row does.
   Verified side by side with the example's own PDF at the same zoom; the only
   visible difference is Segoe UI vs the fallback face on machines without it.
+
+- **The bin rows follow the bin calculator (2026-09-16).** Size, cadence and
+  count in the generator come from the calculator's own three rules — the
+  library is the list, the collection method constrains it, the council's
+  kerbside service specialises it — not from a fixed size list. The
+  calculator is a sandboxed srcdoc, so the platform carries **mirrors**
+  (`wpBinLib`, `wpBinSizesFor`, `wpBinDefaultMethod`, `wpBinDefSize`,
+  `wpBinDefCw`, `wpBinCycleFor`, `wpCouncilScheduleFor`, all pure, beside
+  `wpKerbScheduleParse`) and `tests/bin-library.test.js` §5 runs each pair
+  on the same fixtures — the arrangement `resTableLookup` /
+  `wpResTableLookup` already has. `wmpgBinOffer(room, b)` is the one
+  reading per row: the dropdown is grouped as the calculator groups it
+  (council schedule or common sizes first, *More sizes* after, `(council)`
+  on a council-supplied size), the council's cadence is named on its
+  frequency option and is the default, kerbside *individual* counts
+  dwellings and offers the number. **Editing stays free**: a size the rules
+  do not offer is KEPT under its own heading and named on the row, never
+  silently replaced; changing the method re-snaps size, cadence and count
+  through `wmpgBinResnap` exactly as the calculator would, and the status
+  line says what changed. Every room states where its sizes came from
+  (`wmpgRoomOfferNote`), including "no kerbside service recorded for X" with
+  where to add one. The library and services load before the form renders
+  (`wpBinLibraryEnsure`); the push to the calculator and the generator read
+  ONE mapping (`wpBinLibraryRows`), so they can never see different
+  libraries. Not mirrored: the council stepped table — the calculator's
+  schedule rows already carry its sizes, and a WMP re-size is a stated
+  departure.
 
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
