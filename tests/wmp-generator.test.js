@@ -483,8 +483,11 @@ function loadCover() {
     /^const EMU_PER_TWIP = /, /^function wmpgCoverFit\(/, /^function wmpgTplPageSize\(/, /^function wmpgTplCoverEnd\(/, /^function wmpgTplParagraphs\(/,
     /^function wmpgTplJoinText\(/, /^function wmpgTplRewriteParagraph\(/, /^const WMPG_COVER_PLACEHOLDERS = /, /^function wmpgTplCoverPlaceholders\(/,
     /^function wmpgTplCoverTitle\(/, /^function wmpgTplCoverBand\(/, /^function wmpgTplAddImageRel\(/, /^function wmpgTplEnsureContentType\(/,
-    /^function wmpgCoverPictureXml\(/, /^function wmpgCoverCreditXml\(/, /^function wmpgTplCoverImage\(/].map(p => extractBlock(p).text).join('\n\n');
-  return new Function(code + ';return { wmpgCoverFit, wmpgTplPageSize, wmpgTplParagraphs, wmpgTplCoverPlaceholders, wmpgTplCoverTitle, wmpgTplCoverBand, wmpgTplAddImageRel, wmpgTplEnsureContentType, wmpgTplCoverImage, WMPG_COVER_BAND_H };')();
+    /^function wmpgCoverPictureXml\(/, /^function wmpgCoverCreditXml\(/, /^function wmpgTplCoverImage\(/,
+    /^const WMPG_COVER_ROWS = /, /^const WMPG_COVER_LOGO = /, /^function wmpgCoverGeom\(/, /^function wmpgCoverCss\(/,
+    /^function wmpgCoverDateDMY\(/, /^function wmpgCoverCreditText\(/, /^function wmpgCoverCreditParse\(/, /^function wmpgTplCoverAddressRpr\(/,
+    /^function wmpgCoverPasteFile\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function(code + ';return { wmpgCoverFit, wmpgTplPageSize, wmpgTplParagraphs, wmpgTplCoverPlaceholders, wmpgTplCoverTitle, wmpgTplCoverBand, wmpgTplAddImageRel, wmpgTplEnsureContentType, wmpgTplCoverImage, WMPG_COVER_BAND_H, WMPG_COVER_ROWS, wmpgCoverGeom, wmpgCoverCss, wmpgCoverDateDMY, wmpgCoverCreditText, wmpgCoverCreditParse, wmpgTplCoverAddressRpr, wmpgCoverPasteFile };')();
 }
 // A synthetic master with the REAL cover's structure: one table of shaded
 // cells, self-closing empty paragraphs, the bookmarked corner fields, the
@@ -499,7 +502,7 @@ const COVER_XML = '<w:document><w:body><w:tbl>' +
   TC('003D3D', P(['PREPARED FOR']) + P(['[Client / ', 'Developer Name]'], '<w:bookmarkStart w:id="1" w:name="BM_ClientName"/><w:bookmarkEnd w:id="1"/>') + P(['DATE']) + P(['[Month Year]'])) +
   TC('003D3D', '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="7553325" cy="4267200"/><a:blip r:embed="rId9"/></wp:inline></w:drawing></w:r></w:p>', 4600) +
   TC('4BED12', '<w:p w:rsidR="00B"/>', 55) +
-  TC('005F5F', '<w:p><w:bookmarkStart w:id="2" w:name="BM_SiteAddress"/><w:bookmarkEnd w:id="2"/></w:p>' + P(['Waste Management Plan']) + '<w:p w:rsidR="00C"/>' + P(['[Development Name]', '   |   ', '[Street Address, Suburb]']), 2600) +
+  TC('005F5F', '<w:p><w:pPr><w:spacing w:after="120"/></w:pPr><w:bookmarkStart w:id="2" w:name="BM_SiteAddress"/><w:bookmarkEnd w:id="2"/><w:r><w:rPr><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/><w:b/><w:bCs/><w:color w:val="FFFFFF"/><w:sz w:val="68"/><w:szCs w:val="68"/></w:rPr><w:t>Waste Management Plan</w:t></w:r></w:p>' + '<w:p w:rsidR="00C"/>' + P(['[Development Name]', '   |   ', '[Street Address, Suburb]']), 2600) +
   TC('003D3D', '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:anchor relativeHeight="251683840" behindDoc="0"><wp:positionH relativeFrom="column"><wp:posOffset>1562100</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>2487930</wp:posOffset></wp:positionV><wp:extent cx="4406265" cy="1171575"/><a:blip r:embed="rId10"/></wp:anchor></w:drawing></w:r></w:p>', 5954) +
   TC('003D3D', P(['www.prowaste.au']) + P(['info@prowaste.au'])) +
   '</w:tbl><w:p w:rsidR="00D"/><w:tbl><w:tr><w:tc><w:p><w:bookmarkStart w:id="3" w:name="BM_ProjectID"/><w:r><w:t>Project ID</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p></w:tc></w:tr></w:tbl>' +
@@ -591,16 +594,82 @@ test('the picture goes INLINE into the band paragraph, page-wide, with the credi
 
 test('the cover inputs are WMP-local, the bytes live in IndexedDB, and no image means exactly the master', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-  assert.ok(/cover: \{ image: null, credit: '', scrim: true \}/.test(src), 'the draft carries metadata + credit + scrim, no bytes');
-  const up = extractBlock(/^async function wmpgCoverUpload\(/).text;
-  assert.ok(/idbPutPdf\(wmpgCoverKey\(WMPG\.projectId\), buf, f\.name\)/.test(up), 'bytes go to IndexedDB under the project');
-  assert.ok(up.includes('/^image\\/(jpeg|png)$/') && /WMPG_COVER_MAX_BYTES/.test(up), 'JPEG/PNG only, with a size cap');
+  assert.ok(/cover: \{ image: null, source: '', received: '', scrim: true \}/.test(src), 'the draft carries metadata + source + date received + scrim, no bytes');
+  const acc = extractBlock(/^async function wmpgCoverAccept\(/).text;
+  assert.ok(/idbPutPdf\(wmpgCoverKey\(WMPG\.projectId\), buf, f\.name\)/.test(acc), 'bytes go to IndexedDB under the project');
+  assert.ok(acc.includes('/^image\\/(jpeg|png)$/') && /WMPG_COVER_MAX_BYTES/.test(acc), 'JPEG/PNG only, with a size cap');
+  assert.ok(/return wmpgCoverAccept\(f, 'set'\)/.test(extractBlock(/^async function wmpgCoverUpload\(/).text), 'the file picker goes through the one accept path');
   const build = extractBlock(/^async function wmpgBuildTemplateBlob\(/).text;
   assert.ok(/if \(d\.cover && d\.cover\.image && WMPG\.coverImg && WMPG\.coverImg\.buf\)/.test(build), 'no image → the template is untouched: no frame, no placeholder picture');
   assert.ok(/wmpgCoverRender\(WMPG\.coverImg\.buf, WMPG\.coverImg\.type, band\.wEmu, band\.hEmu/.test(build), 'the photo is rendered to the band’s own aspect before it is embedded');
   assert.ok(/wmpgTplCoverPlaceholders\(xml/.test(build) && /wmpgTplCoverTitle\(xml, d\.title\)/.test(build), 'placeholders and title are always handled');
+  assert.ok(/credit: wmpgCoverCreditText\(d\.cover\)/.test(build), 'the .docx credit is the composed line, never a raw field');
+  assert.ok(/wmpgTplCoverAddressRpr\(xml, 0\.8\)/.test(build) && /payload\.text\.BM_SiteAddress\.rpr = addrRpr/.test(build), 'the address line inherits the master’s run at 80%');
   assert.ok(!/'\[Site address\]'/.test(extractBlock(/^function wmpgTplPayload\(/).text), 'the WMP payload never writes a bracket placeholder');
   const html = extractBlock(/^function wmpgBuildHtml\(/).text;
-  assert.ok(/class="band low" data-src="cover"/.test(html) && /rotate\(-90deg\)/.test(html) && /class="scrim"/.test(html), 'the preview mirrors the bands, the photo, the scrim and the rotated credit');
+  assert.ok(/class="band low" data-src="cover"/.test(html) && /class="scrim"/.test(html) && /wmpgCoverCss\(\)/.test(html), 'the preview mirrors the bands, the photo, the scrim, and takes its stylesheet from the geometry');
+  assert.ok(/data-src="cover\.source cover\.received"/.test(html) && /coverCredit = wmpgCoverCreditText\(d\.cover\)/.test(html), 'the preview credit is the same composed line');
   assert.ok(!/\[Site address\]/.test(html), 'the preview prints no placeholder either');
+});
+
+test('the preview cover is laid out from the master’s own rows and colours', () => {
+  const C = loadCover();
+  const G = C.wmpgCoverGeom();
+  assert.equal(G.top, 360 + 750 + 14 + 4600, 'top band = spacer + fields row + hairline + art row');
+  assert.equal(G.footer, 16838 - G.top - 55 - 2820 - 5954, 'the footer is whatever the page has left — Word paints it to the edge');
+  assert.ok(Math.abs(G.logo.w - 0.583) < 0.002 && Math.abs(G.logo.x - 0.207) < 0.002, 'the logo is 58% of the page width, centred, as the master anchors it');
+  assert.ok(Math.abs(G.logo.y - 0.658) < 0.002 && Math.abs(G.logo.h - 0.310) < 0.002, 'its top sits at two-thirds of the band');
+  assert.ok(Math.abs((G.top + 55 + 2820 + 5954) / G.pageH - 0.865) < 0.003, 'the photo bottom lands where the example’s render puts it (86.5% of the page)');
+  const css = C.wmpgCoverCss();
+  for (const c of ['#003D3D', '#005F5F', '#4BED12', '#B3D9D9']) assert.ok(css.includes(c), 'master colour ' + c);
+  for (const c of ['#0E211F', '#15302E', '#9fd9d6', '#bfe3e1', '#d7efee']) assert.ok(!css.includes(c), 'no invented tint ' + c);
+  assert.ok(/aspect-ratio:11906\/16838/.test(css) && /container-type:inline-size/.test(css), 'the cover is an A4 page and every length is relative to its width');
+  assert.ok(/\.cover \.divider\{[^}]*height:calc\(100cqw \* 0\.00462\)/.test(css), 'the 55-twip divider row');
+  assert.ok(/\.cover \.low\{height:calc\(100cqw \* 0\.50008\)/.test(css), 'the 5954-twip photo row');
+  assert.ok(/\.cover \.cfoot\{/.test(css) && !/\.cover \.foot\{/.test(css), 'the footer has its own class — the document’s .foot rule (38px top margin) must not leak into the cover');
+  assert.ok(/justify-content:safe center/.test(css), 'an over-long title clips at the bottom of the band, as Word’s exact row does, instead of vanishing off the top');
+  assert.ok(/rotate\(-90deg\)/.test(css), 'the credit reads bottom to top');
+});
+
+test('the credit line is built only from what is filled in — no bare "Source:", no dangling comma', () => {
+  const C = loadCover();
+  assert.equal(C.wmpgCoverCreditText({ source: 'SJB Architects', received: '2026-07-24' }), 'Source: SJB Architects, 24/07/2026');
+  assert.equal(C.wmpgCoverCreditText({ source: ' SJB Architects ', received: '' }), 'Source: SJB Architects', 'source only — no comma');
+  assert.equal(C.wmpgCoverCreditText({ source: '', received: '2026-07-24' }), 'Source: 24/07/2026', 'date only — no comma');
+  assert.equal(C.wmpgCoverCreditText({ source: '  ', received: '' }), '', 'nothing filled → nothing printed');
+  assert.equal(C.wmpgCoverCreditText(null), '');
+  assert.equal(C.wmpgCoverDateDMY('2026-07-24'), '24/07/2026', 'the date input’s ISO value prints DD/MM/YYYY like the rest of the document');
+  assert.equal(C.wmpgCoverDateDMY('24/07/2026'), '24/07/2026', 'an already-formatted date passes through');
+  assert.deepStrictEqual(C.wmpgCoverCreditParse('Source: SJB Architects, 24/07/2026'), { source: 'SJB Architects', received: '2026-07-24' }, 'the free-text era splits back into its two fields');
+  assert.deepStrictEqual(C.wmpgCoverCreditParse('SJB Architects'), { source: 'SJB Architects', received: '' });
+  assert.deepStrictEqual(C.wmpgCoverCreditParse(''), { source: '', received: '' });
+  const up = extractBlock(/^function wmpgUpgradeDraft\(/).text;
+  assert.ok(/if \(d\.cover\.source === undefined\)/.test(up) && /wmpgCoverCreditParse\(d\.cover\.credit\)/.test(up) && /delete d\.cover\.credit/.test(up), 'an old draft is migrated once and the legacy field dropped');
+  const form = extractBlock(/^function wmpgRenderForm\(/).text;
+  assert.ok(/wmpgIn\('Image source','cover\.source'/.test(form) && /wmpgIn\('Date received','cover\.received',[^)]*\{type:'date'\}/.test(form), 'source + date picker');
+  assert.ok(/d\.cover && d\.cover\.image \? `<div class="wmpg-grid3"/.test(form), 'the fields only exist while an image does');
+  assert.ok(!/cover\.credit'/.test(form), 'no free-text credit field remains');
+});
+
+test('the address line inherits the master’s title run at 80% instead of a size typed in code', () => {
+  const C = loadCover();
+  const rpr = C.wmpgTplCoverAddressRpr(COVER_XML, 0.8);
+  assert.ok(/<w:sz w:val="54"\/>/.test(rpr) && /<w:szCs w:val="54"\/>/.test(rpr), '68 → 54 half-points (27pt against the 34pt heading)');
+  assert.ok(/<w:b\/>/.test(rpr) && /FFFFFF/.test(rpr) && /Segoe UI/.test(rpr), 'bold, white, the master’s face — read, not restated');
+  assert.equal(C.wmpgTplCoverAddressRpr(COVER_XML.replace(/<w:r><w:rPr><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"\/><w:b\/><w:bCs\/><w:color w:val="FFFFFF"\/><w:sz w:val="68"\/><w:szCs w:val="68"\/><\/w:rPr><w:t>Waste Management Plan<\/w:t><\/w:r>/, '')), null, 'no run to inherit from → null, and the caller keeps its fallback');
+  assert.equal(C.wmpgTplCoverAddressRpr('<w:document/>'), null, 'no bookmark → null');
+});
+
+test('Ctrl/Cmd+V pastes a cover image through the same accept path as the file picker', () => {
+  const C = loadCover();
+  const file = { name: 'image.png' };
+  const items = [{ kind: 'string', type: 'text/plain' }, { kind: 'file', type: 'image/gif', getAsFile: () => ({ name: 'x.gif' }) }, { kind: 'file', type: 'image/png', getAsFile: () => file }];
+  assert.equal(C.wmpgCoverPasteFile(items), file, 'the first JPEG/PNG file item — text and other formats are skipped');
+  assert.equal(C.wmpgCoverPasteFile([{ kind: 'string', type: 'text/plain' }]), null, 'a text paste is not claimed');
+  assert.equal(C.wmpgCoverPasteFile(null), null);
+  const paste = extractBlock(/^async function wmpgCoverPaste\(/).text;
+  assert.ok(/style\.display !== 'flex'/.test(paste), 'only while the generator is open');
+  assert.ok(paste.indexOf('if (!f) return;') < paste.indexOf('ev.preventDefault()'), 'the default paste is prevented only once an image is taken');
+  assert.ok(/return wmpgCoverAccept\(named, 'pasted'\)/.test(paste), 'same validation, storage, preview and remove as an upload');
+  assert.ok(/document\.addEventListener\('paste', wmpgCoverPaste\)/.test(extractBlock(/^function wmpgEnsureModal\(/).text), 'registered once with the modal');
 });
