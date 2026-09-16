@@ -565,10 +565,12 @@ The "Requirements review queue" is gone. Each council has ONE persistent,
 always-editable **Requirements list**, and the list IS the live data — there
 is no approved state to graduate into. In `council_requirements`,
 `status = 'approved'` now means *in the list* (the anon/authenticated read
-policy keys on it, so every consumer is unchanged), `'rejected'` means
-*removed* (kept for audit, never served), and `'proposed'` is retired
-(`sql/2026-09-15-requirements-list.sql` promotes any old queue rows and adds
-`source` = `extraction` | `manual`). Rules, all tested in
+policy keys on it, so every consumer is unchanged) and `'proposed'` is
+retired (`sql/2026-09-15-requirements-list.sql` promotes any old queue rows
+and adds `source` = `extraction` | `manual`). **Removing a row deletes it**
+(2026-09-16): it used to be parked as `'rejected'` "for audit", which nobody
+read and every tool hid; `sql/2026-09-16-requirements-hard-delete.sql`
+purges those and nothing writes the status any more. Rules, all tested in
 `tests/council-pipeline.test.js`:
 
 - **Extraction is append-only.** `crqExtract` only ever INSERTs rows pinned
@@ -585,9 +587,13 @@ policy keys on it, so every consumer is unchanged), `'rejected'` means
 - **Add / inline edit / remove need no approval.** `crqAdd` inserts a live
   `source: 'manual'` row pinned to the council's serving document (a council
   with no document cannot hold rows — the FK is the data model, and the
-  panel says so); `crqSave` saves a field as it is left; `crqRemove` soft
-  deletes to `'rejected'`. Every row keeps a source: the clause, or where it
-  came from.
+  panel says so); `crqSave` saves a field as it is left; `crqRemove` /
+  `crqRemoveSelected` **delete** — one row, or every ticked row at once
+  (a checkbox per row, select-all over the rows the filter shows, the
+  selection scoped to the council) — through one path (`crqRemoveRows`)
+  and one confirmation that says it is a delete and names the rows. Removal
+  is still a human act; nothing is parked. Every row keeps a source: the
+  clause, or where it came from.
 - **Serving is automatic.** `crqSyncServe(councilKey, name)` projects the
   council's WHOLE list — every live row across every version, plus manual
   rows — onto the serving guideline version's `requirements` JSONB after
