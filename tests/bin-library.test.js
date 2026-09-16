@@ -428,7 +428,8 @@ test('the equipment library reaches the calculator as `bins`, with the two selec
   assert.ok(SOURCE.includes("isCommon: r.is_common === true"), 'parent reads is_common');
   assert.ok(SOURCE.includes("collectionMethods: Array.isArray(r.collection_methods)"), 'parent reads collection_methods');
   const push = extractBlock(/^function wsPushEquipToCalc\(\)/).text;
-  assert.ok(push.includes("x.kind === 'bin' && x.active !== false && x.capacityL > 0"), 'every active bin with a capacity is pushed, common or not');
+  assert.ok(push.includes('bins: wpBinLibraryRows(),'), 'the push reads the ONE library mapping the WMP generator also reads');
+  assert.ok(extractBlock(/^function wpBinLibraryRows\(\)/).text.includes("x.kind === 'bin' && x.active !== false && x.capacityL > 0"), 'every active bin with a capacity is pushed, common or not');
   assert.ok(push.includes('council_schedules: WP_COUNCIL_SCHEDULES || []'), 'council schedules ride the same push');
   const calc = decodeSrcdoc('calc-iframe').html;
   assert.ok(calc.includes('if (Array.isArray(d.bins)) rebuildBinLib(d.bins);'), 'calculator rebuilds its bin library from the push');
@@ -564,4 +565,96 @@ test('collection point AREA bins get the same treatment: real bins tagged `colle
   assert.ok(!render.includes("mk('polygon'"), 'no engine-drawn ghost bins anywhere — the bin pass draws the real ones');
   const stats = extractBlock(/^function wsLayoutUpdateStats\(/).text;
   assert.ok(stats.includes('at the collection point'));
+});
+
+
+// ── §5: the platform MIRRORS of the calculator's selection rules ──
+// The WMP generator edits bin rows outside the iframe, through wpBinSizesFor
+// and friends. Each is run here on the same fixtures as the calculator's own
+// function and must give the same answer — drift fails loudly, the way
+// resTableLookup / wpResTableLookup and councilKey / glBridgeNorm are pinned.
+function loadMirror() {
+  const code = [
+    /^function glBridgeNorm\(/, /^const WP_COLLECT_METHODS = /, /^const WP_DEFAULT_METHOD = /, /^const WP_ALLOWED_SIZES = /,
+    /^const WP_LIB_STREAM_KEY = /, /^const WP_DEFAULT_BINSIZES = /, /^const WP_DEFAULT_COLWK = /,
+    /^function wpCollectMethods\(/, /^function wpCollectMethod\(/, /^function wpBinLib\(/, /^function wpBinSizesRaw\(/, /^function wpBinSizesFor\(/,
+    /^function wpBinDefaultMethod\(/, /^function wpCycleCw\(/, /^function wpBinDefSize\(/, /^function wpBinDefCw\(/, /^function wpBinCycleFor\(/,
+    /^function wpCouncilScheduleFor\(/,
+  ].map(p => extractBlock(p).text).join('\n\n');
+  return new Function(code + `;return { WP_COLLECT_METHODS, WP_ALLOWED_SIZES, WP_DEFAULT_BINSIZES, WP_DEFAULT_COLWK, wpCollectMethods, wpCollectMethod, wpBinLib, wpBinSizesRaw, wpBinSizesFor,
+    wpBinDefaultMethod, wpCycleCw, wpBinDefSize, wpBinDefCw, wpBinCycleFor, wpCouncilScheduleFor };`)();
+}
+const CAMDEN_SVC = { GW: { sizeL: 140, altL: [240], cycle: 'W' }, REC: { sizeL: 240, altL: [], cycle: 'A' }, ORG: { sizeL: 240, altL: [], cycle: 'B' }, bulk: { maxL: 660, maxPerWeek: 2 } };
+
+test('mirror: the method vocabulary, the built-in sizes and the generic defaults are the calculator’s, verbatim', () => {
+  const P = loadMirror();
+  const c = loadCalc({ rooms: [] });
+  assert.deepStrictEqual(P.WP_COLLECT_METHODS, c.COLLECT_METHODS);
+  assert.deepStrictEqual(P.WP_ALLOWED_SIZES, c.ALLOWED_SIZES);
+  const calcSrc = decodeSrcdoc('calc-iframe').html;
+  const grab = name => JSON.parse(/const NAME=(\{.*?\});/.source.replace('NAME', name) && (calcSrc.match(new RegExp('const ' + name + '=(\\{[^\\n]*?\\});')) || [])[1].replace(/(\w+):/g, '"$1":'));
+  assert.deepStrictEqual(P.WP_DEFAULT_BINSIZES, grab('DEFAULT_BINSIZES'));
+  assert.deepStrictEqual(P.WP_DEFAULT_COLWK, grab('DEFAULT_COLWK'));
+  assert.equal(P.wpCollectMethods(), P.WP_COLLECT_METHODS, 'cross-block readers go through the accessor');
+  assert.equal(P.wpCollectMethod('nope'), null);
+});
+
+test('mirror: the same library, method and council service give the same size list on both sides of the iframe', () => {
+  const P = loadMirror();
+  const c = loadCalc({ rooms: [room('R1', { townhouse: 6 }), room('R2', { apt_2br: 20 }), room('R3', { apt_1br: 3 }, { r: 'kerbside_shared' })],
+                       councilLabel: 'Camden Council', councilValue: 'camden', state: 'NSW' });
+  c.setLib(LIB); c.setSchedules([{ state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', schedule: CAMDEN_SVC }]);
+  const lib = P.wpBinLib(LIB);
+  assert.deepStrictEqual(lib, c.lib(), 'the library is rebuilt identically');
+  const strip = o => ({ method: o.method, list: o.list, councilSizes: o.councilSizes, schedule: o.schedule, bulkCap: o.bulkCap });
+  for (const [rid, method] of [['R1', 'kerbside_individual'], ['R2', 'bulk'], ['R3', 'kerbside_shared']])
+    for (const st of ['GW', 'REC', 'ORG', 'GLS'])
+      assert.deepStrictEqual(strip(P.wpBinSizesFor(lib, CAMDEN_SVC, method, st)), strip(c.binSizesFor(rid, 'r', st)), rid + ' ' + st);
+  // and with no council service at all
+  const none = loadCalc({ rooms: [room('R1', { townhouse: 6 }), room('R2', { apt_2br: 20 })], councilLabel: 'Nowhere Shire', councilValue: 'nowhere' });
+  none.setLib(LIB);
+  for (const [rid, method] of [['R1', 'kerbside_individual'], ['R2', 'bulk']])
+    for (const st of ['GW', 'REC', 'ORG', 'GLS'])
+      assert.deepStrictEqual(strip(P.wpBinSizesFor(lib, null, method, st)), strip(none.binSizesFor(rid, 'r', st)), 'no service: ' + rid + ' ' + st);
+  // and with no library either: the built-in fallback on both sides
+  const bare = loadCalc({ rooms: [room('R2', { apt_2br: 20 })] });
+  assert.deepStrictEqual(strip(P.wpBinSizesFor([], null, 'bulk', 'GW')), strip(bare.binSizesFor('R2', 'r', 'GW')));
+  assert.deepStrictEqual(strip(P.wpBinSizesFor([], null, 'kerbside_individual', 'GW')).list.map(e => e.sizeL), [60, 80, 120, 240], 'kerbside ceiling on the built-ins too');
+});
+
+test('mirror: default method, default size, default cadence and the cycle letter agree with the calculator', () => {
+  const P = loadMirror();
+  const c = loadCalc({ rooms: [room('R1', { townhouse: 6 }), room('R2', { apt_2br: 20 })], councilLabel: 'Camden Council', councilValue: 'camden', state: 'NSW' });
+  c.setLib(LIB); c.setSchedules([{ state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', schedule: CAMDEN_SVC }]);
+  const lib = P.wpBinLib(LIB);
+  assert.equal(P.wpBinDefaultMethod({ townhouse: 6 }, 'r'), c.defaultMethod(c.rooms[0], 'r'));
+  assert.equal(P.wpBinDefaultMethod({ apt_2br: 20 }, 'r'), c.defaultMethod(c.rooms[1], 'r'));
+  assert.equal(P.wpBinDefaultMethod({ townhouse: 6 }, 'c'), 'bulk', 'a commercial section is serviced in the room');
+  for (const [rid, method] of [['R1', 'kerbside_individual'], ['R2', 'bulk']])
+    for (const st of ['GW', 'REC', 'ORG', 'GLS']) {
+      const o = P.wpBinSizesFor(lib, CAMDEN_SVC, method, st);
+      assert.equal(P.wpBinDefSize(o, 'r', st, null), c.defSize(rid, 'r', st), 'size ' + rid + ' ' + st);
+      assert.equal(P.wpBinDefCw(o, 'r', st), c.defCw(rid, 'r', st), 'cadence ' + rid + ' ' + st);
+      for (const cw of [1, 0.5, 0.25]) assert.equal(P.wpBinCycleFor(o, cw), c.cycleFor(rid, 'r', st, cw), 'cycle ' + rid + ' ' + st + ' ' + cw);
+    }
+  const kerbGW = P.wpBinSizesFor(lib, CAMDEN_SVC, 'kerbside_individual', 'GW');
+  assert.equal(P.wpBinDefSize(kerbGW, 'r', 'GW', 240), 240, 'a current pick that is still offered stands');
+  assert.equal(P.wpBinDefSize(kerbGW, 'r', 'GW', 1100), 140, 'a current pick the service does not offer falls to the council default');
+  assert.equal(P.wpBinCycleFor(kerbGW, 0), null, 'on-call has no cycle');
+  for (const cyc of ['W', 'A', 'B', 'F', 'M', 'OFF', null]) assert.equal(P.wpCycleCw(cyc), c.cycleFor ? (cyc === 'W' ? 1 : /^[ABF]$/.test(cyc || '') ? 0.5 : cyc === 'M' ? 0.25 : null) : null);
+});
+
+test('mirror: a council known by NAME finds its own service, then the state default, never another council’s', () => {
+  const P = loadMirror();
+  const rows = [
+    { state: 'NSW', value: 'camden', name: 'Camden Council', key: 'camden', valueKey: 'camden', schedule: CAMDEN_SVC },
+    { state: 'NSW', value: null, name: null, key: null, valueKey: null, schedule: { GW: { sizeL: 120, altL: [], cycle: 'W' }, bulk: {} } },
+    { state: 'VIC', value: 'melbourne', name: 'City of Melbourne', key: 'melbourne', valueKey: 'melbourne', schedule: { GW: { sizeL: 80, altL: [], cycle: 'W' }, bulk: {} } },
+  ];
+  assert.equal(P.wpCouncilScheduleFor(rows, 'NSW', 'Camden Council').schedule, CAMDEN_SVC, 'by normalised name');
+  assert.equal(P.wpCouncilScheduleFor(rows, 'NSW', 'camden').schedule, CAMDEN_SVC, 'the registry value read as a name');
+  assert.equal(P.wpCouncilScheduleFor(rows, 'NSW', 'Nowhere Shire').schedule.GW.sizeL, 120, 'the state row stands in');
+  assert.equal(P.wpCouncilScheduleFor(rows, 'VIC', 'Nowhere Shire'), null, 'no state row, no service — never a neighbour’s');
+  assert.equal(P.wpCouncilScheduleFor(rows, 'NSW', ''), rows[1], 'no council at all → the state default');
+  assert.equal(P.wpCouncilScheduleFor([], 'NSW', 'Camden Council'), null);
 });

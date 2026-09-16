@@ -18276,13 +18276,7 @@ function wsPushEquipToCalc() {
     // The bin library: the calculator's size dropdowns read THIS, not a
     // constant. Every active bin record with a capacity, common or not —
     // the calculator decides what to show first.
-    bins: WS_EQUIP_DB
-      .filter(x => x.kind === 'bin' && x.active !== false && x.capacityL > 0)
-      .map(x => ({ code: x.code, label: x.label, capacity_l: x.capacityL,
-                   streams: x.streams, is_common: x.isCommon,
-                   collection_methods: x.collectionMethods,
-                   footprint_m2: x.footprintM2,
-                   width_mm: x.w > 0 ? x.w * 1000 : null, depth_mm: x.d > 0 ? x.d * 1000 : null })),
+    bins: wpBinLibraryRows(),
     // Council kerbside schedules + bulk caps from the council database
     // (waste_meta 'kerbside_schedule', parsed by wpKerbScheduleParse).
     council_schedules: WP_COUNCIL_SCHEDULES || [],
@@ -18291,6 +18285,27 @@ function wsPushEquipToCalc() {
     // answered — the council's own method, or a state fallback.
     res_methods: WP_RES_METHODS || [],
   }, '*');
+}
+
+// The bin library in the shape the calculator receives it — ONE mapping,
+// read by the push above and by the WMP generator's bin rows, so the two can
+// never see different libraries. Cross-block readers use these accessors.
+function wpBinLibraryRows() {
+  return (WS_EQUIP_DB || [])
+    .filter(x => x.kind === 'bin' && x.active !== false && x.capacityL > 0)
+    .map(x => ({ code: x.code, label: x.label, capacity_l: x.capacityL,
+                 streams: x.streams, is_common: x.isCommon,
+                 collection_methods: x.collectionMethods,
+                 footprint_m2: x.footprintM2,
+                 width_mm: x.w > 0 ? x.w * 1000 : null, depth_mm: x.d > 0 ? x.d * 1000 : null }));
+}
+function wpBinLibraryLoaded() { return Array.isArray(WS_EQUIP_DB); }
+function wpCouncilScheduleEntries() { return WP_COUNCIL_SCHEDULES || []; }
+// Library + council schedules, loaded once if nothing has yet (the WMP
+// generator can open before the layout ever does).
+async function wpBinLibraryEnsure() {
+  if (WS_EQUIP_DB === null) await wsLoadEquipmentDB();
+  if (WP_COUNCIL_SCHEDULES === null) { try { await wpLoadCouncilSchedules(); } catch (e) { WP_COUNCIL_SCHEDULES = WP_COUNCIL_SCHEDULES || []; } }
 }
 
 // ── COUNCIL COLLECTION SCHEDULES (guidelines library → calculator) ──────────
@@ -18312,6 +18327,124 @@ function wpUseClassScope(u) {
   if (/com|retail|office/.test(s)) return 'commercial';
   if (/mix|mud/.test(s)) return 'mixed';
   return 'all';
+}
+
+// ── BIN SELECTION: the calculator's rules, mirrored for the platform ────────
+// What a bin-size dropdown may offer is decided in the bin calculator
+// (binSizesFor in the srcdoc): the library is the list, the collection method
+// constrains it, the council's kerbside service specialises it. The WMP
+// generator edits the same rows OUTSIDE the iframe and must give the same
+// answer — and the srcdoc is sandboxed, so these MIRROR the calculator's
+// functions rather than call them. tests/bin-library.test.js §5 runs each
+// pair on the same fixtures and fails when they drift, the arrangement
+// resTableLookup / wpResTableLookup and councilKey / glBridgeNorm already
+// have. Pure: library rows and the schedule are passed in, never read from a
+// global. Not mirrored: the council stepped table (resTableBin) — the
+// calculator's schedule rows already carry its sizes, and a re-size in the
+// WMP is a stated departure.
+const WP_COLLECT_METHODS = {
+  kerbside_individual: { label: 'Kerbside — individual bins', maxL: 360, equipment: false, kerb: true },
+  kerbside_shared: { label: 'Kerbside — shared / communal bins', maxL: 360, equipment: false, kerb: true },
+  bulk: { label: 'Bulk bin collection point (front / rear-lift)', maxL: null, equipment: true, kerb: false },
+  self_haul: { label: 'Private shared bin collection', maxL: null, equipment: true, kerb: false },
+};
+const WP_DEFAULT_METHOD = 'bulk';
+const WP_ALLOWED_SIZES = { GW: [60, 80, 120, 240, 660, 1100], REC: [60, 80, 120, 240, 660, 1100], ORG: [60, 80, 120, 240], GLS: [240, 360, 660], CARD: [240, 660, 1100], SOFT: [240, 660, 1100] };
+const WP_LIB_STREAM_KEY = { garbage: 'GW', recycling: 'REC', fogo: 'ORG', organics: 'ORG', glass: 'GLS', paper: 'CARD', card: 'CARD', soft: 'SOFT' };
+const WP_DEFAULT_BINSIZES = { r: { GW: 1100, REC: 1100, ORG: 240, GLS: 240, CARD: 1100, SOFT: 660 }, c: { GW: 1100, REC: 1100, ORG: 240, GLS: 240, CARD: 1100, SOFT: 660 } };
+const WP_DEFAULT_COLWK = { r: { GW: 2, REC: 1, ORG: 1, GLS: 1, CARD: 1, SOFT: 1 }, c: { GW: 3, REC: 2, ORG: 3, GLS: 2, CARD: 2, SOFT: 1 } };
+// Cross-block readers go through these, never the constants.
+function wpCollectMethods() { return WP_COLLECT_METHODS; }
+function wpCollectMethod(id) { return WP_COLLECT_METHODS[id] || null; }
+// mirrors rebuildBinLib: ws-calc-fill `bins` rows → the calculator's BIN_LIB shape
+function wpBinLib(rows) {
+  return (Array.isArray(rows) ? rows : []).map(r => {
+    const cap = Math.round(Number(r && r.capacity_l) || 0);
+    if (!cap) return null;
+    const w = Number(r.width_mm), d = Number(r.depth_mm);
+    const fp = Number(r.footprint_m2) || ((w > 0 && d > 0) ? w * d / 1e6 : 0);
+    const streams = (Array.isArray(r.streams) ? r.streams : []).map(x => WP_LIB_STREAM_KEY[String(x || '').toLowerCase().replace(/[^a-z]/g, '')] || null).filter(Boolean);
+    return { code: r.code, label: r.label || (cap + 'L bin'), cap, fp, streams, common: r.is_common === true,
+             methods: Array.isArray(r.collection_methods) ? r.collection_methods.filter(Boolean) : [] };
+  }).filter(Boolean);
+}
+// mirrors binSizesRaw
+function wpBinSizesRaw(lib, stream) {
+  const l = (lib || []).filter(b => !b.streams.length || b.streams.indexOf(stream) >= 0);
+  if (!l.length) return (WP_ALLOWED_SIZES[stream] || []).map(sz => ({ sizeL: sz, common: true, methods: [], source: 'builtin' }));
+  const by = {};
+  l.forEach(b => {
+    const e = by[b.cap] = by[b.cap] || { sizeL: b.cap, common: false, tagged: [], untagged: false };
+    if (b.common) e.common = true;
+    if (b.methods.length) b.methods.forEach(m => { if (e.tagged.indexOf(m) < 0) e.tagged.push(m); });
+    else e.untagged = true;
+  });
+  return Object.values(by).map(e => ({ sizeL: e.sizeL, common: e.common, methods: e.untagged ? [] : e.tagged, source: 'library' })).sort((a, b) => a.sizeL - b.sizeL);
+}
+// mirrors binSizesFor — `schedule` is the council's parsed kerbside service (or null)
+function wpBinSizesFor(lib, schedule, method, stream) {
+  method = WP_COLLECT_METHODS[method] ? method : WP_DEFAULT_METHOD;
+  const M = WP_COLLECT_METHODS[method];
+  let list = wpBinSizesRaw(lib, stream).filter(e => {
+    if (M.maxL && e.sizeL > M.maxL) return false;
+    if (e.methods.length && e.methods.indexOf(method) < 0) return false;
+    return true;
+  });
+  const sch = (schedule && schedule[stream]) ? schedule[stream] : null, bulk = (schedule && schedule.bulk) || null;
+  let councilSizes = [];
+  if (M.kerb && sch && sch.sizeL) {
+    councilSizes = [sch.sizeL].concat(sch.altL || []);
+    list = councilSizes.map(sz => { const hit = wpBinSizesRaw(lib, stream).find(e => e.sizeL === sz); return { sizeL: sz, common: true, methods: [], source: hit ? hit.source : 'council' }; });
+  } else if (!M.kerb && bulk && bulk.maxL) {
+    list = list.filter(e => e.sizeL <= bulk.maxL);
+  }
+  return { method, M, list, councilSizes, schedule: M.kerb ? sch : null, bulkCap: !M.kerb ? bulk : null };
+}
+// mirrors defaultMethod: a townhouse-only room wheels its own bins to the kerb
+function wpBinDefaultMethod(alloc, sec) {
+  if (sec === 'c') return 'bulk';
+  const a = alloc || {};
+  const apts = (Number(a.apt_1br) || 0) + (Number(a.apt_2br) || 0) + (Number(a.apt_3br) || 0);
+  return (apts === 0 && (Number(a.townhouse) || 0) > 0) ? 'kerbside_individual' : 'bulk';
+}
+// mirrors cycleCw
+function wpCycleCw(cycle) { return cycle === 'W' ? 1 : (cycle === 'A' || cycle === 'B' || cycle === 'F') ? 0.5 : cycle === 'M' ? 0.25 : null; }
+// mirrors defSize (minus the stepped table): the current pick if still
+// offerable, else the council's default bin, else the generic default
+// clamped onto what the method allows
+function wpBinDefSize(offer, sec, stream, cur) {
+  const sizes = offer.list.map(e => e.sizeL);
+  if (cur > 0 && (sizes.indexOf(cur) >= 0 || !sizes.length)) return cur;
+  if (offer.councilSizes.length) return offer.councilSizes[0];
+  const want = (WP_DEFAULT_BINSIZES[sec] || WP_DEFAULT_BINSIZES.r)[stream] || 240;
+  if (!sizes.length || sizes.indexOf(want) >= 0) return want;
+  const below = sizes.filter(x => x <= want);
+  return below.length ? below[below.length - 1] : sizes[0];
+}
+// mirrors defCw (minus the stepped table): the council's kerbside cadence, else the generic default
+function wpBinDefCw(offer, sec, stream) {
+  const cc = offer.schedule ? wpCycleCw(offer.schedule.cycle) : null;
+  if (cc) return cc;
+  return (WP_DEFAULT_COLWK[sec] || WP_DEFAULT_COLWK.r)[stream] || 1;
+}
+// mirrors cycleFor (minus the stepped table): the council's own week letter
+// while the row runs on its cadence, else W / F / M from the frequency
+function wpBinCycleFor(offer, cw) {
+  if (!(cw > 0)) return null;
+  if (cw >= 1) return 'W';
+  if (offer.schedule && offer.schedule.cycle && wpCycleCw(offer.schedule.cycle) === cw) return offer.schedule.cycle;
+  return cw === 0.25 ? 'M' : 'F';
+}
+// mirrors activeScheduleEntry for a council known by NAME (the label the
+// calculator showed, which is what a project carries): the council's own row,
+// then the state-level default
+function wpCouncilScheduleFor(entries, state, council) {
+  const k = glBridgeNorm(council || '');
+  const rows = entries || [];
+  return (k && rows.find(c => c.key && c.key === k && (!c.state || !state || c.state === state)))
+    || (k && rows.find(c => c.valueKey && c.valueKey === k))
+    || rows.find(c => !c.value && c.state === state)
+    || null;
 }
 
 // The kerbside schedule is STRUCTURED DATA entered per council in the admin
@@ -29829,7 +29962,7 @@ const WMPG_UNITS = [
   { key:'apt_1br', label:'1-bedroom apartment' }, { key:'apt_2br', label:'2-bedroom apartment' },
   { key:'apt_3br', label:'3-bedroom apartment' }, { key:'townhouse', label:'Townhouse' },
 ];
-const WMPG_FREQ = [[1,'weekly'],[2,'twice weekly'],[3,'3× weekly'],[0.5,'fortnightly'],[0,'on-call']];
+const WMPG_FREQ = [[1,'weekly'],[2,'twice weekly'],[3,'3× weekly'],[0.5,'fortnightly'],[0.25,'monthly'],[0,'on-call']];
 const WMPG_PRESET_KEY = 'pw_wmp_staff_defaults';
 
 function wmpgFreqLabel(cw){ const h = WMPG_FREQ.find(f => f[0] === +cw); return h ? h[1] : (cw + '×/week'); }
@@ -29879,13 +30012,105 @@ function wmpgRoomStreams(d, room) {
   const v = wmpgRoomVols(d, room);
   return WMPG_ORDER.filter(s => v[s] > 0 || room.bins.some(b => b.stream === s && b.qty > 0));
 }
+// ── BINS FOLLOW THE CALCULATOR ─────────────────────────────────────────────
+// The size a row may take, its default cadence and its count come from the
+// same three rules the bin calculator applies — the library is the list, the
+// collection method constrains it, the council's kerbside service
+// specialises it — through the platform mirrors (wpBinSizesFor and friends,
+// pinned to the calculator's own functions by test). Editing stays free: a
+// size the rules do not offer is KEPT and named, never silently replaced;
+// changing the method re-snaps size, cadence and count exactly as the
+// calculator would, and says what it did.
+function wmpgBinCtx() {
+  const d = WMPG.data || {};
+  const rows = typeof wpBinLibraryRows === 'function' ? wpBinLibraryRows() : [];
+  const entries = typeof wpCouncilScheduleEntries === 'function' ? wpCouncilScheduleEntries() : [];
+  const entry = wpCouncilScheduleFor(entries, d.state, d.council);
+  return { lib: wpBinLib(rows), libRows: rows.length, libLoaded: typeof wpBinLibraryLoaded === 'function' && wpBinLibraryLoaded(),
+           entry, schedule: entry ? entry.schedule : null, services: entries.length };
+}
+// A row's method: its own, else the calculator's default for the room's mix.
+function wmpgBinMethod(room, b) { return (b && b.method) || wpBinDefaultMethod(room && room.alloc, 'r'); }
+// What this row may be: the offered sizes, the defaults, and whether the
+// current size is among them. Per-dwelling count under kerbside individual.
+function wmpgBinOffer(room, b, ctx) {
+  ctx = ctx || wmpgBinCtx();
+  const method = wmpgBinMethod(room, b);
+  const o = wpBinSizesFor(ctx.lib, ctx.schedule, method, b.stream);
+  o.ctx = ctx; o.methodDefault = !(b && b.method);
+  o.defSize = wpBinDefSize(o, 'r', b.stream, null);
+  o.defCw = wpBinDefCw(o, 'r', b.stream);
+  o.offered = !o.list.length || o.list.some(e => e.sizeL === +b.sizeL);
+  o.perDwelling = method === 'kerbside_individual' ? wmpgRoomQty(room) : null;
+  return o;
+}
+// The count the calculator would give the row: one bin per dwelling under
+// kerbside individual, else volume ÷ (size × collections per week).
+function wmpgBinCalcQty(d, room, b, o) {
+  if (o.perDwelling != null) return o.perDwelling;
+  const v = wmpgRoomVols(d, room)[b.stream] || 0;
+  const cap = (+b.sizeL || 0) * (+b.colWk || 0);
+  return cap > 0 ? Math.max(1, Math.ceil(v / cap)) : Math.max(1, +b.qty || 1);
+}
+// The method changed: re-snap size, cadence and count the way the calculator
+// does when its method select changes. Returns what changed, in words.
+function wmpgBinResnap(d, room, b, o) {
+  const words = [];
+  if (o.list.length && !o.list.some(e => e.sizeL === +b.sizeL)) {
+    const was = b.sizeL; b.sizeL = o.defSize;
+    words.push(`${was}L is not offered under ${WMPG_METHOD_LABEL[o.method] || o.method} — now ${b.sizeL}L${o.councilSizes.length ? ' (the council’s default)' : ''}`);
+  }
+  if (o.schedule && o.schedule.cycle && wpCycleCw(o.schedule.cycle) && +b.colWk !== wpCycleCw(o.schedule.cycle)) {
+    b.colWk = wpCycleCw(o.schedule.cycle);
+    words.push(`frequency ${wmpgFreqLabel(b.colWk)} (the council’s cadence)`);
+  }
+  const q = wmpgBinCalcQty(d, room, b, o);
+  if (q !== +b.qty) { b.qty = q; words.push(o.perDwelling != null ? `qty ${q} — one bin per dwelling` : `qty ${q} from the room’s volume`); }
+  b.cycle = wpBinCycleFor(o, +b.colWk || 0);
+  return words.join('; ');
+}
+// Pure: the size dropdown, grouped as the calculator groups it — common
+// sizes (or the council schedule) first, the rest under More sizes, and a
+// current size the rules do not offer kept under its own heading.
+function wmpgBinSizeOptions(o, cur) {
+  const opt = e => `<option value="${e.sizeL}"${e.sizeL === cur ? ' selected' : ''}>${e.sizeL}L${e.source === 'council' ? ' (council)' : ''}</option>`;
+  const common = o.list.filter(e => e.common), more = o.list.filter(e => !e.common);
+  let h = `<optgroup label="${o.councilSizes.length ? 'Council schedule' : 'Bins'}">${(common.length ? common : o.list).map(opt).join('')}</optgroup>`;
+  if (common.length && more.length) h += `<optgroup label="More sizes">${more.map(opt).join('')}</optgroup>`;
+  if (cur > 0 && !o.list.some(e => e.sizeL === cur)) h += `<optgroup label="Not offered under this method"><option value="${cur}" selected>${cur}L</option></optgroup>`;
+  return h;
+}
+// Pure: the frequency dropdown, the council's cadence named on its option.
+function wmpgBinFreqOptions(o, cur) {
+  const cc = (o.schedule && o.schedule.cycle) ? wpCycleCw(o.schedule.cycle) : null;
+  const wk = o.schedule && /^[AB]$/.test(o.schedule.cycle) ? ', week ' + o.schedule.cycle : '';
+  const list = WMPG_FREQ.concat(WMPG_FREQ.some(f => f[0] === cur) ? [] : [[cur, wmpgFreqLabel(cur)]]);
+  return list.map(f => `<option value="${f[0]}"${f[0] === cur ? ' selected' : ''}>${f[1]}${cc === f[0] ? ' (council' + wk + ')' : ''}</option>`).join('');
+}
+function wmpgCycleShort(c) { return c === 'W' ? 'weekly' : c === 'A' || c === 'B' ? 'fortnightly (week ' + c + ')' : c === 'F' ? 'fortnightly' : c === 'M' ? 'monthly' : c === 'OFF' ? 'not collected at the kerb' : ''; }
+// Pure: where the room's sizes and cadence come from — the library, the
+// council's service (or its absence, and where to record one).
+function wmpgRoomOfferNote(d, room, ctx) {
+  const parts = [];
+  const kerb = (room.bins || []).some(b => { const M = wpCollectMethod(wmpgBinMethod(room, b)); return M && M.kerb; });
+  parts.push(ctx.libLoaded ? (ctx.libRows ? `sizes from the equipment library (${ctx.libRows} bin records)` : 'the equipment library has no bin records — built-in sizes shown') : 'bin library not loaded — built-in sizes shown');
+  if (ctx.entry) {
+    const s = ctx.entry.schedule || {};
+    const svc = WMPG_ORDER.filter(k => s[k] && s[k].sizeL).map(k => `${wmpgStreamWord(k)} ${s[k].sizeL}L${s[k].altL && s[k].altL.length ? ' (also ' + s[k].altL.join('L, ') + 'L)' : ''} ${wmpgCycleShort(s[k].cycle)}`.trim());
+    parts.push(`${ctx.entry.name || ((ctx.entry.state || '') + ' state default')} kerbside service: ${svc.join(' · ') || 'no streams recorded'}${s.bulk && s.bulk.maxL ? ' · bulk cap ' + s.bulk.maxL + 'L' : ''}${kerb ? '' : ' (kerbside rows only — none here)'}`);
+  } else if (kerb) {
+    parts.push(`no kerbside service recorded for ${d.council || 'this council'} — add one in Admin › Council & state database › Kerbside collection service (${ctx.services} on file); the method-filtered library is shown`);
+  }
+  return parts.join(' · ');
+}
 function wmpgAutoBins(d, room) {
-  const v = wmpgRoomVols(d, room);
-  const size = { GW:1100, REC:1100, ORG:240, GLS:360 };
-  return WMPG_ORDER.filter(s => v[s] > 0).map(s => ({
-    stream:s, sizeL:size[s], qty: Math.max(1, Math.ceil(v[s] / size[s])), colWk:1, provider:'council',
-    method:null, cycle:null, src:'auto', design:null,
-  }));
+  const v = wmpgRoomVols(d, room), ctx = wmpgBinCtx();
+  return WMPG_ORDER.filter(s => v[s] > 0).map(s => {
+    const b = { stream:s, sizeL:0, qty:0, colWk:1, provider:'council', method:null, cycle:null, src:'auto', design:null };
+    const o = wmpgBinOffer(room, b, ctx);
+    b.sizeL = o.defSize; b.colWk = o.defCw; b.qty = wmpgBinCalcQty(d, room, b, o); b.cycle = wpBinCycleFor(o, b.colWk);
+    return b;
+  });
 }
 function wmpgRoomFootprint(d, room) {
   let fp = 0;
@@ -30199,9 +30424,17 @@ function wmpgBinSource(b) {
   return b.manual ? 'manual' : 'calc';
 }
 function wmpgBinSet(i, j, field, val) {
-  const b = WMPG.data.rooms[i].bins[j]; if (!b) return;
+  const room = WMPG.data.rooms[i], b = room && room.bins[j]; if (!b) return;
   wmpgFollow(`rooms.${i}.bins.${j}.${field}`);
   b[field] = field === 'sizeL' || field === 'qty' || field === 'colWk' ? (+val || 0) : val;
+  if (field === 'method') {
+    // the calculator re-snaps size, cadence and count when its method
+    // changes; so does this, and it says what it did
+    const note = wmpgBinResnap(WMPG.data, room, b, wmpgBinOffer(room, b));
+    wmpgFlash(`${room.name} — ${WMPG_STREAMS[b.stream].doc}: ${WMPG_METHOD_LABEL[wmpgBinMethod(room, b)]}${note ? '. ' + note : ''}.`);
+  } else if (field === 'colWk' || field === 'sizeL') {
+    b.cycle = wpBinCycleFor(wmpgBinOffer(room, b), +b.colWk || 0);   // the presentation cycle the narrative and Collection Point read
+  }
   wmpgRenderForm(); wmpgQueuePreview();
 }
 function wmpgBinReset(i, j) {
@@ -30213,7 +30446,10 @@ function wmpgBinAdd(i) {
   const room = WMPG.data.rooms[i]; if (!room) return;
   const used = new Set(room.bins.map(b => b.stream));
   const stream = WMPG_ORDER.find(s => !used.has(s)) || 'GW';
-  room.bins.push({ stream, sizeL: 240, qty: 1, colWk: 1, provider: room.collection.provider || 'council', method: null, cycle: null, src: 'auto', design: null });
+  const b = { stream, sizeL: 0, qty: 1, colWk: 1, provider: room.collection.provider || 'council', method: null, cycle: null, src: 'auto', design: null };
+  const o = wmpgBinOffer(room, b);
+  b.sizeL = o.defSize; b.colWk = o.defCw; b.qty = wmpgBinCalcQty(WMPG.data, room, b, o); b.cycle = wpBinCycleFor(o, b.colWk);
+  room.bins.push(b);
   wmpgRenderForm(); wmpgQueuePreview();
 }
 function wmpgBinRemove(i, j) {
@@ -30909,6 +31145,7 @@ async function openWmpGenerator() {
   await tbLoad();
   await tbLoadPresets();   // per open: the org context can change between opens
   try { if (typeof wsVehEnsureLoaded === 'function') await wsVehEnsureLoaded(); } catch (e) {}   // the vehicle dropdown reads the same list the swept tool does
+  try { if (typeof wpBinLibraryEnsure === 'function') await wpBinLibraryEnsure(); } catch (e) {}  // the bin rows read the same library + council services the calculator does
   await wmpgCoverLoad();
   WMPG.data.text = WMPG.data.text || { off:{}, edit:{} };
   creqLoad(WMPG.data).then(() => { creqRun(); wmpgLiveNotes(); });
@@ -31222,6 +31459,7 @@ function wmpgRoomBlock(r, i) {
   const d = WMPG.data;
   const units = d.unitTypes;
   const qty = wmpgRoomQty(r);
+  const binCtx = wmpgBinCtx();
   return `
   <details class="wmpg-room" ${i===0?'open':''}>
     <summary><span>${wmpgEsc(r.name)} <span class="wmpg-pill">${qty} dwelling${qty===1?'':'s'}</span> <span class="wmpg-pill">${r.bins.length} bin row${r.bins.length===1?'':'s'}</span></span></summary>
@@ -31238,7 +31476,8 @@ function wmpgRoomBlock(r, i) {
       <div class="wmpg-f"><label>Bins &amp; collection <span class="wmpg-pill" style="text-transform:none;">Design tab is the default — edits here are marked as WMP overrides</span></label></div>
       <table class="wmpg-t"><thead><tr><th>Stream</th><th>Size</th><th>Qty</th><th>Frequency</th><th>Method</th><th>Provider</th><th>Source</th><th></th></tr></thead>
       <tbody>${r.bins.map((b,j)=>{
-        const sizes=[...new Set(Object.keys(WMPG_BIN_DIMS).map(Number).concat([+b.sizeL]))].sort((a,b)=>a-b);
+        const o=wmpgBinOffer(r,b,binCtx), mLabel=WMPG_METHOD_LABEL[o.method]||o.method;
+        const hint=(t,warn)=>`<div style="font-size:10.5px;color:${warn?'#EFB080':'#A9BDBD'};margin-top:2px;white-space:normal;">${t}</div>`;
         const src=wmpgBinSource(b), diff=wmpgBinDiffWords(b);
         const srcCell = src==='wmp'
           ? `<span class="wmpg-pill warn" title="${wmpgEsc('Design tab: '+diff)}">edited in WMP — differs from Design tab</span><div style="font-size:10.5px;color:#EFB080;margin-top:2px;">${wmpgEsc(diff)}</div>
@@ -31248,14 +31487,15 @@ function wmpgRoomBlock(r, i) {
           : `<span class="wmpg-pill" style="opacity:.8;">Design tab</span>`;
         return `<tr>
         <td style="color:#E7EFEF;padding-left:4px;white-space:nowrap;">${WMPG_STREAMS[b.stream].doc}</td>
-        <td><select data-path="rooms.${i}.bins.${j}.sizeL" onchange="wmpgBinSet(${i},${j},'sizeL',this.value)">${sizes.map(z=>`<option value="${z}" ${z===+b.sizeL?'selected':''}>${z}L</option>`).join('')}</select></td>
-        <td><input data-path="rooms.${i}.bins.${j}.qty" type="number" min="0" value="${b.qty}" style="width:58px;font-weight:700;" onchange="wmpgBinSet(${i},${j},'qty',this.value)"></td>
-        <td><select data-path="rooms.${i}.bins.${j}.colWk" onchange="wmpgBinSet(${i},${j},'colWk',this.value)">${WMPG_FREQ.concat(WMPG_FREQ.some(f=>f[0]===+b.colWk)?[]:[[+b.colWk,wmpgFreqLabel(b.colWk)]]).map(f=>`<option value="${f[0]}" ${f[0]===+b.colWk?'selected':''}>${f[1]}</option>`).join('')}</select></td>
-        <td><select data-path="rooms.${i}.bins.${j}.method" onchange="wmpgBinSet(${i},${j},'method',this.value||null)"><option value="" ${!b.method?'selected':''}>—</option>${Object.keys(WMPG_METHOD_LABEL).map(m=>`<option value="${m}" ${b.method===m?'selected':''}>${WMPG_METHOD_LABEL[m]}</option>`).join('')}</select></td>
+        <td><select data-path="rooms.${i}.bins.${j}.sizeL" onchange="wmpgBinSet(${i},${j},'sizeL',this.value)">${wmpgBinSizeOptions(o,+b.sizeL)}</select>${o.offered?'':hint(`${b.sizeL}L is not offered under ${wmpgEsc(mLabel)}${o.councilSizes.length?' — the council supplies '+o.councilSizes.join('L / ')+'L':o.M.maxL?' (kerbside bins top out at '+o.M.maxL+'L)':''}`,true)}</td>
+        <td><input data-path="rooms.${i}.bins.${j}.qty" type="number" min="0" value="${b.qty}" style="width:58px;font-weight:700;" onchange="wmpgBinSet(${i},${j},'qty',this.value)">${o.perDwelling!=null&&o.perDwelling!==+b.qty?hint(`1 per dwelling = ${o.perDwelling} <button class="wmpg-addrow" style="margin:0;padding:1px 6px;" onclick="wmpgBinSet(${i},${j},'qty',${o.perDwelling})">use ${o.perDwelling}</button>`,true):''}</td>
+        <td><select data-path="rooms.${i}.bins.${j}.colWk" onchange="wmpgBinSet(${i},${j},'colWk',this.value)">${wmpgBinFreqOptions(o,+b.colWk)}</select>${o.schedule&&o.schedule.cycle&&wpCycleCw(o.schedule.cycle)&&wpCycleCw(o.schedule.cycle)!==+b.colWk?hint(`council: ${wmpgCycleShort(o.schedule.cycle)}`,true):''}</td>
+        <td><select data-path="rooms.${i}.bins.${j}.method" onchange="wmpgBinSet(${i},${j},'method',this.value||null)"><option value="" ${!b.method?'selected':''}>default — ${WMPG_METHOD_LABEL[wpBinDefaultMethod(r.alloc,'r')]}</option>${Object.keys(WMPG_METHOD_LABEL).map(m=>`<option value="${m}" ${b.method===m?'selected':''}>${WMPG_METHOD_LABEL[m]}</option>`).join('')}</select></td>
         <td><select data-path="rooms.${i}.bins.${j}.provider" onchange="wmpgBinSet(${i},${j},'provider',this.value)"><option value="council" ${b.provider==='council'?'selected':''}>council</option><option value="private contractor" ${b.provider!=='council'?'selected':''}>private</option></select></td>
         <td>${srcCell}</td>
         <td><button class="wmpg-x" title="Remove this row from the WMP" onclick="wmpgBinRemove(${i},${j})">✕</button></td></tr>`;}).join('')}</tbody></table>
       <button class="wmpg-addrow" onclick="wmpgBinAdd(${i})">＋ Bin row</button>
+      <div class="wmpg-note">Sizes, cadence and counts follow the bin calculator’s rules: ${wmpgEsc(wmpgRoomOfferNote(d, r, binCtx))}.</div>
       ${r.bins.some(b=>b.manual&&!b.manualWhy) ? `<div class="wmpg-note wmpg-warn">⚠ A calculator override has no recorded reason. Add one in the bin calculator — it prints in the WMP as justification.</div>` : ''}
       ${r.bins.filter(b=>b.manual&&b.manualWhy).map(b=>`<div class="wmpg-note">✎ ${WMPG_STREAMS[b.stream].doc}: ${wmpgEsc(b.manualWhy)}</div>`).join('')}
       <div class="wmpg-note" id="wmpg-cap-${i}"></div>
