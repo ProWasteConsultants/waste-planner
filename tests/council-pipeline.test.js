@@ -137,9 +137,18 @@ test('C3 (list): the list is live and freely editable — add, inline edit, remo
   assert.ok(list.includes("clause_ref: 'Manual — ' + new Date().toISOString().slice(0, 10), status: 'approved', source: 'manual'"),
     'a hand-typed row is live at once and marked manual — it survives every future extraction');
   assert.ok(list.includes("has no guideline document on file — ⇪ Save one above first"), 'a manual row needs a document version to belong to — stated, not silent');
-  assert.ok(list.includes(".update({ status: 'rejected', reviewed_by"), 'remove is a soft delete — kept for audit, never served');
+  // remove is a DELETE (2026-09-16): singly or as a ticked batch, one confirmation naming what goes, nothing parked
+  assert.ok(list.includes(".delete().in('id', rows.map(r => r.id))"), 'removal deletes the rows from the database');
+  assert.ok(!list.includes("status: 'rejected'") && !/council_requirements'\)\s*\.update\(\{ status/.test(list), 'nothing is parked as rejected any more');
+  assert.ok(list.includes('async function crqRemove(id) { return crqRemoveRows([id]); }') && list.includes('async function crqRemoveSelected() { return crqRemoveRows([...CRQ_L.sel]); }'), 'single and batch removal are one path');
+  assert.ok(list.includes("They are deleted from the database — not kept") && list.includes("rows.slice(0, 6).map(r => '• '"), 'the confirmation says it is a delete and names the rows');
+  assert.ok(list.includes("sel: new Set()") && list.includes('data-crq-sel="${r.id}"') && list.includes('onchange="crqSelectShown(this.checked)"'), 'a checkbox per row and a select-all for the rows shown');
+  assert.ok(list.includes("CRQ_L.sel = new Set([...CRQ_L.sel].filter(id => rows.some(r => r.id === id)));"), 'the selection never outlives the council scope');
+  assert.ok(list.includes('onclick="crqRemoveSelected()">✕ Remove ${nSel} selected</button>'), 'the batch button counts the ticked rows');
   assert.equal((list.match(/await crqSyncServe\(/g) || []).length, 2, 'save and remove re-serve the council list');
   assert.ok(SOURCE.includes("onclick=\"crqAdd()\"") && SOURCE.includes("onclick=\"crqRemove('${r.id}')\""), 'add and remove are on the panel');
+  const purge = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-09-16-requirements-hard-delete.sql'), 'utf8');
+  assert.ok(purge.includes("delete from public.council_requirements where status = 'rejected';"), 'the migration purges the rows parked under the old rule');
   // generation rates are never listed — they go straight into the rate tables
   assert.deepStrictEqual(require('./extract.js').loadEngine({ blocks: [['CRQ_RATE_TYPES', /^const CRQ_RATE_TYPES = /], ['crqIsRate', /^function crqIsRate\(/]] }).CRQ_RATE_TYPES, ['generation_rate']);
   const render = SOURCE.slice(SOURCE.indexOf('function crqRender()'), SOURCE.indexOf('function crqCollect'));

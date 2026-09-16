@@ -12965,14 +12965,18 @@ async function crqPullRatesForScope() {
 // ── the requirements list ───────────────────────────────────────────────────
 // One persistent, always-editable list per council. Every row with status
 // 'approved' IS the list (the RLS read policy keys on it, so 'approved' now
-// means "in the list — live"); 'rejected' is a removed row, kept for audit.
-// Extraction only APPENDS (crqExtract); add / inline edit / remove are always
-// available and need no approval. Every change re-projects the whole council
-// list onto its serving guideline version (crqSyncServe), so what is in the
-// list is what the checker and the WMP cite. Duplicates are FLAGGED, never
-// merged or deleted (crqDupFlags, pure); rows are grouped by source so the
-// latest extraction's additions can be tidied quickly.
-const CRQ_L = { rows: [], docs: {}, filter: 'all' };
+// means "in the list — live"). Removing a row DELETES it (2026-09-16 — it
+// used to be parked as 'rejected'; a removed requirement has no reason to
+// stay in the database, and the list is the record). Extraction only
+// APPENDS (crqExtract); add / inline edit / remove are always available and
+// need no approval. Every change re-projects the whole council list onto
+// its serving guideline version (crqSyncServe), so what is in the list is
+// what the checker and the WMP cite. Duplicates are FLAGGED, never merged
+// (crqDupFlags, pure); rows are grouped by source so the latest extraction's
+// additions can be tidied quickly, and any number of rows can be ticked and
+// removed at once (crqRemoveSelected) — removal is still a human act, one
+// confirmation per batch, and the batch is named before it goes.
+const CRQ_L = { rows: [], docs: {}, filter: 'all', sel: new Set() };
 async function crqLoad() {
   const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
   const { data, error } = await sb.from('council_requirements')
@@ -13048,9 +13052,13 @@ function crqRender() {
   const shown = rows.filter(r => f === 'latest' ? latest.has(r.id) : f === 'dups' ? !!dups[r.id] : f === 'manual' ? r.source === 'manual' : f === 'nostream' ? noStream.includes(r) : true)
     .slice().sort((a, b) => String(a.requirement_type).localeCompare(String(b.requirement_type)) || String(a.clause_ref || '').localeCompare(String(b.clause_ref || ''), undefined, { numeric: true }));
   const opt = (v, l, n) => `<option value="${v}" ${f === v ? 'selected' : ''}>${l}${n != null ? ' (' + n + ')' : ''}</option>`;
+  // the selection survives a filter change but never a scope change: only ids in this council's list count
+  CRQ_L.sel = new Set([...CRQ_L.sel].filter(id => rows.some(r => r.id === id)));
+  const nSel = CRQ_L.sel.size;
   const toolbar = `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
       <span style="font-size:11px;color:rgba(255,255,255,0.75);"><b>${rows.length}</b> requirement${rows.length === 1 ? '' : 's'} in ${cgbEsc(CG_SCOPE.name)}’s list — live in the checker and WMP as shown</span>
+      ${nSel ? `<button class="btn" style="padding:3px 9px;font-size:11px;color:#EF8080;border-color:#5a2a2a;" title="Delete every ticked row from the database — the checker and WMP stop citing them" onclick="crqRemoveSelected()">✕ Remove ${nSel} selected</button><button class="btn" style="padding:3px 9px;font-size:11px;" onclick="CRQ_L.sel.clear();crqRender();">clear selection</button>` : ''}
       <select class="wsl-sel" style="font-size:11px;padding:4px 6px;" onchange="CRQ_L.filter=this.value;crqRender();" title="Narrow the list — the rows stay in the list either way">
         ${opt('all', 'Show all')}${opt('latest', 'Added by the latest extraction', latest.size)}${opt('dups', '≈ possible duplicates', Object.keys(dups).length)}${opt('manual', 'Added by hand', manual.length)}${opt('nostream', '⚠ stream to set', noStream.length)}
       </select>
@@ -13070,14 +13078,17 @@ function crqRender() {
     return r.source === 'manual' ? '✎ by hand' : 'v' + (d.version ?? '?') + (d.version_label ? ' ' + d.version_label : '') + (d.superseded_at ? ' (older)' : '');
   };
   const clauseOf = id => { const o = rows.find(x => x.id === id); return o ? (o.clause_ref || '') + ' · ' + srcOf(o) : ''; };
-  const cols = '130px 90px 84px 64px 76px 1fr 110px 118px 26px';
+  const cols = '22px 130px 90px 84px 64px 76px 1fr 110px 118px 26px';
+  const allShown = shown.length > 0 && shown.every(r => CRQ_L.sel.has(r.id));
   wrap.innerHTML = toolbar + `
     <div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:10px 12px;">
-      <div style="display:grid;grid-template-columns:${cols};gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">
+      <div style="display:grid;grid-template-columns:${cols};gap:6px;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;align-items:center;">
+        <input type="checkbox" id="crq-sel-all" ${allShown ? 'checked' : ''} title="Select every row shown (the filter decides what is shown)" onchange="crqSelectShown(this.checked)" style="margin:0;">
         <span>Type</span><span>Use class</span><span>Stream</span><span>Value</span><span>Unit</span><span>Requirement</span><span title="The clause reference, or where a hand-typed row came from">Clause / source</span><span>From</span><span></span>
       </div>
       ${shown.map(r => `
-      <div id="crq-row-${r.id}" style="display:grid;grid-template-columns:${cols};gap:6px;align-items:start;margin-bottom:5px;${dups[r.id] ? 'background:#1e1a10;border-radius:6px;' : ''}">
+      <div id="crq-row-${r.id}" style="display:grid;grid-template-columns:${cols};gap:6px;align-items:start;margin-bottom:5px;${CRQ_L.sel.has(r.id) ? 'background:#2a1a1a;border-radius:6px;' : dups[r.id] ? 'background:#1e1a10;border-radius:6px;' : ''}">
+        <input type="checkbox" data-crq-sel="${r.id}" ${CRQ_L.sel.has(r.id) ? 'checked' : ''} onchange="crqToggleSel('${r.id}', this.checked)" title="Tick to remove several at once" style="margin:6px 0 0;">
         <select data-crq="${r.id}:requirement_type" onchange="crqSave('${r.id}')" style="${inp}padding:4px;">${typeOpts(r.requirement_type)}</select>
         <input type="text" data-crq="${r.id}:use_class" value="${cgbEsc(r.use_class)}" onchange="crqSave('${r.id}')" style="${inp}">
         <select data-crq="${r.id}:stream" onchange="crqSave('${r.id}')" style="${inp}padding:4px;${!r.stream && noStream.includes(r) ? 'border-color:#FFB74D;' : ''}">${streamOpts(r.stream)}</select>
@@ -13086,7 +13097,7 @@ function crqRender() {
         <textarea data-crq="${r.id}:value_text" rows="2" onchange="crqSave('${r.id}')" style="${inp}resize:vertical;">${cgbEsc(r.value_text)}</textarea>
         <input type="text" data-crq="${r.id}:clause_ref" value="${cgbEsc(r.clause_ref)}" onchange="crqSave('${r.id}')" title="The clause as printed — or, for a hand-typed row, where it came from. It is the audit trail." style="${inp}border-color:#4a5a3a;color:#C5E1A5;">
         <span style="font-size:10px;color:var(--muted);line-height:1.4;">${cgbEsc(srcOf(r))}${latest.has(r.id) ? '<br><span style="color:#7FD8D8;">new</span>' : ''}${dups[r.id] ? `<br><span style="color:#FFB74D;" title="${cgbEsc(clauseOf(dups[r.id].of))}">≈ possible duplicate — ${cgbEsc(dups[r.id].why)} ${cgbEsc((rows.find(x => x.id === dups[r.id].of) || {}).clause_ref || 'an earlier row')}</span>` : ''}</span>
-        <button class="btn" title="Remove from the list — the checker and WMP stop citing it (kept in the database as removed)" onclick="crqRemove('${r.id}')" style="padding:3px 7px;font-size:10px;color:#EF8080;">✕</button>
+        <button class="btn" title="Delete this requirement — it leaves the database, and the checker and WMP stop citing it" onclick="crqRemove('${r.id}')" style="padding:3px 7px;font-size:10px;color:#EF8080;">✕</button>
       </div>`).join('')}
       ${shown.length < rows.length ? `<div style="font-size:10px;color:var(--muted);margin-top:4px;">${rows.length - shown.length} more row${rows.length - shown.length === 1 ? '' : 's'} hidden by the filter — still in the list, still live.</div>` : ''}
     </div>`;
@@ -13138,19 +13149,38 @@ async function crqAdd() {
   const el = document.querySelector(`[data-crq="${data.id}:value_text"]`); if (el) el.focus();
   crqMsg('Row added — fill it in; each field saves as you leave it. Replace the source note with the clause, or where it came from.');
 }
-// Remove = the row leaves the list and the serving projection. Kept in the
-// database as 'rejected' (never served) so nothing is lost for audit.
-async function crqRemove(id) {
-  const r = CRQ_L.rows.find(x => x.id === id); if (!r) return;
-  if (!confirm('Remove this requirement from ' + CG_SCOPE.name + '’s list? The checker and WMP stop citing it. (It stays in the database as removed.)')) return;
-  const { error } = await sb.from('council_requirements')
-    .update({ status: 'rejected', reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() }).eq('id', id);
-  if (error) { crqMsg('Remove failed: ' + error.message, true); return; }
-  CRQ_L.rows = CRQ_L.rows.filter(x => x.id !== id);
+// Remove = the rows leave the database, the list and the serving
+// projection. One confirmation names what goes; nothing is parked.
+function crqToggleSel(id, on) {
+  if (on) CRQ_L.sel.add(id); else CRQ_L.sel.delete(id);
   crqRender();
-  const d = CRQ_L.docs[r.council_guideline_id] || {};
-  const n = await crqSyncServe(d.council_key || null, d.council_name || CG_SCOPE.name);
-  crqMsg(`Removed — ${n} requirement${n === 1 ? '' : 's'} serving the checker and WMP.`);
+}
+function crqSelectShown(on) {
+  document.querySelectorAll('[data-crq-sel]').forEach(el => { const id = el.getAttribute('data-crq-sel'); if (on) CRQ_L.sel.add(id); else CRQ_L.sel.delete(id); });
+  crqRender();
+}
+async function crqRemove(id) { return crqRemoveRows([id]); }
+async function crqRemoveSelected() { return crqRemoveRows([...CRQ_L.sel]); }
+async function crqRemoveRows(ids) {
+  const rows = (ids || []).map(id => CRQ_L.rows.find(x => x.id === id)).filter(Boolean);
+  if (!rows.length) return;
+  const named = rows.slice(0, 6).map(r => '• ' + (CRQ_TYPE_LABEL[r.requirement_type] || r.requirement_type) + (r.clause_ref ? ' — ' + r.clause_ref : '')).join('\n') + (rows.length > 6 ? '\n• … and ' + (rows.length - 6) + ' more' : '');
+  if (!confirm(`Delete ${rows.length === 1 ? 'this requirement' : rows.length + ' requirements'} from ${CG_SCOPE.name}’s list?\n\n${named}\n\nThey are deleted from the database — not kept — and the checker and WMP stop citing them.`)) return;
+  const { error } = await sb.from('council_requirements').delete().in('id', rows.map(r => r.id));
+  if (error) { crqMsg('Remove failed: ' + error.message, true); return; }
+  const gone = new Set(rows.map(r => r.id));
+  CRQ_L.rows = CRQ_L.rows.filter(x => !gone.has(x.id));
+  gone.forEach(id => CRQ_L.sel.delete(id));
+  crqRender();
+  // re-serve every council the batch touched (a batch is one council's list, but the projection is per serving document)
+  const seen = new Set(); let n = 0;
+  for (const r of rows) {
+    const d = CRQ_L.docs[r.council_guideline_id] || {};
+    const k = (d.council_key || '') + '|' + (d.council_name || CG_SCOPE.name);
+    if (seen.has(k)) continue; seen.add(k);
+    n = await crqSyncServe(d.council_key || null, d.council_name || CG_SCOPE.name);
+  }
+  crqMsg(`Deleted ${rows.length} — ${n} requirement${n === 1 ? '' : 's'} serving the checker and WMP.`);
 }
 
 // C1: guidelines are VERSIONED. A save is always a new row (version = max+1
