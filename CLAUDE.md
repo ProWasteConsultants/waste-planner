@@ -198,6 +198,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
 | `tests/residential-method.test.js` | Residential method types: stepped-table lookup, review gate, state fallback |
 | `tests/wmp-generator.test.js` | WMP generator: title, guideline auto-load, assembled narrative, polish guard, override provenance, text-library conditions and presets |
+| `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -555,9 +556,131 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   schedule rows already carry its sizes, and a WMP re-size is a stated
   departure.
 
+- **§1.1 scope drives the intro (2026-09-17).** `wmpgScopeFlags(d)` reads
+  which §1.1 bullets are ticked ABOVE the "outside the scope" line — from the
+  on-state alone, never through `tbCondMet`, which reads these flags and
+  would recurse — and `wmpgPhaseWords` turns that into the `{phase}` token
+  ("construction, demolition and operation" once C&D is in scope). Green
+  Star in scope adds the `{green_star}` sentence and the conditioned seed
+  snippet `INTRO_2` (`cond: greenstar`; `sql/2026-09-17-wmp-intro-scope.sql`
+  puts it in the live library). `cnd` / `greenstar` are snippet conditions
+  like any other (`TB_CONDS`). No library → the built-in scope (operational
+  + C&D), and both built-in intros say the phases.
+- **§1.5 always lists the council's own document.** `wmpgCouncilGuidelineLine`
+  (the library version the checker uses, else a plain council reference) is
+  appended after the text library's bullets unless one already names it
+  (`wmpgGuidelineListed`, pure), in the preview and the .docx alike.
+  `wmpgGuidelinesSync` keeps it in the author's §1.5 list as the council
+  changes — the line this generator put there last time (`guidelinesCouncil`)
+  is swapped for the current one, the author's own lines are never touched —
+  and runs on draft upgrade so old drafts get it.
+- **§1.2 site context can be generated** (`wmpgGenerateSiteContext`): the
+  library's snippets are skeletons ("The surrounding land uses include xxx"),
+  so ✨ writes the paragraph from the WMP's facts (`wmpgSiteContextFacts`) —
+  address, council, development, previous use, collection street/point — and
+  the locality's character is the one thing the model supplies from what it
+  knows of the area. Same discipline as the polish: `wmpgContextGuard` (pure)
+  refuses text that drops the address, brings in a number the facts do not
+  contain, or uses bullets; a fact the model lacks is a `[bracketed
+  placeholder]`. The result is marked *AI-generated — check the surrounding
+  land uses* (`siteContextSrc`), the mark follows an edit (`edited`), and the
+  .docx now applies the preview's rule — an author's or generated text beats
+  the library skeleton (it used to print the skeleton regardless).
+- **Text-library groups keep their open state** across the re-render a tick
+  causes (`TB.open`, `tbGroupToggled`), and **a selection follows to its
+  section**: `data-src` is space-separated, so the group tag travels as
+  `tbSrcTag(g)` = `tb:1.1_Scope` — the old `tb:1.1 Scope` split into pieces
+  and matched nothing.
+
+- **Figure 1 (site location) is generated from PUBLIC state services — no
+  key, no Google** (`WP_SITEFIG_PROVIDERS`, one record per state, NSW =
+  Spatial Services; endpoints are data, not code). `wmpgSiteFigGenerate`:
+  geocode (OpenStreetMap Nominatim, credited on the figure) → lot polygon
+  from the state cadastre (point-in-lot, Web Mercator) → aerial or base map
+  export for a frame padded per zoom and widened to the image aspect
+  (`wpSiteFigFrame`, pure) → composed HERE on a canvas (`wmpgSiteFigCompose`:
+  boundary, north arrow, scale bar in GROUND metres — `wpSiteFigScaleBar`
+  applies cos(lat) — and attribution), so no third party's terms sit on the
+  picture. Bytes in IndexedDB (`wmp:sitefig:<projectId>`) like the cover;
+  `d.siteFigure` carries provider, lots, zoom, map type, access date. A
+  development that spans lots gets the adjoining lots from an envelope
+  query and a one-click add (`extraLots`) — the one human step. A state not
+  wired up, an address the geocoder misses, or no lot under the point is
+  STATED and nothing wrong is drawn (no lot → the figure without a boundary,
+  flagged). Uploading a site plan is the other way in. The export places
+  the picture at the master's own cyan "[Insert location map / aerial
+  image here]" paragraph at the body text width and rewrites the "Source:
+  …" line beneath the caption (`wmpgTplSiteFigure`, pure; no placeholder →
+  not placed, export note). The live endpoints could not be reached from
+  the build sandbox: the pipeline is verified against stubbed responses in
+  the exact request/answer shapes; the first real run confirms the field
+  names (`lotFields`) and CORS.
+
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
 gradient.
+
+## Site preparation & construction stages (C&D) — PWC staff only (2026-09-17)
+
+NSW councils want a Resource & Waste Management Plan covering site
+preparation, construction and occupancy; the app did occupancy only. Step 1
+of the brief is built (record + estimator + DOCX appendix); the facilities
+table, council profiles, the Central Coast fillable-PDF field map, stage
+layers and calibration follow in that order. Rules, tested in
+`tests/cd-stages.test.js`:
+
+- **One canonical StageRecord per stage** (`cdEmptyStage`: description,
+  contractor, workers comp, asbestos, hazardous, facilities, declarations,
+  `materials[]`, recycling, journeys, risks, site-plan checklist,
+  `estimatedWith`, `calibration`) at `p.stages.site_prep` /
+  `p.stages.construction` — **server-authoritative through `app_data.stages`**
+  both ways. Occupancy stays in its own shape for now (decided 2026-09-17:
+  the calculator, layout, Collection Point and generator all read it, and a
+  migration bought no output). Everything sits behind `wmpgIsStaff()` inside
+  the generator; no new routes.
+- **The estimator is parametric and transparent.** Rates are a **versioned
+  JSON seed** (`#cd-rates-seed`, `cdRates()`) — the brief's §5 priors, which
+  reproduce the Terrigal fixture exactly — never constants in code, and the
+  version stamps every estimate. `cdEstimateSitePrep` / `cdEstimateConstruction`
+  (pure) return the Central Coast 20-row superset in its order: a stream at or
+  above the 10 m³ threshold (or one the council always wants a figure for —
+  residual, excavation) gets a rounded quantity, its split
+  (`cdSplit` from the seed's split table; excavation keeps the retained
+  fraction on site) and a `basis` string naming the rule; **every other
+  listed material is the council's "under 10 m³" tick with no figure**, except
+  *Other* — that is what the submitted form did. A pre-1990 building makes
+  asbestos **TBC (survey)** and never a guessed volume. Diverted = reuse +
+  separated + unseparated × the council's recovery factor (0.8), so 12 m³ of
+  packaging counts 10, as submitted; `cdDiversionPct` is over quantified rows.
+- **An override is never overwritten.** Rows carry `source` (`estimate` ·
+  `override` · `contractor`); `cdApplyEstimate` moves estimate rows only and
+  keeps the fresh estimate beside an override (`estimate`) for the ↺. A hand
+  edit in the form tags the row `override` (`cdSetMaterial`). Contractor
+  quotes and dockets go in `calibration`, apart from estimates — the dataset
+  a later "fit rates from history" job reads.
+- **Pre-fill is templates, not generation** (`cdPrefill`, pure): one journey
+  per key stream group with the council's eight touchpoints, destinations
+  picked from the seeded facilities (licence numbers null until verified
+  against the EPA register — renderers print *EPL TBC*; a `tbc` facility is
+  marked), a missing street is a `[street]` placeholder; risks from the
+  Terrigal rows as templates. Council profile (`cdCouncilProfile`: target,
+  recovery factor, tick rule, renderers) by council-name match, NSW default
+  otherwise.
+- **One node list feeds both renderers.** `cdAppendixNodes` (pure) builds the
+  appendix as doc-model nodes — general information, declarations, the
+  materials table with a total row and the diversion sentence, recycling,
+  the journey table, risks, the ticked site-plan items; the preview renders
+  them and `cdNodesXml` turns them into the master's own styles
+  (`ProWaste-Heading3`, `ProWaste-Table`, captions). `cdTplAppendixE` (pure)
+  replaces the master's Appendix E body under its own "Construction and
+  demolition waste" `ProWaste-Appendices` heading (matched with tags and
+  spaces stripped — Word splits the words across runs) up to the next
+  appendix heading or the section end; no heading → not placed, export note.
+  Not built yet: the council fillable-PDF field map (the Central Coast form's
+  page-3/page-9 grids are quantity · reuse · recycled separated · recycled
+  unseparated · landfill · diverted, matched by row y; the tick column is the
+  under-10 m³ rule), stage layers, and the tonnage view (densities are in the
+  seed).
 
 ## Council requirements list (C3, revised 2026-09-15)
 
