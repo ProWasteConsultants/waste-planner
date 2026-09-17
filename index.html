@@ -30842,6 +30842,7 @@ function wmpgDefaultData(p) {
     devTypeText: [p.levels ? p.levels + '-level' : '', (p.devType || 'multi-unit residential development')].filter(Boolean).join(' '),
     title: wmpgTitleDefault(p, { projectName: p.name || '', address: s.address || p.address || '' }),
     cover: { image: null, source: '', received: '', scrim: true },   // WMP-local presentation; bytes live in IndexedDB
+    siteFigure: null,   // §1.2 Figure 1 — generated from state services or uploaded; bytes in IndexedDB
     siteContext: '', background: '', compliance: '', complianceSrc: null, guidelines: [],
     unitTypes: WMPG_UNITS.map(u => ({ ...u })),
     rates: Object.fromEntries(WMPG_UNITS.map(u => [u.key, { GW:0, REC:0, ORG:0, GLS:0 }])),
@@ -31256,6 +31257,7 @@ async function openWmpGenerator() {
   try { if (typeof wsVehEnsureLoaded === 'function') await wsVehEnsureLoaded(); } catch (e) {}   // the vehicle dropdown reads the same list the swept tool does
   try { if (typeof wpBinLibraryEnsure === 'function') await wpBinLibraryEnsure(); } catch (e) {}  // the bin rows read the same library + council services the calculator does
   await wmpgCoverLoad();
+  await wmpgSiteFigLoad();
   WMPG.data.text = WMPG.data.text || { off:{}, edit:{} };
   creqLoad(WMPG.data).then(() => { creqRun(); wmpgLiveNotes(); });
   WMPG.data.tokens = WMPG.data.tokens || {};
@@ -31285,7 +31287,7 @@ function wmpgRepull() {
   wmpgApplyRates(fresh);
   fresh.rooms.forEach(room => { if (!room.bins.length) room.bins = wmpgAutoBins(fresh, room); });
   // carry the author's writing across
-  const keep = ['projId','client','ver','status','author','date','history','title','cover','siteContext','siteContextSrc','guidelinesCouncil','background','compliance','complianceSrc','guidelines','suppliers','contractors','colours','devTypeText','daRef','text','tokens','shapeHint'];
+  const keep = ['projId','client','ver','status','author','date','history','title','cover','siteFigure','siteContext','siteContextSrc','guidelinesCouncil','background','compliance','complianceSrc','guidelines','suppliers','contractors','colours','devTypeText','daRef','text','tokens','shapeHint'];
   keep.forEach(k => fresh[k] = WMPG.data[k]);
   // and per-room narrative, matched by name
   fresh.rooms.forEach(nr => {
@@ -31436,6 +31438,30 @@ function wmpgIn(label, path, val, o) {
   return `<div class="wmpg-f"><label>${label}</label><input data-path="${path}" ${o.num?'type="number" step="any"':o.type?`type="${o.type}"`:'type="text"'} value="${wmpgEsc(val)}" placeholder="${wmpgEsc(o.ph||'')}"
     oninput="wmpgSet('${path}', ${o.num?'parseFloat(this.value)||0':'this.value'})"></div>`;
 }
+// The Figure 1 card: generate from the state services, or use your own image.
+function wmpgSiteFigCard(d) {
+  const f = d.siteFigure, img = WMPG.siteFigImg, p = wpSiteFigProvider(d.state);
+  const sel = (k, opts, cur) => `<select onchange="wmpgSiteFigSet('${k}',this.value)" style="background:#0D1313;border:1px solid #344444;border-radius:6px;padding:4px 6px;font-size:12px;color:#F2F7F7;">${opts.map(o => `<option value="${o[0]}" ${o[0] === cur ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`;
+  return `<div class="wmpg-f"><label>Figure 1 — site location and surrounding context <span class="wmpg-pill" style="text-transform:none;">fills the master’s "[Insert location map]" placeholder</span></label>
+    <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+      ${f && img ? `<img src="${img.dataUrl}" alt="" style="width:180px;height:auto;border-radius:4px;border:1px solid #344444;background:#0E211F;">` : ''}
+      <div style="flex:1;min-width:240px;">
+        ${f ? `<div style="font-size:12px;color:#E7EFEF;">${f.kind === 'generated' ? `${wmpgEsc(f.provider || '')} ${f.mapType === 'base' ? 'base map' : 'aerial'} · ${f.lots && f.lots.length ? wmpgEsc(f.lots.join(', ')) : '<span style="color:#EFB080;">no lot boundary found</span>'} · accessed ${wmpgCoverDateDMY(f.accessed)}` : `${wmpgEsc(f.name || 'uploaded image')}`}</div>` : ''}
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+          ${p ? `${sel('mapType', [['aerial', 'Aerial imagery'], ['base', 'Street base map']], f && f.mapType || 'aerial')}${sel('zoom', [['close', 'Site only'], ['context', 'Site + neighbours'], ['wide', 'Locality']], f && f.zoom || 'context')}
+          <label class="wmpg-chk" style="margin:0;"><input type="checkbox" ${!f || f.boundary !== false ? 'checked' : ''} onchange="wmpgSiteFigSet('boundary',this.checked)"> site boundary</label>
+          <button class="wmpg-addrow" style="margin:0;" onclick="wmpgSiteFigGenerate()" title="Geocode the address, read the lot from the state cadastre, fetch the imagery and compose the figure — no key, no Google">🗺 ${f && f.kind === 'generated' ? 'Regenerate' : 'Generate'} (${wmpgEsc(d.state || 'NSW')})</button>`
+             : `<span class="wmpg-note" style="margin:0;">Automatic lookup is wired for ${wpSiteFigStates().join(', ')} only — ${wmpgEsc(d.state || 'this state')} is not yet; use your own image.</span>`}
+          <button class="wmpg-addrow" style="margin:0;" onclick="document.getElementById('wmpg-sitefig-file').click()">⬆ Use my own image (site plan)</button>
+          ${f ? `<button class="wmpg-addrow" style="margin:0;color:#EF8080;" onclick="wmpgSiteFigRemove()">✕ Remove</button>` : ''}
+          <input type="file" id="wmpg-sitefig-file" accept="image/jpeg,image/png" style="display:none;" onchange="wmpgSiteFigUpload(event)">
+        </div>
+        ${f && f.kind === 'generated' && f.neighbours && f.neighbours.length ? `<div style="font-size:11px;color:#A9BDBD;margin-top:6px;">Site spans more than one lot? Add the adjoining lot: ${f.neighbours.slice(0, 12).map(n => `<label class="wmpg-chk" style="display:inline-flex;margin:0 8px 0 0;"><input type="checkbox" ${(f.extraLots || []).includes(n.id) ? 'checked' : ''} onchange="wmpgSiteFigToggleLot('${wmpgEsc(n.id)}',this.checked)"> ${wmpgEsc(n.label)}</label>`).join('')}</div>` : ''}
+        ${f && f.kind === 'upload' ? `<div class="wmpg-grid2" style="margin-top:6px;">${wmpgIn('Image source', 'siteFigure.source', f.source || '', { ph: 'Site plan — SJB Architects' })}${wmpgIn('Date accessed / received', 'siteFigure.accessed', f.accessed || '', { type: 'date' })}</div>` : ''}
+        <div class="wmpg-note" style="margin-top:4px;">${f ? 'Prints as ' + wmpgEsc(wpSiteFigSourceLine(f) || '[source]') + ' under the caption.' : 'Nothing placed yet — the master keeps its placeholder for a manual insert.'}</div>
+      </div>
+    </div></div>`;
+}
 function wmpgTa(label, path, val, rows, ph) {
   return `<div class="wmpg-f"><label>${label}</label><textarea data-path="${path}" rows="${rows||2}" placeholder="${wmpgEsc(ph||'')}"
     oninput="wmpgSet('${path}', this.value)">${wmpgEsc(val)}</textarea></div>`;
@@ -31538,6 +31564,7 @@ function wmpgRenderForm() {
       ${d.siteContextSrc && d.siteContextSrc.kind === 'ai' ? `<span class="wmpg-pill warn">AI-generated — check the surrounding land uses before issue</span><button class="wmpg-addrow" style="margin:0;" onclick="wmpgSet('siteContext','');WMPG.data.siteContextSrc=null;wmpgRenderForm();">↺ clear</button>`
         : d.siteContextSrc && d.siteContextSrc.kind === 'edited' ? `<span class="wmpg-pill">AI draft, edited by you</span>` : ''}
     </div>
+    ${wmpgSiteFigCard(d)}
     ${wmpgTa('Background (§1.3)','background',d.background,3,'Blank = standard wording built from the DA reference and development type.')}
     <div class="wmpg-f"><label>Guidelines &amp; standards (§1.5) — one per line</label>
       <textarea data-path="guidelines" rows="6" oninput="WMPG.data.guidelines=this.value.split('\\n').map(x=>x.trim()).filter(Boolean);wmpgFollow('guidelines');wmpgQueuePreview()">${wmpgEsc(d.guidelines.join('\n'))}</textarea></div>
@@ -31870,6 +31897,8 @@ function wmpgDocModel() {
   M.push({ k:'h2', t:'1.2. Site context' });
   if (!d.siteContext && tbHas('1.2 Site context')) tbNodes('1.2 Site context', tbCtxFor('1.2 Site context', d)).forEach(n => M.push(n));
   else M.push(S({ k:'p', field:'siteContext', t: d.siteContext || `The subject site is located at ${d.address || '[address]'} within the ${councilTxt} municipality. The site is surrounded by a mix of residential and commercial land uses. [Insert site location figure]` }, 'siteContext', 'address'));
+  if (d.siteFigure && WMPG.siteFigImg && WMPG.siteFigImg.dataUrl) M.push(S({ k:'figure', src: WMPG.siteFigImg.dataUrl, t: 'Figure 1 – Site location and surrounding context', v: wpSiteFigSourceLine(d.siteFigure) }, 'siteFigure'));
+  else M.push(S({ k:'p', t: WMPG_SITEFIG_PLACEHOLDER + ' — Figure 1 – Site location and surrounding context' }, 'siteFigure'));
   M.push({ k:'h2', t:'1.3. Background' });
   if (!d.background && tbHas('1.3 Background')) tbNodes('1.3 Background', tbCtxFor('1.3 Background', d)).forEach(n => M.push(n));
   else M.push(S({ k:'p', field:'background', t: d.background || `${d.daRef ? 'This site is the subject of planning application ' + d.daRef + '. ' : ''}The site is proposed to be developed as ${d.devTypeText ? (/^\d/.test(d.devTypeText) ? 'an ' : 'a ') + d.devTypeText : 'a multi-unit residential development'}.` }, 'background', 'daRef', 'devTypeText'));
@@ -32177,6 +32206,7 @@ function wmpgBuildHtml(forPrint) {
       case 'p':  return `<p${n.b?' class="b"':''}>${esc(n.t).replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>')}</p>`;
       case 'kv': return `<p class="kv"><span>${esc(n.t)}</span>${n.v?'<br>'+esc(n.v):''}</p>`;
       case 'caption': return `<p class="cap">${esc(n.t)}</p>`;
+      case 'figure': return `<figure class="fig"><img src="${n.src}" alt=""><figcaption>${esc(n.t)}${n.v ? '<br><i>' + esc(n.v) + '</i>' : ''}</figcaption></figure>`;
       case 'bullets': return `<ul>${n.items.map(i=>`<li>${esc(i)}</li>`).join('')}</ul>`;
       case 'pagebreak': return `<div class="pb"></div>`;
       case 'table': {
@@ -32221,6 +32251,7 @@ function wmpgBuildHtml(forPrint) {
   @media print{body{background:#fff;}.sheet{box-shadow:none;padding:0;max-width:none;}}
   ${coverCss}
   .dc{margin:8px 0 26px;}
+  figure.fig{margin:14px 0 18px;}figure.fig img{display:block;width:100%;height:auto;border:1px solid #d9e2e2;}figure.fig figcaption{font-size:9.5pt;color:#3a3a3a;margin-top:6px;font-weight:700;}figure.fig figcaption i{font-weight:400;color:#6a7a7a;}
   h1{color:${teal};font-size:16.5pt;font-weight:800;margin:26px 0 8px;page-break-after:avoid;}
   h2{color:${teal};font-size:12.5pt;font-weight:800;margin:18px 0 6px;page-break-after:avoid;}
   p{margin:6px 0;}
@@ -33118,6 +33149,122 @@ const WMPG_COVER_MAX_BYTES = 4 * 1024 * 1024;
 const WMPG_COVER_OUT_W = 1800;                          // px across the band — plenty at A4, keeps the .docx small
 const EMU_PER_TWIP = 635;
 function wmpgCoverKey(projectId) { return 'wmp:cover:' + projectId; }
+// ── SITE FIGURE (§1.2, "Figure 1 – Site location and surrounding context") ──
+// Generated from PUBLIC state services, no key and no Google: the address is
+// geocoded, the lot polygon comes from the state cadastre, the aerial (or
+// base map) comes from the state imagery service, and the figure is composed
+// here — boundary, north arrow, scale bar, attribution — so no third party's
+// terms sit on the picture. One provider record per state; a state not yet
+// wired up is a stated "not generated", never a wrong map. The endpoints are
+// data, not code: when a service moves, change the record.
+const WP_SITEFIG_PROVIDERS = {
+  NSW: {
+    name: 'NSW Spatial Services',
+    imagery: 'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Imagery/MapServer/export',
+    basemap: 'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Base_Map/MapServer/export',
+    cadastre: 'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query',
+    lotFields: { lot: 'lotnumber', section: 'sectionnumber', plan: 'planlabel' },
+    attribution: 'Imagery and cadastre © Spatial Services (NSW), CC BY 4.0',
+  },
+};
+const WP_SITEFIG_GEOCODER = 'https://nominatim.openstreetmap.org/search';   // OpenStreetMap's geocoder — free, attribution below, ≤1 request/s
+function wpSiteFigProvider(state) { return WP_SITEFIG_PROVIDERS[String(state || '').toUpperCase()] || null; }
+function wpSiteFigStates() { return Object.keys(WP_SITEFIG_PROVIDERS); }
+// Web Mercator (EPSG:3857), the projection every service here speaks.
+function wpMerc(lon, lat) { const R = 6378137; return { x: lon * Math.PI / 180 * R, y: Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) * R }; }
+function wpMercLat(y) { return (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI / 2) * 180 / Math.PI; }
+function wpSiteFigGeocodeUrl(address) { return WP_SITEFIG_GEOCODER + '?format=json&limit=1&countrycodes=au&q=' + encodeURIComponent(address); }
+function wpSiteFigParseGeocode(json) {
+  const r = Array.isArray(json) ? json[0] : null; if (!r) return null;
+  const lon = +r.lon, lat = +r.lat;
+  return isFinite(lon) && isFinite(lat) ? { lon, lat, label: r.display_name || '' } : null;
+}
+function wpSiteFigLotQueryUrl(p, lon, lat) {
+  return p.cadastre + '?f=json&geometryType=esriGeometryPoint&inSR=4326&outSR=3857&spatialRel=esriSpatialRelIntersects&returnGeometry=true' +
+    '&outFields=' + encodeURIComponent(Object.values(p.lotFields).join(',')) + '&geometry=' + encodeURIComponent(JSON.stringify({ x: lon, y: lat, spatialReference: { wkid: 4326 } }));
+}
+// the lots around a lot (an envelope a few metres bigger than it) — the "add adjoining lot" list
+function wpSiteFigNeighbourQueryUrl(p, bbox, padM) {
+  const g = { xmin: bbox.xmin - padM, ymin: bbox.ymin - padM, xmax: bbox.xmax + padM, ymax: bbox.ymax + padM, spatialReference: { wkid: 3857 } };
+  return p.cadastre + '?f=json&geometryType=esriGeometryEnvelope&inSR=3857&outSR=3857&spatialRel=esriSpatialRelIntersects&returnGeometry=true' +
+    '&outFields=' + encodeURIComponent(Object.values(p.lotFields).join(',')) + '&geometry=' + encodeURIComponent(JSON.stringify(g));
+}
+// Pure: ArcGIS feature JSON → lots. A feature with no usable ring is dropped.
+function wpSiteFigParseLots(json, fields) {
+  const feats = (json && Array.isArray(json.features)) ? json.features : [];
+  return feats.map(f => {
+    const a = f.attributes || {}, rings = ((f.geometry || {}).rings || []).filter(r => Array.isArray(r) && r.length >= 3);
+    if (!rings.length) return null;
+    const lot = a[fields.lot] != null ? String(a[fields.lot]) : '', sec = a[fields.section] != null ? String(a[fields.section]) : '', plan = a[fields.plan] != null ? String(a[fields.plan]) : '';
+    const label = ['Lot ' + (lot || '?'), sec ? 'Sec ' + sec : '', plan].filter(Boolean).join(' ');
+    return { id: label, lot, section: sec, plan, label, rings };
+  }).filter(Boolean);
+}
+function wpRingsBbox(ringsList) {
+  let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
+  ringsList.forEach(rings => rings.forEach(r => r.forEach(([x, y]) => { if (x < xmin) xmin = x; if (x > xmax) xmax = x; if (y < ymin) ymin = y; if (y > ymax) ymax = y; })));
+  return isFinite(xmin) ? { xmin, ymin, xmax, ymax } : null;
+}
+// Pure: the map frame — the lots' extent padded per zoom, then widened to
+// the image's aspect so nothing is stretched. `close` shows the site,
+// `context` the site and its neighbours, `wide` the locality.
+const WP_SITEFIG_ZOOM = { close: 0.5, context: 1.25, wide: 3 };
+function wpSiteFigFrame(bbox, w, h, zoom) {
+  const pad = WP_SITEFIG_ZOOM[zoom] != null ? WP_SITEFIG_ZOOM[zoom] : WP_SITEFIG_ZOOM.context;
+  const cx = (bbox.xmin + bbox.xmax) / 2, cy = (bbox.ymin + bbox.ymax) / 2;
+  const span = Math.max(bbox.xmax - bbox.xmin, bbox.ymax - bbox.ymin, 20);
+  let fw = span * (1 + 2 * pad), fh = fw;
+  if (fw / fh < w / h) fw = fh * w / h; else fh = fw * h / w;
+  return { xmin: cx - fw / 2, xmax: cx + fw / 2, ymin: cy - fh / 2, ymax: cy + fh / 2 };
+}
+function wpSiteFigImageUrl(p, mapType, bbox, w, h) {
+  return (mapType === 'base' ? p.basemap : p.imagery) + `?f=image&format=png&bbox=${bbox.xmin},${bbox.ymin},${bbox.xmax},${bbox.ymax}&bboxSR=3857&imageSR=3857&size=${w},${h}&dpi=96`;
+}
+function wpSiteFigToPx(pt, bbox, w, h) { return { x: (pt[0] - bbox.xmin) / (bbox.xmax - bbox.xmin) * w, y: (bbox.ymax - pt[1]) / (bbox.ymax - bbox.ymin) * h }; }
+// Pure: a scale bar in GROUND metres — Mercator metres shrink by cos(lat),
+// which at Sydney is a fifth. A nice length that spans an eighth to a
+// quarter of the image.
+function wpSiteFigScaleBar(bbox, w) {
+  const lat = wpMercLat((bbox.ymin + bbox.ymax) / 2);
+  const mPerPx = (bbox.xmax - bbox.xmin) / w * Math.cos(lat * Math.PI / 180);
+  const nice = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000];
+  let metres = nice[0];
+  for (const n of nice) { if (n / mPerPx <= w / 4) metres = n; }
+  return { metres, px: metres / mPerPx, mPerPx };
+}
+// Pure: the source line under the figure — the provider and the access date
+// for a generated figure, the author's own credit for an uploaded one.
+function wpSiteFigSourceLine(fig) {
+  if (!fig) return '';
+  if (fig.kind === 'upload') { const parts = [String(fig.source || '').trim(), wmpgCoverDateDMY(fig.accessed)].filter(Boolean); return parts.length ? 'Source: ' + parts.join(', ') : ''; }
+  return `Source: ${fig.provider || 'state'} ${fig.mapType === 'base' ? 'base map' : 'aerial imagery'} and cadastre${fig.lots && fig.lots.length ? ' (' + fig.lots.join(', ') + ')' : ''}, accessed ${wmpgCoverDateDMY(fig.accessed)}`;
+}
+// Pure: put the figure into the master at its own placeholder — the cyan
+// "[Insert location map / aerial image here]" paragraph — and rewrite the
+// "Source: …" line beneath the caption. No placeholder → nothing is placed and
+// the export says so; the master is never guessed at.
+const WMPG_SITEFIG_PLACEHOLDER = '[Insert location map / aerial image here]';
+function wmpgTplSiteFigure(xml, o) {
+  const at = xml.indexOf(WMPG_SITEFIG_PLACEHOLDER);
+  if (at < 0) return { xml, note: ' — site figure NOT placed: the master has no "' + WMPG_SITEFIG_PLACEHOLDER + '" paragraph', placed: false };
+  const pStart = Math.max(xml.lastIndexOf('<w:p ', at), xml.lastIndexOf('<w:p>', at)), pEnd = xml.indexOf('</w:p>', at);
+  const para = xml.slice(pStart, pEnd);
+  const pprEnd = para.indexOf('</w:pPr>');
+  const head = pprEnd >= 0 ? para.slice(0, pprEnd + 8) : para.slice(0, para.indexOf('>') + 1);
+  const pic = wmpgCoverPictureXml({ id: 9003, rId: o.rId, w: o.wEmu, h: o.hEmu, descr: o.descr || 'Site location figure', name: 'Site figure' });
+  let out = xml.slice(0, pStart) + head + pic + xml.slice(pEnd);
+  // the source line: the first "Source:" paragraph after the placeholder
+  const from = pStart + head.length + pic.length;
+  const sAt = out.indexOf('>Source: ', from);
+  if (sAt >= 0 && sAt - from < 6000) {
+    const sStart = Math.max(out.lastIndexOf('<w:p ', sAt), out.lastIndexOf('<w:p>', sAt)), sEnd = out.indexOf('</w:p>', sAt);
+    const sp = out.slice(sStart, sEnd);
+    const spprEnd = sp.indexOf('</w:pPr>');
+    const shead = spprEnd >= 0 ? sp.slice(0, spprEnd + 8) : sp.slice(0, sp.indexOf('>') + 1);
+    out = out.slice(0, sStart) + shead + `<w:r><w:rPr><w:i/><w:iCs/></w:rPr><w:t xml:space="preserve">${tplEsc(o.source || '')}</w:t></w:r>` + out.slice(sEnd);
+  }
+  return { xml: out, note: '', placed: true };
+}
 // The master's cover, row by row, in twips (A4 is 11906 × 16838) — read off
 // xxxPW_Address_WMP_Master.dotx, one table of exact-height shaded rows. The
 // preview lays its bands out from THESE numbers, so it cannot drift from what
@@ -33347,7 +33494,7 @@ function wmpgTplEnsureContentType(ct, ext, mime) {
 // example carries, minus its editor noise.
 function wmpgCoverPictureXml(o) {
   return `<w:r><w:rPr><w:noProof/></w:rPr><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${o.w}" cy="${o.h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>` +
-    `<wp:docPr id="${o.id}" name="Cover image" descr="${tplEsc(o.descr || '')}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
+    `<wp:docPr id="${o.id}" name="${tplEsc(o.name || 'Cover image')}" descr="${tplEsc(o.descr || '')}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>` +
     `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
     `<pic:nvPicPr><pic:cNvPr id="${o.id}" name="cover_image.jpeg"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${o.rId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
     `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${o.w}" cy="${o.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
@@ -33448,6 +33595,136 @@ async function wmpgCoverAccept(f, how) {
     wmpgFlash(`Cover image ${how === 'pasted' ? 'pasted' : 'set'} — ${f.name} (${(f.size / 1024).toFixed(0)} KB). It fills the photo band behind the logo, cover-fit; ✕ Remove takes it off again.`);
   } catch (e) { wmpgFlash('Cover image not usable: ' + (e.message || e), true); }
 }
+// ── SITE FIGURE in the browser ─────────────────────────────────────────────
+const WMPG_SITEFIG_W = 1400, WMPG_SITEFIG_H = 1000;
+function wmpgSiteFigKey(projectId) { return 'wmp:sitefig:' + projectId; }
+async function wmpgSiteFigLoad() {
+  WMPG.siteFigImg = null;
+  if (!WMPG.projectId) return null;
+  try {
+    const rec = await idbGetPdf(wmpgSiteFigKey(WMPG.projectId));
+    if (rec && rec.buf) { const type = (WMPG.data && WMPG.data.siteFigure && WMPG.data.siteFigure.type) || 'image/png'; WMPG.siteFigImg = { buf: rec.buf, type, dataUrl: 'data:' + type + ';base64,' + wmpgB64(rec.buf) }; }
+  } catch (e) { WMPG.siteFigImg = null; }
+  return WMPG.siteFigImg;
+}
+async function wmpgSiteFigJson(url) {
+  const r = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!r.ok) throw new Error('service returned ' + r.status);
+  return r.json();
+}
+async function wmpgSiteFigImage(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('imagery service returned ' + r.status);
+  const blob = await r.blob();
+  if (!/^image\//.test(blob.type)) throw new Error('imagery service returned ' + (blob.type || 'no image'));
+  const obj = URL.createObjectURL(blob);
+  try { return await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('imagery could not be decoded')); i.src = obj; }); }
+  finally { setTimeout(() => URL.revokeObjectURL(obj), 5000); }
+}
+// The composed figure: imagery, the site boundary, north arrow, scale bar, attribution.
+function wmpgSiteFigCompose(img, lots, frame, w, h, o) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0, w, h);
+  if (o.boundary !== false && lots.length) {
+    g.lineWidth = Math.max(3, w / 350); g.strokeStyle = '#E5322D'; g.fillStyle = 'rgba(229,50,45,0.14)'; g.lineJoin = 'round';
+    lots.forEach(l => l.rings.forEach(r => { g.beginPath(); r.forEach((pt, i) => { const q = wpSiteFigToPx(pt, frame, w, h); if (i) g.lineTo(q.x, q.y); else g.moveTo(q.x, q.y); }); g.closePath(); g.fill(); g.stroke(); }));
+  }
+  const f = Math.max(12, Math.round(w / 70));
+  // north arrow, top right
+  const nx = w - f * 2.2, ny = f * 1.4;
+  g.fillStyle = 'rgba(255,255,255,0.85)'; g.beginPath(); g.arc(nx, ny + f * 0.9, f * 1.5, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#111'; g.beginPath(); g.moveTo(nx, ny - f * 0.2); g.lineTo(nx - f * 0.45, ny + f * 1.1); g.lineTo(nx, ny + f * 0.8); g.lineTo(nx + f * 0.45, ny + f * 1.1); g.closePath(); g.fill();
+  g.font = `bold ${f * 0.8}px Segoe UI, Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText('N', nx, ny + f * 2.1);
+  // scale bar, bottom left
+  const sb = wpSiteFigScaleBar(frame, w);
+  const sx = f * 1.2, sy = h - f * 1.6;
+  g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(sx - f * 0.5, sy - f * 1.6, sb.px + f, f * 2.4);
+  g.fillStyle = '#111'; g.fillRect(sx, sy, sb.px, f * 0.35); g.fillRect(sx, sy - f * 0.3, 2, f * 0.65); g.fillRect(sx + sb.px - 2, sy - f * 0.3, 2, f * 0.65);
+  g.font = `${f * 0.75}px Segoe UI, Arial, sans-serif`; g.textAlign = 'left'; g.fillText(sb.metres + ' m', sx, sy - f * 0.45);
+  // attribution, bottom right
+  if (o.attribution) {
+    g.font = `${f * 0.6}px Segoe UI, Arial, sans-serif`; g.textAlign = 'right';
+    const tw = g.measureText(o.attribution).width;
+    g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillRect(w - tw - f, h - f * 1.1, tw + f, f * 1.1);
+    g.fillStyle = '#222'; g.fillText(o.attribution, w - f * 0.5, h - f * 0.35);
+  }
+  return c;
+}
+// One button: geocode → lot → imagery → composed figure, stored like the
+// cover and placed at the master's own placeholder. A miss at any step is
+// stated and nothing is placed; the manual insert stays.
+async function wmpgSiteFigGenerate(opts) {
+  const d = WMPG.data; if (!d) return;
+  const p = wpSiteFigProvider(d.state);
+  if (!p) { wmpgFlash(`Site figure: ${d.state || 'this state'} is not wired up yet (${wpSiteFigStates().join(', ')} only) — insert the figure by hand.`, true); return; }
+  if (!d.address) { wmpgFlash('Set the site address first — the figure is looked up from it.', true); return; }
+  const f = d.siteFigure = Object.assign({ kind: 'generated', mapType: 'aerial', zoom: 'context', boundary: true, extraLots: [] }, d.siteFigure && d.siteFigure.kind === 'generated' ? d.siteFigure : {}, opts || {});
+  try {
+    wmpgFlash('Site figure: locating ' + d.address + '…');
+    let geo = f.geo;
+    if (!geo) {
+      geo = wpSiteFigParseGeocode(await wmpgSiteFigJson(wpSiteFigGeocodeUrl(d.address + ', ' + d.state + ', Australia')));
+      if (!geo) { wmpgFlash('Site figure: the address was not found by the geocoder — check the address, or insert the figure by hand.', true); return; }
+    }
+    wmpgFlash('Site figure: reading the cadastre…');
+    let lots = f.lotsCache || null;
+    if (!lots) {
+      lots = wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigLotQueryUrl(p, geo.lon, geo.lat)), p.lotFields);
+      let neighbours = [];
+      if (lots.length) {
+        try { neighbours = wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigNeighbourQueryUrl(p, wpRingsBbox(lots.map(l => l.rings)), 6)), p.lotFields).filter(n => !lots.some(l => l.id === n.id)); } catch (e) { neighbours = []; }
+      }
+      f.lotsCache = lots; f.neighbours = neighbours;
+    }
+    const chosen = lots.concat((f.extraLots || []).map(id => (f.neighbours || []).find(n => n.id === id)).filter(Boolean));
+    const m = wpMerc(geo.lon, geo.lat);
+    const bbox = chosen.length ? wpRingsBbox(chosen.map(l => l.rings)) : { xmin: m.x - 30, xmax: m.x + 30, ymin: m.y - 30, ymax: m.y + 30 };
+    const frame = wpSiteFigFrame(bbox, WMPG_SITEFIG_W, WMPG_SITEFIG_H, f.zoom);
+    wmpgFlash('Site figure: fetching ' + (f.mapType === 'base' ? 'the base map' : 'aerial imagery') + '…');
+    const img = await wmpgSiteFigImage(wpSiteFigImageUrl(p, f.mapType, frame, WMPG_SITEFIG_W, WMPG_SITEFIG_H));
+    const canvas = wmpgSiteFigCompose(img, chosen, frame, WMPG_SITEFIG_W, WMPG_SITEFIG_H, { boundary: f.boundary, attribution: p.attribution + ' · geocoding © OpenStreetMap contributors' });
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+    await idbPutPdf(wmpgSiteFigKey(WMPG.projectId), await blob.arrayBuffer(), 'site_figure.png');
+    Object.assign(f, { kind: 'generated', type: 'image/png', provider: p.name, geo: { lon: geo.lon, lat: geo.lat }, lots: chosen.map(l => l.label), accessed: new Date().toISOString().slice(0, 10), w: WMPG_SITEFIG_W, h: WMPG_SITEFIG_H, noLot: !lots.length });
+    await wmpgSiteFigLoad();
+    wmpgFollow('siteFigure');
+    wmpgRenderForm(); wmpgQueuePreview();
+    wmpgFlash(lots.length ? `Site figure ready — ${chosen.map(l => l.label).join(', ')} outlined on ${p.name} ${f.mapType === 'base' ? 'base map' : 'imagery'}. Check the boundary; add an adjoining lot if the site spans more than one.`
+                          : 'Site figure ready, WITHOUT a boundary — no lot was found under the address point. Check the address or insert the figure by hand.', !lots.length);
+  } catch (e) { wmpgFlash('Site figure failed: ' + (e.message || e) + ' — nothing was placed; insert the figure by hand.', true); }
+}
+function wmpgSiteFigSet(k, v) {
+  const d = WMPG.data; if (!d || !d.siteFigure) return;
+  d.siteFigure[k] = v; return wmpgSiteFigGenerate();
+}
+function wmpgSiteFigToggleLot(id, on) {
+  const d = WMPG.data; if (!d || !d.siteFigure) return;
+  const set = new Set(d.siteFigure.extraLots || []); if (on) set.add(id); else set.delete(id);
+  d.siteFigure.extraLots = [...set]; return wmpgSiteFigGenerate();
+}
+async function wmpgSiteFigUpload(ev) {
+  const f = ev.target.files && ev.target.files[0]; ev.target.value = '';
+  if (!f) return;
+  const d = WMPG.data;
+  if (!/^image\/(jpeg|png)$/.test(f.type)) { wmpgFlash('The site figure must be a JPEG or PNG.', true); return; }
+  if (f.size > WMPG_COVER_MAX_BYTES) { wmpgFlash(`That image is ${(f.size / 1048576).toFixed(1)} MB — the cap is ${WMPG_COVER_MAX_BYTES / 1048576} MB.`, true); return; }
+  try {
+    const buf = await f.arrayBuffer();
+    const probe = await wmpgCoverRender(buf, f.type, 3, 2, false);
+    await idbPutPdf(wmpgSiteFigKey(WMPG.projectId), buf, f.name);
+    d.siteFigure = { kind: 'upload', name: f.name, type: f.type, w: probe.w, h: probe.h, source: (d.siteFigure && d.siteFigure.source) || '', accessed: new Date().toISOString().slice(0, 10) };
+    await wmpgSiteFigLoad();
+    wmpgFollow('siteFigure'); wmpgRenderForm(); wmpgQueuePreview();
+    wmpgFlash(`Site figure set from ${f.name} — add its source below; it prints under the caption.`);
+  } catch (e) { wmpgFlash('Site figure not usable: ' + (e.message || e), true); }
+}
+async function wmpgSiteFigRemove() {
+  const d = WMPG.data; if (!d) return;
+  try { await idbDeletePdf(wmpgSiteFigKey(WMPG.projectId)); } catch (e) {}
+  d.siteFigure = null; WMPG.siteFigImg = null;
+  wmpgRenderForm(); wmpgQueuePreview();
+}
 async function wmpgCoverRemove() {
   const d = WMPG.data; if (!d || !d.cover) return;
   try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction('pdfs', 'readwrite'); tx.objectStore('pdfs').delete(wmpgCoverKey(WMPG.projectId)); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {}
@@ -33489,9 +33766,20 @@ async function wmpgBuildTemplateBlob(buf) {
       xml = r.xml; WMPG.exportNote = r.note || '';
     }
   }
+  // Figure 1: at the master's own placeholder, the page's text width, the source line rewritten.
+  if (d.siteFigure && WMPG.siteFigImg && WMPG.siteFigImg.buf) {
+    const ext = WMPG.siteFigImg.type === 'image/jpeg' ? 'jpeg' : 'png';
+    zip.file('word/media/site_figure.' + ext, WMPG.siteFigImg.buf);
+    const relsFile = zip.file('word/_rels/document.xml.rels');
+    if (relsFile) zip.file('word/_rels/document.xml.rels', wmpgTplAddImageRel(await relsFile.async('string'), 'rIdWmpSiteFig', 'media/site_figure.' + ext));
+    const textW = 9026 * EMU_PER_TWIP;   // A4 body section: 11906 − 2 × 1440 twips
+    const fw = d.siteFigure.w || WMPG_SITEFIG_W, fh = d.siteFigure.h || WMPG_SITEFIG_H;
+    const r = wmpgTplSiteFigure(xml, { rId: 'rIdWmpSiteFig', wEmu: textW, hEmu: Math.round(textW * fh / fw), source: wpSiteFigSourceLine(d.siteFigure), descr: d.siteFigure.kind === 'upload' ? d.siteFigure.name : 'Site location figure' });
+    xml = r.xml; if (r.note) WMPG.exportNote = (WMPG.exportNote || '') + r.note;
+  }
   zip.file('word/document.xml', xml);
   const ctFile = zip.file('[Content_Types].xml');
-  if (ctFile) zip.file('[Content_Types].xml', wmpgTplEnsureContentType(wmpgTplFixContentTypes(await ctFile.async('string')), 'jpeg', 'image/jpeg'));
+  if (ctFile) zip.file('[Content_Types].xml', wmpgTplEnsureContentType(wmpgTplEnsureContentType(wmpgTplFixContentTypes(await ctFile.async('string')), 'jpeg', 'image/jpeg'), 'png', 'image/png'));
   const stFile = zip.file('word/settings.xml');
   if (stFile) zip.file('word/settings.xml', wmpgTplFixSettings(await stFile.async('string')));
   return zip.generateAsync({ type:'blob', compression:'DEFLATE',

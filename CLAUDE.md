@@ -591,6 +591,30 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   `tbSrcTag(g)` = `tb:1.1_Scope` — the old `tb:1.1 Scope` split into pieces
   and matched nothing.
 
+- **Figure 1 (site location) is generated from PUBLIC state services — no
+  key, no Google** (`WP_SITEFIG_PROVIDERS`, one record per state, NSW =
+  Spatial Services; endpoints are data, not code). `wmpgSiteFigGenerate`:
+  geocode (OpenStreetMap Nominatim, credited on the figure) → lot polygon
+  from the state cadastre (point-in-lot, Web Mercator) → aerial or base map
+  export for a frame padded per zoom and widened to the image aspect
+  (`wpSiteFigFrame`, pure) → composed HERE on a canvas (`wmpgSiteFigCompose`:
+  boundary, north arrow, scale bar in GROUND metres — `wpSiteFigScaleBar`
+  applies cos(lat) — and attribution), so no third party's terms sit on the
+  picture. Bytes in IndexedDB (`wmp:sitefig:<projectId>`) like the cover;
+  `d.siteFigure` carries provider, lots, zoom, map type, access date. A
+  development that spans lots gets the adjoining lots from an envelope
+  query and a one-click add (`extraLots`) — the one human step. A state not
+  wired up, an address the geocoder misses, or no lot under the point is
+  STATED and nothing wrong is drawn (no lot → the figure without a boundary,
+  flagged). Uploading a site plan is the other way in. The export places
+  the picture at the master's own cyan "[Insert location map / aerial
+  image here]" paragraph at the body text width and rewrites the "Source:
+  …" line beneath the caption (`wmpgTplSiteFigure`, pure; no placeholder →
+  not placed, export note). The live endpoints could not be reached from
+  the build sandbox: the pipeline is verified against stubbed responses in
+  the exact request/answer shapes; the first real run confirms the field
+  names (`lotFields`) and CORS.
+
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
 gradient.

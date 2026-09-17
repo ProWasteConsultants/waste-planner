@@ -908,3 +908,92 @@ test('§1.2 site context can be generated: written from the WMP’s facts, guard
   const tpl = extractBlock(/^function wmpgTplPayload\(/).text;
   assert.ok(/if \(!d\.siteContext && tbHas\('1\.2 Site context'\)\)/.test(tpl) && /if \(!d\.background && tbHas\('1\.3 Background'\)\)/.test(tpl), 'an author’s (or generated) text beats the library skeleton in the .docx, as in the preview');
 });
+
+
+// ── §13 the site figure: public state services, composed here, placed at the master's placeholder ──
+function loadSiteFig() {
+  const code = [/^const EMU_PER_TWIP = /, /^function tplEsc\(/, /^function wmpgCoverDateDMY\(/, /^const WP_SITEFIG_PROVIDERS = /, /^const WP_SITEFIG_GEOCODER = /,
+    /^function wpSiteFigProvider\(/, /^function wpSiteFigStates\(/, /^function wpMerc\(/, /^function wpMercLat\(/, /^function wpSiteFigGeocodeUrl\(/, /^function wpSiteFigParseGeocode\(/,
+    /^function wpSiteFigLotQueryUrl\(/, /^function wpSiteFigNeighbourQueryUrl\(/, /^function wpSiteFigParseLots\(/, /^function wpRingsBbox\(/, /^const WP_SITEFIG_ZOOM = /, /^function wpSiteFigFrame\(/,
+    /^function wpSiteFigImageUrl\(/, /^function wpSiteFigToPx\(/, /^function wpSiteFigScaleBar\(/, /^function wpSiteFigSourceLine\(/, /^const WMPG_SITEFIG_PLACEHOLDER = /,
+    /^function wmpgCoverPictureXml\(/, /^function wmpgTplSiteFigure\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function(code + ';return { wpSiteFigProvider, wpSiteFigStates, wpMerc, wpMercLat, wpSiteFigGeocodeUrl, wpSiteFigParseGeocode, wpSiteFigLotQueryUrl, wpSiteFigNeighbourQueryUrl, wpSiteFigParseLots, wpRingsBbox, wpSiteFigFrame, wpSiteFigImageUrl, wpSiteFigToPx, wpSiteFigScaleBar, wpSiteFigSourceLine, wmpgTplSiteFigure, WMPG_SITEFIG_PLACEHOLDER, WP_SITEFIG_PROVIDERS };')();
+}
+const LOT_JSON = { features: [{ attributes: { lotnumber: '12', sectionnumber: null, planlabel: 'DP 12345' }, geometry: { rings: [[[16860000, -3990000], [16860040, -3990000], [16860040, -3990030], [16860000, -3990030], [16860000, -3990000]]] } },
+  { attributes: { lotnumber: '13', planlabel: 'DP 12345' }, geometry: { rings: [] } }] };
+
+test('site figure: the lookup is a chain of public requests — geocode, lot, imagery — with the state as a provider record', () => {
+  const F = loadSiteFig();
+  const p = F.wpSiteFigProvider('nsw');
+  assert.ok(p && p.name === 'NSW Spatial Services' && /six\.nsw\.gov\.au/.test(p.cadastre) && /NSW_Imagery/.test(p.imagery) && /NSW_Base_Map/.test(p.basemap), 'NSW is wired to Spatial Services');
+  assert.equal(F.wpSiteFigProvider('VIC'), null, 'a state not wired up is null — the caller says so, never draws a wrong map');
+  assert.deepStrictEqual(F.wpSiteFigStates(), ['NSW']);
+  assert.ok(F.wpSiteFigGeocodeUrl('12 Maroomba Road, Terrigal').startsWith('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=au&q=12%20Maroomba'));
+  assert.deepStrictEqual(F.wpSiteFigParseGeocode([{ lon: '151.44', lat: '-33.45', display_name: 'X' }]), { lon: 151.44, lat: -33.45, label: 'X' });
+  assert.equal(F.wpSiteFigParseGeocode([]), null); assert.equal(F.wpSiteFigParseGeocode([{ lon: 'x' }]), null);
+  const lotUrl = F.wpSiteFigLotQueryUrl(p, 151.44, -33.45);
+  assert.ok(/geometryType=esriGeometryPoint&inSR=4326&outSR=3857/.test(lotUrl) && /outFields=lotnumber%2Csectionnumber%2Cplanlabel/.test(lotUrl) && /%22x%22%3A151\.44/.test(lotUrl), 'point-in-lot query, answers in Web Mercator');
+  const nb = F.wpSiteFigNeighbourQueryUrl(p, { xmin: 0, ymin: 0, xmax: 10, ymax: 10 }, 6);
+  assert.ok(/esriGeometryEnvelope&inSR=3857/.test(nb) && /%22xmin%22%3A-6/.test(nb), 'adjoining lots come from an envelope a few metres past the lot');
+  const img = F.wpSiteFigImageUrl(p, 'aerial', { xmin: 1, ymin: 2, xmax: 3, ymax: 4 }, 1400, 1000);
+  assert.ok(img.startsWith(p.imagery + '?f=image&format=png&bbox=1,2,3,4&bboxSR=3857&imageSR=3857&size=1400,1000'));
+  assert.ok(F.wpSiteFigImageUrl(p, 'base', { xmin: 1, ymin: 2, xmax: 3, ymax: 4 }, 10, 10).startsWith(p.basemap), 'base map is the same request to the other service');
+});
+
+test('site figure: lots parse from ArcGIS JSON, the frame keeps the image aspect, the scale bar is in ground metres', () => {
+  const F = loadSiteFig();
+  const lots = F.wpSiteFigParseLots(LOT_JSON, F.WP_SITEFIG_PROVIDERS.NSW.lotFields);
+  assert.equal(lots.length, 1, 'a feature with no ring is dropped');
+  assert.equal(lots[0].label, 'Lot 12 DP 12345'); assert.equal(lots[0].id, lots[0].label);
+  assert.equal(F.wpSiteFigParseLots({ features: [{ attributes: { lotnumber: '3', sectionnumber: '2', planlabel: 'DP 9' }, geometry: { rings: [[[0, 0], [1, 0], [1, 1]]] } }] }, F.WP_SITEFIG_PROVIDERS.NSW.lotFields)[0].label, 'Lot 3 Sec 2 DP 9');
+  assert.deepStrictEqual(F.wpRingsBbox([lots[0].rings]), { xmin: 16860000, ymin: -3990030, xmax: 16860040, ymax: -3990000 });
+  assert.equal(F.wpRingsBbox([]), null);
+  const fr = F.wpSiteFigFrame(F.wpRingsBbox([lots[0].rings]), 1400, 1000, 'context');
+  assert.ok(Math.abs((fr.xmax - fr.xmin) / (fr.ymax - fr.ymin) - 1.4) < 1e-9, 'the frame has the image’s aspect — nothing is stretched');
+  assert.ok(Math.abs(((fr.xmin + fr.xmax) / 2) - 16860020) < 1e-6 && Math.abs(((fr.ymin + fr.ymax) / 2) + 3990015) < 1e-6, 'centred on the site');
+  assert.ok(fr.ymax - fr.ymin > 40 * 3.4 && fr.ymax - fr.ymin < 40 * 3.6, 'context zoom shows about 3.5 site-widths');
+  assert.ok(F.wpSiteFigFrame(F.wpRingsBbox([lots[0].rings]), 1400, 1000, 'wide').xmax - fr.xmax > 0, 'wide is wider');
+  const px = F.wpSiteFigToPx([fr.xmin, fr.ymax], fr, 1400, 1000); assert.deepStrictEqual(px, { x: 0, y: 0 }, 'top-left of the frame is the image origin');
+  // Sydney: 1 Mercator metre is ~0.83 ground metres
+  const m = F.wpMerc(151.2093, -33.8688);
+  assert.ok(Math.abs(m.x - 16832000) < 3000 && Math.abs(m.y + 4009000) < 5000, 'Web Mercator of Sydney');
+  assert.ok(Math.abs(F.wpMercLat(m.y) + 33.8688) < 1e-6, 'and back');
+  const sb = F.wpSiteFigScaleBar({ xmin: m.x - 100, xmax: m.x + 100, ymin: m.y - 70, ymax: m.y + 70 }, 1400);
+  assert.ok(Math.abs(sb.mPerPx - 200 / 1400 * Math.cos(-33.8688 * Math.PI / 180)) < 1e-9, 'ground metres per pixel, cos(lat) applied');
+  assert.ok(sb.px <= 350 && sb.px > 175, 'the bar spans an eighth to a quarter of the image'); assert.ok([5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000].includes(sb.metres));
+});
+
+test('site figure: the source line and the .docx placement at the master’s own placeholder', () => {
+  const F = loadSiteFig();
+  assert.equal(F.wpSiteFigSourceLine({ kind: 'generated', provider: 'NSW Spatial Services', mapType: 'aerial', lots: ['Lot 12 DP 12345'], accessed: '2026-09-17' }), 'Source: NSW Spatial Services aerial imagery and cadastre (Lot 12 DP 12345), accessed 17/09/2026');
+  assert.equal(F.wpSiteFigSourceLine({ kind: 'generated', provider: 'NSW Spatial Services', mapType: 'base', lots: [], accessed: '2026-09-17' }), 'Source: NSW Spatial Services base map and cadastre, accessed 17/09/2026');
+  assert.equal(F.wpSiteFigSourceLine({ kind: 'upload', source: 'SJB Architects', accessed: '2026-07-24' }), 'Source: SJB Architects, 24/07/2026');
+  assert.equal(F.wpSiteFigSourceLine({ kind: 'upload', source: '', accessed: '' }), '', 'nothing filled → nothing printed');
+  const XML = '<w:body><w:p><w:pPr><w:pStyle w:val="ProWaste-Body"/></w:pPr><w:r><w:rPr><w:highlight w:val="cyan"/></w:rPr><w:t>[Insert location map / aerial image here]</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:pStyle w:val="TableofFigures"/></w:pPr><w:r><w:t>Figure 1 – Site location and surrounding context</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:pStyle w:val="ProWaste-Body"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">Source: Google Maps, accessed </w:t></w:r><w:r><w:rPr><w:highlight w:val="cyan"/></w:rPr><w:t>September 2025</w:t></w:r></w:p><w:p><w:r><w:t>Source: something far away</w:t></w:r></w:p></w:body>';
+  const r = F.wmpgTplSiteFigure(XML, { rId: 'rIdWmpSiteFig', wEmu: 5731510, hEmu: 4093936, source: 'Source: NSW Spatial Services aerial imagery and cadastre, accessed 17/09/2026' });
+  assert.ok(r.placed && !r.note);
+  assert.ok(!r.xml.includes('[Insert location map'), 'the placeholder text is gone');
+  assert.ok(/<w:pStyle w:val="ProWaste-Body"\/><\/w:pPr><w:r><w:rPr><w:noProof\/><\/w:rPr><w:drawing><wp:inline [^>]*><wp:extent cx="5731510" cy="4093936"\/>/.test(r.xml), 'an inline picture in the placeholder’s own paragraph, page-text-wide');
+  assert.ok(r.xml.includes('name="Site figure"') && r.xml.includes('r:embed="rIdWmpSiteFig"'));
+  assert.ok(r.xml.includes('Figure 1 – Site location and surrounding context'), 'the caption is untouched');
+  assert.ok(r.xml.includes('<w:t xml:space="preserve">Source: NSW Spatial Services aerial imagery and cadastre, accessed 17/09/2026</w:t>') && !r.xml.includes('Google Maps') && !r.xml.includes('September 2025'), 'the source line is rewritten whole');
+  assert.ok(r.xml.includes('Source: something far away'), 'only the figure’s own source line');
+  const miss = F.wmpgTplSiteFigure('<w:body><w:p><w:r><w:t>nothing</w:t></w:r></w:p></w:body>', { rId: 'x' });
+  assert.ok(!miss.placed && /NOT placed/.test(miss.note) && miss.xml.includes('nothing'), 'no placeholder → nothing placed, and the export says so');
+  // wiring
+  const build = extractBlock(/^async function wmpgBuildTemplateBlob\(/).text;
+  assert.ok(/if \(d\.siteFigure && WMPG\.siteFigImg && WMPG\.siteFigImg\.buf\)/.test(build) && /const textW = 9026 \* EMU_PER_TWIP/.test(build) && /wmpgTplSiteFigure\(xml, \{ rId: 'rIdWmpSiteFig'/.test(build), 'placed at export, sized to the body text width');
+  assert.ok(/'png', 'image\/png'/.test(build), 'PNG content type registered');
+  const gen = extractBlock(/^async function wmpgSiteFigGenerate\(/).text;
+  assert.ok(/if \(!p\) \{ wmpgFlash\(`Site figure: \$\{d\.state \|\| 'this state'\} is not wired up yet/.test(gen), 'an unwired state is stated, not guessed');
+  assert.ok(/wpSiteFigGeocodeUrl\(d\.address \+ ', ' \+ d\.state \+ ', Australia'\)/.test(gen) && /wpSiteFigLotQueryUrl\(p, geo\.lon, geo\.lat\)/.test(gen) && /wpSiteFigNeighbourQueryUrl\(p, wpRingsBbox/.test(gen) && /wmpgSiteFigCompose\(img, chosen, frame/.test(gen), 'geocode → lot → neighbours → imagery → compose');
+  assert.ok(/noLot: !lots\.length/.test(gen) && /WITHOUT a boundary/.test(gen), 'no lot under the point is drawn without a boundary and said');
+  assert.ok(/idbPutPdf\(wmpgSiteFigKey\(WMPG\.projectId\)/.test(gen), 'bytes in IndexedDB like the cover');
+  const model = extractBlock(/^function wmpgDocModel\(/).text;
+  assert.ok(/k:'figure', src: WMPG\.siteFigImg\.dataUrl, t: 'Figure 1 – Site location and surrounding context', v: wpSiteFigSourceLine\(d\.siteFigure\)/.test(model), 'the preview shows the figure with caption and source');
+  assert.ok(/WMPG_SITEFIG_PLACEHOLDER \+ ' — Figure 1/.test(model), 'and the master’s placeholder when there is none');
+  assert.ok(/case 'figure': return `<figure class="fig">/.test(extractBlock(/^function wmpgBuildHtml\(/).text));
+  assert.ok(/geocoding © OpenStreetMap contributors/.test(gen), 'the geocoder is credited on the figure');
+});
