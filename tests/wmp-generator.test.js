@@ -23,13 +23,16 @@ function load() {
     /^function wmpgBinWords\(/, /^function wmpgRoomMethod\(/, /^function wmpgNarrative\(/, /^function wmpgNarrativeText\(/,
     /^function wmpgPolishGuard\(/, /^const WMPG_BIN_FIELDS = /, /^function wmpgBinDiff\(/, /^function wmpgBinEdited\(/,
     /^function wmpgBinDiffWords\(/, /^function wmpgBinSource\(/, /^function wmpgVehicleSource\(/, /^function wmpgUpgradeDraft\(/,
+    /^function wmpgCouncilGuidelineLine\(/, /^function wmpgGuidelineListed\(/, /^function wmpgGuidelinesSync\(/,
+    /^function wmpgScopeFlags\(/, /^function wmpgPhaseWords\(/, /^function tbDefaultOn\(/,
     /^const TB_COND_ALIASES = /, /^const TB_CONDS = /, /^function tbCondMet\(/,
     /^const WMPG_TEXT_PRESETS_BUILTIN = /, /^function tbPresetApply\(/,
   ].map(p => extractBlock(p).text).join('\n\n');
   return new Function('WMPG', code + `
     ;return { wmpgTitleDefault, wmpgPickGuideline, wmpgGuidelineLabel, wmpgShape, wmpgShapeWords, wmpgCycleWords, wmpgBinWords,
               wmpgRoomMethod, wmpgNarrative, wmpgNarrativeText, wmpgPolishGuard, wmpgBinDiff, wmpgBinEdited, wmpgBinDiffWords,
-              wmpgBinSource, wmpgVehicleSource, wmpgUpgradeDraft, tbCondMet, TB_CONDS, WMPG_TEXT_PRESETS_BUILTIN, tbPresetApply, WMPG_METHOD_LABEL };`)({ data: null });
+              wmpgBinSource, wmpgVehicleSource, wmpgUpgradeDraft, tbCondMet, TB_CONDS, WMPG_TEXT_PRESETS_BUILTIN, tbPresetApply, WMPG_METHOD_LABEL,
+              wmpgCouncilGuidelineLine, wmpgGuidelineListed, wmpgGuidelinesSync, wmpgScopeFlags, wmpgPhaseWords };`)({ data: null });
 }
 const room = (over) => Object.assign({ name: 'Bin room', component: 'Residential', alloc: { apt_1br: 4 }, bins: [],
   extras: { bulky: { on: false }, textiles: { on: false }, tug: { on: false }, wash: { on: true } }, chutesOn: false,
@@ -371,7 +374,7 @@ test('follow is on EDIT, not focus; it is applied after the reload; otherwise th
   assert.ok(/^\s*wmpgFollow\(path\);/m.test(set), 'every wmpgSet names the path it edited');
   assert.ok(!/onfocus|focusin/.test(extractBlock(/^function wmpgIn\(/).text), 'inputs never follow on focus — tabbing must not fight the reader');
   assert.ok(/wmpgFollow\(`rooms\.\$\{i\}\.bins\.\$\{j\}\.\$\{field\}`\)/.test(extractBlock(/^function wmpgBinSet\(/).text));
-  assert.ok(/wmpgFollow\('tb:' \+/.test(extractBlock(/^function tbToggle\(/).text) && /wmpgFollow\('tb:' \+/.test(extractBlock(/^function tbEdit\(/).text), 'a text-library selection follows to its section');
+  assert.ok(/wmpgFollow\(tbSrcTag\(/.test(extractBlock(/^function tbToggle\(/).text) && /wmpgFollow\(tbSrcTag\(/.test(extractBlock(/^function tbEdit\(/).text), 'a text-library selection follows to its section');
   const refresh = extractBlock(/^function wmpgRefreshPreview\(/).text;
   assert.ok(/fr\.onload = \(\) =>/.test(refresh) && /prevY = fr\.contentWindow\.scrollY/.test(refresh), 'srcdoc reloads the iframe — the follow runs after load, and a render without a fresh edit restores where the reader was');
   assert.ok(/wmpgFollowOn\(\)/.test(refresh), 'the toggle gates it');
@@ -802,4 +805,106 @@ test('auto rows (no calculator schedule) and added rows start from the calculato
   assert.ok(/1 per dwelling = \$\{o\.perDwelling\}/.test(roomFn), 'kerbside individual counts dwellings and offers the number');
   assert.ok(/wpBinLibraryEnsure\(\)/.test(extractBlock(/^async function openWmpGenerator\(/).text), 'the library and council services load before the form renders');
   assert.ok(extractBlock(/^async function wpBinLibraryEnsure\(/).text.includes('if (WS_EQUIP_DB === null) await wsLoadEquipmentDB();'));
+});
+
+
+// ── §12 five fixes (2026-09-17): open groups · follow tags · council guideline · scope-driven intro · AI site context ──
+function loadScope(TB) {
+  const code = [/^function wmpgScopeFlags\(/, /^function wmpgPhaseWords\(/, /^function tbDefaultOn\(/, /^function tbSrcTag\(/,
+    /^function wmpgSrcMatch\(/, /^function wmpgFollowPick\(/, /^function wmpgContextGuard\(/, /^function wmpgSiteContextFacts\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function('TB', 'WMPG', code + ';return { wmpgScopeFlags, wmpgPhaseWords, tbSrcTag, wmpgSrcMatch, wmpgFollowPick, wmpgContextGuard, wmpgSiteContextFacts };')(TB, { data: null });
+}
+const SCOPE_ROWS = [
+  { t: 'SCOPE_INTRO', g: '1.1 Scope', b: 'The scope of this WMP includes:', on: 1, s: 'p' },
+  { t: 'SCOPE_BP1', g: '1.1 Scope', b: 'Management of solid waste and recyclables generated during the operational phase of the development', on: 1, s: 'b' },
+  { t: 'SCOPE_BP2', g: '1.1 Scope', b: 'Construction and demolition (C&D) waste.', on: 0, s: 'b' },
+  { t: 'SCOPE_BP3', g: '1.1 Scope', b: 'Green Star compliance', on: 0, s: 'p' },
+  { t: 'SCOPE_OUTRO', g: '1.1 Scope', b: 'The following are outside the scope of this document:', on: 1, s: 'b' },
+  { t: 'SCOPE_BP4', g: '1.1 Scope', b: 'Construction and demolition (C&D) waste.', on: 1, s: 'b' },
+  { t: 'SCOPE_BP5', g: '1.1 Scope', b: 'Green Star compliance', on: 1, s: 'p' },
+];
+
+test('the intro follows §1.1: tick C&D or Green Star into scope and the phases (and the Green Star sentence) change', () => {
+  const S = loadScope({ byGroup: { '1.1 Scope': SCOPE_ROWS }, scope: {} });
+  const d0 = { state: 'NSW', council: 'X', text: { off: {}, edit: {} } };
+  assert.deepStrictEqual(S.wmpgScopeFlags(d0), { operational: true, cnd: false, greenstar: false, fromLibrary: true }, 'defaults: operational only — the out-of-scope C&D bullet below the line is NOT read as in scope');
+  assert.equal(S.wmpgPhaseWords(S.wmpgScopeFlags(d0)), 'operation');
+  const d1 = { state: 'NSW', council: 'X', text: { off: { SCOPE_BP2: false }, edit: {} } };
+  assert.deepStrictEqual(S.wmpgScopeFlags(d1).cnd, true, 'C&D ticked in scope');
+  assert.equal(S.wmpgPhaseWords(S.wmpgScopeFlags(d1)), 'construction, demolition and operation');
+  const d2 = { state: 'NSW', council: 'X', text: { off: { SCOPE_BP2: false, SCOPE_BP1: true }, edit: {} } };
+  assert.equal(S.wmpgPhaseWords(S.wmpgScopeFlags(d2)), 'construction and demolition', 'operational unticked');
+  const d3 = { state: 'NSW', council: 'X', text: { off: { SCOPE_BP3: false }, edit: {} } };
+  assert.equal(S.wmpgScopeFlags(d3).greenstar, true);
+  const none = loadScope({ byGroup: {}, scope: {} });
+  assert.deepStrictEqual(none.wmpgScopeFlags(d0), { operational: true, cnd: true, greenstar: false, fromLibrary: false }, 'no library → the built-in scope (operational + C&D)');
+  // wiring: the tokens, the conditions and both fallbacks read the flags
+  const ctx = extractBlock(/^function tbContext\(/).text;
+  assert.ok(/phase: wmpgPhaseWords\(wmpgScopeFlags\(d\)\)/.test(ctx) && /green_star: wmpgScopeFlags\(d\)\.greenstar/.test(ctx), '{phase} and {green_star} tokens');
+  const G = load();
+  assert.ok(G.TB_CONDS.some(c => c[0] === 'cnd') && G.TB_CONDS.some(c => c[0] === 'greenstar') && G.TB_CONDS.some(c => c[0] === '!cnd'), 'a snippet can be conditioned on the scope');
+  assert.ok(/Object\.assign\(wmpgShape\(d\), wmpgScopeFlags\(d\)\)/.test(extractBlock(/^function tbCondMet\(/).text), 'conditions see the scope flags');
+  assert.ok(/during \$\{wmpgPhaseWords\(wmpgScopeFlags\(d\)\)\}/.test(extractBlock(/^function wmpgDocModel\(/).text), 'the built-in intro says the phases');
+  assert.ok(/wmpgPhaseWords\(wmpgScopeFlags\(d\)\) \+ '\.'/.test(extractBlock(/^function wmpgTplPayload\(/).text), 'so does the .docx fallback');
+  assert.ok(SOURCE.includes('{"t":"INTRO_2","g":"1. Introduction"') && /"c":"greenstar"/.test(SOURCE), 'the seed carries the Green Star intro sentence, conditioned');
+  assert.ok(!/tbCondMet|tbGroup\(/.test(extractBlock(/^function wmpgScopeFlags\(/).text), 'flags are read from the on-state alone — never through tbCondMet, which would recurse');
+});
+
+test('text-library groups stay open across a tick, and a selection follows to its section even though group names contain spaces', () => {
+  const S = loadScope({ byGroup: {}, scope: {} });
+  assert.equal(S.tbSrcTag('1.1 Scope'), 'tb:1.1_Scope');
+  assert.equal(S.wmpgSrcMatch('tb:1.1_Scope', 'tb:1.1_Scope'), 99);
+  // the attribute is space-separated: the old tag split into pieces and matched nothing
+  const attr = ['tb:1.1_Scope', 'tokens.phase'].join(' ');
+  const pick = S.wmpgFollowPick([{ src: ['title'], pri: true }, { src: attr.split(' '), pri: false }], 'tb:1.1_Scope');
+  assert.equal(pick.primary, 1, 'the group node is found from the split attribute');
+  assert.equal(S.wmpgFollowPick([{ src: 'tb:1.1 Scope'.split(' '), pri: false }], 'tb:1.1 Scope').primary, -1, 'the old form could never match');
+  assert.ok(/n\.src = \(n\.src \|\| \[\]\)\.concat\(\[tbSrcTag\(groupName\)\]/.test(extractBlock(/^function tbNodes\(/).text), 'nodes are tagged through the same helper');
+  const panel = extractBlock(/^function tbRenderPanel\(/).text;
+  assert.ok(/TB\.open = TB\.open \|\| new Set\(\)/.test(panel) && /\$\{TB\.open\.has\(g\) \? 'open' : ''\} ontoggle="tbGroupToggled\(this\)"/.test(panel), 'open state lives in TB.open and is rendered back');
+  const tog = extractBlock(/^function tbGroupToggled\(/).text;
+  assert.ok(/if \(el\.open\) TB\.open\.add\(g\); else TB\.open\.delete\(g\);/.test(tog));
+});
+
+test('the council’s own guideline is always in §1.5 — appended after the library list, swapped when the council changes, never duplicated', () => {
+  const G = load();
+  assert.equal(G.wmpgCouncilGuidelineLine({ compliance: 'Northern Beaches Council — waste management guidelines, v2' }), 'Northern Beaches Council — waste management guidelines, v2');
+  assert.equal(G.wmpgCouncilGuidelineLine({ council: 'Camden Council' }), 'Camden Council — waste management requirements for new developments.');
+  assert.equal(G.wmpgCouncilGuidelineLine({}), '');
+  assert.ok(G.wmpgGuidelineListed(['Standards Australia. AS 4123 – Mobile Waste Containers.'], 'Standards Australia AS 4123 - mobile waste containers'), 'punctuation and case aside');
+  assert.ok(!G.wmpgGuidelineListed(['AS 4123'], 'AS 1668.2'));
+  const d = { council: 'Camden Council', compliance: 'Camden Council — waste management guidelines, v3', guidelines: ['AS 4123', 'Camden Council — waste management guidelines, v3'], guidelinesCouncil: 'Camden Council — waste management guidelines, v3' };
+  G.wmpgGuidelinesSync(d);
+  assert.deepStrictEqual(d.guidelines, ['AS 4123', 'Camden Council — waste management guidelines, v3'], 'already there → unchanged');
+  d.council = 'Penrith City Council'; d.compliance = '';
+  G.wmpgGuidelinesSync(d);
+  assert.deepStrictEqual(d.guidelines, ['AS 4123', 'Penrith City Council — waste management requirements for new developments.'], 'the old council line is swapped, the author’s line kept');
+  assert.equal(d.guidelinesCouncil, 'Penrith City Council — waste management requirements for new developments.');
+  const old = { rooms: [], council: 'Camden Council', compliance: 'Camden Council — waste management guidelines, v3', guidelines: ['AS 4123'], cover: { image: null, source: '', received: '', scrim: true } };
+  G.wmpgUpgradeDraft(old, {});
+  assert.ok(old.guidelines.includes('Camden Council — waste management guidelines, v3'), 'a resumed draft gets the council document');
+  const model = extractBlock(/^function wmpgDocModel\(/).text;
+  assert.ok(/const bank15 = tbNodesOr\('1\.5 Relevant guidelines and standards', d, null, null\);/.test(model) && /if \(councilLine && !wmpgGuidelineListed\(bank15\.flatMap/.test(model), 'the preview appends the council line after the library’s bullets unless one already names it');
+  const tpl = extractBlock(/^function wmpgTplPayload\(/).text;
+  assert.ok(/add\('BM_Sec_GUIDELINES', tplBullets\(\[councilLine\]\)\)/.test(tpl), 'and so does the .docx');
+  assert.ok(/wmpgGuidelinesSync\(d\);\s*\/\/ §1\.5 follows the council/.test(extractBlock(/^async function wmpgCouncilChanged\(/).text));
+});
+
+test('§1.2 site context can be generated: written from the WMP’s facts, guarded like the polish, marked AI until edited; the .docx follows the preview’s rule', () => {
+  const S = loadScope({ byGroup: {}, scope: {} });
+  const facts = { address: '117 Flinders St, Surry Hills', council: 'City of Sydney', state: 'NSW', development: '8-level mixed-use', previous_use: '', collection_street: 'Flinders St', collection_point: '', site_constraints: '' };
+  assert.ok(S.wmpgContextGuard(facts, 'The subject site is located at 117 Flinders St, Surry Hills within the City of Sydney area. The surrounding land uses are established terraces with shops along the main road. Collection is from Flinders St.').ok);
+  assert.equal(S.wmpgContextGuard(facts, '').why, 'it returned nothing');
+  assert.equal(S.wmpgContextGuard(facts, 'The site at 119 Flinders St is in Surry Hills.').why, 'it changed or dropped the address');
+  assert.equal(S.wmpgContextGuard(facts, 'The subject site is located at 117 Flinders St, Surry Hills, about 400 m from Central Station.').why, 'it introduced 400', 'a distance the facts do not contain');
+  assert.equal(S.wmpgContextGuard(facts, '- 117 Flinders St, Surry Hills').why, 'it used headings or bullets');
+  assert.deepStrictEqual(S.wmpgSiteContextFacts({ address: 'A', council: 'C', state: 'NSW', devTypeText: 'D', tokens: { previous_use: 'warehouse' }, rooms: [{ collection: { street: 'S', point: 'P' } }] }),
+    { address: 'A', council: 'C', state: 'NSW', development: 'D', previous_use: 'warehouse', collection_street: 'S', collection_point: 'P', site_constraints: '' });
+  const gen = extractBlock(/^async function wmpgGenerateSiteContext\(/).text;
+  assert.ok(/aiProxy\(\{ max_tokens: 800, system: WMPG_CONTEXT_SYSTEM/.test(gen) && /wmpgContextGuard\(facts, text\)/.test(gen) && /siteContextSrc = \{ kind: 'ai'/.test(gen), 'generated through the proxy, guarded, marked');
+  assert.ok(/never invent street names, distances, dates, numbers/.test(extractBlock(/^const WMPG_CONTEXT_SYSTEM = /).text) && /\[bracketed placeholder\]/.test(extractBlock(/^const WMPG_CONTEXT_SYSTEM = /).text), 'no guessing — a missing fact is a placeholder');
+  assert.ok(/siteContextSrc\.kind === 'ai'\) WMPG\.data\.siteContextSrc = \{ kind: 'edited'/.test(extractBlock(/^function wmpgSet\(/).text), 'provenance follows an edit');
+  assert.ok(/onclick="wmpgGenerateSiteContext\(\)"/.test(extractBlock(/^function wmpgRenderForm\(/).text) && /AI-generated — check the surrounding land uses/.test(extractBlock(/^function wmpgRenderForm\(/).text));
+  const tpl = extractBlock(/^function wmpgTplPayload\(/).text;
+  assert.ok(/if \(!d\.siteContext && tbHas\('1\.2 Site context'\)\)/.test(tpl) && /if \(!d\.background && tbHas\('1\.3 Background'\)\)/.test(tpl), 'an author’s (or generated) text beats the library skeleton in the .docx, as in the preview');
 });

@@ -555,6 +555,42 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   schedule rows already carry its sizes, and a WMP re-size is a stated
   departure.
 
+- **§1.1 scope drives the intro (2026-09-17).** `wmpgScopeFlags(d)` reads
+  which §1.1 bullets are ticked ABOVE the "outside the scope" line — from the
+  on-state alone, never through `tbCondMet`, which reads these flags and
+  would recurse — and `wmpgPhaseWords` turns that into the `{phase}` token
+  ("construction, demolition and operation" once C&D is in scope). Green
+  Star in scope adds the `{green_star}` sentence and the conditioned seed
+  snippet `INTRO_2` (`cond: greenstar`; `sql/2026-09-17-wmp-intro-scope.sql`
+  puts it in the live library). `cnd` / `greenstar` are snippet conditions
+  like any other (`TB_CONDS`). No library → the built-in scope (operational
+  + C&D), and both built-in intros say the phases.
+- **§1.5 always lists the council's own document.** `wmpgCouncilGuidelineLine`
+  (the library version the checker uses, else a plain council reference) is
+  appended after the text library's bullets unless one already names it
+  (`wmpgGuidelineListed`, pure), in the preview and the .docx alike.
+  `wmpgGuidelinesSync` keeps it in the author's §1.5 list as the council
+  changes — the line this generator put there last time (`guidelinesCouncil`)
+  is swapped for the current one, the author's own lines are never touched —
+  and runs on draft upgrade so old drafts get it.
+- **§1.2 site context can be generated** (`wmpgGenerateSiteContext`): the
+  library's snippets are skeletons ("The surrounding land uses include xxx"),
+  so ✨ writes the paragraph from the WMP's facts (`wmpgSiteContextFacts`) —
+  address, council, development, previous use, collection street/point — and
+  the locality's character is the one thing the model supplies from what it
+  knows of the area. Same discipline as the polish: `wmpgContextGuard` (pure)
+  refuses text that drops the address, brings in a number the facts do not
+  contain, or uses bullets; a fact the model lacks is a `[bracketed
+  placeholder]`. The result is marked *AI-generated — check the surrounding
+  land uses* (`siteContextSrc`), the mark follows an edit (`edited`), and the
+  .docx now applies the preview's rule — an author's or generated text beats
+  the library skeleton (it used to print the skeleton regardless).
+- **Text-library groups keep their open state** across the re-render a tick
+  causes (`TB.open`, `tbGroupToggled`), and **a selection follows to its
+  section**: `data-src` is space-separated, so the group tag travels as
+  `tbSrcTag(g)` = `tb:1.1_Scope` — the old `tb:1.1 Scope` split into pieces
+  and matched nothing.
+
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
 gradient.
