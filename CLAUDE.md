@@ -198,7 +198,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
 | `tests/residential-method.test.js` | Residential method types: stepped-table lookup, review gate, state fallback |
 | `tests/wmp-generator.test.js` | WMP generator: title, guideline auto-load, assembled narrative, polish guard, override provenance, text-library conditions and presets |
-| `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers |
+| `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers, the Central Coast form map and fill (pdf-lib test skips when not installed) |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -623,11 +623,10 @@ gradient.
 ## Site preparation & construction stages (C&D) — PWC staff only (2026-09-17)
 
 NSW councils want a Resource & Waste Management Plan covering site
-preparation, construction and occupancy; the app did occupancy only. Step 1
-of the brief is built (record + estimator + DOCX appendix); the facilities
-table, council profiles, the Central Coast fillable-PDF field map, stage
-layers and calibration follow in that order. Rules, tested in
-`tests/cd-stages.test.js`:
+preparation, construction and occupancy; the app did occupancy only. Steps 1–3
+of the brief are built (record + estimator + DOCX appendix; facilities and
+council profiles server-side; the Central Coast fillable-PDF field map).
+Stage layers and calibration follow. Rules, tested in `tests/cd-stages.test.js`:
 
 - **One canonical StageRecord per stage** (`cdEmptyStage`: description,
   contractor, workers comp, asbestos, hazardous, facilities, declarations,
@@ -659,13 +658,25 @@ layers and calibration follow in that order. Rules, tested in
   quotes and dockets go in `calibration`, apart from estimates — the dataset
   a later "fit rates from history" job reads.
 - **Pre-fill is templates, not generation** (`cdPrefill`, pure): one journey
-  per key stream group with the council's eight touchpoints, destinations
-  picked from the seeded facilities (licence numbers null until verified
-  against the EPA register — renderers print *EPL TBC*; a `tbc` facility is
-  marked), a missing street is a `[street]` placeholder; risks from the
-  Terrigal rows as templates. Council profile (`cdCouncilProfile`: target,
-  recovery factor, tick rule, renderers) by council-name match, NSW default
-  otherwise.
+  per key stream group with the council's **nine** touchpoints (generation ·
+  capture · consolidation · transfer · on-site reuse · transfer to
+  collection · collection point · vehicle access · off-site — the rows the
+  council's own form has), destinations picked from the facilities table
+  (licence numbers null until verified against the EPA register — renderers
+  print *EPL TBC*; a `tbc` facility is marked), a missing street is a
+  `[street]` placeholder; risks from the Terrigal rows as templates. Council
+  profile (`cdCouncilProfile`: target, recovery factor, tick rule,
+  renderers) by council-name match, NSW default otherwise.
+- **Facilities and council profiles are server-side** (`cd_facilities`,
+  `cd_council_profiles`; `sql/2026-09-17-cd-facilities.sql` — GRANTs + RLS,
+  every signed-in user reads, `profiles.is_staff` writes, seeded with the
+  seven Terrigal facilities and two profiles). `cdLoadRemote` runs per
+  generator open for staff; `cdRates()` merges the rows over the JSON seed
+  and says which it used (`facilitiesSource`, stated in the section note —
+  "built-in seed … run the SQL" until the tables exist). The **rates**
+  themselves stay the versioned seed. `cdSaveFacility` upserts from the
+  section's form and never takes a licence number — that is typed in only
+  after the EPA register is checked, so nothing prints an unverified EPL.
 - **One node list feeds both renderers.** `cdAppendixNodes` (pure) builds the
   appendix as doc-model nodes — general information, declarations, the
   materials table with a total row and the diversion sentence, recycling,
@@ -676,11 +687,33 @@ layers and calibration follow in that order. Rules, tested in
   demolition waste" `ProWaste-Appendices` heading (matched with tags and
   spaces stripped — Word splits the words across runs) up to the next
   appendix heading or the section end; no heading → not placed, export note.
-  Not built yet: the council fillable-PDF field map (the Central Coast form's
-  page-3/page-9 grids are quantity · reuse · recycled separated · recycled
-  unseparated · landfill · diverted, matched by row y; the tick column is the
-  under-10 m³ rule), stage layers, and the tonnage view (densities are in the
-  seed).
+- **The Central Coast RWMP form is the council's own PDF, filled — never
+  redrawn.** The field map is a JSON seed (`#cd-ccc-map`, `cdCccMap()`)
+  decoded from the form's own geometry: Part A, the page-3 and page-9 grids
+  (quantity · reuse · recycled separated · recycled unseparated · landfill ·
+  diverted per material, the under-10 m³ tick, the % cell), three journey
+  columns and risk rows per stage, the site-plan checklists, Part D
+  (occupancy, from the WMP's own rooms and bins) and the page-19
+  declarations. `tests/fixtures/ccc_rwmp_fields.json` is every field's
+  page, name, type and rect (structure only — never the filled form, which
+  is client work) and §5 proves each mapped name exists, sits on its row and
+  is the right kind. `cdCccValues` (pure) builds `{ text, checks, radios,
+  notes }` from the stage records and the draft — §6 reproduces the
+  submitted Terrigal grid, ticks and percentages by the form's own field
+  names; a fourth journey or an extra risk row is a **note**, never dropped
+  silently. `cdCccFill` (pdf-lib, loaded on demand from cdnjs like jsPDF)
+  writes them and returns every field the PDF lacks **by name** — an old or
+  different form is reported, not half-filled. Radio option names are read
+  from the PDF at fill time (`Choice1` on this form, `/0` or `Yes`
+  elsewhere). The blank form comes from the `pwc-templates` bucket
+  (`ccc_rwmp_form.pdf`) with a per-device IndexedDB cache behind the ⬆
+  button; the fill button appears only for a council whose profile lists
+  the `pdf` renderer. **`sharedFields`**: the council's form has one field
+  (`C9`) serving both the page-1 "site preparation completed" box and the
+  page-3 asbestos tick, so they can only ever agree — the grid's value
+  wins, page 1 does not claim it, and the export says so. Not built yet:
+  stage layers, calibration capture / fit-rates, the tonnage view
+  (densities are in the seed).
 
 ## Council requirements list (C3, revised 2026-09-15)
 
