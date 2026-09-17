@@ -198,6 +198,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
 | `tests/residential-method.test.js` | Residential method types: stepped-table lookup, review gate, state fallback |
 | `tests/wmp-generator.test.js` | WMP generator: title, guideline auto-load, assembled narrative, polish guard, override provenance, text-library conditions and presets |
+| `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -618,6 +619,68 @@ Rules, all tested in `tests/wmp-generator.test.js`:
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
 gradient.
+
+## Site preparation & construction stages (C&D) — PWC staff only (2026-09-17)
+
+NSW councils want a Resource & Waste Management Plan covering site
+preparation, construction and occupancy; the app did occupancy only. Step 1
+of the brief is built (record + estimator + DOCX appendix); the facilities
+table, council profiles, the Central Coast fillable-PDF field map, stage
+layers and calibration follow in that order. Rules, tested in
+`tests/cd-stages.test.js`:
+
+- **One canonical StageRecord per stage** (`cdEmptyStage`: description,
+  contractor, workers comp, asbestos, hazardous, facilities, declarations,
+  `materials[]`, recycling, journeys, risks, site-plan checklist,
+  `estimatedWith`, `calibration`) at `p.stages.site_prep` /
+  `p.stages.construction` — **server-authoritative through `app_data.stages`**
+  both ways. Occupancy stays in its own shape for now (decided 2026-09-17:
+  the calculator, layout, Collection Point and generator all read it, and a
+  migration bought no output). Everything sits behind `wmpgIsStaff()` inside
+  the generator; no new routes.
+- **The estimator is parametric and transparent.** Rates are a **versioned
+  JSON seed** (`#cd-rates-seed`, `cdRates()`) — the brief's §5 priors, which
+  reproduce the Terrigal fixture exactly — never constants in code, and the
+  version stamps every estimate. `cdEstimateSitePrep` / `cdEstimateConstruction`
+  (pure) return the Central Coast 20-row superset in its order: a stream at or
+  above the 10 m³ threshold (or one the council always wants a figure for —
+  residual, excavation) gets a rounded quantity, its split
+  (`cdSplit` from the seed's split table; excavation keeps the retained
+  fraction on site) and a `basis` string naming the rule; **every other
+  listed material is the council's "under 10 m³" tick with no figure**, except
+  *Other* — that is what the submitted form did. A pre-1990 building makes
+  asbestos **TBC (survey)** and never a guessed volume. Diverted = reuse +
+  separated + unseparated × the council's recovery factor (0.8), so 12 m³ of
+  packaging counts 10, as submitted; `cdDiversionPct` is over quantified rows.
+- **An override is never overwritten.** Rows carry `source` (`estimate` ·
+  `override` · `contractor`); `cdApplyEstimate` moves estimate rows only and
+  keeps the fresh estimate beside an override (`estimate`) for the ↺. A hand
+  edit in the form tags the row `override` (`cdSetMaterial`). Contractor
+  quotes and dockets go in `calibration`, apart from estimates — the dataset
+  a later "fit rates from history" job reads.
+- **Pre-fill is templates, not generation** (`cdPrefill`, pure): one journey
+  per key stream group with the council's eight touchpoints, destinations
+  picked from the seeded facilities (licence numbers null until verified
+  against the EPA register — renderers print *EPL TBC*; a `tbc` facility is
+  marked), a missing street is a `[street]` placeholder; risks from the
+  Terrigal rows as templates. Council profile (`cdCouncilProfile`: target,
+  recovery factor, tick rule, renderers) by council-name match, NSW default
+  otherwise.
+- **One node list feeds both renderers.** `cdAppendixNodes` (pure) builds the
+  appendix as doc-model nodes — general information, declarations, the
+  materials table with a total row and the diversion sentence, recycling,
+  the journey table, risks, the ticked site-plan items; the preview renders
+  them and `cdNodesXml` turns them into the master's own styles
+  (`ProWaste-Heading3`, `ProWaste-Table`, captions). `cdTplAppendixE` (pure)
+  replaces the master's Appendix E body under its own "Construction and
+  demolition waste" `ProWaste-Appendices` heading (matched with tags and
+  spaces stripped — Word splits the words across runs) up to the next
+  appendix heading or the section end; no heading → not placed, export note.
+  Not built yet: the council fillable-PDF field map (the Central Coast form's
+  page-3/page-9 grids are quantity · reuse · recycled separated · recycled
+  unseparated · landfill · diverted, matched by row y; the tick column is the
+  under-10 m³ rule), stage layers, and the tonnage view (densities are in the
+  seed).
 
 ## Council requirements list (C3, revised 2026-09-15)
 

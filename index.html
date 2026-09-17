@@ -16020,6 +16020,7 @@ async function loadProjectsFromDB() {
         volumes: ad.volumes || prev.volumes,
         pdf_name: ad.pdf_name || prev.pdf_name,
         check: ad.check || prev.check || null,
+        stages: ad.stages || prev.stages || null,
       };
       if (ad.ws) {
         try {
@@ -16057,6 +16058,7 @@ async function saveProjectToDB(project) {
       volumes: project.volumes || null,
       pdf_name: project.pdf_name || null,
       check: project.check || null,   // compliance result carried through signup (anonymous entry)
+      stages: project.stages || null, // C&D stage records (site_prep / construction) — server-authoritative
       ws: (() => { try { return JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) { return null; } })(),
     },
     updated_at: new Date().toISOString(),
@@ -31225,6 +31227,7 @@ async function openWmpGenerator() {
   const p = getProjects().find(x => x.id === currentProjectId);
   if (!p) { alert('Open a project first.'); return; }
   WMPG.projectId = p.id;
+  WMPG.cdCache = null;   // the C&D stage records are re-read per open
   WMPG.open = WMPG.open || new Set(['doc','site','rates','rooms','qa']);
   wmpgEnsureModal();
   document.getElementById('wmpg-overlay').style.display = 'flex';
@@ -31462,6 +31465,387 @@ function wmpgSiteFigCard(d) {
       </div>
     </div></div>`;
 }
+// ── SITE PREPARATION & CONSTRUCTION STAGES (C&D) — PWC staff only ─────────
+// NSW councils want a Resource & Waste Management Plan covering three stages;
+// the app did occupancy only. Two canonical StageRecords live on the project
+// (p.stages.site_prep / p.stages.construction, server-authoritative through
+// app_data). A parametric estimator pre-fills the materials table from inputs
+// staff already hold; every figure carries its basis and its source
+// (estimate · override · contractor), and an override survives re-estimation.
+// Rates are a VERSIONED JSON seed (#cd-rates-seed), never constants in code —
+// the version stamps every estimate. Renderers read the record: the preview
+// and the .docx appendix here (step 1), the council fillable-PDF field map
+// later. tests/cd-stages.test.js reproduces the Terrigal fixture (658PW).
+function cdRates() {
+  if (!cdRates._v) { try { cdRates._v = JSON.parse(document.getElementById('cd-rates-seed').textContent); } catch (e) { cdRates._v = null; } }
+  return cdRates._v;
+}
+function cdMaterials(rates) { return ((rates || cdRates() || {}).materials || []).map(([key, label]) => ({ key, label })); }
+function cdMaterialLabel(key, rates) { const m = cdMaterials(rates).find(x => x.key === key); return m ? m.label : key; }
+function cdCouncilProfile(council, rates) {
+  const R = rates || cdRates() || {}; const profs = R.council_profiles || {};
+  const name = String(council || '').toLowerCase();
+  const hit = Object.entries(profs).find(([k, v]) => k !== 'default' && v.match && name.includes(v.match));
+  return Object.assign({ id: hit ? hit[0] : 'default' }, hit ? hit[1] : (profs.default || { name: 'Default', diversionTarget: 80, unseparatedFactor: 0.8, tickUnder10: true, renderers: ['docx'] }));
+}
+function cdEmptyMaterial(key) { return { key, under10m3: false, qty_m3: null, reuse_m3: 0, recycleSeparated_m3: 0, recycleUnseparated_m3: 0, landfill_m3: 0, source: 'estimate', basis: '', note: '' }; }
+function cdEmptyStage(stage) {
+  return { stage, description: '', contractor: { name: '', contact: '', website: '' }, workersComp: { insurer: '', policy: '', limit: '' },
+    asbestos: { present: 'tbc', qty_m3: null, removalist: '', facility: '' }, hazardous: { transporter: '', facility: '' },
+    facilities: { generalWaste: '', resourceRecovery: [] }, declarations: { asbestosWHS: false, hazardousPOEO: false },
+    inputs: stage === 'site_prep' ? { gfa_m2: null, storeys: 1, yearBuilt: null, wall: 'brick_veneer', roof: 'tile', floor: 'slab', paving_m2: null, roof_m2: null, trees: { small: 0, medium: 0, large: 0 }, ancillary: { septic: false, shed: false, pool: false }, excavation_m3: null }
+                                   : { gfa_m2: null, storeys: null, structure: 'rc_masonry', fitout: 'full', prefab: false },
+    materials: [], recycling: [], journeys: [], risks: [], sitePlanChecklist: {}, estimatedWith: null, calibration: { contractorQuote: [], dockets: [] } };
+}
+function cdRound(v) { return v > 0 && v < 1 ? 1 : Math.round(v); }
+// Pure: allocate a quantity across reuse / recycling / landfill per the rates' split table.
+function cdSplit(key, qty, rates, stage, extra) {
+  const sp = ((rates[stage] || {}).split || {})[key] || { landfill: 1 };
+  const out = { reuse_m3: 0, recycleSeparated_m3: 0, recycleUnseparated_m3: 0, landfill_m3: 0 };
+  if (key === 'excavation') { const r = cdRound(qty * (extra && extra.retained != null ? extra.retained : 0)); out.reuse_m3 = r; out.recycleSeparated_m3 = Math.max(0, qty - r); return out; }
+  Object.entries(sp).forEach(([k, f]) => { if (typeof f === 'number') out[k + '_m3'] = cdRound(qty * f); });
+  return out;
+}
+// Pure: the site-preparation take-off. Every row names its rule.
+function cdEstimateSitePrep(inp, rates) {
+  const R = rates.site_prep, gfa = +inp.gfa_m2 || 0, storeys = Math.max(1, +inp.storeys || 1), footprint = gfa / storeys;
+  const rows = [], est = (key, qty, basis, extra) => rows.push(Object.assign({ key, raw: qty, basis }, extra || {}));
+  const paving = +inp.paving_m2 || 0, anc = inp.ancillary || {};
+  const ancN = ['septic', 'shed', 'pool'].filter(k => anc[k]).length;
+  if (inp.floor === 'slab' || paving || ancN) est('concrete', (inp.floor === 'slab' ? footprint * R.concrete.slab_m3_per_m2_footprint : 0) + paving * R.concrete.paving_m3_per_m2 + ancN * R.concrete.ancillary_m3,
+    `${inp.floor === 'slab' ? 'slab ' + footprint.toFixed(0) + ' m² × ' + R.concrete.slab_m3_per_m2_footprint : 'no slab'}${paving ? ' + paving ' + paving + ' m² × ' + R.concrete.paving_m3_per_m2 : ''}${ancN ? ' + ' + ancN + ' ancillary × ' + R.concrete.ancillary_m3 + ' m³' : ''}`);
+  const bk = R.bricks_m3_per_m2_gfa[inp.wall] || 0;
+  if (gfa && bk) est('bricks', gfa * bk, `GFA ${gfa} m² × ${bk} (${inp.wall})`);
+  if (gfa) est('timber_clean', gfa * R.timber_clean_m3_per_m2_gfa + 0, `GFA ${gfa} m² × ${R.timber_clean_m3_per_m2_gfa} (frame${inp.floor === 'timber' ? ' + timber floor' : ''})`);
+  const roof = +inp.roof_m2 || footprint * R.roof_area_factor;
+  if (inp.roof === 'tile' && roof) est('tiles', roof * R.tiles_m3_per_m2_roof, `roof ${roof.toFixed(0)} m² × ${R.tiles_m3_per_m2_roof} (tile roof)`);
+  const pre = inp.yearBuilt && +inp.yearBuilt < R.asbestos_year_before;
+  if (gfa && !pre) est('plasterboard', gfa * R.plasterboard_m3_per_m2_gfa, `GFA ${gfa} m² × ${R.plasterboard_m3_per_m2_gfa} (post-${R.asbestos_year_before} linings)`);
+  if (gfa) est('metals_ferrous', gfa * R.metals_ferrous_m3_per_m2_gfa, `GFA ${gfa} m² × ${R.metals_ferrous_m3_per_m2_gfa}`);
+  const t = inp.trees || {}, tv = ['small', 'medium', 'large'].reduce((a, k) => a + (+t[k] || 0) * R.garden_m3_per_tree[k], 0), tn = ['small', 'medium', 'large'].reduce((a, k) => a + (+t[k] || 0), 0);
+  if (tn) est('garden', tv, `${tn} tree${tn === 1 ? '' : 's'} (${['small', 'medium', 'large'].filter(k => +t[k]).map(k => t[k] + ' ' + k + ' × ' + R.garden_m3_per_tree[k]).join(', ')})`);
+  if (gfa) est('mixed', gfa * R.mixed_m3_per_m2_gfa, `GFA ${gfa} m² × ${R.mixed_m3_per_m2_gfa} (mixed C&D)`);
+  if (gfa) est('residual', gfa * R.residual_m3_per_m2_gfa, `GFA ${gfa} m² × ${R.residual_m3_per_m2_gfa}`);
+  const exc = +inp.excavation_m3 || 0;
+  if (exc) est('excavation', exc, `as entered; ${R.excavation_retained_fraction * 100}% retained on site`, { retained: R.excavation_retained_fraction });
+  return cdFinish(rows, rates, 'site_prep', { asbestosTbc: !!pre, yearBuilt: inp.yearBuilt, before: R.asbestos_year_before });
+}
+// Pure: the construction take-off (m³ per 100 m² GFA by structure).
+function cdEstimateConstruction(inp, rates) {
+  const R = rates.construction, gfa = +inp.gfa_m2 || 0;
+  const prof = R.m3_per_100m2_gfa[inp.structure] || R.m3_per_100m2_gfa.rc_masonry;
+  const rows = [];
+  Object.entries(prof).forEach(([key, rate]) => {
+    let q = gfa / 100 * rate, basis = `GFA ${gfa} m² ÷ 100 × ${rate} (${inp.structure || 'rc_masonry'})`;
+    if (inp.fitout === 'shell' && R.shell_fitout_factor[key] != null) { q *= R.shell_fitout_factor[key]; basis += ` × ${R.shell_fitout_factor[key]} shell only`; }
+    if (inp.prefab) { q *= R.prefab_factor; basis += ` × ${R.prefab_factor} prefab`; }
+    if (gfa) rows.push({ key, raw: q, basis });
+  });
+  return cdFinish(rows, rates, 'construction', {});
+}
+// Pure: quantify or tick. A stream at or above the threshold (or one the
+// council always wants a figure for) gets a rounded quantity and its split;
+// every other listed material is present-but-minor → the council's
+// "under 10 m³" tick with no figure, except Other. Asbestos on a pre-1990
+// building is TBC pending the survey — never a guessed volume.
+function cdFinish(rows, rates, stage, ctx) {
+  const thr = rates.quantifyThreshold_m3 || 10, always = (rates[stage] || {}).always_quantify || [];
+  const byKey = {};
+  rows.forEach(r => { byKey[r.key] = r; });
+  return cdMaterials(rates).map(m => {
+    const row = cdEmptyMaterial(m.key), e = byKey[m.key];
+    row.source = 'estimate'; row.rates = rates.version;
+    if (m.key === 'asbestos' && stage === 'site_prep' && ctx.asbestosTbc) { row.note = 'TBC (survey)'; row.basis = `built ${ctx.yearBuilt} (pre-${ctx.before}) — hazardous materials survey before demolition`; row.under10m3 = false; return row; }
+    if (e && (cdRound(e.raw) >= thr || always.includes(m.key))) {   // on the rounded figure: 9.9 m³ of formwork is the 10 the form shows
+      row.qty_m3 = cdRound(e.raw); row.basis = e.basis + ` = ${e.raw.toFixed(1)} → ${row.qty_m3} m³`;
+      Object.assign(row, cdSplit(m.key, row.qty_m3, rates, stage, e));
+      return row;
+    }
+    if (e) row.basis = e.basis + ` = ${e.raw.toFixed(1)} m³ < ${thr} → tick only`;
+    row.under10m3 = m.key !== 'other';
+    return row;
+  });
+}
+function cdDiverted(row, profile) {
+  if (row.qty_m3 == null) return 0;
+  return cdRound((+row.reuse_m3 || 0) + (+row.recycleSeparated_m3 || 0) + (+row.recycleUnseparated_m3 || 0) * (profile && profile.unseparatedFactor != null ? profile.unseparatedFactor : 0.8));
+}
+function cdDiversionPct(rows, profile) {
+  const q = (rows || []).filter(r => r.qty_m3 != null);
+  const gen = q.reduce((a, r) => a + (+r.qty_m3 || 0), 0), div = q.reduce((a, r) => a + cdDiverted(r, profile), 0);
+  return gen > 0 ? Math.round(div / gen * 100) : null;
+}
+// Pure: merge a fresh estimate over the record — an override or a contractor
+// figure is never overwritten; only estimate rows move.
+function cdApplyEstimate(rec, rows, rates) {
+  const keep = {}; (rec.materials || []).forEach(r => { if (r.source === 'override' || r.source === 'contractor') keep[r.key] = r; });
+  rec.materials = rows.map(r => keep[r.key] ? Object.assign({}, keep[r.key], { estimate: { qty_m3: r.qty_m3, basis: r.basis } }) : r);
+  rec.estimatedWith = { version: rates.version, at: new Date().toISOString() };
+  return rec;
+}
+// Templates: a journey per key stream, the touchpoints as the council names them.
+const CD_JOURNEY_TEMPLATES = {
+  site_prep: {
+    excavation: { generation: 'Bulk excavation for the basement', capture: 'Excavated by excavator directly to trucks; balance stockpiled on site', transfer: 'Excavator/loader within site; no manual handling', consolidation: 'Stockpile within the site boundary, covered and battered', onsiteReuse: '{retained} m³ reused for backfill and landscaping', collectionPoint: 'Loaded directly to tipper trucks at the excavation face', vehicleAccess: 'Tipper trucks (up to 19 t) via {street}; forward entry and exit', offsite: '{facility}' },
+    masonry: { generation: 'Demolition of slab, walls, paving and roof', capture: 'Broken down by excavator; loaded to a dedicated concrete/masonry skip', transfer: 'Excavator; skip within site boundary', consolidation: 'Skip at site frontage, clear of footpath and trees', onsiteReuse: 'Not applicable', collectionPoint: 'Skip collected in place — no transfer', vehicleAccess: 'Hook-lift truck via {street}; forward entry and exit', offsite: '{facility}' },
+    garden: { generation: 'Removal of trees and vegetation', capture: 'Trees chipped on site or loaded to a green waste skip', transfer: 'Excavator/manual to skip within site', consolidation: 'Green waste skip at site frontage', onsiteReuse: 'Chip may be reused as site mulch (TBC)', collectionPoint: 'Skip collected in place', vehicleAccess: 'Hook-lift truck via {street}; forward entry and exit', offsite: '{facility}' },
+  },
+  construction: {
+    timber_clean: { generation: 'Formwork and framing offcuts', capture: 'Trade capture bins/stillages at each work front', transfer: 'Wheelbarrow or hand carry to skip', consolidation: 'Dedicated timber skip in the site compound at the frontage', onsiteReuse: 'Formwork reused across pours; offcuts reused where practical', collectionPoint: 'Not applicable — skip collected in place', vehicleAccess: 'Hook-lift truck via {street}; forward entry and exit', offsite: '{facility}' },
+    plasterboard: { generation: 'Lining offcuts during fit-out', capture: 'Trade capture bin on each level', transfer: 'Hand carry / hoist to skip', consolidation: 'Dedicated plasterboard skip in the site compound', onsiteReuse: 'Offcuts used for noggings/patches where practical', collectionPoint: 'Not applicable — skip collected in place', vehicleAccess: 'Hook-lift truck via {street}', offsite: '{facility}' },
+    mixed: { generation: 'Packaging, strapping and mixed offcuts', capture: 'Separate recycling and residual capture bins at each level', transfer: 'Hand carry / hoist to skips', consolidation: 'Mixed recycling skip and general waste skip in the site compound', onsiteReuse: 'Not applicable', collectionPoint: 'Not applicable — skips collected in place', vehicleAccess: 'Hook-lift truck via {street}', offsite: '{facility}' },
+  },
+};
+const CD_RISK_TEMPLATES = {
+  site_prep: [
+    ['Generation / capture', 'Possible asbestos-containing material in the existing building', 'Airborne fibre exposure to workers and neighbours', 'Pre-demolition hazardous materials survey; licensed removalist; air monitoring; clearance certificate', 'Low'],
+    ['Generation / capture', 'Dust, noise and vibration from demolition and excavation', 'Amenity impact on adjoining properties', 'Water suppression; work within Council hours; hoarding/screening', 'Low'],
+    ['Consolidation area', 'Skips and stockpiles at the site frontage', 'Materials falling from skips; slip/trip; obstruction of footpath', 'Skips within the site boundary on a level pad, not overfilled, covered', 'Low'],
+    ['Collection vehicle access', 'Tipper and hook-lift trucks entering and leaving the site', 'Vehicle–pedestrian conflict; reversing; damage to retained trees', 'Traffic control/spotter; forward entry and exit; tree protection', 'Low'],
+    ['Excavation / onsite reuse', 'Excavated material stockpile', 'Sediment runoff to stormwater; stockpile collapse', 'Sediment fencing; stockpile covered and battered; reuse or removal without delay', 'Low'],
+    ['Offsite destination', 'Contaminated or unclassified fill sent to a recycler', 'Unlawful disposal; EPA penalties', 'Waste classification per NSW EPA guidelines before removal; dockets retained', 'Low'],
+  ],
+  construction: [
+    ['Capture / internal transfer', 'Manual handling of offcuts and bins between levels', 'Musculoskeletal injury', 'Wheelbarrows and hoist/crane for bulk transfer; trade bins sized for two-person lifts', 'Low'],
+    ['Consolidation area', 'Multiple skips in a compact site compound', 'Contamination of recycling streams; trip hazards', 'Clearly signed, colour-coded skips; site induction covers separation', 'Low'],
+    ['Consolidation area', 'Wind-blown packaging and dust', 'Litter to neighbours and street; stormwater pollution', 'Covered/lidded skips; daily site clean; sediment and litter controls', 'Low'],
+    ['Collection vehicle access', 'Hook-lift truck servicing skips from the street', 'Vehicle–pedestrian conflict; noise to neighbours', 'Servicing within Council construction hours; spotter; forward entry and exit', 'Low'],
+    ['Generation', 'Hazardous materials (paints, solvents, adhesives)', 'Spill; incorrect disposal', 'Bunded storage; licensed hazardous waste contractor; tracked disposal', 'Low'],
+  ],
+};
+function cdFacilitiesFor(key, region, rates) { return ((rates || cdRates() || {}).facilities || []).filter(f => (!region || f.region === region) && (f.streams || []).includes(key)); }
+function cdFacilityName(f) { return f ? `${f.name}, ${f.address}${f.status === 'tbc' ? ' (status TBC)' : ''}` : ''; }
+// Pure: the pre-filled journeys, recycling rows and risks for a record.
+function cdPrefill(rec, ctx, rates) {
+  const R = rates || cdRates(); const st = rec.stage; const region = ctx.region || 'central_coast';
+  const fill = (t, key) => String(t || '').replace('{street}', ctx.street || '[street]').replace('{retained}', String((rec.materials.find(m => m.key === 'excavation') || {}).reuse_m3 || '[retained]')).replace('{facility}', cdFacilityName(cdFacilitiesFor(key, region, R)[0]) || '[facility]');
+  const quantified = rec.materials.filter(m => m.qty_m3 != null);
+  const tmpl = CD_JOURNEY_TEMPLATES[st] || {};
+  const journeys = [];
+  if (st === 'site_prep') {
+    if (quantified.some(m => m.key === 'excavation')) journeys.push({ stream: 'Excavation material', keys: ['excavation'], ...Object.fromEntries(Object.entries(tmpl.excavation).map(([k, v]) => [k, fill(v, 'excavation')])) });
+    const mas = quantified.filter(m => ['concrete', 'bricks', 'tiles'].includes(m.key)); if (mas.length) journeys.push({ stream: mas.map(m => cdMaterialLabel(m.key, R)).join(', '), keys: mas.map(m => m.key), ...Object.fromEntries(Object.entries(tmpl.masonry).map(([k, v]) => [k, fill(v, 'concrete')])) });
+    const grn = quantified.filter(m => ['garden', 'timber_clean'].includes(m.key)); if (grn.length) journeys.push({ stream: grn.map(m => cdMaterialLabel(m.key, R)).join(' & '), keys: grn.map(m => m.key), ...Object.fromEntries(Object.entries(tmpl.garden).map(([k, v]) => [k, fill(v, 'garden')])) });
+  } else {
+    ['timber_clean', 'plasterboard'].forEach(k => { if (quantified.some(m => m.key === k)) journeys.push({ stream: cdMaterialLabel(k, R), keys: [k], ...Object.fromEntries(Object.entries(tmpl[k]).map(([a, v]) => [a, fill(v, k)])) }); });
+    const mr = quantified.filter(m => ['mixed', 'residual'].includes(m.key)); if (mr.length) journeys.push({ stream: 'Mixed recycling (packaging) & residual', keys: mr.map(m => m.key), ...Object.fromEntries(Object.entries(tmpl.mixed).map(([a, v]) => [a, fill(v, 'mixed')])) });
+  }
+  journeys.forEach(j => { const q = j.keys.reduce((a, k) => a + ((rec.materials.find(m => m.key === k) || {}).qty_m3 || 0), 0); j.qty = q ? 'Approx. ' + q + ' m³' : ''; const rows = rec.materials.filter(m => j.keys.includes(m.key)); j.diversion = (cdDiversionPct(rows, ctx.profile) != null ? cdDiversionPct(rows, ctx.profile) + '%' : ''); });
+  const recycling = quantified.filter(m => cdDiverted(m, ctx.profile) > 0).map(m => { const f = cdFacilitiesFor(m.key, region, R)[0]; return { material: cdMaterialLabel(m.key, R), recycler: f ? cdFacilityName(f) : (m.key.startsWith('metals') ? 'Licensed scrap metal recycler engaged by the contractor' : '[recycler]'), market: f && f.notes ? f.notes : '' }; });
+  const risks = (CD_RISK_TEMPLATES[st] || []).map(r => ({ touchpoint: r[0], hazard: r[1], risk: r[2], controls: r[3], residual: r[4] }));
+  return { journeys, recycling, risks };
+}
+// The project's stage records (server-authoritative via app_data.stages).
+// getProjects() parses localStorage afresh on every call, so the generator
+// keeps ONE project object for the session and persists its stages back.
+function cdProject() {
+  try {
+    if (WMPG.cdCache && WMPG.cdCache.id === WMPG.projectId) return WMPG.cdCache;
+    WMPG.cdCache = getProjects().find(x => x.id === WMPG.projectId) || null;
+    return WMPG.cdCache;
+  } catch (e) { return null; }
+}
+function cdStages(p) { p = p || cdProject(); return (p && p.stages) || null; }
+function cdStage(stage) { const p = cdProject(); if (!p) return null; p.stages = p.stages || {}; if (!p.stages[stage]) p.stages[stage] = cdEmptyStage(stage); return p.stages[stage]; }
+function cdPersist() {
+  clearTimeout(cdPersist._t);
+  cdPersist._t = setTimeout(() => {
+    try {
+      const projects = getProjects(); const p = projects.find(x => x.id === WMPG.projectId); if (!p || !WMPG.cdCache) return;
+      p.stages = WMPG.cdCache.stages || null;   // only the stages — nothing else on the project is this form's to write
+      saveProjects(projects);
+      if (typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(p);
+    } catch (e) {}
+  }, 600);
+}
+function cdSet(stage, path, val) {
+  const rec = cdStage(stage); if (!rec) return;
+  const parts = path.split('.'); let o = rec;
+  for (let i = 0; i < parts.length - 1; i++) { if (o[parts[i]] == null) o[parts[i]] = {}; o = o[parts[i]]; }
+  o[parts[parts.length - 1]] = val;
+  cdPersist(); wmpgQueuePreview();
+}
+function cdSetMaterial(stage, key, field, val) {
+  const rec = cdStage(stage); if (!rec) return;
+  let m = rec.materials.find(x => x.key === key); if (!m) { m = cdEmptyMaterial(key); rec.materials.push(m); }
+  if (field === 'under10m3') m.under10m3 = !!val;
+  else if (field === 'note') m.note = val;
+  else { const n = val === '' ? null : +val; m[field] = field === 'qty_m3' ? (isFinite(n) ? n : null) : (isFinite(n) ? n : 0); }
+  if (field !== 'note') { if (m.source === 'estimate') m.estimate = m.estimate || { qty_m3: m.qty_m3, basis: m.basis }; m.source = 'override'; }
+  cdPersist(); cdRefreshComputed(stage); wmpgQueuePreview();
+}
+function cdResetMaterial(stage, key) {
+  const rec = cdStage(stage); if (!rec) return;
+  const i = rec.materials.findIndex(x => x.key === key); if (i < 0) return;
+  const rows = stage === 'site_prep' ? cdEstimateSitePrep(rec.inputs, cdRates()) : cdEstimateConstruction(rec.inputs, cdRates());
+  rec.materials[i] = rows.find(r => r.key === key) || cdEmptyMaterial(key);
+  cdPersist(); wmpgRenderForm(); wmpgQueuePreview();
+}
+function cdEstimate(stage) {
+  const rec = cdStage(stage), R = cdRates(); if (!rec || !R) { wmpgFlash('C&D rates seed missing — cannot estimate.', true); return; }
+  const rows = stage === 'site_prep' ? cdEstimateSitePrep(rec.inputs, R) : cdEstimateConstruction(rec.inputs, R);
+  cdApplyEstimate(rec, rows, R);
+  const kept = rec.materials.filter(m => m.source !== 'estimate').length;
+  cdPersist(); wmpgRenderForm(); wmpgQueuePreview();
+  wmpgFlash(`${stage === 'site_prep' ? 'Site preparation' : 'Construction'} estimated with ${R.version}${kept ? ' — ' + kept + ' overridden row' + (kept === 1 ? '' : 's') + ' kept' : ''}. Every figure shows its rule under “show the maths”.`);
+}
+function cdDoPrefill(stage) {
+  const rec = cdStage(stage); if (!rec) return;
+  const d = WMPG.data || {}; const r0 = (d.rooms || [])[0] || {};
+  const pre = cdPrefill(rec, { street: (r0.collection && r0.collection.street) || '', profile: cdCouncilProfile(d.council), region: cdCouncilProfile(d.council).id === 'default' ? null : cdCouncilProfile(d.council).id }, cdRates());
+  if (!rec.journeys.length) rec.journeys = pre.journeys; if (!rec.recycling.length) rec.recycling = pre.recycling; if (!rec.risks.length) rec.risks = pre.risks;
+  cdPersist(); wmpgRenderForm(); wmpgQueuePreview();
+  wmpgFlash('Journeys, recycling details and risks pre-filled from the templates — edit freely; a [bracketed] slot is a fact still to fill.');
+}
+function cdRefreshComputed(stage) {
+  const rec = cdStage(stage); const prof = cdCouncilProfile((WMPG.data || {}).council);
+  (rec.materials || []).forEach(m => { const el = document.getElementById(`cd-div-${stage}-${m.key}`); if (el) el.textContent = m.qty_m3 == null ? '' : String(cdDiverted(m, prof)); const s = document.getElementById(`cd-src-${stage}-${m.key}`); if (s) s.textContent = m.source; });
+  const t = document.getElementById(`cd-pct-${stage}`); if (t) t.textContent = cdPctWords(rec, prof);
+}
+function cdPctWords(rec, prof) { const pct = cdDiversionPct(rec.materials, prof); return pct == null ? 'no quantified streams yet' : `${pct}% diverted (target ${prof.diversionTarget}%${pct >= prof.diversionTarget ? ' ✓' : ' — short'})`; }
+function cdStageLabel(stage) { return stage === 'site_prep' ? 'Site preparation' : 'Construction'; }
+// The staff form: plain inputs, keyboard-fast, and a "show the maths" panel.
+function cdSectionHtml(d) {
+  if (!wmpgIsStaff()) return '';
+  const p = cdProject(); if (!p) return '';
+  const R = cdRates(); if (!R) return '<div class="wmpg-note wmpg-warn">C&D rates seed missing.</div>';
+  const prof = cdCouncilProfile(d.council, R);
+  const stages = p.stages || {};
+  const on = st => !!stages[st];
+  const inp = (st, path, val, ph, type) => `<input data-cd="${st}.${path}" type="${type || 'text'}" value="${wmpgEsc(val == null ? '' : val)}" placeholder="${wmpgEsc(ph || '')}" ${type === 'number' ? 'step="any" min="0"' : ''} onchange="cdSet('${st}','${path}',${type === 'number' ? "this.value===''?null:+this.value" : 'this.value'})">`;
+  const sel = (st, path, val, opts) => `<select onchange="cdSet('${st}','${path}',this.value)">${opts.map(o => `<option value="${o[0]}" ${o[0] === val ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`;
+  const chk = (st, path, val, label) => `<label class="wmpg-chk" style="margin:0 10px 0 0;"><input type="checkbox" ${val ? 'checked' : ''} onchange="cdSet('${st}','${path}',this.checked)"> ${label}</label>`;
+  const stageBlock = st => {
+    if (!on(st)) return `<div class="wmpg-f"><label>${cdStageLabel(st)}</label><button class="wmpg-addrow" style="margin:0;" onclick="cdStage('${st}');cdPersist();wmpgRenderForm();">＋ Add ${cdStageLabel(st).toLowerCase()} stage</button></div>`;
+    const rec = stages[st], I = rec.inputs || {};
+    const inputs = st === 'site_prep' ? `
+      <div class="wmpg-grid3">
+        <div class="wmpg-f"><label>Existing GFA (m²)</label>${inp(st, 'inputs.gfa_m2', I.gfa_m2, '150', 'number')}</div>
+        <div class="wmpg-f"><label>Storeys</label>${inp(st, 'inputs.storeys', I.storeys, '1', 'number')}</div>
+        <div class="wmpg-f"><label>Year built</label>${inp(st, 'inputs.yearBuilt', I.yearBuilt, 'pre-1990 → asbestos TBC', 'number')}</div>
+        <div class="wmpg-f"><label>Walls</label>${sel(st, 'inputs.wall', I.wall, [['brick_veneer', 'Brick veneer'], ['full_brick', 'Full brick'], ['clad', 'Clad frame']])}</div>
+        <div class="wmpg-f"><label>Roof</label>${sel(st, 'inputs.roof', I.roof, [['tile', 'Tile'], ['metal', 'Metal']])}</div>
+        <div class="wmpg-f"><label>Floor</label>${sel(st, 'inputs.floor', I.floor, [['slab', 'Slab'], ['timber', 'Timber']])}</div>
+        <div class="wmpg-f"><label>Driveway + paths (m²)</label>${inp(st, 'inputs.paving_m2', I.paving_m2, '60', 'number')}</div>
+        <div class="wmpg-f"><label>Roof area (m²)</label>${inp(st, 'inputs.roof_m2', I.roof_m2, 'blank = footprint × ' + R.site_prep.roof_area_factor, 'number')}</div>
+        <div class="wmpg-f"><label>Excavation (m³)</label>${inp(st, 'inputs.excavation_m3', I.excavation_m3, 'basement footprint × depth', 'number')}</div>
+        <div class="wmpg-f"><label>Trees — small</label>${inp(st, 'inputs.trees.small', (I.trees || {}).small, '0', 'number')}</div>
+        <div class="wmpg-f"><label>Trees — medium</label>${inp(st, 'inputs.trees.medium', (I.trees || {}).medium, '0', 'number')}</div>
+        <div class="wmpg-f"><label>Trees — large</label>${inp(st, 'inputs.trees.large', (I.trees || {}).large, '0', 'number')}</div>
+      </div>
+      <div class="wmpg-f"><label>Ancillary structures</label>${chk(st, 'inputs.ancillary.septic', (I.ancillary || {}).septic, 'septic')}${chk(st, 'inputs.ancillary.shed', (I.ancillary || {}).shed, 'shed')}${chk(st, 'inputs.ancillary.pool', (I.ancillary || {}).pool, 'pool')}</div>`
+    : `
+      <div class="wmpg-grid3">
+        <div class="wmpg-f"><label>New GFA (m²)</label>${inp(st, 'inputs.gfa_m2', I.gfa_m2, '450', 'number')}</div>
+        <div class="wmpg-f"><label>Storeys</label>${inp(st, 'inputs.storeys', I.storeys, '3', 'number')}</div>
+        <div class="wmpg-f"><label>Structure</label>${sel(st, 'inputs.structure', I.structure, [['rc_masonry', 'RC frame / masonry'], ['lightweight', 'Lightweight'], ['timber_frame', 'Timber frame'], ['clt', 'CLT']])}</div>
+        <div class="wmpg-f"><label>Fit-out</label>${sel(st, 'inputs.fitout', I.fitout, [['full', 'Full'], ['shell', 'Shell only']])}</div>
+        <div class="wmpg-f" style="padding-top:22px;">${chk(st, 'inputs.prefab', I.prefab, 'prefabricated elements')}</div>
+      </div>`;
+    const matRows = cdMaterials(R).map(m => {
+      const r = rec.materials.find(x => x.key === m.key) || cdEmptyMaterial(m.key);
+      const num = f => `<input data-cd="${st}.materials.${m.key}.${f}" type="number" step="any" min="0" value="${r[f] == null ? '' : r[f]}" style="width:58px;" onchange="cdSetMaterial('${st}','${m.key}','${f}',this.value)">`;
+      return `<tr>
+        <td style="white-space:nowrap;color:#E7EFEF;">${m.label}${r.note ? `<div style="font-size:10px;color:#EFB080;">${wmpgEsc(r.note)}</div>` : ''}</td>
+        <td><input type="checkbox" ${r.under10m3 ? 'checked' : ''} title="Present, under ${R.quantifyThreshold_m3} m³ — the council’s tick-only rule" onchange="cdSetMaterial('${st}','${m.key}','under10m3',this.checked)"></td>
+        <td>${num('qty_m3')}</td><td>${num('reuse_m3')}</td><td>${num('recycleSeparated_m3')}</td><td>${num('recycleUnseparated_m3')}</td><td>${num('landfill_m3')}</td>
+        <td id="cd-div-${st}-${m.key}" style="font-weight:700;">${r.qty_m3 == null ? '' : cdDiverted(r, prof)}</td>
+        <td><span id="cd-src-${st}-${m.key}" class="wmpg-pill ${r.source === 'estimate' ? '' : 'warn'}" title="${wmpgEsc(r.basis || '')}">${r.source}</span>${r.source !== 'estimate' && r.estimate ? ` <button class="wmpg-x" title="Back to the estimate (${wmpgEsc(r.estimate.basis || '')})" onclick="cdResetMaterial('${st}','${m.key}')">↺</button>` : ''}</td></tr>`;
+    }).join('');
+    const maths = rec.materials.filter(r => r.basis).map(r => `<div><b>${cdMaterialLabel(r.key, R)}</b>: ${wmpgEsc(r.basis)}${r.source !== 'estimate' ? ' <span style="color:#EFB080;">(overridden)</span>' : ''}</div>`).join('') || '<div>No estimate yet.</div>';
+    const fac = (key) => cdFacilitiesFor(key, prof.id === 'default' ? null : prof.id, R);
+    const facSel = (path, val, keys) => { const list = [...new Set(keys.flatMap(k => fac(k)))]; return `<select onchange="cdSet('${st}','${path}',this.value)"><option value="">— pick a facility —</option>${list.map(f => `<option value="${wmpgEsc(f.name)}" ${f.name === val ? 'selected' : ''}>${wmpgEsc(f.name)} — ${wmpgEsc(f.address)}${f.status === 'tbc' ? ' (TBC)' : ''}${f.licenceNo ? '' : ' · EPL TBC'}</option>`).join('')}</select>`; };
+    const tp = R.touchpoints;
+    const journeys = rec.journeys.length ? `<table class="wmpg-t"><thead><tr><th>Stream</th><th>Qty</th>${tp.map(t => `<th>${t[1]}</th>`).join('')}<th>Diversion</th></tr></thead><tbody>${rec.journeys.map((j, i) => `<tr><td><input value="${wmpgEsc(j.stream)}" onchange="cdSet('${st}','journeys.${i}.stream',this.value)"></td><td><input value="${wmpgEsc(j.qty || '')}" style="width:80px;" onchange="cdSet('${st}','journeys.${i}.qty',this.value)"></td>${tp.map(t => `<td><textarea rows="2" style="min-width:120px;" onchange="cdSet('${st}','journeys.${i}.${t[0]}',this.value)">${wmpgEsc(j[t[0]] || '')}</textarea></td>`).join('')}<td><input value="${wmpgEsc(j.diversion || '')}" style="width:60px;" onchange="cdSet('${st}','journeys.${i}.diversion',this.value)"></td></tr>`).join('')}</tbody></table>` : '<div class="wmpg-note">No journeys yet — estimate, then ✚ Pre-fill.</div>';
+    const risks = rec.risks.length ? `<table class="wmpg-t"><thead><tr><th>Touchpoint</th><th>Hazard</th><th>Risk</th><th>Controls</th><th>Residual</th><th></th></tr></thead><tbody>${rec.risks.map((r, i) => `<tr>${['touchpoint', 'hazard', 'risk', 'controls', 'residual'].map(k => `<td><textarea rows="2" onchange="cdSet('${st}','risks.${i}.${k}',this.value)">${wmpgEsc(r[k] || '')}</textarea></td>`).join('')}<td><button class="wmpg-x" onclick="cdStage('${st}').risks.splice(${i},1);cdPersist();wmpgRenderForm();">✕</button></td></tr>`).join('')}</tbody></table>` : '';
+    const recyc = rec.recycling.length ? `<table class="wmpg-t"><thead><tr><th>Material</th><th>Recycler / facility</th><th>End market</th><th></th></tr></thead><tbody>${rec.recycling.map((r, i) => `<tr>${['material', 'recycler', 'market'].map(k => `<td><input value="${wmpgEsc(r[k] || '')}" onchange="cdSet('${st}','recycling.${i}.${k}',this.value)"></td>`).join('')}<td><button class="wmpg-x" onclick="cdStage('${st}').recycling.splice(${i},1);cdPersist();wmpgRenderForm();">✕</button></td></tr>`).join('')}</tbody></table>` : '';
+    return `<details class="wmpg-room" open><summary><span>${cdStageLabel(st)} <span class="wmpg-pill">${cdPctWords(rec, prof)}</span>${rec.estimatedWith ? ` <span class="wmpg-pill" style="text-transform:none;">${wmpgEsc(rec.estimatedWith.version)}</span>` : ''}</span></summary><div style="padding:0 10px 10px;">
+      ${inputs}
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0;">
+        <button class="wmpg-addrow" style="margin:0;" onclick="cdEstimate('${st}')">▶ Estimate materials</button>
+        <button class="wmpg-addrow" style="margin:0;" onclick="cdDoPrefill('${st}')">✚ Pre-fill journeys, recycling &amp; risks</button>
+        <details style="display:inline-block;"><summary style="cursor:pointer;font-size:12px;color:#4FC3C3;">show the maths</summary><div style="font-size:11.5px;color:#A9BDBD;padding:6px 0;">${maths}</div></details>
+        <button class="wmpg-addrow" style="margin:0 0 0 auto;color:#EF8080;" onclick="if(confirm('Remove the ${cdStageLabel(st).toLowerCase()} stage from this project?')){delete cdProject().stages['${st}'];cdPersist();wmpgRenderForm();wmpgQueuePreview();}">✕ Remove stage</button>
+      </div>
+      <div class="wmpg-f"><label>Materials (m³) <span class="wmpg-pill" style="text-transform:none;">tick = present, under ${R.quantifyThreshold_m3} m³ · diverted = reuse + separated + unseparated × ${prof.unseparatedFactor}</span></label></div>
+      <table class="wmpg-t"><thead><tr><th>Material</th><th>&lt;${R.quantifyThreshold_m3}</th><th>Qty</th><th>Reuse</th><th>Recycled sep.</th><th>Recycled unsep.</th><th>Landfill</th><th>Diverted</th><th>Source</th></tr></thead><tbody>${matRows}</tbody></table>
+      <div class="wmpg-note" id="cd-pct-${st}">${cdPctWords(rec, prof)}</div>
+      <div class="wmpg-grid2">
+        <div class="wmpg-f"><label>Description of works</label><textarea rows="2" onchange="cdSet('${st}','description',this.value)">${wmpgEsc(rec.description)}</textarea></div>
+        <div class="wmpg-f"><label>Contractor (name · contact · website)</label>${inp(st, 'contractor.name', rec.contractor.name, 'TBC prior to lodgement')}${inp(st, 'contractor.contact', rec.contractor.contact, 'contact')}${inp(st, 'contractor.website', rec.contractor.website, 'website')}</div>
+        <div class="wmpg-f"><label>Workers compensation (insurer · policy · limit)</label>${inp(st, 'workersComp.insurer', rec.workersComp.insurer, 'TBC by contractor')}${inp(st, 'workersComp.policy', rec.workersComp.policy, 'policy no.')}${inp(st, 'workersComp.limit', rec.workersComp.limit, 'limit')}</div>
+        ${st === 'site_prep' ? `<div class="wmpg-f"><label>Asbestos</label>${sel(st, 'asbestos.present', rec.asbestos.present, [['tbc', 'TBC — survey'], ['yes', 'Present'], ['no', 'Not present']])}${inp(st, 'asbestos.removalist', rec.asbestos.removalist, 'licensed removalist')}${facSel('asbestos.facility', rec.asbestos.facility, ['asbestos'])}</div>` : ''}
+        <div class="wmpg-f"><label>Hazardous waste (transporter · facility)</label>${inp(st, 'hazardous.transporter', rec.hazardous.transporter, 'licensed transporter')}${facSel('hazardous.facility', rec.hazardous.facility, ['hazardous', 'asbestos'])}</div>
+        <div class="wmpg-f"><label>General waste facility</label>${facSel('facilities.generalWaste', rec.facilities.generalWaste, ['residual'])}</div>
+        <div class="wmpg-f"><label>Resource recovery facilities (one per line)</label><textarea rows="3" onchange="cdSet('${st}','facilities.resourceRecovery',this.value.split('\\n').map(x=>x.trim()).filter(Boolean))">${wmpgEsc((rec.facilities.resourceRecovery || []).join('\n'))}</textarea><div class="wmpg-note" style="margin:2px 0 0;">${fac('concrete').concat(fac('mixed'), fac('plasterboard'), fac('garden')).filter((f, i, a) => a.indexOf(f) === i).map(f => wmpgEsc(f.name)).join(' · ')}</div></div>
+      </div>
+      <div class="wmpg-f"><label>Declarations</label>${chk(st, 'declarations.asbestosWHS', rec.declarations.asbestosWHS, 'asbestos per WHS Regulation 2022')}${chk(st, 'declarations.hazardousPOEO', rec.declarations.hazardousPOEO, 'hazardous waste tracked per POEO Act')}</div>
+      <div class="wmpg-f"><label>Site plan checklist</label>${(R.sitePlanChecklist || []).map((item, i) => chk(st, 'sitePlanChecklist.' + i, (rec.sitePlanChecklist || {})[i], item)).join('<br>')}</div>
+      <div class="wmpg-f"><label>Recycling details</label>${recyc}</div>
+      <div class="wmpg-f"><label>Touchpoint journeys</label>${journeys}</div>
+      <div class="wmpg-f"><label>Risk assessment</label>${risks}<button class="wmpg-addrow" onclick="cdStage('${st}').risks.push({touchpoint:'',hazard:'',risk:'',controls:'',residual:'Low'});cdPersist();wmpgRenderForm();">＋ Risk</button></div>
+    </div></details>`;
+  };
+  return `<details class="wmpg-sec" id="s-cd" ${wmpgSecOpen('cd')} ontoggle="wmpgToggleSec('cd',this)">
+    <summary>Site preparation &amp; construction (C&amp;D) <span class="wmpg-pill">PWC staff</span></summary><div class="wmpg-sec-in">
+    <div class="wmpg-note">Council profile: <b>${wmpgEsc(prof.name)}</b> — diversion target ${prof.diversionTarget}%, renderers ${prof.renderers.join(' + ')}. Rates ${wmpgEsc(R.version)}. Stage records are saved on the project and print as the C&amp;D appendix.</div>
+    ${stageBlock('site_prep')}${stageBlock('construction')}
+  </div></details>`;
+}
+// Pure: the appendix as doc-model nodes — one source for the preview and the .docx.
+function cdAppendixNodes(stages, opts) {
+  const R = opts.rates, prof = opts.profile, M = [];
+  const order = ['site_prep', 'construction'].filter(s => stages && stages[s]);
+  if (!order.length) return M;
+  M.push({ k: 'h1', t: 'Appendix E — Construction and demolition waste' });
+  M.push({ k: 'p', t: `The following tables set out the Resource and Waste Management Plan for the ${order.map(cdStageLabel).map(x => x.toLowerCase()).join(' and ')} stage${order.length > 1 ? 's' : ''}, in the form ${prof.name} requires: general information, declarations, materials generation with diversion from landfill, recycling details, the touchpoint journey per key stream, and the risk assessment. Estimated volumes are take-offs (${R.version}); each carries its basis and is superseded by contractor quantities as they are confirmed.` });
+  order.forEach(st => {
+    const rec = stages[st];
+    M.push({ k: 'h3', t: cdStageLabel(st) + ' stage' });
+    const gi = [['Description of works', rec.description || '[description]'], ['Contractor', [rec.contractor.name, rec.contractor.contact, rec.contractor.website].filter(Boolean).join(' · ') || 'TBC prior to lodgement'], ['Workers compensation', [rec.workersComp.insurer, rec.workersComp.policy, rec.workersComp.limit].filter(Boolean).join(' · ') || 'TBC by contractor']];
+    if (st === 'site_prep') gi.push(['Asbestos', rec.asbestos.present === 'no' ? 'Not present' : (rec.asbestos.present === 'yes' ? 'Present' + (rec.asbestos.qty_m3 ? ', approx. ' + rec.asbestos.qty_m3 + ' m³' : '') : 'Quantity TBC — hazardous materials survey before demolition') + (rec.asbestos.removalist ? '; removalist ' + rec.asbestos.removalist : '') + (rec.asbestos.facility ? '; to ' + rec.asbestos.facility : '')]);
+    gi.push(['Hazardous waste', [rec.hazardous.transporter && 'transporter ' + rec.hazardous.transporter, rec.hazardous.facility && 'to ' + rec.hazardous.facility].filter(Boolean).join('; ') || 'Classified per NSW EPA guidelines; licensed transporter and facility TBC']);
+    gi.push(['General waste facility', rec.facilities.generalWaste || '[facility]'], ['Resource recovery', (rec.facilities.resourceRecovery || []).join('; ') || '[facilities]']);
+    M.push({ k: 'caption', t: `${cdStageLabel(st)} — general information` });
+    M.push({ k: 'table', widths: [30, 70], header: ['Item', 'Detail'], rows: gi });
+    M.push({ k: 'p', t: `Declarations: asbestos managed under the WHS Regulation 2022 — ${rec.declarations.asbestosWHS ? 'declared' : 'NOT declared'}; hazardous waste managed and tracked under the POEO Act — ${rec.declarations.hazardousPOEO ? 'declared' : 'NOT declared'}.` });
+    const rows = (rec.materials || []).filter(m => m.qty_m3 != null || m.under10m3 || m.note);
+    const tot = { q: 0, r: 0, s: 0, u: 0, l: 0, d: 0 };
+    M.push({ k: 'caption', t: `${cdStageLabel(st)} — materials and waste generation (m³)` });
+    M.push({ k: 'table', widths: [26, 7, 10, 11, 12, 12, 10, 12], header: ['Material', '<' + R.quantifyThreshold_m3 + ' m³', 'Volume', 'Reuse on site', 'Recycled (separated)', 'Recycled (unseparated)', 'Landfill', 'Diverted'],
+      rows: rows.map(m => { const dv = cdDiverted(m, prof); if (m.qty_m3 != null) { tot.q += +m.qty_m3; tot.r += +m.reuse_m3 || 0; tot.s += +m.recycleSeparated_m3 || 0; tot.u += +m.recycleUnseparated_m3 || 0; tot.l += +m.landfill_m3 || 0; tot.d += dv; }
+        return [cdMaterialLabel(m.key, R) + (m.source === 'contractor' ? ' †' : ''), m.under10m3 ? '✓' : '', m.qty_m3 != null ? String(m.qty_m3) : (m.note || ''), ...(m.qty_m3 != null ? [String(m.reuse_m3 || 0), String(m.recycleSeparated_m3 || 0), String(m.recycleUnseparated_m3 || 0), String(m.landfill_m3 || 0), String(dv)] : ['', '', '', '', ''])]; }),
+      total: ['Total', '', String(tot.q), String(tot.r), String(tot.s), String(tot.u), String(tot.l), String(tot.d)] });
+    const pct = cdDiversionPct(rec.materials, prof);
+    M.push({ k: 'p', t: pct == null ? 'No quantified streams.' : `Diversion from landfill: ${pct}% of quantified volume (${tot.d} of ${tot.q} m³) against ${prof.name}’s ${prof.diversionTarget}% target${pct >= prof.diversionTarget ? '.' : ' — below target; see recycling details.'} Unseparated recycling is counted at ${Math.round(prof.unseparatedFactor * 100)}% recovery.${rows.some(m => m.source === 'contractor') ? ' † contractor-supplied quantity.' : ''}` });
+    if (rec.recycling.length) { M.push({ k: 'caption', t: `${cdStageLabel(st)} — recycling details` }); M.push({ k: 'table', header: ['Material', 'Recycler / facility', 'End market'], rows: rec.recycling.map(r => [r.material || '', r.recycler || '', r.market || '']) }); }
+    if (rec.journeys.length) { M.push({ k: 'caption', t: `${cdStageLabel(st)} — system overview (touchpoint journey)` }); M.push({ k: 'table', header: ['Touchpoint', ...rec.journeys.map(j => j.stream + (j.qty ? ' (' + j.qty + ')' : ''))], rows: R.touchpoints.map(t => [t[1], ...rec.journeys.map(j => j[t[0]] || '')]).concat([['Diversion', ...rec.journeys.map(j => j.diversion || '')]]) }); }
+    if (rec.risks.length) { M.push({ k: 'caption', t: `${cdStageLabel(st)} — risk assessment` }); M.push({ k: 'table', widths: [16, 22, 20, 30, 12], header: ['Touchpoint', 'Hazard', 'Risk', 'Mitigation / control measures', 'Residual risk'], rows: rec.risks.map(r => [r.touchpoint || '', r.hazard || '', r.risk || '', r.controls || '', r.residual || '']) }); }
+    const ticked = (R.sitePlanChecklist || []).filter((x, i) => (rec.sitePlanChecklist || {})[i]);
+    if (ticked.length) { M.push({ k: 'p', t: 'Site plan shows:' }); M.push({ k: 'bullets', items: ticked }); }
+  });
+  return M;
+}
+// Pure: doc-model nodes → template XML through the same helpers the body uses.
+function cdNodesXml(nodes) {
+  return nodes.map(n => n.k === 'h1' ? '' : n.k === 'h3' ? tplP(n.t, WMPG_TPL_STYLE.h3) : n.k === 'p' ? tplP(n.t) : n.k === 'caption' ? tplCaption(n.t) : n.k === 'bullets' ? tplBullets(n.items) : n.k === 'table' ? tplTable(n) : '').join('');
+}
+// Pure: replace the master's Appendix E body (everything after the
+// "Construction and demolition waste" appendix heading up to the next
+// appendix heading or the section end) with the rendered blocks. No heading
+// → not placed, and the export says so; the master is never guessed at.
+function cdTplAppendixE(xml, blocksXml) {
+  const re = /<w:p[ >][\s\S]*?<\/w:p>/g; let m, headEnd = -1, rangeEnd = -1;
+  const norm = t => t.replace(/<[^>]+>/g, '').replace(/\s+/g, '').toLowerCase();
+  while ((m = re.exec(xml))) {
+    const isApp = /<w:pStyle w:val="ProWaste-Appendices"\/>/.test(m[0]);
+    if (headEnd < 0) { if (isApp && norm(m[0]).includes('constructionanddemolitionwaste')) headEnd = m.index + m[0].length; }
+    else if (isApp) { rangeEnd = m.index; break; }
+  }
+  if (headEnd < 0) return { xml, placed: false, note: ' — C&D appendix NOT placed: the master has no "Construction and demolition waste" appendix heading' };
+  if (rangeEnd < 0) { const sp = xml.lastIndexOf('<w:sectPr'); rangeEnd = sp > headEnd ? sp : xml.length; }
+  return { xml: xml.slice(0, headEnd) + blocksXml + xml.slice(rangeEnd), placed: true, note: '' };
+}
 function wmpgTa(label, path, val, rows, ph) {
   return `<div class="wmpg-f"><label>${label}</label><textarea data-path="${path}" rows="${rows||2}" placeholder="${wmpgEsc(ph||'')}"
     oninput="wmpgSet('${path}', this.value)">${wmpgEsc(val)}</textarea></div>`;
@@ -31583,6 +31967,7 @@ function wmpgRenderForm() {
     <button class="wmpg-addrow" onclick="WMPG.data.contractors.push({type:'',company:'',web:'',phone:''});wmpgRenderForm()">＋ Contractor</button>
   </details>
 
+  ${cdSectionHtml(d)}
   <details class="wmpg-sec" id="s-qa" ${wmpgSecOpen('qa')} ontoggle="wmpgToggleSec('qa',this)">
     <summary>Pre-flight check</summary><div class="wmpg-sec-in">
       <div id="wmpg-qa-list"></div>
@@ -32175,8 +32560,9 @@ function wmpgDocModel() {
     : '[Insert bin room layout drawing — export from the Waste Planner layout tool and attach here.]' });
   M.push({ k:'h1', t:'Appendix B — Equipment specifications' });
   M.push({ k:'p', t:'[Insert manufacturer specification sheets for nominated bins, chutes and equipment.]' });
-  M.push({ k:'h1', t:'Appendix C — Construction waste' });
-  M.push({ k:'p', t:'[Insert council construction waste and recycling management plan form, where required.]' });
+  const cdSt = cdStages();
+  if (cdSt && (cdSt.site_prep || cdSt.construction) && cdRates()) cdAppendixNodes(cdSt, { rates: cdRates(), profile: cdCouncilProfile(d.council) }).forEach(n => M.push(n));
+  else { M.push({ k:'h1', t:'Appendix C — Construction waste' }); M.push({ k:'p', t:'[Insert council construction waste and recycling management plan form, where required — or add the site preparation and construction stages in the C&D section to generate it.]' }); }
   return M;
 }
 
@@ -32203,6 +32589,7 @@ function wmpgBuildHtml(forPrint) {
     switch (n.k) {
       case 'h1': return `<h1>${esc(n.t)}</h1>`;
       case 'h2': return `<h2>${esc(n.t)}</h2>`;
+      case 'h3': return `<h3>${esc(n.t)}</h3>`;
       case 'p':  return `<p${n.b?' class="b"':''}>${esc(n.t).replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>')}</p>`;
       case 'kv': return `<p class="kv"><span>${esc(n.t)}</span>${n.v?'<br>'+esc(n.v):''}</p>`;
       case 'caption': return `<p class="cap">${esc(n.t)}</p>`;
@@ -32254,6 +32641,7 @@ function wmpgBuildHtml(forPrint) {
   figure.fig{margin:14px 0 18px;}figure.fig img{display:block;width:100%;height:auto;border:1px solid #d9e2e2;}figure.fig figcaption{font-size:9.5pt;color:#3a3a3a;margin-top:6px;font-weight:700;}figure.fig figcaption i{font-weight:400;color:#6a7a7a;}
   h1{color:${teal};font-size:16.5pt;font-weight:800;margin:26px 0 8px;page-break-after:avoid;}
   h2{color:${teal};font-size:12.5pt;font-weight:800;margin:18px 0 6px;page-break-after:avoid;}
+  h3{color:${teal};font-size:11pt;font-weight:800;margin:14px 0 4px;page-break-after:avoid;}
   p{margin:6px 0;}
   p.b{font-weight:700;}
   p.kv span{color:${teal};font-weight:700;font-size:10pt;}
@@ -32680,11 +33068,14 @@ function tplTable(n) {
   // w:tblGrid is REQUIRED by the schema — Word refuses the file without it
   // (LibreOffice silently infers it, which is how this once slipped through).
   const nCols = n.header.length;
-  const colW = Math.floor(9800 / nCols);
-  x += '<w:tblGrid>' + Array.from({length:nCols}, () => '<w:gridCol w:w="' + colW + '"/>').join('') + '</w:tblGrid>';
-  x += '<w:tr><w:trPr><w:tblHeader/></w:trPr>' + n.header.map(h => tplCell(h, { rpr:'<w:b/>' })).join('') + '</w:tr>';
-  n.rows.forEach(r => { x += '<w:tr>' + r.map(c => tplCell(c)).join('') + '</w:tr>'; });
-  if (hasTotal) x += '<w:tr>' + n.total.map(c => tplCell(c, { style: WMPG_TPL_STYLE.totalRow })).join('') + '</w:tr>';
+  // optional n.widths: percent per column (sums to 100) — a wide table with a
+  // text column and many figures reads badly on equal columns
+  const pct = Array.isArray(n.widths) && n.widths.length === nCols ? n.widths : Array.from({length:nCols}, () => 100 / nCols);
+  x += '<w:tblGrid>' + pct.map(w => '<w:gridCol w:w="' + Math.floor(9800 * w / 100) + '"/>').join('') + '</w:tblGrid>';
+  const cw = i => Array.isArray(n.widths) ? { w: Math.round(pct[i] * 50) } : {};
+  x += '<w:tr><w:trPr><w:tblHeader/></w:trPr>' + n.header.map((h, i) => tplCell(h, { rpr:'<w:b/>', ...cw(i) })).join('') + '</w:tr>';
+  n.rows.forEach(r => { x += '<w:tr>' + r.map((c, i) => tplCell(c, cw(i))).join('') + '</w:tr>'; });
+  if (hasTotal) x += '<w:tr>' + n.total.map((c, i) => tplCell(c, { style: WMPG_TPL_STYLE.totalRow, ...cw(i) })).join('') + '</w:tr>';
   return x + '</w:tbl>';
 }
 
@@ -33777,6 +34168,12 @@ async function wmpgBuildTemplateBlob(buf) {
     const r = wmpgTplSiteFigure(xml, { rId: 'rIdWmpSiteFig', wEmu: textW, hEmu: Math.round(textW * fh / fw), source: wpSiteFigSourceLine(d.siteFigure), descr: d.siteFigure.kind === 'upload' ? d.siteFigure.name : 'Site location figure' });
     xml = r.xml; if (r.note) WMPG.exportNote = (WMPG.exportNote || '') + r.note;
   }
+  // Appendix E: the C&D stage records, when the project carries any.
+  const cdSt = cdStages();
+  if (cdSt && (cdSt.site_prep || cdSt.construction) && cdRates()) {
+    const r = cdTplAppendixE(xml, cdNodesXml(cdAppendixNodes(cdSt, { rates: cdRates(), profile: cdCouncilProfile(d.council) })));
+    xml = r.xml; if (r.note) WMPG.exportNote = (WMPG.exportNote || '') + r.note;
+  }
   zip.file('word/document.xml', xml);
   const ctFile = zip.file('[Content_Types].xml');
   if (ctFile) zip.file('[Content_Types].xml', wmpgTplEnsureContentType(wmpgTplEnsureContentType(wmpgTplFixContentTypes(await ctFile.async('string')), 'jpeg', 'image/jpeg'), 'png', 'image/png'));
@@ -34542,6 +34939,7 @@ async function pkgBuild() {
 
 </script>
 
+<script type="application/json" id="cd-rates-seed">{"version":"cd-rates-v1 (2026-09-17)","source":"WastePlanner brief — Site Preparation & Construction stages §5 initial priors, calibrated against 12 Maroomba Rd Terrigal (658PW, Central Coast Council). Lightweight / timber-frame / CLT construction profiles are extrapolations of the RC/masonry priors (plasterboard + packaging heavier), not measured — replace from calibration data.","materials":[["asbestos","Asbestos"],["bricks","Bricks"],["concrete","Concrete"],["ceiling_tiles","Ceiling tiles"],["ewaste","Electronic waste"],["excavation","Excavation material"],["floor_coverings","Floor coverings"],["fixtures","Fixtures & fittings"],["garden","Garden organics & trees"],["glass","Glass"],["hazardous","Hazardous waste"],["metals_ferrous","Metals (ferrous)"],["metals_nonferrous","Metals (non-ferrous)"],["mixed","Mixed recycling"],["plasterboard","Plasterboard"],["residual","Residual waste"],["timber_clean","Timber (clean)"],["tiles","Tiles"],["timber_treated","Timber (treated)"],["other","Other"]],"quantifyThreshold_m3":10,"density_kg_m3":{"bricks":800,"concrete":800,"timber_clean":200,"metals_ferrous":140},"site_prep":{"concrete":{"slab_m3_per_m2_footprint":0.1,"paving_m3_per_m2":0.12,"ancillary_m3":3},"bricks_m3_per_m2_gfa":{"brick_veneer":0.08,"full_brick":0.15,"clad":0.02},"timber_clean_m3_per_m2_gfa":0.08,"tiles_m3_per_m2_roof":0.06,"roof_area_factor":1.0,"plasterboard_m3_per_m2_gfa":0.05,"metals_ferrous_m3_per_m2_gfa":0.03,"garden_m3_per_tree":{"small":2,"medium":2.5,"large":4},"mixed_m3_per_m2_gfa":0.05,"residual_m3_per_m2_gfa":0.04,"excavation_retained_fraction":0.2,"asbestos_year_before":1990,"always_quantify":["residual","excavation"],"split":{"concrete":{"recycleSeparated":1},"bricks":{"recycleSeparated":1},"tiles":{"recycleSeparated":1},"timber_clean":{"recycleSeparated":1},"plasterboard":{"recycleSeparated":1},"metals_ferrous":{"recycleSeparated":1},"metals_nonferrous":{"recycleSeparated":1},"garden":{"recycleSeparated":1},"mixed":{"recycleUnseparated":1},"residual":{"landfill":1},"excavation":{"reuse":"retained","recycleSeparated":"rest"},"asbestos":{"landfill":1},"hazardous":{"landfill":1},"glass":{"recycleSeparated":1},"ewaste":{"recycleSeparated":1},"ceiling_tiles":{"landfill":1},"floor_coverings":{"landfill":1},"fixtures":{"recycleUnseparated":1},"timber_treated":{"landfill":1},"other":{"landfill":1}}},"construction":{"m3_per_100m2_gfa":{"rc_masonry":{"timber_clean":2.2,"plasterboard":1.3,"concrete":1.1,"metals_ferrous":0.9,"mixed":2.7,"residual":1.3},"lightweight":{"timber_clean":2.6,"plasterboard":1.8,"concrete":0.4,"metals_ferrous":0.8,"mixed":3.2,"residual":1.3},"timber_frame":{"timber_clean":3.0,"plasterboard":1.8,"concrete":0.3,"metals_ferrous":0.5,"mixed":3.2,"residual":1.3},"clt":{"timber_clean":2.4,"plasterboard":1.4,"concrete":0.3,"metals_ferrous":0.6,"mixed":3.0,"residual":1.2}},"shell_fitout_factor":{"plasterboard":0.4,"mixed":0.7,"residual":0.8},"prefab_factor":0.75,"always_quantify":["timber_clean","plasterboard","concrete","metals_ferrous","mixed","residual"],"split":{"concrete":{"recycleSeparated":1},"bricks":{"recycleSeparated":1},"tiles":{"recycleSeparated":1},"timber_clean":{"recycleSeparated":1},"plasterboard":{"recycleSeparated":1},"metals_ferrous":{"recycleSeparated":1},"metals_nonferrous":{"recycleSeparated":1},"garden":{"recycleSeparated":1},"mixed":{"recycleUnseparated":1},"residual":{"landfill":1},"excavation":{"reuse":"retained","recycleSeparated":"rest"},"asbestos":{"landfill":1},"hazardous":{"landfill":1},"glass":{"recycleSeparated":1},"ewaste":{"recycleSeparated":1},"ceiling_tiles":{"landfill":1},"floor_coverings":{"landfill":1},"fixtures":{"recycleUnseparated":1},"timber_treated":{"landfill":1},"other":{"landfill":1}}},"council_profiles":{"central_coast":{"name":"Central Coast Council","match":"central coast","diversionTarget":80,"unseparatedFactor":0.8,"tickUnder10":true,"renderers":["docx","pdf"]},"default":{"name":"NSW — EPA better practice","match":"","diversionTarget":80,"unseparatedFactor":0.8,"tickUnder10":true,"renderers":["docx"]}},"facilities":[{"id":"buttonderry","name":"Buttonderry Waste Management Facility","address":"Hue Hue Road, Jilliby NSW","region":"central_coast","streams":["residual","timber_clean","garden","mixed","other"],"licenceNo":null,"phone":"","url":"","notes":"Central Coast Council landfill and resource recovery (Council)","status":"verified"},{"id":"woywoy","name":"Woy Woy Waste Management Facility","address":"Nagari Road, Woy Woy NSW","region":"central_coast","streams":["asbestos","residual","hazardous"],"licenceNo":null,"phone":"","url":"","notes":"Central Coast Council; asbestos accepted (bookings)","status":"verified"},{"id":"rcp_gosford","name":"Recycled Concrete Products","address":"18a Tathra Street, West Gosford NSW","region":"central_coast","streams":["concrete","bricks","tiles","excavation"],"licenceNo":null,"phone":"","url":"recycledconcrete.com.au","notes":"Crushed into recycled aggregate and road base","status":"verified"},{"id":"north_wyong","name":"North Wyong Recycling","address":"North Wyong NSW","region":"central_coast","streams":["mixed","garden","timber_clean","concrete","bricks"],"licenceNo":null,"phone":"","url":"northwyongrecycling.com.au","notes":"Mixed C&D sorting; mulch","status":"verified"},{"id":"kariong_sand","name":"Kariong Sand & Soil Supplies","address":"Somersby NSW","region":"central_coast","streams":["excavation"],"licenceNo":null,"phone":"","url":"","notes":"Recycled fill, sand and soil blends","status":"tbc"},{"id":"iq_renew","name":"IQ Renew MRF","address":"Somersby NSW","region":"central_coast","streams":["mixed","glass"],"licenceNo":null,"phone":"","url":"","notes":"Materials recovery facility (packaging)","status":"verified"},{"id":"regyp","name":"REGYP","address":"Belrose / Mayfield West NSW","region":"central_coast","streams":["plasterboard"],"licenceNo":null,"phone":"","url":"regyp.com.au","notes":"Plasterboard recycling — recycled gypsum","status":"verified"}],"sitePlanChecklist":["Areas to be excavated or cleared","Structures to be demolished","Locations and dimensions of capture and consolidation bins and stockpiles","Travel paths of all materials and waste","Location of any onsite material reuse","Travel path of bins to collection point","Collection point location","Number and total area of bins to be presented at the collection point","Access paths for collection vehicles","Direction of traffic flow for internal access driveways and roads"],"touchpoints":[["generation","Generation"],["capture","Capture"],["transfer","Internal transfer"],["consolidation","Consolidation area"],["onsiteReuse","Onsite reuse"],["collectionPoint","Collection point"],["vehicleAccess","Collection vehicle access"],["offsite","Offsite destination"]]}</script>
 <script type="application/json" id="wmpg-textbank-seed">[{"t":"MEMODESIGN_BP1","g":"Memo design requirements","b":"Separate bin rooms are to be provided for residential and commercial waste.","on":1,"s":"b"},{"t":"MEMODESIGN_BP2","g":"Memo design requirements","b":"Bin storage areas are to incorporate minimum aisle and door widths of {aisle_width_mm}mm to allow for manoeuvrability and bin transfer to the collection point.","on":1,"s":"b"},{"t":"MEMODESIGN_BP3","g":"Memo design requirements","b":"A minimum of {travel_path} clear travel path is to be provided from the bin storage area to the collection point. The path is to be unobstructed by carparks, steps or kerbs.","on":1,"s":"b"},{"t":"MEMODESIGN_BP4","g":"Memo design requirements","b":"Ramps and gradients not exceeding 1:14.","on":1,"s":"b"},{"t":"MEMODESIGN_BP5","g":"Memo design requirements","b":"Bin rooms and external bin enclosures to be screened to avoid unsightly impacts on amenity.","on":1,"s":"b"},{"t":"MEMODESIGN_BP6","g":"Memo design requirements","b":"General waste chutes to not exceed 45 degrees and commingled recycling to not exceed 22.5 degrees from the vertical plane to minimise chute blockages.","on":1,"s":"b"},{"t":"MEMODESIGN_BP7","g":"Memo design requirements","b":"Mechanical or natural ventilation to meet council/building code.","on":1,"s":"b"},{"t":"MEMODESIGN_BP8","g":"Memo design requirements","b":"Ventilation openings to be screened and protected from flies and vermin.","on":1,"s":"b"},{"t":"MEMODESIGN_BP9","g":"Memo design requirements","b":"Bin wash with floor waste graded to drain; connected to sewer with a trap. Where bin washing facilities are located externally, a washdown diversion system is to be installed to ensure that rainwater is diverted to stormwater.","on":1,"s":"b"},{"t":"MEMODESIGN_BP10","g":"Memo design requirements","b":"Self-closing, lockable doors to restrict unauthorised access.","on":1,"s":"b"},{"t":"MEMODESIGN_BP11","g":"Memo design requirements","b":"Adequate lighting with automatic sensors preferred.","on":1,"s":"b"},{"t":"MEMOCOLLECTION_BP1","g":"Memo collection and access","b":"Residential waste will be collected by the/a {collector} with a {vehicle}, which requires {route_clearance_m}metres along travel routes and {loading_clearance_m}metres at bin loading areas to allow for overhead lifting operations.","on":1,"s":"b"},{"t":"MEMO_COLLECTION_BP3","g":"Memo collection and access","b":"Commercial waste will be collected by the/a {collector} with a {vehicle}, which requires {route_clearance_m}metres along travel routes and {loading_clearance_m}metres at bin loading areas to allow for overhead lifting operations.","on":1,"s":"b","c":"commercial"},{"t":"MEMO_COLLECTION_BP5","g":"Memo collection and access","b":"A swept path analysis will be/has been prepared to confirm the waste collection vehicle can access and service the site.","on":1,"s":"b"},{"t":"SUMMARY_SITEADDRESS","g":"Waste management plan","b":"","on":1,"s":"p"},{"t":"SUMMARY_DEVELOPMENTTYPE","g":"Waste management plan","b":"","on":1,"s":"p"},{"t":"SUMMARY_COUNCIL","g":"Waste management plan","b":"","on":1,"s":"p"},{"t":"SUMMARY_COMPLIANCE_STATE","g":"Waste management plan","b":"No guideline found","on":1,"s":"b"},{"t":"SUMMARY_COMPLIANCE_COUNCIL","g":"Waste management plan","b":"No guideline found","on":1,"s":"b"},{"t":"SUMMARY_COLLECTION_RESI","g":"Waste management plan","b":"Waste will be collected from the {collection_point} by {collector} with a{vehicle}, which will access the site via XXX./stop on the kerbside of xxx.","on":1,"s":"b"},{"t":"SUMMARY_COLLECTION_COMM","g":"Waste management plan","b":"Waste will be collected from the {collection_point} by {collector} with a{vehicle}, which will access the site via XXX./stop on the kerbside of xxx.","on":1,"s":"b","c":"commercial"},{"t":"INTRO","g":"1. Introduction","b":"This Waste Management Plan (WMP) has been prepared for {client} by Pro Waste Consultants to support a {application_type} for the proposed development at {address} and address the waste management requirements of {council}.","on":1,"s":"p"},{"t":"INTRO_1","g":"1. Introduction","b":"The purpose of this WMP is to outline the strategy for the separation, handling, storage and collection of solid waste and recyclables generated by the development during {phase}.","on":1,"s":"p"},{"t":"INTRO_2","g":"1. Introduction","b":"This WMP also documents the waste management measures relied upon for Green Star Buildings Credit 05 (Responsible Resource Management).","on":1,"s":"p","c":"greenstar"},{"t":"SCOPE_INTRO","g":"1.1 Scope","b":"The scope of this WMP includes:","on":1,"s":"p"},{"t":"SCOPE_BP1","g":"1.1 Scope","b":"Management of solid waste and recyclables generated during the operational phase of the development","on":1,"s":"b"},{"t":"SCOPE_BP2","g":"1.1 Scope","b":"Construction and demolition (C&D) waste.","on":0,"s":"b"},{"t":"SCOPE_BP3","g":"1.1 Scope","b":"Green Star compliance","on":0,"s":"p"},{"t":"SCOPE_OUTRO","g":"1.1 Scope","b":"The following are outside the scope of this document:","on":1,"s":"b"},{"t":"SCOPE_BP4","g":"1.1 Scope","b":"Construction and demolition (C&D) waste.","on":1,"s":"b"},{"t":"SCOPE_BP5","g":"1.1 Scope","b":"Green Star compliance","on":1,"s":"p"},{"t":"SCOPE_BP6","g":"1.1 Scope","b":"Public realm waste management (e.g. street bins and council services).","on":1,"s":"b"},{"t":"SCOPE_BP7","g":"1.1 Scope","b":"Litter management plan","on":1,"s":"b"},{"t":"SCOPE_BP8","g":"1.1 Scope","b":"Post-collection processing once waste is removed from site.","on":1,"s":"b"},{"t":"SCOPE_BP9","g":"1.1 Scope","b":"Hazardous or regulated waste streams.","on":1,"s":"b"},{"t":"SCOPE_BP10","g":"1.1 Scope","b":"Clinical waste","on":1,"s":"b"},{"t":"SCOPE_BP11","g":"1.1 Scope","b":"Liquid waste streams (e.g. sewerage greywater, grease trap waste) ,which are managed under separate trade waste or plumbing arrangements.","on":1,"s":"b"},{"t":"SCOPE_BP12","g":"1.1 Scope","b":"Garden and landscaping waste; which is typically taken off site to be managed by external contractors.","on":1,"s":"b"},{"t":"CONTEXT_INTRO","g":"1.2 Site context","b":"The subject site is located at {address} within the {council} municipality.","on":1,"s":"p"},{"t":"CONTEXT_BP1","g":"1.2 Site context","b":"The surrounding land uses include xxx","on":1,"s":"p"},{"t":"CONTEXT_BP2","g":"1.2 Site context","b":"Waste collection access is proposed via xxx which provides direct vehicle access to the on-site bin storage areas.","on":1,"s":"p"},{"t":"CONTEXT_BP3","g":"1.2 Site context","b":"The site has xxx which have been considered in the design of the waste management system.","on":1,"s":"p"},{"t":"BACKGROUND_INTRO","g":"1.3 Background","b":"This site is the subject of Planning Permit No.{da_ref}.","on":0,"s":"p"},{"t":"BACKGROUND_BP1","g":"1.3 Background","b":"The site previously accommodated a {previous_use}.","on":1,"s":"p"},{"t":"BACKGROUND_BP2","g":"1.3 Background","b":"The development is now proposed as a {dev_type}.","on":1,"s":"p"},{"t":"BACKGROUND_BP3","g":"1.3 Background","b":"Key design drivers/issues/existing waste arrangements influencing the waste strategy include xxx","on":1,"s":"p"},{"t":"GUIDELINES_BP1","g":"1.5 Relevant guidelines and standards","b":"Australian Government (2018). National Waste Policy. Less Waste, More Resources.","on":1,"s":"b"},{"t":"GUIDELINES_BP2","g":"1.5 Relevant guidelines and standards","b":"Standards Australia. AS 4123 – Mobile Waste Containers.","on":1,"s":"b"},{"t":"GUIDELINES_BP3","g":"1.5 Relevant guidelines and standards","b":"Standards Australia. AS 1668.2 – Mechanical Ventilation in Buildings.","on":1,"s":"b"},{"t":"GUIDELINES_BP4","g":"1.5 Relevant guidelines and standards","b":"Standards Australia. AS 2890.2 – Parking Facilities: Off-Street Commercial Vehicle Facilities.","on":1,"s":"b"},{"t":"GUIDELINES_BP5","g":"1.5 Relevant guidelines and standards","b":"Standards Australia. AS 1319 – Safety Signs for the Occupational Environment.","on":1,"s":"b"},{"t":"GUIDELINES_BP6","g":"1.5 Relevant guidelines and standards","b":"No guideline found","on":1,"s":"b"},{"t":"GUIDELINES_BP7","g":"1.5 Relevant guidelines and standards","b":"No guideline found","on":1,"s":"b"},{"t":"GUIDELINES_BP8","g":"1.5 Relevant guidelines and standards","b":"EPA Victoria (2021). Noise Control Guidelines.","on":1,"s":"b"},{"t":"GUIDELINES_BP9","g":"1.5 Relevant guidelines and standards","b":"Green Building Council of Australia. Green Star Buildings Submission Guidelines – Credit 05: Responsible Resource Management","on":1,"s":"b"},{"t":"GUIDELINES_BP10","g":"1.5 Relevant guidelines and standards","b":"No guideline found","on":1,"s":"b"},{"t":"WG_INTRO","g":"2. Waste generation","b":"This section outlines the estimated waste volumes generated by the development.","on":1,"s":"p"},{"t":"WG_RESI_1","g":"2.1 Residential waste volume generation","b":"Residential waste generation rates have been applied with reference to {compliance}. These rates estimate weekly waste volumes generated by dwellings within the development.","on":1,"s":"p"},{"t":"WG_RESI_2","g":"2.1 Residential waste volume generation","b":"Residential waste generation rates have been applied with reference to {compliance}. These rates estimate weekly waste volumes generated by dwellings within the development.","on":0,"s":"p"},{"t":"WG_RESI_3","g":"2.1 Residential waste volume generation","b":"Modifications to the rates reflect separation of {separated_stream}.","on":1,"s":"p"},{"t":"WG_RESI_4","g":"2.1 Residential waste volume generation","b":"All dwellings for the {dev_type} have been allocated to the appropriate waste storage area as per the below tables.","on":1,"s":"p","c":"multiroom"},{"t":"WG_COMM_1","g":"2.2 Commercial waste volume generation","b":"Commercial waste generation rates have been applied with reference to {compliance}.","on":1,"s":"p","c":"commercial"},{"t":"WG_COMM_2","g":"2.2 Commercial waste volume generation","b":"Commercial waste generation rates have been applied with reference to {compliance}.","on":0,"s":"p","c":"commercial"},{"t":"WG_COMM_3","g":"2.2 Commercial waste volume generation","b":"Modifications to the rates reflect separation of {separated_stream}.","on":1,"s":"p","c":"commercial"},{"t":"WG_COMM_4","g":"2.2 Commercial waste volume generation","b":"All rates are expressed in L/100 m²/day, other than hotel (L/bed/week) and education (L/studemt/week) rates.","on":1,"s":"p","c":"commercial"},{"t":"WG_COMM_NOTE1","g":"2.2 Commercial waste volume generation","b":"Clinical waste may be generated by health-related tenancies and must be managed independently by licensed contractors. Volumes of clinical waste are not included in the generation tables.","on":1,"s":"p","c":"commercial"},{"t":"SORT_RESI_ROW_General waste","g":"3.1 Residential waste stream sorting table","b":"General waste","on":1,"s":"p"},{"t":"SORT_RESI_ROW_Organics","g":"3.1 Residential waste stream sorting table","b":"Organics","on":1,"s":"p"},{"t":"SORT_RESI_ROW_Recycling","g":"3.1 Residential waste stream sorting table","b":"Recycling","on":1,"s":"p"},{"t":"SORT_RESI_ROW_Glass","g":"3.1 Residential waste stream sorting table","b":"Glass","on":1,"s":"p"},{"t":"SORT_RESI_ROW_Hard waste","g":"3.1 Residential waste stream sorting table","b":"Hard waste","on":1,"s":"p"},{"t":"SORT_RESI_ROW_E-waste","g":"3.1 Residential waste stream sorting table","b":"E-waste","on":1,"s":"p"},{"t":"OTHERSORT_RESI_NOTES_BP1","g":"3.1 Resi waste other stream sorting text","b":"Garden waste – Managed by external landscape contractors. Where council provides a FOGO service, residents may place garden clippings in the organics bin.","on":1,"s":"b"},{"t":"OTHERSORT_RESI_NOTES_BP2","g":"3.1 Resi waste other stream sorting text","b":"Coffee grounds – Opportunities exist for onsite separation and collection for composting or reuse.","on":1,"s":"b"},{"t":"OTHERSORT_RESI_NOTES_BP3","g":"3.1 Resi waste other stream sorting text","b":"Soft plastics – Can be collected separately if a processor or take-back program is available.","on":1,"s":"b"},{"t":"OTHERSORT_RESI_NOTES_BP4","g":"3.1 Resi waste other stream sorting text","b":"Textiles – Donation bins or third-party recycling services may be provided, subject to building management.","on":1,"s":"b"},{"t":"OTHERSORT_RESI_NOTES_BP5","g":"3.1 Resi waste other stream sorting text","b":"Hazardous waste (e.g. paints, chemicals, batteries) – Not to be placed in building bins. Disposal must follow council/EPA guidance.","on":1,"s":"b"},{"t":"SORT_COMM_ROW_General waste","g":"3.2 Commercial waste stream sorting table","b":"General waste (hotel, retail, bars etc.)","on":1,"s":"p","c":"commercial"},{"t":"SORT_COMM_ROW_Organics","g":"3.2 Commercial waste stream sorting table","b":"Organics (office, restaurant, retail, bars etc.)","on":1,"s":"p","c":"commercial"},{"t":"SORT_COMM_ROW_Recycing","g":"3.2 Commercial waste stream sorting table","b":"Recycling (hotel, retail, bars etc.)","on":1,"s":"p","c":"commercial"},{"t":"SORT_COMM_ROW_Glass","g":"3.2 Commercial waste stream sorting table","b":"Glass (hotel, retail, bars etc.)","on":1,"s":"p","c":"commercial"},{"t":"SORT_COMM_ROW_Cardboard","g":"3.2 Commercial waste stream sorting table","b":"Paper & cardboard (hotel, retail, bars etc.)","on":1,"s":"p","c":"commercial"},{"t":"OTHERSORT_COMM_NOTES_BP1","g":"3.2 Commercial other waste stream sorting text","b":"Clinical waste – Must be segregated at source and stored within the tenancy until collection by a licensed contractor.","on":1,"s":"b","c":"commercial"},{"t":"OTHERSORT_COMM_NOTES_BP2","g":"3.2 Commercial other waste stream sorting text","b":"Coffee grounds – Opportunities exist for onsite separation and collection for composting or reuse.","on":1,"s":"b","c":"commercial"},{"t":"OTHERSORT_COMM_NOTES_BP3","g":"3.2 Commercial other waste stream sorting text","b":"Soft plastics – Can be collected separately if a processor or take-back program is available.","on":1,"s":"b","c":"commercial"},{"t":"OTHERSORT_COMM_NOTES_BP4","g":"3.2 Commercial other waste stream sorting text","b":"Textiles – Donation bins or third-party recycling services may be provided, subject to building management.","on":1,"s":"b","c":"commercial"},{"t":"OTHERSORT_COMM_NOTES_BP5","g":"3.2 Commercial other waste stream sorting text","b":"Hazardous waste (e.g. paints, chemicals, batteries) – Not to be placed in building bins. Disposal must follow council/EPA guidance.","on":1,"s":"b","c":"commercial"},{"t":"CHUTE_INTRO","g":"4.2 Residential chute requirements (if required)","b":"The proposed development is to incorporate the following residential chute requirements:","on":1,"s":"p","c":"chutes"},{"t":"CHUTE_BP1","g":"4.2 Residential chute requirements (if required)","b":"{chute_room} - {chute_type}, discharging at {chute_discharge}","on":1,"s":"b","c":"chutes"},{"t":"CHUTE_BP2","g":"4.2 Residential chute requirements (if required)","b":"{chute_room} - {chute_type}, discharging at {chute_discharge}","on":0,"s":"b","c":"chutes"},{"t":"CHUTE_BP3","g":"4.2 Residential chute requirements (if required)","b":"General waste chutes to not exceed 45 degrees and commingled recycling to not exceed 22.5 degrees from the vertical plane to minimise chute blockages.","on":1,"s":"b","c":"chutes"},{"t":"CHUTE_BP3_2","g":"4.2 Residential chute requirements (if required)","b":"Glass and organics streams are managed separately within bin rooms.","on":1,"s":"b","c":"chutes"},{"t":"CHUTE_BP4","g":"4.2 Residential chute requirements (if required)","b":"Beneath-chute compaction (general waste chute) to reduce waste footprint.","on":1,"s":"b","c":"chutes"},{"t":"CHUTE_BP5","g":"4.2 Residential chute requirements (if required)","b":"Chute access rooms sized and ventilated in accordance with council and Australian Standards.","on":1,"s":"b","c":"chutes"},{"t":"CHUTE_BP6","g":"4.2 Residential chute requirements (if required)","b":"Signage and labelling provided at chute openings to guide correct disposal.","on":1,"s":"p","c":"chutes"},{"t":"CHUTE_BP7","g":"4.2 Residential chute requirements (if required)","b":"Operational management of chutes, including cleaning and maintenance, remains the responsibility of the {manager} and waste contractor.","on":1,"s":"p","c":"chutes"},{"t":"CLINICAL_STORE","g":"Clinical Waste Storage","b":"Clinical waste storage requirements are determined by relevant health authority and EPA guidelines.","on":1,"s":"p","c":"clinical"},{"t":"CLINICAL_STORE_BP1","g":"Clinical Waste Storage","b":"Storage is typically provided within the medical tenancy.","on":0,"s":"p","c":"clinical"},{"t":"CLINICAL_STORE_BP2","g":"Clinical Waste Storage","b":"Secure storage or temperature-controlled areas may be required.","on":0,"s":"p","c":"clinical"},{"t":"BIN_DESIGN_BP1","g":"4.4 Bin storage area design requirements","b":"Direct and unobstructed access for collection vehicles.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP2","g":"4.4 Bin storage area design requirements","b":"Doors wide enough for bin movement (minimum clear width per council standard).","on":1,"s":"b"},{"t":"BIN_DESIGN_BP3","g":"4.4 Bin storage area design requirements","b":"Ramps and gradients not exceeding 1:14.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP4","g":"4.4 Bin storage area design requirements","b":"Compliance with the BCA and relevant Australian Standards.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP5","g":"4.4 Bin storage area design requirements","b":"Adequate aisle width for safe bin manoeuvring.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP6","g":"4.4 Bin storage area design requirements","b":"Bin rooms and external bin enclosures to be screened to avoid unsightly impacts on amenity.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP7","g":"4.4 Bin storage area design requirements","b":"Ventilation openings to be screened and protected from flies and vermin.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP8","g":"4.4 Bin storage area design requirements","b":"Headroom to allow for bin lid opening and equipment.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP9","g":"4.4 Bin storage area design requirements","b":"Mechanical or natural ventilation to meet council/building code.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP10","g":"4.4 Bin storage area design requirements","b":"Adequate lighting with automatic sensors preferred.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP11","g":"4.4 Bin storage area design requirements","b":"Graded floor with slip-resistant finish.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP12","g":"4.4 Bin storage area design requirements","b":"Bin wash with floor waste graded to drain; connected to sewer with a trap. Where bin washing facilities are located externally, a washdown diversion system is to be installed to ensure that rainwater is diverted to stormwater.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP13","g":"4.4 Bin storage area design requirements","b":"Signage indicating bin types and waste stream separation.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP14","g":"4.4 Bin storage area design requirements","b":"Self-closing, lockable doors to restrict unauthorised access.","on":1,"s":"b"},{"t":"BIN_DESIGN_BP15","g":"4.4 Bin storage area design requirements","b":"Fire safety measures as applicable (sprinklers/extinguishers).","on":1,"s":"b"},{"t":"BIN_DESIGN_BP16","g":"4.4 Bin storage area design requirements","b":"Bin colours must comply with council requirements (AS 4123 where unspecified).","on":1,"s":"b"},{"t":"COLLECT_RESI_BP1","g":"5.1 Residential waste collection","b":"Note:","on":1,"s":"h"},{"t":"COLLECT_RESI_BP2","g":"5.1 Residential waste collection","b":"Estimated weekly waste generation of XXX marginally exceeds the calculated service capacity by [XX L]. This variance is considered negligible and can be managed without impacting collection efficiency.","on":1,"s":"p"},{"t":"COLLECT_RESI_BP3","g":"5.1 Residential waste collection","b":"Residential collection process","on":1,"s":"h"},{"t":"COLLECT_RESI_BP4","g":"5.1 Residential waste collection","b":"Bins will be transferred by the {manager} from the {room} to the {collection_point} prior to scheduled collections.","on":1,"s":"p"},{"t":"COLLECT_RESI_BP5","g":"5.1 Residential waste collection","b":"XXX waste will be collected by the/a {collector} with a {vehicle}, which requires {route_clearance_m}metres along travel routes and {loading_clearance_m}metres at bin loading areas to allow for overhead lifting operations.","on":1,"s":"p"},{"t":"COLLECT_RESI_BP6","g":"5.1 Residential waste collection","b":"A minimum of XXX metres clearance has been provided along the travel route, and XXX metres at the loading points. Therefore, no clearance height issues have been identified.","on":1,"s":"p"},{"t":"COLLECT_RESI_BP7","g":"5.1 Residential waste collection","b":"The vehicle will enter the site via xxx / stop on the kerbside of xxx, (custom sentence)","on":1,"s":"p"},{"t":"COLLECT_RESI_BP8","g":"5.1 Residential waste collection","b":"Bins shall be returned immediately after servicing, and not left outside the property.","on":1,"s":"p"},{"t":"COLLECT_RESI_BP9","g":"5.1 Residential waste collection","b":"Safe access and manoeuvring have been confirmed via swept path analysis provided in Appendix B.","on":1,"s":"p"},{"t":"COLLECT_COMM_BP1","g":"5.2 Commercial waste collection","b":"Note:","on":0,"s":"h","c":"commercial"},{"t":"COLLECT_COMM_BP2","g":"5.2 Commercial waste collection","b":"Estimated weekly waste generation of XXX marginally exceeds the calculated service capacity by [XX L]. This variance is considered negligible and can be managed without impacting collection efficiency.","on":0,"s":"p","c":"commercial"},{"t":"COLLECT_COMM_BP3","g":"5.2 Commercial waste collection","b":"Residential collection process","on":1,"s":"h","c":"commercial"},{"t":"COLLECT_COMM_BP4","g":"5.2 Commercial waste collection","b":"Bins will be transferred by the {manager} from the {room} to the {collection_point} prior to scheduled collections.","on":1,"s":"p","c":"commercial"},{"t":"COLLECT_COMM_BP5","g":"5.2 Commercial waste collection","b":"XXX waste will be collected by the/a {collector} with a {vehicle}, which requires {route_clearance_m}metres along travel routes and {loading_clearance_m}metres at bin loading areas to allow for overhead lifting operations.","on":1,"s":"p","c":"commercial"},{"t":"COLLECT_COMM_BP6","g":"5.2 Commercial waste collection","b":"A minimum of XXX metres clearance has been provided along the travel route, and XXX metres at the loading points. Therefore, no clearance height issues have been identified.","on":1,"s":"p","c":"commercial"},{"t":"COLLECT_COMM_BP7","g":"The vehicle will enter the site via xxx / stop on the kerbside of xxx, (custom sentence)","b":"Bins shall be returned immediately after servicing, and not left outside the property.","on":1,"s":"p","c":"commercial"},{"t":"COLLECT_COMM_BP8","g":"The vehicle will enter the site via xxx / stop on the kerbside of xxx, (custom sentence)","b":"Safe access and manoeuvring have been confirmed via swept path analysis provided in Appendix B.","on":1,"s":"p","c":"commercial"},{"t":"COLLECT_COMM_BP9","g":"The vehicle will enter the site via xxx / stop on the kerbside of xxx, (custom sentence)","b":"Clinical waste collection","on":1,"s":"h","c":"commercial"},{"t":"COLLECT_COMM_BP10","g":"The vehicle will enter the site via xxx / stop on the kerbside of xxx, (custom sentence)","b":"Clinical waste collections are undertaken by a licensed contractor directly from the medical tenancy.","on":0,"s":"p","c":"commercial"},{"t":"COLLECT_COMM_BP11","g":"The vehicle will enter the site via xxx / stop on the kerbside of xxx, (custom sentence)","b":"Collection frequency will be determined by the operator in accordance with health regulations.","on":0,"s":"b","c":"commercial"},{"t":"COLLECT_COMM_BP12","g":"The vehicle will enter the site via xxx / stop on the kerbside of xxx, (custom sentence)","b":"Clinical waste is not consolidated within the building’s general waste storage areas.","on":0,"s":"b","c":"commercial"},{"t":"COLL_TIMES_HEADING","g":"Waste collection times","b":"Residental collection times","on":1,"s":"h"},{"t":"COLL_TIMES_INTRO","g":"Waste collection times","b":"Domestic refuse collections should, avoid early-morning disturbance (before 7:00 AM). Therefore, if possible, routes should be selected to provide the least\nimpact on residential areas during that time. Waste collection times should be undertaken in accordance with {collection_times_ref}:","on":1,"s":"p"},{"t":"COLL_TIMES_BP1","g":"Waste collection times","b":"Once-weekly collections: permitted between 6:00 AM – 6:00 PM, Monday to Saturday.","on":1,"s":"b"},{"t":"COLL_TIMES_BP2","g":"Waste collection times","b":"Collections more than once per week: restricted to 7:00 AM – 6:00 PM, Monday to Saturday.","on":1,"s":"b"},{"t":"COLL_TIMES_BP3","g":"Waste collection times","b":"Between xxx and xxx","on":1,"s":"b"},{"t":"COLL_TIMES_BP4","g":"Waste collection times","b":"Further to the above, it is recommended that waste collection is undertaken {time_from} {time_to}","on":1,"s":"b"},{"t":"COLL_TIMES_BP5","g":"Waste collection times","b":"Therefore, waste collection is to be undertaken between {time_from} and {time_to}.","on":1,"s":"b"},{"t":"COLL_TIMES_BP6","g":"Waste collection times","b":"Commercial/Industrial collection times","on":1,"s":"h"},{"t":"COLL_TIMES_BP7","g":"Waste collection times","b":"Early-morning collections should be restricted to non-residential areas to minimise early morning disturbances. Where a residential area is impacted by noise from the collection of\nrefuse, residential-refuse collection times apply. Otherwise, commercial/industrial waste collection times should be undertaken in accordance with {collection_times_ref}:","on":1,"s":"p"},{"t":"COLL_TIMES_BP8","g":"Waste collection times","b":"Once-weekly collections: permitted between 6:30 AM – 8:00 PM, Monday to Saturday and 9:00 AM - 8:00 PM Sunday and public holidays","on":1,"s":"b"},{"t":"COLL_TIMES_BP9","g":"Waste collection times","b":"Collections more than once per week: restricted to 7:00 AM – 8:00 PM, Monday to Saturday and 9:00 AM - 8:00 PM Sunday and public holidays","on":1,"s":"b"},{"t":"COLL_TIMES_BP10","g":"Waste collection times","b":"Between xxx and xxx.","on":1,"s":"b"},{"t":"COLL_TIMES_BP11","g":"Waste collection times","b":"Further to the above, it is recommended that waste collection is undertaken between {time_from} and {time_to}.","on":1,"s":"b"},{"t":"COLL_TIMES_BP12","g":"Waste collection times","b":"Therefore, waste collection is to be undertaken between {time_from} and {time_to}.","on":1,"s":"b"},{"t":"COLL_TIMES_BP13","g":"Waste collection times","b":"General noise-minimisation requirements","on":1,"s":"h"},{"t":"COLL_TIMES_BP14","g":"Waste collection times","b":"Refuse bins should be located at sites that provide minimal annoyance to residential premises","on":1,"s":"b"},{"t":"COLL_TIMES_BP15","g":"Waste collection times","b":"Compaction operations should only occur while the vehicle is moving.","on":1,"s":"b"},{"t":"COLL_TIMES_BP16","g":"Waste collection times","b":"Glass/bottle breaking should not occur at the point of collection.","on":1,"s":"b"},{"t":"COLL_TIMES_BP17","g":"Waste collection times","b":"Routes servicing residential areas should be altered regularly to reduce recurring early-morning disturbance.","on":1,"s":"b"},{"t":"COLL_TIMES_BP18","g":"Waste collection times","b":"Noisy verbal communication between operators should be avoided where possible.","on":1,"s":"b"},{"t":"MGMT_INTRO","g":"6. Management responsibilities","b":"The {manager} will be responsible for coordinating and overseeing the ongoing operation of the waste management system.","on":1,"s":"p"},{"t":"MGMT_BP1","g":"6. Management responsibilities","b":"Ongoing operation of the development’s waste system and equipment,  in accordance with manufacturer specifications.","on":1,"s":"b"},{"t":"MGMT_BP2","g":"6. Management responsibilities","b":"Transferring bins from the storage area to the designated collection point in accordance with collection schedules,  using mechanical aids where appropriate.","on":1,"s":"b"},{"t":"MGMT_BP3","g":"6. Management responsibilities","b":"Ensuring bins are returned to site immediately after servicing.","on":1,"s":"b"},{"t":"MGMT_BP4","g":"6. Management responsibilities","b":"Engaging qualified contractors and allowing site access for required services, collections and maintenance.","on":1,"s":"b"},{"t":"MGMT_BP5","g":"6. Management responsibilities","b":"Ensuring the health and safety of occupants, and contractors in accordance with relevant OH&S legislation and guidelines.","on":1,"s":"b"},{"t":"MGMT_BP6","g":"6. Management responsibilities","b":"Providing clear information to all users on waste system operation, waste stream sorting,  disposal methods and bin room locations.","on":1,"s":"b"},{"t":"MGMT_BP7","g":"6. Management responsibilities","b":"Cleaning (or engaging a contractor to clean) the bin room and bins to ensure cleanliness and prevent odour, disease and vermin attraction.","on":1,"s":"b"},{"t":"MGMT_BP8","g":"6. Management responsibilities","b":"Preventing over-filled bins by keeping bin lids closed and changing full bins beneath chutes (if applicable).","on":1,"s":"b"},{"t":"MGMT_BP9","g":"6. Management responsibilities","b":"Securing the bin storage area and implementing measures to prevent theft and vandalism (e.g. labelling bins).","on":1,"s":"b"},{"t":"MGMT_BP10","g":"6. Management responsibilities","b":"Ensuring system rules are followed (e.g. no bagged recycling, no contamination of bins).","on":1,"s":"b"},{"t":"MGMT_BP11","g":"6. Management responsibilities","b":"Maintaining public areas by scheduling sweeping and litter removal to reduce stormwater pollution.","on":1,"s":"b"},{"t":"MGMT_BP12","g":"6. Management responsibilities","b":"The medical centre operator is responsible for training, EPA compliance, and ensuring licensed clinical waste contractors are used.","on":0,"s":"b"},{"t":"COMM_INTRO","g":"6.2 Waste management communication","b":"The {manager} shall ensure all users receive appropriate guidance on how to use the waste system correctly.","on":1,"s":"p"},{"t":"COMM_BP1","g":"6.2 Waste management communication","b":"Distribution of the WMP and/or a User Guide.","on":1,"s":"b"},{"t":"COMM_BP2","g":"6.2 Waste management communication","b":"Educational material (in coordination with council if applicable) to promote correct separation of waste streams.","on":1,"s":"b"},{"t":"COMM_BP3","g":"6.2 Waste management communication","b":"Ongoing updates when system requirements,  bin locations or collection arrangements change.","on":1,"s":"b"},{"t":"REVIEW_INTRO","g":"6.3 Review and updates of the Waste Management Plan","b":"The WMP should be periodically reviewed to ensure it remains fit-for-purpose. Reviews may be triggered by:","on":1,"s":"p"},{"t":"REVIEW_BP1","g":"6.3 Review and updates of the Waste Management Plan","b":"Changes in legislation or council requirements.","on":1,"s":"b"},{"t":"REVIEW_BP2","g":"6.3 Review and updates of the Waste Management Plan","b":"Alterations to waste system design (bin sizes, quantities, streams, equipment upgrades).","on":1,"s":"b"},{"t":"REVIEW_BP3","g":"6.3 Review and updates of the Waste Management Plan","b":"Adjustments to collection frequency or service providers.","on":1,"s":"b"},{"t":"REVIEW_BP4","g":"6.3 Review and updates of the Waste Management Plan","b":"Emerging operational issues that affect the system.","on":1,"s":"b"},{"t":"REVIEW_BP5","g":"6.3 Review and updates of the Waste Management Plan","b":"Education needs for residents,","on":1,"s":"b"},{"t":"OHS_INTRO","g":"7. Occupational health and safety","b":"The proposed waste management system is to incorporate the following occupational health and safety considerations:","on":1,"s":"p"},{"t":"OHS_BP1","g":"7. Occupational health and safety","b":"Bin lifters provided for 660L and 1100L bins to reduce manual lifting risks.","on":1,"s":"b"},{"t":"OHS_BP2","g":"7. Occupational health and safety","b":"Transfer routes are flat, non-slip, step-free  and less than 30m in length.","on":1,"s":"b"},{"t":"OHS_BP3","g":"7. Occupational health and safety","b":"Gradients do not exceed 1:14 in accordance with accessibility guidelines.","on":1,"s":"b"},{"t":"OHS_BP4","g":"7. Occupational health and safety","b":"Bin rooms include washable floors and adequate mechanical ventilation.","on":1,"s":"b"},{"t":"OHS_BP5","g":"7. Occupational health and safety","b":"Sufficient lighting provided in bin rooms and along transfer routes.","on":1,"s":"b"},{"t":"OHS_BP6","g":"7. Occupational health and safety","b":"Doorways and corridors sized to accommodate bin movement.","on":1,"s":"b"},{"t":"OHS_BP7","g":"7. Occupational health and safety","b":"Vehicle interaction areas separated from pedestrian/bin movements where possible.","on":1,"s":"b"},{"t":"OHS_BP8","g":"7. Occupational health and safety","b":"Dual chutes provided to reduce manual transfer of waste.","on":1,"s":"b"},{"t":"OHS_BP9","g":"7. Occupational health and safety","b":"Compactor provided to minimise double handling of waste.","on":0,"s":"b"},{"t":"OHS_BP10","g":"7. Occupational health and safety","b":"Signage provided to guide residents and contractors on safe waste practices.","on":1,"s":"b"},{"t":"OHS_BP11","g":"7. Occupational health and safety","b":"Contractors must prepare and maintain appropriate SWMS for relevant tasks.","on":1,"s":"b"},{"t":"OHS_NOTE","g":"7. Occupational health and safety","b":"Pro Waste Consultants is not responsible for implementation of OH&S measures. Responsibility rests with the building manager  owners’ corporation or waste contractor.","on":1,"s":"p"}]</script>
 <script>
 /* ── WMP TEXT BANK ──────────────────────────────────────────────────────────
