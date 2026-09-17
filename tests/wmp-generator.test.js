@@ -913,11 +913,11 @@ test('§1.2 site context can be generated: written from the WMP’s facts, guard
 // ── §13 the site figure: public state services, composed here, placed at the master's placeholder ──
 function loadSiteFig() {
   const code = [/^const EMU_PER_TWIP = /, /^function tplEsc\(/, /^function wmpgCoverDateDMY\(/, /^const WP_SITEFIG_PROVIDERS = /, /^const WP_SITEFIG_GEOCODER = /,
-    /^function wpSiteFigProvider\(/, /^function wpSiteFigStates\(/, /^function wpMerc\(/, /^function wpMercLat\(/, /^function wpSiteFigGeocodeUrl\(/, /^function wpSiteFigParseGeocode\(/,
+    /^function wpSiteFigProvider\(/, /^function wpSiteFigStates\(/, /^function wpMerc\(/, /^function wpMercLat\(/, /^function wpSiteFigGeocodeUrl\(/, /^function wpSiteFigParseGeocode\(/, /^function wpSiteFigAddressParts\(/, /^function wpSiteFigGeocodeQueries\(/, /^function wpSiteFigPickGeocode\(/, /^function wpSiteFigParseLotRef\(/, /^function wpSiteFigLotRefQueryUrl\(/,
     /^function wpSiteFigLotQueryUrl\(/, /^function wpSiteFigNeighbourQueryUrl\(/, /^function wpSiteFigParseLots\(/, /^function wpRingsBbox\(/, /^const WP_SITEFIG_ZOOM = /, /^function wpSiteFigFrame\(/,
     /^function wpSiteFigImageUrl\(/, /^function wpSiteFigToPx\(/, /^function wpSiteFigScaleBar\(/, /^function wpSiteFigSourceLine\(/, /^const WMPG_SITEFIG_PLACEHOLDER = /,
     /^function wmpgCoverPictureXml\(/, /^function wmpgTplSiteFigure\(/].map(p => extractBlock(p).text).join('\n\n');
-  return new Function(code + ';return { wpSiteFigProvider, wpSiteFigStates, wpMerc, wpMercLat, wpSiteFigGeocodeUrl, wpSiteFigParseGeocode, wpSiteFigLotQueryUrl, wpSiteFigNeighbourQueryUrl, wpSiteFigParseLots, wpRingsBbox, wpSiteFigFrame, wpSiteFigImageUrl, wpSiteFigToPx, wpSiteFigScaleBar, wpSiteFigSourceLine, wmpgTplSiteFigure, WMPG_SITEFIG_PLACEHOLDER, WP_SITEFIG_PROVIDERS };')();
+  return new Function(code + ';return { wpSiteFigProvider, wpSiteFigStates, wpMerc, wpMercLat, wpSiteFigGeocodeUrl, wpSiteFigParseGeocode, wpSiteFigAddressParts, wpSiteFigGeocodeQueries, wpSiteFigPickGeocode, wpSiteFigParseLotRef, wpSiteFigLotRefQueryUrl, wpSiteFigLotQueryUrl, wpSiteFigNeighbourQueryUrl, wpSiteFigParseLots, wpRingsBbox, wpSiteFigFrame, wpSiteFigImageUrl, wpSiteFigToPx, wpSiteFigScaleBar, wpSiteFigSourceLine, wmpgTplSiteFigure, WMPG_SITEFIG_PLACEHOLDER, WP_SITEFIG_PROVIDERS };')();
 }
 const LOT_JSON = { features: [{ attributes: { lotnumber: '12', sectionnumber: null, planlabel: 'DP 12345' }, geometry: { rings: [[[16860000, -3990000], [16860040, -3990000], [16860040, -3990030], [16860000, -3990030], [16860000, -3990000]]] } },
   { attributes: { lotnumber: '13', planlabel: 'DP 12345' }, geometry: { rings: [] } }] };
@@ -988,12 +988,50 @@ test('site figure: the source line and the .docx placement at the master’s own
   assert.ok(/'png', 'image\/png'/.test(build), 'PNG content type registered');
   const gen = extractBlock(/^async function wmpgSiteFigGenerate\(/).text;
   assert.ok(/if \(!p\) \{ wmpgFlash\(`Site figure: \$\{d\.state \|\| 'this state'\} is not wired up yet/.test(gen), 'an unwired state is stated, not guessed');
-  assert.ok(/wpSiteFigGeocodeUrl\(d\.address \+ ', ' \+ d\.state \+ ', Australia'\)/.test(gen) && /wpSiteFigLotQueryUrl\(p, geo\.lon, geo\.lat\)/.test(gen) && /wpSiteFigNeighbourQueryUrl\(p, wpRingsBbox/.test(gen) && /wmpgSiteFigCompose\(img, chosen, frame/.test(gen), 'geocode → lot → neighbours → imagery → compose');
-  assert.ok(/noLot: !lots\.length/.test(gen) && /WITHOUT a boundary/.test(gen), 'no lot under the point is drawn without a boundary and said');
+  assert.ok(/wpSiteFigGeocodeQueries\(d\.address, d\.state\)/.test(gen) && /wpSiteFigLotQueryUrl\(p, geo\.lon, geo\.lat\)/.test(gen) && /wpSiteFigNeighbourQueryUrl\(p, wpRingsBbox/.test(gen) && /wmpgSiteFigCompose\(img, chosen, frame/.test(gen), 'geocode → lot → neighbours → imagery → compose');
+  assert.ok(/noLot: !chosen\.length/.test(gen) && /WITHOUT a boundary/.test(gen), 'no lot under the point is drawn without a boundary and said');
   assert.ok(/idbPutPdf\(wmpgSiteFigKey\(WMPG\.projectId\)/.test(gen), 'bytes in IndexedDB like the cover');
   const model = extractBlock(/^function wmpgDocModel\(/).text;
   assert.ok(/k:'figure', src: WMPG\.siteFigImg\.dataUrl, t: 'Figure 1 – Site location and surrounding context', v: wpSiteFigSourceLine\(d\.siteFigure\)/.test(model), 'the preview shows the figure with caption and source');
   assert.ok(/WMPG_SITEFIG_PLACEHOLDER \+ ' — Figure 1/.test(model), 'and the master’s placeholder when there is none');
   assert.ok(/case 'figure': return `<figure class="fig">/.test(extractBlock(/^function wmpgBuildHtml\(/).text));
   assert.ok(/geocoding © OpenStreetMap contributors/.test(gen), 'the geocoder is credited on the figure');
+});
+
+test('§13 geocoding after the first real run: the address is parsed, asked three ways, a street-level hit never becomes a lot, and Lot / DP goes straight to the cadastre', () => {
+  const F = loadSiteFig(); const p = F.wpSiteFigProvider('NSW');
+  assert.deepStrictEqual(F.wpSiteFigAddressParts('12 Maroomba Road, Terrigal NSW 2260', 'NSW'), { number: '12', street: 'Maroomba Road', suburb: 'Terrigal', state: 'NSW', postcode: '2260' });
+  assert.deepStrictEqual(F.wpSiteFigAddressParts('Unit 3/117 Flinders St, Surry Hills NSW 2010, Australia', 'NSW'), { number: '117', street: 'Flinders St', suburb: 'Surry Hills', state: 'NSW', postcode: '2010' }, 'the unit is dropped — the street number locates the parcel');
+  assert.deepStrictEqual(F.wpSiteFigAddressParts('12 Maroomba Road Terrigal', 'nsw'), { number: '12', street: 'Maroomba Road', suburb: 'Terrigal', state: 'NSW', postcode: '' }, 'no comma: the last word is read as the suburb');
+  assert.equal(F.wpSiteFigAddressParts('Lot 5, 12 Maroomba Road, Terrigal', 'NSW').number, '12');
+  const q = F.wpSiteFigGeocodeQueries('12 Maroomba Road, Terrigal NSW 2260', 'NSW');
+  assert.deepStrictEqual(q.map(x => x.how), ['structured', 'as typed', 'street and suburb only']);
+  assert.ok(/street=12%20Maroomba%20Road&city=Terrigal&state=NSW&postalcode=2260&country=Australia/.test(q[0].url) && q.every(x => /addressdetails=1/.test(x.url) && /countrycodes=au/.test(x.url)));
+  assert.ok(/q=12%20Maroomba%20Road%2C%20Terrigal%20NSW%202260%2C%20Australia$/.test(q[1].url), 'as typed does not repeat the state: ' + q[1].url);
+  assert.ok(/q=12%20Maroomba%20Road%2C%20Terrigal%2C%20NSW%2C%20Australia$/.test(q[2].url), 'without the postcode: ' + q[2].url);
+  const parts = F.wpSiteFigAddressParts('12 Maroomba Road, Terrigal NSW 2260', 'NSW');
+  const street = { lon: '151.44', lat: '-33.44', display_name: 'Maroomba Road, Terrigal', address: { road: 'Maroomba Road' } };
+  const house = { lon: '151.441', lat: '-33.441', display_name: '12, Maroomba Road, Terrigal', address: { house_number: '12', road: 'Maroomba Road' } };
+  const other = { lon: '151.442', lat: '-33.442', display_name: '14, Maroomba Road', address: { house_number: '14', road: 'Maroomba Road' } };
+  assert.equal(F.wpSiteFigPickGeocode([street, house], parts).level, 'address'); assert.equal(F.wpSiteFigPickGeocode([street, house], parts).lon, 151.441, 'the numbered result wins whatever the order');
+  assert.equal(F.wpSiteFigPickGeocode([street], parts).level, 'street'); assert.equal(F.wpSiteFigPickGeocode([other], parts).level, 'nearby'); assert.equal(F.wpSiteFigPickGeocode([{ lon: '1', lat: '2' }], parts).level, 'area');
+  assert.equal(F.wpSiteFigPickGeocode([], parts), null); assert.equal(F.wpSiteFigPickGeocode({ error: 'x' }, parts), null);
+  assert.deepStrictEqual(F.wpSiteFigParseLotRef('Lot 12 DP 12345'), { lot: '12', section: '', plan: 'DP12345' });
+  assert.deepStrictEqual(F.wpSiteFigParseLotRef('12/DP12345'), { lot: '12', section: '', plan: 'DP12345' });
+  assert.deepStrictEqual(F.wpSiteFigParseLotRef('lot 3 sec 4 dp 1234'), { lot: '3', section: '4', plan: 'DP1234' });
+  assert.deepStrictEqual(F.wpSiteFigParseLotRef('Lot 7 SP 99887'), { lot: '7', section: '', plan: 'SP99887' });
+  assert.equal(F.wpSiteFigParseLotRef('12 Maroomba Road'), null); assert.equal(F.wpSiteFigParseLotRef(''), null);
+  const u = decodeURIComponent(F.wpSiteFigLotRefQueryUrl(p, F.wpSiteFigParseLotRef('Lot 12 DP 12345')));
+  assert.ok(u.startsWith(p.cadastre) && /where=lotnumber='12' AND planlabel IN \('DP12345','DP 12345'\)$/.test(u) && /outSR=3857/.test(u) && /outFields=lotnumber,sectionnumber,planlabel/.test(u), u);
+  assert.ok(/sectionnumber='4'/.test(decodeURIComponent(F.wpSiteFigLotRefQueryUrl(p, F.wpSiteFigParseLotRef('Lot 3 Sec 4 DP 1234')))));
+  // the flow
+  const gen = extractBlock(/^async function wmpgSiteFigGenerate\(/).text;
+  assert.ok(/for \(const q of wpSiteFigGeocodeQueries\(d\.address, d\.state\)\)/.test(gen) && /if \(geo && geo\.level === 'address'\) break;/.test(gen), 'every query is tried until one carries the number');
+  assert.ok(/lots = f\.geo\.level === 'address' \? wpSiteFigParseLots\(/.test(gen), 'a street- or suburb-level point never becomes a lot');
+  assert.ok(/lots\.length \? 6 : 60/.test(gen), 'with no lot, the lots around the point are offered to tick');
+  assert.ok(/wpSiteFigLotRefQueryUrl\(p, ref\)/.test(gen) && /f\.lotsFrom = 'ref'; geo = null; f\.geo = null;/.test(gen), 'Lot / DP skips the geocoder');
+  assert.ok(/usedGeocoder \? ' · geocoding © OpenStreetMap contributors' : ''/.test(gen), 'OSM is credited only when used');
+  assert.ok(/tried\.join\('; '\)/.test(gen), 'a miss names every attempt');
+  assert.ok(/onchange="wmpgSiteFigLotRef\(this\.value\)"/.test(extractBlock(/^function wmpgSiteFigCard\(/).text));
+  assert.ok(/noLot: !chosen\.length/.test(gen), 'a ticked lot counts as the boundary');
 });

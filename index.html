@@ -31460,7 +31460,8 @@ function wmpgSiteFigCard(d) {
           ${f ? `<button class="wmpg-addrow" style="margin:0;color:#EF8080;" onclick="wmpgSiteFigRemove()">✕ Remove</button>` : ''}
           <input type="file" id="wmpg-sitefig-file" accept="image/jpeg,image/png" style="display:none;" onchange="wmpgSiteFigUpload(event)">
         </div>
-        ${f && f.kind === 'generated' && f.neighbours && f.neighbours.length ? `<div style="font-size:11px;color:#A9BDBD;margin-top:6px;">Site spans more than one lot? Add the adjoining lot: ${f.neighbours.slice(0, 12).map(n => `<label class="wmpg-chk" style="display:inline-flex;margin:0 8px 0 0;"><input type="checkbox" ${(f.extraLots || []).includes(n.id) ? 'checked' : ''} onchange="wmpgSiteFigToggleLot('${wmpgEsc(n.id)}',this.checked)"> ${wmpgEsc(n.label)}</label>`).join('')}</div>` : ''}
+        ${p ? `<div class="wmpg-grid2" style="margin-top:6px;"><div class="wmpg-f"><label>Lot / DP from the DA (used instead of the address)</label><input value="${wmpgEsc(f && f.lotRef || '')}" placeholder="Lot 12 DP 12345" onchange="wmpgSiteFigLotRef(this.value)"></div></div>` : ''}
+        ${f && f.kind === 'generated' && f.neighbours && f.neighbours.length ? `<div style="font-size:11px;color:#A9BDBD;margin-top:6px;">${f.noLot ? 'No lot under the point — tick the site’s lot:' : 'Site spans more than one lot? Add the adjoining lot:'} ${f.neighbours.slice(0, 16).map(n => `<label class="wmpg-chk" style="display:inline-flex;margin:0 8px 0 0;"><input type="checkbox" ${(f.extraLots || []).includes(n.id) ? 'checked' : ''} onchange="wmpgSiteFigToggleLot('${wmpgEsc(n.id)}',this.checked)"> ${wmpgEsc(n.label)}</label>`).join('')}</div>` : ''}
         ${f && f.kind === 'upload' ? `<div class="wmpg-grid2" style="margin-top:6px;">${wmpgIn('Image source', 'siteFigure.source', f.source || '', { ph: 'Site plan — SJB Architects' })}${wmpgIn('Date accessed / received', 'siteFigure.accessed', f.accessed || '', { type: 'date' })}</div>` : ''}
         <div class="wmpg-note" style="margin-top:4px;">${f ? 'Prints as ' + wmpgEsc(wpSiteFigSourceLine(f) || '[source]') + ' under the caption.' : 'Nothing placed yet — the master keeps its placeholder for a manual insert.'}</div>
       </div>
@@ -33796,6 +33797,58 @@ function wpSiteFigParseGeocode(json) {
   const lon = +r.lon, lat = +r.lat;
   return isFinite(lon) && isFinite(lat) ? { lon, lat, label: r.display_name || '' } : null;
 }
+// Address → parts. "Unit 3/12 Maroomba Road, Terrigal NSW 2260" → number 12, street, suburb, state, postcode.
+// The unit or lot prefix is dropped for geocoding: the street number is what locates the parcel.
+function wpSiteFigAddressParts(address, state) {
+  let a = String(address || '').replace(/\s+/g, ' ').replace(/,?\s*australia\s*$/i, '').trim();
+  const out = { number: '', street: '', suburb: '', state: String(state || '').toUpperCase(), postcode: '' };
+  const pc = a.match(/\b(\d{4})\s*$/); if (pc) { out.postcode = pc[1]; a = a.slice(0, pc.index).trim(); }
+  const st = a.match(/[\s,]+(NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\.?\s*$/i); if (st) { out.state = st[1].toUpperCase(); a = a.slice(0, st.index).trim(); }
+  a = a.replace(/,\s*(australia)\s*$/i, '').replace(/,\s*$/, '');
+  const parts = a.split(',').map(x => x.trim()).filter(Boolean);
+  if (parts.length >= 2) { out.suburb = parts[parts.length - 1]; a = parts.slice(0, -1).join(', '); } else a = parts[0] || '';
+  a = a.replace(/^(unit|apt|apartment|shop|suite|lot)\s+\S+,\s*/i, '').replace(/^(unit|apt|apartment|shop|suite)\s+/i, '').replace(/^\S+\s*\/\s*/, '');   // "Lot 5, 12 …" · "Unit 3/12 …" · "3/12 …"
+  const m = a.match(/^(\d+[A-Za-z]?(?:\s*-\s*\d+[A-Za-z]?)?)\s+(.+)$/);
+  if (m) { out.number = m[1].replace(/\s+/g, ''); out.street = m[2].trim(); } else out.street = a.trim();
+  if (!out.suburb && out.street) { const w = out.street.split(' '); if (w.length >= 3) { out.suburb = w.pop(); out.street = w.join(' '); } }
+  return out;
+}
+// The geocoder is asked more than once: a structured query first (OSM resolves Australian house numbers best that way),
+// then the address as typed, then without the postcode. Every attempt is named so a miss can be reported precisely.
+function wpSiteFigGeocodeQueries(address, state) {
+  const P = wpSiteFigAddressParts(address, state), base = WP_SITEFIG_GEOCODER + '?format=json&limit=5&countrycodes=au&addressdetails=1';
+  const q = [];
+  if (P.number && P.street && P.suburb) q.push({ how: 'structured', url: base + '&street=' + encodeURIComponent(P.number + ' ' + P.street) + '&city=' + encodeURIComponent(P.suburb) + (P.state ? '&state=' + encodeURIComponent(P.state) : '') + (P.postcode ? '&postalcode=' + P.postcode : '') + '&country=Australia' });
+  const typed = String(address || '').trim(); const dup = new RegExp('(,\\s*)?\\b' + (P.state || 'XX') + '\\b\\s*' + (P.postcode || '') + '\\s*$', 'i');
+  q.push({ how: 'as typed', url: base + '&q=' + encodeURIComponent(typed.replace(/,?\s*australia\s*$/i, '') + (dup.test(typed) ? '' : ', ' + (P.state || '')) + ', Australia') });
+  if (P.number && P.street) q.push({ how: 'street and suburb only', url: base + '&q=' + encodeURIComponent([P.number + ' ' + P.street, P.suburb, P.state].filter(Boolean).join(', ') + ', Australia') });
+  return q;
+}
+// Which result to trust: one carrying the street number we asked for is the address; a road without a number is only
+// the street; anything else is the suburb. The level is kept so a street-level point never draws a lot as the site.
+function wpSiteFigPickGeocode(json, parts) {
+  const rows = Array.isArray(json) ? json.filter(r => isFinite(+r.lon) && isFinite(+r.lat)) : [];
+  if (!rows.length) return null;
+  const num = String((parts && parts.number) || '').toLowerCase();
+  const lvl = r => { const a = r.address || {}; if (a.house_number && (!num || String(a.house_number).toLowerCase() === num)) return 'address'; if (a.house_number) return 'nearby'; if (a.road) return 'street'; return 'area'; };
+  const rank = { address: 0, nearby: 1, street: 2, area: 3 };
+  const best = rows.map(r => ({ r, level: lvl(r) })).sort((x, y) => rank[x.level] - rank[y.level])[0];
+  return { lon: +best.r.lon, lat: +best.r.lat, label: best.r.display_name || '', level: best.level };
+}
+// Lot / DP typed in directly — the deterministic way in when the geocoder cannot place the address.
+function wpSiteFigParseLotRef(text) {
+  const t = String(text || '').toUpperCase().replace(/\s+/g, ' ').trim(); if (!t) return null;
+  const lot = t.match(/\bLOTS?\s*([0-9]+[A-Z]?)/) || t.match(/^([0-9]+[A-Z]?)\s*(?:\/|\bIN\b|,)/), plan = t.match(/\b(DP|SP|CP|MPS)\s*([0-9]+)/), sec = t.match(/\bSEC(?:TION)?\s*([0-9A-Z]+)/);
+  if (!lot || !plan) return null;
+  return { lot: lot[1], section: sec ? sec[1] : '', plan: plan[1] + plan[2] };
+}
+function wpSiteFigLotRefQueryUrl(p, ref) {
+  const esc = v => String(v).replace(/'/g, "''");
+  const planLabel = ref.plan.replace(/^([A-Z]+)(\d+)$/, '$1 $2');
+  let where = `${p.lotFields.lot}='${esc(ref.lot)}' AND ${p.lotFields.plan} IN ('${esc(ref.plan)}','${esc(planLabel)}')`;
+  if (ref.section) where += ` AND ${p.lotFields.section}='${esc(ref.section)}'`;
+  return p.cadastre + '?f=json&outSR=3857&returnGeometry=true&outFields=' + encodeURIComponent(Object.values(p.lotFields).join(',')) + '&where=' + encodeURIComponent(where);
+}
 function wpSiteFigLotQueryUrl(p, lon, lat) {
   return p.cadastre + '?f=json&geometryType=esriGeometryPoint&inSR=4326&outSR=3857&spatialRel=esriSpatialRelIntersects&returnGeometry=true' +
     '&outFields=' + encodeURIComponent(Object.values(p.lotFields).join(',')) + '&geometry=' + encodeURIComponent(JSON.stringify({ x: lon, y: lat, spatialReference: { wkid: 4326 } }));
@@ -34278,42 +34331,67 @@ async function wmpgSiteFigGenerate(opts) {
   if (!d.address) { wmpgFlash('Set the site address first — the figure is looked up from it.', true); return; }
   const f = d.siteFigure = Object.assign({ kind: 'generated', mapType: 'aerial', zoom: 'context', boundary: true, extraLots: [] }, d.siteFigure && d.siteFigure.kind === 'generated' ? d.siteFigure : {}, opts || {});
   try {
-    wmpgFlash('Site figure: locating ' + d.address + '…');
-    let geo = f.geo;
-    if (!geo) {
-      geo = wpSiteFigParseGeocode(await wmpgSiteFigJson(wpSiteFigGeocodeUrl(d.address + ', ' + d.state + ', Australia')));
-      if (!geo) { wmpgFlash('Site figure: the address was not found by the geocoder — check the address, or insert the figure by hand.', true); return; }
+    const ref = wpSiteFigParseLotRef(f.lotRef);
+    let lots = f.lotsCache || null, geo = f.geo || null, usedGeocoder = false;
+    if (ref && !(lots && lots.length && f.lotsFrom === 'ref')) {
+      // Lot / DP typed in: the cadastre answers directly — no geocoder, nothing approximate
+      wmpgFlash(`Site figure: looking up Lot ${ref.lot}${ref.section ? ' Sec ' + ref.section : ''} ${ref.plan} in the cadastre…`);
+      lots = wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigLotRefQueryUrl(p, ref)), p.lotFields);
+      if (!lots.length) { wmpgFlash(`Site figure: the ${p.name} cadastre has no Lot ${ref.lot} ${ref.plan} — check the lot and plan numbers as they appear on the DA.`, true); return; }
+      f.lotsCache = lots; f.lotsFrom = 'ref'; geo = null; f.geo = null;
+      try { f.neighbours = wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigNeighbourQueryUrl(p, wpRingsBbox(lots.map(l => l.rings)), 6)), p.lotFields).filter(n => !lots.some(l => l.id === n.id)); } catch (e) { f.neighbours = []; }
     }
-    wmpgFlash('Site figure: reading the cadastre…');
-    let lots = f.lotsCache || null;
     if (!lots) {
-      lots = wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigLotQueryUrl(p, geo.lon, geo.lat)), p.lotFields);
-      let neighbours = [];
-      if (lots.length) {
-        try { neighbours = wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigNeighbourQueryUrl(p, wpRingsBbox(lots.map(l => l.rings)), 6)), p.lotFields).filter(n => !lots.some(l => l.id === n.id)); } catch (e) { neighbours = []; }
+      if (!geo) {
+        wmpgFlash('Site figure: locating ' + d.address + '…');
+        const parts = wpSiteFigAddressParts(d.address, d.state), tried = [];
+        for (const q of wpSiteFigGeocodeQueries(d.address, d.state)) {
+          let hit = null;
+          try { hit = wpSiteFigPickGeocode(await wmpgSiteFigJson(q.url), parts); } catch (e) { tried.push(q.how + ': ' + (e.message || e)); continue; }
+          tried.push(q.how + ': ' + (hit ? hit.level : 'no match'));
+          if (hit && (!geo || hit.level === 'address')) geo = Object.assign(hit, { how: q.how });
+          if (geo && geo.level === 'address') break;
+        }
+        if (!geo) { wmpgFlash(`Site figure: OpenStreetMap could not locate "${d.address}" (${tried.join('; ')}). Enter the Lot / DP from the DA below — the cadastre is looked up directly — or insert the figure by hand.`, true); return; }
+        usedGeocoder = true;
       }
-      f.lotsCache = lots; f.neighbours = neighbours;
-    }
+      f.geo = { lon: geo.lon, lat: geo.lat, level: geo.level || 'address', how: geo.how || '' };
+      wmpgFlash('Site figure: reading the cadastre…');
+      const m0 = wpMerc(geo.lon, geo.lat);
+      lots = f.geo.level === 'address' ? wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigLotQueryUrl(p, geo.lon, geo.lat)), p.lotFields) : [];   // a street-level point is never a lot
+      let neighbours = [];
+      try { neighbours = wpSiteFigParseLots(await wmpgSiteFigJson(wpSiteFigNeighbourQueryUrl(p, lots.length ? wpRingsBbox(lots.map(l => l.rings)) : { xmin: m0.x, xmax: m0.x, ymin: m0.y, ymax: m0.y }, lots.length ? 6 : 60)), p.lotFields).filter(n => !lots.some(l => l.id === n.id)); } catch (e) { neighbours = []; }
+      f.lotsCache = lots; f.lotsFrom = 'geocode'; f.neighbours = neighbours;
+    } else usedGeocoder = !!(f.geo && f.lotsFrom !== 'ref');
     const chosen = lots.concat((f.extraLots || []).map(id => (f.neighbours || []).find(n => n.id === id)).filter(Boolean));
-    const m = wpMerc(geo.lon, geo.lat);
+    const m = geo ? wpMerc(geo.lon, geo.lat) : null;
     const bbox = chosen.length ? wpRingsBbox(chosen.map(l => l.rings)) : { xmin: m.x - 30, xmax: m.x + 30, ymin: m.y - 30, ymax: m.y + 30 };
     const frame = wpSiteFigFrame(bbox, WMPG_SITEFIG_W, WMPG_SITEFIG_H, f.zoom);
     wmpgFlash('Site figure: fetching ' + (f.mapType === 'base' ? 'the base map' : 'aerial imagery') + '…');
     const img = await wmpgSiteFigImage(wpSiteFigImageUrl(p, f.mapType, frame, WMPG_SITEFIG_W, WMPG_SITEFIG_H));
-    const canvas = wmpgSiteFigCompose(img, chosen, frame, WMPG_SITEFIG_W, WMPG_SITEFIG_H, { boundary: f.boundary, attribution: p.attribution + ' · geocoding © OpenStreetMap contributors' });
+    const canvas = wmpgSiteFigCompose(img, chosen, frame, WMPG_SITEFIG_W, WMPG_SITEFIG_H, { boundary: f.boundary, attribution: p.attribution + (usedGeocoder ? ' · geocoding © OpenStreetMap contributors' : '') });
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
     await idbPutPdf(wmpgSiteFigKey(WMPG.projectId), await blob.arrayBuffer(), 'site_figure.png');
-    Object.assign(f, { kind: 'generated', type: 'image/png', provider: p.name, geo: { lon: geo.lon, lat: geo.lat }, lots: chosen.map(l => l.label), accessed: new Date().toISOString().slice(0, 10), w: WMPG_SITEFIG_W, h: WMPG_SITEFIG_H, noLot: !lots.length });
+    Object.assign(f, { kind: 'generated', type: 'image/png', provider: p.name, lots: chosen.map(l => l.label), accessed: new Date().toISOString().slice(0, 10), w: WMPG_SITEFIG_W, h: WMPG_SITEFIG_H, noLot: !chosen.length });
     await wmpgSiteFigLoad();
     wmpgFollow('siteFigure');
     wmpgRenderForm(); wmpgQueuePreview();
-    wmpgFlash(lots.length ? `Site figure ready — ${chosen.map(l => l.label).join(', ')} outlined on ${p.name} ${f.mapType === 'base' ? 'base map' : 'imagery'}. Check the boundary; add an adjoining lot if the site spans more than one.`
-                          : 'Site figure ready, WITHOUT a boundary — no lot was found under the address point. Check the address or insert the figure by hand.', !lots.length);
-  } catch (e) { wmpgFlash('Site figure failed: ' + (e.message || e) + ' — nothing was placed; insert the figure by hand.', true); }
+    const lvl = f.geo && f.geo.level;
+    wmpgFlash(chosen.length ? `Site figure ready — ${chosen.map(l => l.label).join(', ')} outlined on ${p.name} ${f.mapType === 'base' ? 'base map' : 'imagery'}${f.lotsFrom === 'ref' ? ' (from the Lot / DP)' : lvl === 'nearby' ? ' — the geocoder matched a NEIGHBOURING number; check that this is the right lot' : ''}. Check the boundary; add an adjoining lot if the site spans more than one.`
+                            : lvl && lvl !== 'address' ? `Site figure ready, WITHOUT a boundary — OpenStreetMap found ${lvl === 'nearby' ? 'a neighbouring street number' : lvl === 'street' ? 'only the street' : 'only the suburb'}, not this number. Tick the site's lot from the list below, or enter the Lot / DP from the DA.`
+                            : 'Site figure ready, WITHOUT a boundary — no lot was found under the address point. Tick the lot below, enter the Lot / DP, or insert the figure by hand.', !chosen.length);
+  } catch (e) { wmpgFlash('Site figure failed: ' + (/failed to fetch|networkerror|load failed/i.test(e.message || '') ? 'the service could not be reached from the browser (network, or the service refused a cross-site request)' : (e.message || e)) + ' — nothing was placed; insert the figure by hand.', true); }
 }
 function wmpgSiteFigSet(k, v) {
   const d = WMPG.data; if (!d || !d.siteFigure) return;
   d.siteFigure[k] = v; return wmpgSiteFigGenerate();
+}
+function wmpgSiteFigLotRef(text) {
+  const d = WMPG.data; if (!d) return;
+  const f = d.siteFigure = Object.assign({ kind: 'generated', mapType: 'aerial', zoom: 'context', boundary: true, extraLots: [] }, d.siteFigure && d.siteFigure.kind === 'generated' ? d.siteFigure : {});
+  f.lotRef = String(text || '').trim(); f.lotsCache = null; f.lotsFrom = null; f.extraLots = []; f.geo = null;
+  if (f.lotRef && !wpSiteFigParseLotRef(f.lotRef)) { wmpgFlash('Lot / DP not recognised — write it as "Lot 12 DP 12345" (or SP for a strata plan).', true); return; }
+  return wmpgSiteFigGenerate();
 }
 function wmpgSiteFigToggleLot(id, on) {
   const d = WMPG.data; if (!d || !d.siteFigure) return;
