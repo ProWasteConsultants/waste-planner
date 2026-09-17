@@ -615,6 +615,24 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   the build sandbox: the pipeline is verified against stubbed responses in
   the exact request/answer shapes; the first real run confirms the field
   names (`lotFields`) and CORS.
+- **Geocoding, after the first real run (2026-09-17: "address not found").**
+  OSM's house-number coverage in Australia is patchy and Nominatim is
+  literal, so the address is **parsed** (`wpSiteFigAddressParts`, pure —
+  unit and lot prefixes dropped, state and postcode split off) and asked
+  **three ways** (`wpSiteFigGeocodeQueries`: structured street/city/state/
+  postcode first, then as typed, then without the postcode), and the result
+  is **graded** (`wpSiteFigPickGeocode`: `address` = carries the number we
+  asked for · `nearby` = another number · `street` · `area`). Only an
+  `address`-level point is put to the cadastre — a street-level point is
+  never outlined as the site; instead the lots within 60 m are offered to
+  **tick** (the same `extraLots` mechanism), and the figure is drawn without
+  a boundary until one is. A miss names every attempt in the status line.
+  **Lot / DP is the deterministic way in** (`wpSiteFigParseLotRef` +
+  `wpSiteFigLotRefQueryUrl`: `lotnumber` / `planlabel` with and without the
+  space, `sectionnumber` when given) — it is on every DA, skips the geocoder
+  entirely, and OSM is then not credited on the figure. Not tried: the NSW
+  Geocoded Addressing Theme (GNAF) as a second geocoder — its layer and
+  field names are unverified from here; add it as provider data once seen.
 
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
