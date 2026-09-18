@@ -787,6 +787,8 @@ test('the WMP narrative only speaks when the layout has something to say', () =>
 test('the project snapshot publishes the reconciliation for the generator', () => {
   const { SOURCE } = require('./extract.js');
   assert.match(SOURCE, /reconciliation: \(\(\) => \{/, 'the draft must carry it');
-  assert.match(SOURCE, /wsReconcileSnapshot\(wsLayoutSlot\(\)\.rooms, WS_CALC_ROOMS/);
+  // Always OCCUPANCY's slot — a C&D stage being drawn on the canvas must not
+  // become the WMP's bin rooms (wsOccupancySlot reads the park when a stage is live).
+  assert.match(SOURCE, /const slot = wsOccupancySlot\(\);\s*return wsReconcileSnapshot\(slot\.rooms, WS_CALC_ROOMS, slot,/);
   assert.match(SOURCE, /reconciliation snapshot skipped/, 'and must never break saving if it fails');
 });

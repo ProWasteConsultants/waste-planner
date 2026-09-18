@@ -41,6 +41,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .ws-project-name{font-size:12px;color:rgba(255,255,255,0.7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px;}
 .ws-page-nav{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.06);border-radius:6px;padding:3px 8px;}
 .ws-page-nav span{font-size:11px;color:rgba(255,255,255,0.5);white-space:nowrap;}
+.ws-stage-seg{display:inline-flex;border:1px solid #444;border-radius:5px;overflow:hidden;}
+.ws-stage-seg button{border:none;background:transparent;color:rgba(255,255,255,0.6);font-size:11px;padding:3px 9px;cursor:pointer;font-family:inherit;border-right:1px solid #444;}
+.ws-stage-seg button:last-child{border-right:none;}
+.ws-stage-seg button:hover{color:#fff;}
+.ws-stage-seg button.on{background:#008080;color:#fff;}
 .ws-page-btn{width:22px;height:22px;border-radius:4px;border:none;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;}
 .ws-page-btn:hover{background:rgba(255,255,255,0.15);}
 .ws-btn{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);font-size:11px;cursor:pointer;color:rgba(255,255,255,0.7);font-family:inherit;white-space:nowrap;}
@@ -1714,15 +1719,20 @@ body.wp-anon .ws-top-chip{display:none;}
            onmousemove="wsOnMouseMove(event)"
            onmouseup="wsOnMouseUp(event)"
            ondragover="event.preventDefault();event.dataTransfer.dropEffect='copy';"
-           ondrop="event.preventDefault()">
+           ondrop="wsOnDrop(event)">
+        <!-- ONE plan file input for the empty state AND the float bar's Replace
+             plan: both go through wsLoadPdfFile, which replaces the live stage's
+             plan when the project already has one. A PDF dropped anywhere on the
+             canvas takes the same path (wsOnDrop). -->
+        <input type="file" id="ws-plan-file" accept=".pdf" style="display:none;" onchange="wsLoadPdfFile(this.files[0]);this.value='';">
 
-        <!-- Empty state -->
+        <!-- Empty state (worded per stage by wsShowNoPlan) -->
         <div class="ws-canvas-empty" id="ws-empty-state">
           <div class="ws-upload-zone" style="cursor:default;">
-            <div class="ws-upload-zone-title">No plans loaded</div>
-            <div class="ws-upload-zone-sub">Upload a plan PDF — it attaches to the open project, or starts a draft project if none is open.</div>
-            <input type="file" id="ws-plan-file" accept=".pdf" style="display:none;" onchange="wsLoadPdfFile(this.files[0]);this.value='';">
+            <div class="ws-upload-zone-title" id="ws-empty-title">No plans loaded</div>
+            <div class="ws-upload-zone-sub" id="ws-empty-sub">Upload a plan PDF — it attaches to the open project, or starts a draft project if none is open.</div>
             <button class="ws-upload-zone-btn" onclick="document.getElementById('ws-plan-file').click()">⬆ Upload plan PDF</button>
+            <button class="ws-upload-zone-btn" id="ws-empty-copy-btn" style="display:none;margin-left:8px;" onclick="wsStageCopyOccupancyPlan()" title="Copy the project's occupancy plan into this stage's own slot — the two are independent from then on">⧉ Start from the project's plans</button>
             <div style="margin-top:10px;"><a href="#" onclick="showScreen('projects',document.getElementById('nav-projects'));return false;" style="font-size:11.5px;color:#7FD8D8;">or open a project with plans attached</a></div>
           </div>
           <div style="font-size:11px;color:rgba(255,255,255,0.2);margin-top:8px;">or use the bin calculator without a plan — it reads the project's dev summary</div>
@@ -1907,6 +1917,13 @@ body.wp-anon .ws-top-chip{display:none;}
         <!-- Floating scale controls (layout mode only) -->
         <div class="ws-float-bar" id="ws-float-bar" style="display:none;" onmousedown="wsPillDragStart(event,'ws-float-bar')">
           <span class="ws-project-name" id="ws-project-name">No project selected</span>
+          <!-- Stage switcher (PWC staff, project open): each stage has its own plan and layer state -->
+          <div class="ws-stage-seg" id="ws-stage-seg" style="display:none;">
+            <button data-stage="occupancy" onclick="wsStageSet('occupancy')" title="Occupancy — the project's plan and bin-room layout">Occupancy</button>
+            <button data-stage="site_prep" onclick="wsStageSet('site_prep')" title="Site preparation stage — its own plan (demolition / site plan) and layers">Site prep</button>
+            <button data-stage="construction" onclick="wsStageSet('construction')" title="Construction stage — its own plan (construction management plan) and layers">Construction</button>
+          </div>
+          <button class="ws-page-btn" id="ws-replace-plan-btn" style="display:none;width:auto;padding:0 8px;" onclick="wsReplacePlan()" title="Replace the plan — placed work stays at its page and position; the previous plan stays in Documents">⇄ Plan</button>
           <div class="ws-page-nav" id="ws-page-nav" style="display:none;">
             <button class="ws-page-btn" onclick="wsChangePage(-1)">‹</button>
             <span id="ws-page-label" onclick="wsThumbsToggle()" title="Show page thumbnails" style="cursor:pointer;">Page 1 of 1</span>
@@ -9986,11 +10003,11 @@ function idbOpen() {
     rq.onerror = () => rej(rq.error);
   });
 }
-async function idbPutPdf(projectId, buf, name) {
+async function idbPutPdf(projectId, buf, name, rev) {
   const db = await idbOpen();
   return new Promise((res, rej) => {
     const tx = db.transaction('pdfs', 'readwrite');
-    tx.objectStore('pdfs').put({ buf, name, ts: Date.now() }, projectId);
+    tx.objectStore('pdfs').put({ buf, name, rev: rev || null, ts: Date.now() }, projectId);
     tx.oncomplete = res; tx.onerror = () => rej(tx.error);
   });
 }
@@ -10011,44 +10028,125 @@ async function idbDeletePdf(projectId) {
   });
 }
 
-// Storage facade: local cache always; cloud sync for signed-in users.
-async function storeProjectPdf(projectId, buf, name) {
-  await idbPutPdf(projectId, buf, name);
+// ── PLAN SLOTS: one plan per project per STAGE ──────────────────────────────
+// Occupancy is the project's plan exactly as it has always been stored (IDB
+// key = projectId, cloud path {uid}/{projectId}.pdf, name on p.pdf_name), so
+// every existing project keeps working untouched. The site preparation and
+// construction stages — PWC staff only, see wsStageAllowed — each carry their
+// own plan under a stage-suffixed slot: a demolition plan is not the
+// architectural set, and it is replaced independently of it.
+const WP_PLAN_STAGES = ['occupancy', 'site_prep', 'construction'];
+function wpPlanStages() { return WP_PLAN_STAGES.slice(); }
+function wpPlanStage(stage) { return WP_PLAN_STAGES.includes(stage) ? stage : 'occupancy'; }
+function wpPlanStageLabel(stage) {
+  return stage === 'site_prep' ? 'Site preparation' : stage === 'construction' ? 'Construction' : 'Occupancy';
+}
+// Pure: where a stage's plan lives (cache key + cloud path).
+function wpPlanSlot(projectId, stage, uid) {
+  const st = wpPlanStage(stage);
+  const suffix = st === 'occupancy' ? '' : '.' + st;
+  return {
+    stage: st,
+    idbKey: st === 'occupancy' ? projectId : projectId + ':stage:' + st,
+    cloudPath: `${uid}/${projectId}${suffix}.pdf`,
+  };
+}
+// Pure: the plan metadata the project record carries for a stage — occupancy
+// on p.pdf_name / p.pdf_rev, a stage under p.stage_plans[stage]. Both travel
+// in app_data, so nothing here needs a schema change. Null = no plan recorded.
+function wpPlanMeta(p, stage) {
+  if (!p) return null;
+  const st = wpPlanStage(stage);
+  const m = st === 'occupancy' ? p : (p.stage_plans && p.stage_plans[st]);
+  if (!m || (!m.pdf_name && !m.pdf_rev)) return null;
+  return { pdf_name: m.pdf_name || null, pdf_rev: m.pdf_rev || null };
+}
+function wpPlanMetaSet(p, stage, meta) {
+  const st = wpPlanStage(stage);
+  if (st === 'occupancy') {
+    p.pdf_name = meta ? (meta.pdf_name || null) : null;
+    p.pdf_rev = meta ? (meta.pdf_rev || null) : null;
+    return p;
+  }
+  p.stage_plans = p.stage_plans || {};
+  if (meta) p.stage_plans[st] = { pdf_name: meta.pdf_name || null, pdf_rev: meta.pdf_rev || null };
+  else delete p.stage_plans[st];
+  return p;
+}
+// Pure: gate 4 (cross-device plan freshness). The cached copy is stale when the
+// project record carries a revision the cache does not — a plan re-issued under
+// the SAME file name used to serve the old page on every other device, because
+// the name was the only thing compared. The name check stays for records that
+// predate the revision stamp.
+function wpPlanCacheStale(rec, meta) {
+  if (!rec || !meta) return false;
+  if (meta.pdf_rev) return rec.rev !== meta.pdf_rev;
+  return !!(meta.pdf_name && rec.name && rec.name !== meta.pdf_name);
+}
+// The revision is the content: SHA-256 of the bytes, so the identical file
+// re-uploaded on two devices is one revision and never churns the caches.
+async function wpPlanRev(buf) {
+  try {
+    if (crypto && crypto.subtle) {
+      const h = await crypto.subtle.digest('SHA-256', buf);
+      return [...new Uint8Array(h)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch(e) {}
+  return 't' + Date.now().toString(36);
+}
+
+// Storage facade: local cache always; cloud sync for signed-in users. Stamps
+// the plan's name and revision on the project record for the stage, so every
+// caller that stores a plan gets the freshness stamp — none can forget it.
+async function storeProjectPdf(projectId, buf, name, stage) {
+  const slot = wpPlanSlot(projectId, stage, currentUser?.id);
+  const rev = await wpPlanRev(buf);
+  await idbPutPdf(slot.idbKey, buf, name, rev);
+  const projects = getProjects();
+  const p = projects.find(x => x.id === projectId);
+  if (p) { wpPlanMetaSet(p, slot.stage, { pdf_name: name, pdf_rev: rev }); saveProjects(projects); }
   if (currentUser && sb?.storage) {
     try {
       const { error } = await sb.storage.from(PLANS_BUCKET)
-        .upload(`${currentUser.id}/${projectId}.pdf`, new Blob([buf], { type: 'application/pdf' }), { upsert: true });
+        .upload(slot.cloudPath, new Blob([buf], { type: 'application/pdf' }), { upsert: true });
       if (error) console.warn('Supabase plan upload skipped:', error.message);
     } catch(e) { console.warn('Supabase plan upload failed:', e); }
   }
+  if (p && typeof saveProjectToDB === 'function') saveProjectToDB(p);   // the revision stamp reaches other devices
+  return rev;
 }
-async function loadProjectPdf(projectId) {
+async function loadProjectPdf(projectId, stage) {
+  const slot = wpPlanSlot(projectId, stage, currentUser?.id);
   let rec = null;
-  try { rec = await idbGetPdf(projectId); } catch(e) {}
-  // Freshness check: a differently-named plan on the project record means the cached
-  // copy is stale (replaced on another device) — refetch from cloud, keep cache as fallback.
-  const pMeta = getProjects().find(x => x.id === projectId);
-  const stale = rec && pMeta?.pdf_name && rec.name && rec.name !== pMeta.pdf_name;
-  if (rec && !stale) return rec;
+  try { rec = await idbGetPdf(slot.idbKey); } catch(e) {}
+  const meta = wpPlanMeta(getProjects().find(x => x.id === projectId), slot.stage);
+  // A stage with no plan recorded and nothing cached has nothing to fetch.
+  if (slot.stage !== 'occupancy' && !meta && !rec) return null;
+  // Freshness: refetch from the cloud when the record says the cache is behind
+  // (wpPlanCacheStale), keeping the cached copy as the offline fallback.
+  if (rec && !wpPlanCacheStale(rec, meta)) return rec;
   if (currentUser && sb?.storage) {
     try {
-      const { data, error } = await sb.storage.from(PLANS_BUCKET)
-        .download(`${currentUser.id}/${projectId}.pdf`);
+      const { data, error } = await sb.storage.from(PLANS_BUCKET).download(slot.cloudPath);
       if (!error && data) {
         const buf = await data.arrayBuffer();
-        const p = getProjects().find(x => x.id === projectId);
-        const name = p?.pdf_name || 'plans.pdf';
-        await idbPutPdf(projectId, buf, name);
-        return { buf, name };
+        const name = meta?.pdf_name || rec?.name || 'plans.pdf';
+        const rev = await wpPlanRev(buf);   // the bytes' own revision, never the record's claim
+        await idbPutPdf(slot.idbKey, buf, name, rev);
+        return { buf, name, rev };
       }
     } catch(e) {}
   }
   return rec || null;
 }
-async function removeProjectPdf(projectId) {
-  try { await idbDeletePdf(projectId); } catch(e) {}
+async function removeProjectPdf(projectId, stage) {
+  const slot = wpPlanSlot(projectId, stage, currentUser?.id);
+  try { await idbDeletePdf(slot.idbKey); } catch(e) {}
+  const projects = getProjects();
+  const p = projects.find(x => x.id === projectId);
+  if (p) { wpPlanMetaSet(p, slot.stage, null); saveProjects(projects); }
   if (currentUser && sb?.storage) {
-    try { await sb.storage.from(PLANS_BUCKET).remove([`${currentUser.id}/${projectId}.pdf`]); } catch(e) {}
+    try { await sb.storage.from(PLANS_BUCKET).remove([slot.cloudPath]); } catch(e) {}
   }
 }
 
@@ -10170,6 +10268,13 @@ function docCardHtml(p, d) {
     `<div class="doc-menu-item" onclick="docShare('${d.id}')">🔗 Share link</div>` +
     (isPdf && !isWmp ? `<div class="doc-menu-item" onclick="docOpenInCompliance('${d.id}')">✓ Open in Compliance Checker</div>` : '') +
     (isWmp ? `<div class="doc-menu-item" onclick="openCouncilSubmit()">📮 Submit WMP</div>` : '') +
+    // Stage plan slots (PWC staff): a demolition or construction plan becomes
+    // THAT stage's plan, leaving the occupancy plan and its layout untouched.
+    (isPdf && !isWmp && typeof wsStageAllowed === 'function' && wsStageAllowed()
+      ? `<div class="doc-menu-sep">Use as stage plan</div>` +
+        wpPlanStages().filter(st => st !== 'occupancy').map(st =>
+          `<div class="doc-menu-item" onclick="docOpenInDesign('${d.id}','${st}')">⇄ ${wpPlanStageLabel(st)} plan</div>`).join('')
+      : '') +
     `<div class="doc-menu-sep">Treat as</div>` +
     ['Plans', 'WMP', 'Other'].map(k =>
       `<div class="doc-menu-item${kind === k ? ' on' : ''}" onclick="docSetKind('${d.id}','${k}')">${kind === k ? '✓ ' : ''}${k === 'Plans' ? 'Plan' : k}</div>`).join('') +
@@ -10576,17 +10681,23 @@ function docOpenProjectPlan() {
   if (typeof wsOpenProject === 'function') wsOpenProject(p);
   else showScreen('workspace', document.getElementById('nav-workspace'));
 }
-async function docOpenInDesign(docId) {
+// `stage` (optional, staff): make the document the plan of that stage's slot
+// instead of the project's occupancy plan. Same path either way — the one
+// setter (wsSetProjectPlan) stores, stamps the revision and keeps the plan it
+// replaces filed, so the grid and the Design tab can never differ.
+async function docOpenInDesign(docId, stage) {
   const rec = await docLoad(currentProjectId, docId); if (!rec) return alert('Document unavailable offline.');
-  await storeProjectPdf(currentProjectId, rec.buf, rec.name);
-  const projects = getProjects(); const p = projects.find(x => x.id === currentProjectId);
-  if (p) { p.pdf_name = rec.name; saveProjects(projects); }
+  stage = wpPlanStage(stage);
+  if (stage !== 'occupancy' && !(typeof wsStageAllowed === 'function' && wsStageAllowed())) stage = 'occupancy';
+  if (typeof wsSetProjectPlan === 'function') await wsSetProjectPlan(currentProjectId, rec.buf, rec.name, { stage, file: false, docId });
+  else await storeProjectPdf(currentProjectId, rec.buf, rec.name, stage);
+  const p = getProjects().find(x => x.id === currentProjectId);
   // The stored plan just changed: clear the session marker so wsOpenProject's
   // auto-load refetches instead of keeping whatever PDF is already on canvas.
   if (typeof WS !== 'undefined') WS.loadedProjectPdfFor = null;
   // Route through wsOpenProject: showScreen alone switches tabs without loading
   // the project into the canvas — no plan, no saved layout/swept state, no name.
-  if (p && typeof wsOpenProject === 'function') wsOpenProject(p);
+  if (p && typeof wsOpenProject === 'function') wsOpenProject(p, { stage });
   else showScreen('workspace', document.getElementById('nav-workspace'));
 }
 async function docOpenInCompliance(docId) {
@@ -16019,6 +16130,8 @@ async function loadProjectsFromDB() {
         summary: ad.summary || prev.summary,
         volumes: ad.volumes || prev.volumes,
         pdf_name: ad.pdf_name || prev.pdf_name,
+        pdf_rev: ad.pdf_rev || prev.pdf_rev || null,           // plan revision stamp (gate 4) — compared by wpPlanCacheStale
+        stage_plans: ad.stage_plans || prev.stage_plans || null, // per-stage plan slots (site_prep / construction), staff
         check: ad.check || prev.check || null,
         stages: ad.stages || prev.stages || null,
       };
@@ -16057,6 +16170,8 @@ async function saveProjectToDB(project) {
       summary: (typeof getProjectSummary === 'function' ? getProjectSummary(project) : {}) || {},
       volumes: project.volumes || null,
       pdf_name: project.pdf_name || null,
+      pdf_rev: project.pdf_rev || null,         // plan revision stamp: same-named re-issue refreshes every device
+      stage_plans: project.stage_plans || null, // per-stage plan slots — each stage's plan name + revision
       check: project.check || null,   // compliance result carried through signup (anonymous entry)
       stages: project.stages || null, // C&D stage records (site_prep / construction) — server-authoritative
       ws: (() => { try { return JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) { return null; } })(),
@@ -16944,6 +17059,220 @@ const WS = {
   projectId: null,
 };
 
+// ── STAGE SLOTS (PWC staff): occupancy · site preparation · construction ─────
+// Each stage carries its own plan (wpPlanSlot) and its own layer state —
+// layout, swept paths, page, scale, paper. Exactly one stage is LIVE in
+// WS_LAYOUT / WS_SWEPT / WS; the others rest in WS_STAGE.park under their id,
+// in the same shape the saved draft uses (wsStagePack). The bin calculator,
+// provision streams and the project summary are occupancy facts shared by
+// every stage, so they are never parked. Occupancy is saved at the top level
+// of the draft where every existing reader (WMP generator, project open,
+// crash recovery) already looks; the other stages sit under `stages`.
+const WS_STAGE = { id: 'occupancy', park: {} };
+function wsStageId() { return WS_STAGE.id; }
+function wsStageAllowed() { return typeof wmpgIsStaff === 'function' && wmpgIsStaff(); }
+// Pure: the layer state a stage owns, lifted from a draft-shaped object.
+function wsStagePack(src) {
+  src = src || {};
+  return {
+    layoutData: src.layoutData || {},
+    sweptByPage: src.sweptByPage || {},
+    currentPage: src.currentPage || 1,
+    scale: src.scale || '',
+    paper: src.paper || '',
+  };
+}
+// Pure: the saved draft with each stage's state where it belongs. `base` is
+// the live snapshot (whatever stage is on the canvas); the result carries
+// occupancy at the top level and every other stage under `stages`. When a
+// non-occupancy stage is live, occupancy comes from the park, else from
+// `occFallback` (the last saved draft) — never from the live stage, and never
+// blanked: a missing source leaves the fallback's fields in place.
+function wsStageDraft(base, liveStage, park, occFallback) {
+  const out = { ...base };
+  const live = wsStagePack(base);
+  const stages = {};
+  wpPlanStages().forEach(st => {
+    if (st === 'occupancy') return;
+    const src = st === liveStage ? live : (park || {})[st];
+    if (src) stages[st] = wsStagePack(src);
+  });
+  if (liveStage !== 'occupancy') {
+    const occ = (park || {}).occupancy || occFallback;
+    Object.assign(out, wsStagePack(occ));
+  }
+  out.stage = liveStage;
+  if (Object.keys(stages).length) out.stages = stages; else delete out.stages;
+  return out;
+}
+// Pure: how much placed work a stage's state holds — every array on every
+// page slot (bins, rooms, chutes, equip, zones, aisles, callouts…) plus swept
+// paths. Reported when a plan is replaced under it.
+function wsPlanPlacedCount(layoutData, sweptByPage) {
+  let placed = 0, paths = 0;
+  Object.values(layoutData || {}).forEach(slot => {
+    Object.values(slot || {}).forEach(v => { if (Array.isArray(v)) placed += v.length; });
+  });
+  Object.values(sweptByPage || {}).forEach(s => { if (s && Array.isArray(s.paths)) paths += s.paths.length; });
+  return { placed, paths };
+}
+// Pure: the status line after a plan is replaced. It says what was kept and
+// what to check — placed work is kept at its page and canvas position, and
+// the scale is per stage, not per plan, so a re-issued sheet at a new scale
+// measures wrong until it is reset.
+function wsPlanReplaceNote(name, counts, scale, paper) {
+  const kept = [];
+  if (counts.placed) kept.push(counts.placed + ' placed item' + (counts.placed === 1 ? '' : 's'));
+  if (counts.paths) kept.push(counts.paths + ' swept path' + (counts.paths === 1 ? '' : 's'));
+  let s = 'Plan replaced with ' + name + '.';
+  if (kept.length) s += ' ' + kept.join(' and ') + ' kept at their page and position — check they still sit on the linework.';
+  if (scale) {
+    const paperName = { '210,297': 'A4', '420,297': 'A3', '594,420': 'A2', '841,594': 'A1', '1189,841': 'A0' }[paper] || '';
+    s += ' Scale stays 1:' + scale + (paperName ? ' @ ' + paperName : '') + ' — check it against the new sheet.';
+  } else s += ' No scale set yet.';
+  s += ' The previous plan is in the project’s Documents — Open in Design brings it back.';
+  return s;
+}
+function wsPlanLoadedKey(projectId, stage) {
+  stage = wpPlanStage(stage);
+  return stage === 'occupancy' ? projectId : projectId + ':' + stage;
+}
+// The live layer state as a draft-shaped object.
+function wsStageLive() {
+  return {
+    layoutData: (typeof WS_LAYOUT !== 'undefined' && WS_LAYOUT.byPage) || {},
+    sweptByPage: (typeof WS_SWEPT !== 'undefined' && WS_SWEPT.byPage) || {},
+    currentPage: WS.currentPage || 1,
+    scale: document.getElementById('ws-scale-sel')?.value || '',
+    paper: document.getElementById('ws-paper-sel')?.value || '',
+  };
+}
+// The OCCUPANCY layout slot for the current page — live when occupancy is on
+// the canvas, else the parked copy. The reconciliation snapshot the WMP
+// generator reads must always be occupancy's, whatever stage is being drawn.
+function wsOccupancySlot() {
+  if (WS_STAGE.id === 'occupancy') return wsLayoutSlot();
+  const occ = WS_STAGE.park.occupancy;
+  const slot = occ && occ.layoutData && occ.layoutData[occ.currentPage || 1];
+  return slot || { bins: [], rooms: [], chutes: [], equip: [] };
+}
+function wsStageClearScale() {
+  ['ws-scale-sel', 'ws-paper-sel'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+}
+// Switch the live stage: park the current state, unpark the target, then load
+// the target's plan (or show the stage's empty state). `noLoad` leaves the
+// plan to the caller (wsOpenProject does its own load).
+function wsStageSet(stage, opts = {}) {
+  stage = wpPlanStage(stage);
+  if (stage !== 'occupancy' && !wsStageAllowed()) stage = 'occupancy';
+  if (stage === WS_STAGE.id) { wsStageRenderSwitch(); return; }
+  if (typeof wsLayoutEndMode === 'function') { try { wsLayoutEndMode(); } catch(e) {} }
+  WS_STAGE.park[WS_STAGE.id] = wsStagePack(wsStageLive());
+  WS_STAGE.id = stage;
+  const s = WS_STAGE.park[stage] || wsStagePack({});
+  WS_LAYOUT.byPage = s.layoutData; WS_LAYOUT.sel = null; WS_LAYOUT.gen = null; WS_LAYOUT.undo = []; WS_LAYOUT.redo = [];
+  if (typeof WS_SWEPT !== 'undefined') WS_SWEPT.byPage = s.sweptByPage;
+  WS.currentPage = s.currentPage || 1;
+  wsStageClearScale();
+  wsApplySavedScale(s);
+  if (!opts.noLoad) wsStageLoadPlan();
+  wsStageRenderSwitch();
+  if (typeof wsRenderLayoutLayer === 'function') setTimeout(wsRenderLayoutLayer, 50);
+  if (typeof wsRenderSweptLayer === 'function') setTimeout(wsRenderSweptLayer, 50);
+  wsScheduleAutosave();
+}
+// Load the live stage's plan into the canvas; no plan → the stage's empty state.
+function wsStageLoadPlan() {
+  const pid = WS.projectId, st = WS_STAGE.id;
+  WS.pdfDoc = null; WS.pdfBytes = null; WS.totalPages = 0; WS.loadedProjectPdfFor = null;
+  wsShowNoPlan();
+  if (!pid) return;
+  loadProjectPdf(pid, st).then(rec => {
+    if (!rec || WS.projectId !== pid || WS_STAGE.id !== st) return;
+    WS.loadedProjectPdfFor = wsPlanLoadedKey(pid, st);
+    wsLoadPdfBytes(rec.buf.slice(0), rec.name);
+  }).catch(() => {});
+}
+// The empty state, worded for the live stage. A stage with no plan can start
+// from the project's occupancy plan (a copy into the stage's own slot — the
+// two are independent from then on) or take its own upload.
+function wsShowNoPlan() {
+  const es = document.getElementById('ws-empty-state'), cw = document.getElementById('ws-canvas-wrap');
+  if (es) es.style.display = '';
+  if (cw) cw.style.display = 'none';
+  ['ws-page-nav', 'ws-scale-wrap', 'ws-export-btn', 'ws-exportpdf-btn', 'ws-thumb-bar', 'ws-replace-plan-btn'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+  const st = WS_STAGE.id, staged = st !== 'occupancy';
+  const title = document.getElementById('ws-empty-title'), sub = document.getElementById('ws-empty-sub');
+  if (title) title.textContent = staged ? 'No plan for the ' + wpPlanStageLabel(st).toLowerCase() + ' stage' : 'No plans loaded';
+  if (sub) sub.textContent = staged
+    ? 'Upload the ' + wpPlanStageLabel(st).toLowerCase() + ' drawing (demolition, site or construction management plan) — it is this stage’s own plan, separate from the occupancy set.'
+    : 'Upload a plan PDF — it attaches to the open project, or starts a draft project if none is open.';
+  const copy = document.getElementById('ws-empty-copy-btn');
+  if (copy) {
+    const p = WS.projectId && getProjects().find(x => x.id === WS.projectId);
+    copy.style.display = staged && p && wpPlanMeta(p, 'occupancy') ? '' : 'none';
+  }
+  // The float bar stays up while a project is open so the stage switcher is reachable.
+  const fb = document.getElementById('ws-float-bar');
+  if (fb) fb.style.display = WS.projectId ? 'flex' : 'none';
+  wsStageRenderSwitch();
+}
+async function wsStageCopyOccupancyPlan() {
+  const pid = WS.projectId, st = WS_STAGE.id;
+  if (!pid || st === 'occupancy') return;
+  const rec = await loadProjectPdf(pid, 'occupancy');
+  if (!rec) { wsFloatStatus('The project has no occupancy plan to copy.'); return; }
+  await wsSetProjectPlan(pid, rec.buf, rec.name, { stage: st, file: false });
+  WS.loadedProjectPdfFor = wsPlanLoadedKey(pid, st);
+  await wsLoadPdfBytes(rec.buf.slice(0), rec.name);
+  wsFloatStatus(wpPlanStageLabel(st) + ' stage now has its own copy of ' + rec.name + ' — replacing it never touches the occupancy plan.');
+}
+// The segmented stage control in the float bar: staff only, project open.
+function wsStageRenderSwitch() {
+  const seg = document.getElementById('ws-stage-seg');
+  if (!seg) return;
+  const show = !!WS.projectId && wsStageAllowed();
+  seg.style.display = show ? 'inline-flex' : 'none';
+  if (!show) return;
+  seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.stage === WS_STAGE.id));
+  const rp = document.getElementById('ws-replace-plan-btn');
+  if (rp) rp.title = 'Replace the ' + wpPlanStageLabel(WS_STAGE.id).toLowerCase() + ' plan — placed work stays at its page and position; the previous plan stays in Documents';
+}
+// ONE way a PDF becomes a stage's plan — the Design tab's upload, Replace plan
+// and drop-on-canvas, the Documents grid's Open in Design and the stage slots
+// all come here, so filing, storage, the revision stamp and what happens to
+// the plan being replaced can never differ between them. Data only: the
+// caller decides how the canvas reloads. Returns { rev, unchanged, replaced }.
+async function wsSetProjectPlan(projectId, buf, name, opts = {}) {
+  const stage = wpPlanStage(opts.stage);
+  const projects = getProjects();
+  const p = projects.find(x => x.id === projectId);
+  const before = wpPlanMeta(p, stage);
+  const rev = await wpPlanRev(buf);
+  if (before && before.pdf_rev && before.pdf_rev === rev) return { rev, unchanged: true, replaced: false };
+  // The plan being replaced stays in the Documents grid. It has a card there
+  // unless it predates the grid (or was never filed), in which case its bytes
+  // are filed now — replacing a plan never discards one.
+  if (p && before && opts.keepOld !== false) await wsFileOldPlan(projectId, stage, before);
+  let docId = opts.docId || null;
+  if (opts.file !== false) docId = await docStore(projectId, buf.slice(0), name, 'Plans');
+  if (docId) docSetFlags(projectId, docId, { rev });   // the card knows which revision it holds
+  await storeProjectPdf(projectId, buf.slice(0), name, stage);
+  return { rev, unchanged: false, replaced: !!before };
+}
+async function wsFileOldPlan(projectId, stage, meta) {
+  const p = getProjects().find(x => x.id === projectId);
+  const docs = (p && p.docs) || [];
+  const filed = docs.some(d => d.name === meta.pdf_name && (!meta.pdf_rev || !d.rev || d.rev === meta.pdf_rev));
+  if (filed) return;
+  const old = await loadProjectPdf(projectId, stage);
+  if (!old || !old.buf) return;
+  const id = await docStore(projectId, old.buf.slice(0), old.name || meta.pdf_name || 'plans.pdf', 'Plans');
+  if (id && (old.rev || meta.pdf_rev)) docSetFlags(projectId, id, { rev: old.rev || meta.pdf_rev });
+}
+
 // Load PDF.js
 (function(){
   if (window.pdfjsLib) return;
@@ -17073,8 +17402,9 @@ async function wsLoadPdfFile(file) {
   }
   const arrayBuffer = await file.arrayBuffer();
 
-  // Plans belong to the project: attach to the open project, or create a draft
-  const keep = arrayBuffer.slice(0);
+  // Plans belong to the project: attach to the open project (replacing the
+  // live stage's plan if it has one), or create a draft project.
+  let stage = 'occupancy', replaced = false;
   if (!WS.projectId) {
     const draft = {
       id: Date.now().toString(),
@@ -17093,16 +17423,27 @@ async function wsLoadPdfFile(file) {
     saveProjects(projects);
     renderProjects();
     WS.projectId = draft.id;
+    WS_STAGE.id = 'occupancy'; WS_STAGE.park = {};
     document.getElementById('ws-project-name').textContent = draft.name;
+    await wsSetProjectPlan(draft.id, arrayBuffer, file.name, { stage, keepOld: false });
   } else {
-    const projects = getProjects();
-    const p = projects.find(x => x.id === WS.projectId);
-    if (p) { p.pdf_name = file.name; saveProjects(projects); }
+    stage = WS_STAGE.id;
+    const r = await wsSetProjectPlan(WS.projectId, arrayBuffer, file.name, { stage });
+    if (r.unchanged) { wsFloatStatus(file.name + ' is already the plan on the canvas — nothing changed.'); return; }
+    replaced = r.replaced;
   }
-  storeProjectPdf(WS.projectId, keep, file.name); // async, fire-and-forget
-  WS.loadedProjectPdfFor = WS.projectId; // session copy now matches this project's stored plan
+  WS.loadedProjectPdfFor = wsPlanLoadedKey(WS.projectId, stage); // session copy now matches this stage's stored plan
 
   await wsLoadPdfBytes(arrayBuffer, file.name);
+  if (replaced) {
+    const live = wsStageLive();
+    wsFloatStatus(wsPlanReplaceNote(file.name, wsPlanPlacedCount(live.layoutData, live.sweptByPage), live.scale, live.paper));
+  }
+}
+// Replace plan (float bar) — the same input the empty state uses.
+function wsReplacePlan() {
+  const inp = document.getElementById('ws-plan-file');
+  if (inp) inp.click();
 }
 
 async function wsLoadPdfBytes(arrayBuffer, fileName) {
@@ -17119,7 +17460,9 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
 
   WS.pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   WS.totalPages = WS.pdfDoc.numPages;
-  WS.currentPage = 1;
+  // Keep the stage's page when the new file has it — a replaced plan or a
+  // stage switch lands where the placed work is; otherwise page 1.
+  WS.currentPage = Math.min(Math.max(1, WS.currentPage || 1), WS.totalPages || 1);
   WS.pdfBytes = arrayBuffer; // store for export
 
   // Show canvas, hide empty state
@@ -17141,6 +17484,9 @@ async function wsLoadPdfBytes(arrayBuffer, fileName) {
   // to a tool tab — live from the moment a plan is up, before any tab click.
   const sw = document.getElementById('ws-scale-wrap');
   if (sw) sw.style.display = 'flex';
+  const rp = document.getElementById('ws-replace-plan-btn');
+  if (rp) rp.style.display = WS.projectId ? '' : 'none';   // a plan can be replaced once it belongs to a project
+  wsStageRenderSwitch();
   if (typeof wsLayoutBind === 'function') wsLayoutBind();
   const ov = document.getElementById('ws-overlay-svg');
   if (ov) ov.style.pointerEvents = 'all';
@@ -28734,7 +29080,9 @@ function wsExportDXF() {
 }
 
 // Open a project directly in workspace
-function wsOpenProject(project) {
+// `opts.stage` (staff) opens the project on that stage's plan and layer state;
+// a project always opens on occupancy otherwise.
+function wsOpenProject(project, opts = {}) {
   // leaving another project? save its canvas immediately, then swap state sets
   if (WS.projectId && WS.projectId !== project.id) wsFlushState();
   showScreen('workspace', document.getElementById('nav-workspace'));
@@ -28745,31 +29093,50 @@ function wsOpenProject(project) {
   if (switching) {
     let st = null;
     try { st = JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) {}
+    // Occupancy goes live from the top level of the draft; the other stages'
+    // states wait in the park until the switcher asks for them.
+    WS_STAGE.id = 'occupancy'; WS_STAGE.park = {};
+    if (st && st.stages) Object.entries(st.stages).forEach(([k, v]) => {
+      if (k !== 'occupancy' && wpPlanStages().includes(k)) WS_STAGE.park[k] = wsStagePack(v);
+    });
     WS_LAYOUT.byPage = (st && st.layoutData) || {};
-    WS_LAYOUT.sel = null; WS_LAYOUT.gen = null;
+    WS_LAYOUT.sel = null; WS_LAYOUT.gen = null; WS_LAYOUT.undo = []; WS_LAYOUT.redo = [];
     if (typeof WS_SWEPT !== 'undefined') WS_SWEPT.byPage = (st && st.sweptByPage) || {};
     if (st && st.calcTargets && typeof WS_CALC_TARGETS !== 'undefined') WS_CALC_TARGETS = st.calcTargets;
     WS_PROVISION_CUSTOM = (st && st.provisionCustom) || [];
     if (st && st.currentPage) WS.currentPage = st.currentPage;
     // the saved scale/paper come back BEFORE the layer renders — without them
     // every dimensioned layer bails on a null mpp and the plan looks empty
+    wsStageClearScale();
     if (typeof wsApplySavedScale === 'function') wsApplySavedScale(st);
     if (typeof wsRenderLayoutLayer === 'function') setTimeout(wsRenderLayoutLayer, 50);
     if (typeof wsRenderSweptLayer === 'function') setTimeout(wsRenderSweptLayer, 50);
   }
+  const stage = wpPlanStage(opts.stage || WS_STAGE.id);
+  if (stage !== WS_STAGE.id) wsStageSet(stage, { noLoad: true });
+  wsStageRenderSwitch();
   const s = getProjectSummary(project);
   if (Object.keys(s).length) {
     WS.extractData = { ...s };
     if (typeof wsSweptPopulateVehicles === 'function') wsSweptPopulateVehicles(true);
     setTimeout(wsPushSummaryToCalc, 400);
   }
-  // Auto-load the project's plans into the canvas (unless already showing them)
-  if (!WS.pdfDoc || WS.loadedProjectPdfFor !== project.id) {
-    loadProjectPdf(project.id).then(rec => {
-      if (rec && WS.projectId === project.id) {
-        WS.loadedProjectPdfFor = project.id;
+  // Auto-load the live stage's plan into the canvas (unless already showing it).
+  // No plan on record → the stage's empty state, never the previous project's
+  // or the previous stage's sheet left standing under this project's name.
+  const planKey = wsPlanLoadedKey(project.id, WS_STAGE.id);
+  if (!WS.pdfDoc || WS.loadedProjectPdfFor !== planKey) {
+    const st = WS_STAGE.id;
+    loadProjectPdf(project.id, st).then(rec => {
+      if (WS.projectId !== project.id || WS_STAGE.id !== st) return;
+      if (rec) {
+        WS.loadedProjectPdfFor = planKey;
         wsLoadPdfBytes(rec.buf.slice(0), rec.name);
-      }
+      } else if (WS.loadedProjectPdfFor && WS.loadedProjectPdfFor !== planKey) {
+        // the canvas still shows another project's or stage's stored plan
+        WS.pdfDoc = null; WS.pdfBytes = null; WS.totalPages = 0; WS.loadedProjectPdfFor = null;
+        wsShowNoPlan();
+      } else if (!WS.pdfDoc) wsShowNoPlan();   // word the empty state for this stage
     }).catch(() => {});
   }
   if (project.unit_mix) {
@@ -28983,7 +29350,13 @@ function wsPillDragStart(e, id) {
 // ── AUTOSAVE DRAFT ────────────────────────────────────────────
 let _wsDraftTimer = null;
 function wsBuildDraft() {
-  return {
+  // The live snapshot is whichever stage is on the canvas; wsStageDraft puts
+  // occupancy at the top level (where every reader looks) and the other
+  // stages under `stages`, reading a parked occupancy from the last saved
+  // draft if the park has none — never blanking it.
+  let occFallback = null;
+  try { occFallback = WS.projectId ? JSON.parse(localStorage.getItem('ws_state_' + WS.projectId) || 'null') : null; } catch(e) {}
+  return wsStageDraft({
     ts: Date.now(),
     projectId: WS.projectId,
     projectName: document.getElementById('ws-project-name')?.textContent,
@@ -29000,13 +29373,14 @@ function wsBuildDraft() {
     provisionCustom: (typeof WS_PROVISION_CUSTOM !== 'undefined' ? WS_PROVISION_CUSTOM : []),
     // B3: the reconciled view the WMP generator reads. Written from the same
     // functions the plan draws from, so the document cannot diverge from it.
+    // Always OCCUPANCY's slot — a stage being drawn must not become the WMP's bins.
     reconciliation: (() => {
       try {
-        return wsReconcileSnapshot(wsLayoutSlot().rooms, WS_CALC_ROOMS, wsLayoutSlot(),
-                                   wsEquipLibrary(WS_EQUIP_DB));
+        const slot = wsOccupancySlot();
+        return wsReconcileSnapshot(slot.rooms, WS_CALC_ROOMS, slot, wsEquipLibrary(WS_EQUIP_DB));
       } catch (e) { console.warn('reconciliation snapshot skipped', e); return []; }
     })(),
-  };
+  }, WS_STAGE.id, WS_STAGE.park, occFallback);
 }
 function wsFlushState() {
   clearTimeout(_wsDraftTimer);
@@ -29042,6 +29416,10 @@ function wsRestoreDraft() {
     if (draft.layoutData) { WS_LAYOUT.byPage = draft.layoutData; wsRenderLayoutLayer(); }
     // legacy draft.layoutRooms (old rooms-only format) intentionally dropped — incompatible coordinates
     if (draft.sweptByPage) WS_SWEPT.byPage = draft.sweptByPage;
+    // occupancy is live after a reload; the other stages wait in the park
+    if (draft.stages) Object.entries(draft.stages).forEach(([k, v]) => {
+      if (k !== 'occupancy' && wpPlanStages().includes(k)) WS_STAGE.park[k] = wsStagePack(v);
+    });
     else if (draft.sweptNodes?.length) WS_SWEPT.nodes = draft.sweptNodes;
     if (draft.projectName) document.getElementById('ws-project-name').textContent = draft.projectName;
     if (draft.projectId) WS.projectId = draft.projectId;

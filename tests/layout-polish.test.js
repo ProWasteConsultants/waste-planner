@@ -462,8 +462,10 @@ test('Open in Design loads the project into the canvas, not just the tab', () =>
   // must route through wsOpenProject, which owns plan auto-load + state restore.
   const pdfFn = SOURCE.slice(SOURCE.indexOf('async function docOpenInDesign('),
                              SOURCE.indexOf('async function docOpenInCompliance('));
-  assert.ok(pdfFn.includes('wsOpenProject(p)'),
-    'docOpenInDesign routes through wsOpenProject');
+  assert.ok(pdfFn.includes('wsOpenProject(p, { stage })'),
+    'docOpenInDesign routes through wsOpenProject (on the stage the document was chosen for)');
+  assert.ok(pdfFn.includes('await wsSetProjectPlan(currentProjectId, rec.buf, rec.name, { stage, file: false, docId })'),
+    'and stores the plan through the ONE setter every plan path uses');
   assert.ok(pdfFn.includes('WS.loadedProjectPdfFor = null'),
     'and clears the session marker so a newly chosen document replaces the PDF already up');
   const dxfFn = SOURCE.slice(SOURCE.indexOf('async function docOpenInDesignDxf('),
@@ -471,9 +473,9 @@ test('Open in Design loads the project into the canvas, not just the tab', () =>
   assert.ok(dxfFn.includes('wsOpenProject(p)'),
     'the DXF grid action carries the project context too');
   // wsOpenProject itself must keep its auto-load path — it is what the grid relies on
-  const open = SOURCE.slice(SOURCE.indexOf('function wsOpenProject(project)'),
+  const open = SOURCE.slice(SOURCE.indexOf('function wsOpenProject(project, opts = {})'),
                             SOURCE.indexOf('let _wsPanelCollapsed'));
-  assert.ok(open.includes('loadProjectPdf(project.id).then(rec =>') &&
+  assert.ok(open.includes('loadProjectPdf(project.id, st).then(rec =>') &&
             open.includes('wsLoadPdfBytes(rec.buf.slice(0), rec.name)'),
     'wsOpenProject auto-loads the stored plan into the canvas');
   assert.ok(open.includes("localStorage.getItem('ws_state_' + project.id)"),
