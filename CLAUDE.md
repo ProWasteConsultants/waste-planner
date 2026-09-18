@@ -13,9 +13,17 @@ check this list before widening who can use the app.
 | 1 | **Org-level title block branding.** `WS_BRAND` in `index.html` is a hard-coded constant for Pro Waste Consultants. | Any **external organisation** exporting a sheet. | Every firm's drawings would go out branded Pro Waste Consultants. Needs a row per org, editable in-app. The gate is restated at the constant itself. |
 | 2 | **Private repository.** | **Launch.** | **Decided 2026-08-24: staying public for now.** The org is on the **free** GitHub plan, where Pages cannot serve from a private repo — flipping visibility would take the live site down at the `CNAME`. A scan found nothing that requires secrecy: the Supabase JWT is the **anon** key (`"role":"anon"`) with RLS as the real boundary, and there is no `service_role` key, private key or API secret. So this is hygiene with a real cost attached. It closes by moving hosting or paying for a plan — not by flipping the switch. Do not re-investigate; the blocker is the plan, not the repo. |
 | 3 | **No PITR — daily backups only.** | **Real customer data.** | **Confirmed 2026-08-24: point-in-time recovery is NOT enabled.** The project has daily backups, which sets a recovery point objective of **up to 24 hours** — a customer who spends a day on a layout can lose that day, and nothing in the app warns them. A restore has also still never been **rehearsed**, so the retention window and the restore path are both untested. And daily backups cover **Postgres only**: uploaded plan PDFs live in Supabase **Storage** (`PLANS_BUCKET`), which they do not include. A restore that brings back every `projects` row and no plan PDFs is a half-restore — every project would open pointing at a drawing that is gone. Decide the acceptable RPO before real customer data, then enable PITR or accept 24h in writing, back up Storage separately, and rehearse once end to end. |
-| 4 | **`pdf_rev` column** for cross-device plan freshness. | Multi-device use of one project. | Nothing currently tells a second device that the stored plan PDF changed, so it can serve a stale page under a current layout. |
 | 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
 | 9 | **ai-user anonymous allowance.** The `?check=wmp` entry hands the checker an `is_anonymous` session token; the ai-user edge function (not in this repo) must grant such tokens exactly ONE lifetime `compliance` run and refuse every other tool tag. Also: "Allow anonymous sign-ins" must be ON in Supabase Auth (off = graceful signup-first fallback, but the offer stops being "no account needed"). | **Pointing the planner landing page at real traffic.** | Until verified, an anonymous check either fails server-side or draws from an unintended allowance bucket. Client + DB fences are done (`sql/2026-09-12-anon-compliance-entry.sql`); this is the last leg. |
+
+**Closed:** Cross-device plan freshness (gate 4). Every stored plan carries a
+**revision stamp** — SHA-256 of the bytes (`wpPlanRev`) — on the project record
+(`app_data.pdf_rev`, and `app_data.stage_plans[stage].pdf_rev` for stage
+plans), and `loadProjectPdf` refetches when the cache's stamp differs
+(`wpPlanCacheStale`, pure). It is in `app_data`, not a column, on purpose: the
+upsert would fail on every device until a column migration ran, and nothing
+queries by revision. The name check stays only for records that predate the
+stamp. See "Plans: replace, stage slots, revision".
 
 **Closed:** Swept-path title block panel (gate 5). `wsSheetVehPanel` renders the
 bottom-centre card when the swept layer is on and paths exist: the D2 side
@@ -198,6 +206,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
 | `tests/residential-method.test.js` | Residential method types: stepped-table lookup, review gate, state fallback |
 | `tests/wmp-generator.test.js` | WMP generator: title, guideline auto-load, assembled narrative, polish guard, override provenance, text-library conditions and presets |
+| `tests/plan-slots.test.js` | Plan slots: legacy occupancy keys, per-stage slots (staff), revision freshness, stage park/draft, replace note, wiring conventions |
 | `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers, the Central Coast form map and fill (pdf-lib test skips when not installed) |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
@@ -929,6 +938,66 @@ Not built (its own brief): equipment **categories** with distinct calculation
 branches — balers, transpackers, organics processors. Today anything with a
 compaction ratio is "compaction equipment", collectable or plant; see the
 Equipment section.
+
+## Plans: replace, stage slots, revision (2026-09-18)
+
+A project's plan is replaceable from inside the Design tab, and PWC staff get
+one plan and one layer state per C&D stage. Rules, tested in
+`tests/plan-slots.test.js`:
+
+- **ONE way a PDF becomes a plan: `wsSetProjectPlan(projectId, buf, name,
+  { stage, file, docId, keepOld })`.** The empty-state upload, the float bar's
+  **⇄ Plan** button, a PDF dropped on the loaded canvas (`wsOnDrop`), the
+  Documents grid's *Open in Design* and the stage slots all come here. It
+  files the new PDF as a Plans document (unless it already is one), stores it
+  through `storeProjectPdf` (which stamps `pdf_name` + `pdf_rev` on the
+  record for the stage), and **keeps the plan being replaced**: if it has no
+  card in the Documents grid (`wsFileOldPlan`), its bytes are filed first.
+  Replacing a plan never discards one — *Open in Design* on the old card
+  brings it back. The identical file (same revision) is a stated no-op.
+- **Placed work stays where it was, and the status line says so.** Layout,
+  swept paths and markups are keyed by page number in canvas pixels; a
+  replacement keeps them at their page and position and keeps the current
+  page when the new file has it. Nothing re-fits — the note
+  (`wsPlanReplaceNote`, pure) counts what was kept (`wsPlanPlacedCount`,
+  pure), names the scale to check (scale is **per stage**, not per plan) and
+  says where the old plan went. A re-issued sheet at a new scale or with
+  pages reordered leaves the layout over the wrong linework until the user
+  fixes it: stated, not silently corrected.
+- **Slots (`wpPlanSlot`, pure).** Occupancy keeps the legacy keys exactly
+  (IDB key = projectId, cloud `{uid}/{projectId}.pdf`, `p.pdf_name`), so no
+  existing project changes. A stage's plan is `projectId:stage:<stage>` /
+  `{uid}/{projectId}.<stage>.pdf` with metadata at
+  `p.stage_plans[stage] = { pdf_name, pdf_rev }` (`wpPlanMeta` /
+  `wpPlanMetaSet`, pure). Both travel in `app_data`, so the change is
+  schema-free. `WP_PLAN_STAGES` is the registry; cross-block readers use
+  `wpPlanStages()` / `wpPlanStage()`.
+- **Stage slots are PWC staff only** — `wsStageAllowed()` is the single gate
+  (it is `wmpgIsStaff()`, the C&D generator's own), checked in `wsStageSet`,
+  `docOpenInDesign` and the menu/switcher renderers. A non-staff user never
+  sees the switcher, and every stage request falls back to occupancy.
+- **Exactly one stage is LIVE** in `WS_LAYOUT` / `WS_SWEPT` / `WS`; the
+  others rest in `WS_STAGE.park[stage]` in the draft's own shape
+  (`wsStagePack`, pure: layoutData, sweptByPage, currentPage, scale, paper).
+  The bin calculator targets, provision streams and project summary are
+  occupancy facts shared by every stage and are never parked. **Occupancy is
+  saved at the top level of the draft**, where the WMP generator, project
+  open and crash recovery already look; the other stages sit under
+  `draft.stages` (`wsStageDraft`, pure). When a stage is live, occupancy comes
+  from the park, else from the last saved draft — never from the live stage
+  and never blanked. The reconciliation snapshot is always occupancy's
+  (`wsOccupancySlot`): a demolition layout must not become the WMP's bins.
+- **A project always opens on occupancy**; `wsOpenProject(project, { stage })`
+  (from the grid's staff-only *Use as stage plan* entries) switches after the
+  state loads. A stage with no plan shows its own empty state, with **⧉ Start
+  from the project's plans** copying the occupancy plan into the stage's slot
+  — independent from then on — beside its own upload. Opening a project with
+  no plan while another project's plan is on the canvas now shows the empty
+  state instead of the stale sheet.
+
+Not built: the stage named on the exported sheet's title block, and any
+stage layer content of its own (stockpiles, C&D bins) — the stage canvas
+carries the same tools as occupancy today.
 
 ## Layout: rooms, schedules and bins
 
