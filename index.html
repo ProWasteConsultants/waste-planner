@@ -2090,8 +2090,11 @@ body.wp-anon .ws-top-chip{display:none;}
                     <span style="font-size:10px;color:rgba(255,255,255,0.4);">×</span>
                     <input id="ws-zone-d" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone depth in mm — applied when you click to place">
                     <span style="font-size:10px;color:rgba(255,255,255,0.4);">mm</span>
-                    <input id="ws-zone-label" type="text" maxlength="60" class="wsl-sel" style="flex:1 1 110px;min-width:110px;" placeholder="Custom zone label…" title="Caption for a Custom zone — read when you place or draw it. Double-click any placed zone to rename it.">
                     <button class="wsl-btn" onclick="wsZoneDrawMode()" title="Draw the picked zone as a polygon — click corners, Enter or double-click to close. The area is measured from the outline, and a zone inside a bin room is tagged to it.">▱ Draw</button>
+                  </div>
+                  <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
+                    <span style="font-size:10px;color:rgba(255,255,255,0.45);white-space:nowrap;">Label</span>
+                    <input id="ws-zone-label" type="text" maxlength="60" class="wsl-sel" style="flex:1 1 auto;min-width:0;" placeholder="Custom zone caption (e.g. Mattress store)" title="Caption for a Custom zone — read when you place or draw it. Predefined zones keep their own name. Double-click any placed zone to rename it.">
                   </div>
                   <div class="wsl-group-body" id="ws-layout-zones" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
                 </div>
