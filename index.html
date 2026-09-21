@@ -2090,6 +2090,7 @@ body.wp-anon .ws-top-chip{display:none;}
                     <span style="font-size:10px;color:rgba(255,255,255,0.4);">×</span>
                     <input id="ws-zone-d" type="number" min="200" step="100" class="wsl-sel" style="width:70px;" title="Zone depth in mm — applied when you click to place">
                     <span style="font-size:10px;color:rgba(255,255,255,0.4);">mm</span>
+                    <input id="ws-zone-label" type="text" maxlength="60" class="wsl-sel" style="flex:1 1 110px;min-width:110px;" placeholder="Custom zone label…" title="Caption for a Custom zone — read when you place or draw it. Double-click any placed zone to rename it.">
                     <button class="wsl-btn" onclick="wsZoneDrawMode()" title="Draw the picked zone as a polygon — click corners, Enter or double-click to close. The area is measured from the outline, and a zone inside a bin room is tagged to it.">▱ Draw</button>
                   </div>
                   <div class="wsl-group-body" id="ws-layout-zones" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;align-items:stretch;"></div>
@@ -19637,6 +19638,24 @@ function wsZoneLabel(zone) {
   return t ? t.label : 'Zone';
 }
 function wsIsZone(item) { return !!(item && item.zoneType && WS_ZONE_TYPES[item.zoneType]); }
+// Pure: what the palette's W×D field shows when a zone type is picked. A value
+// the user TYPED stays — typing the dimensions first and then picking the type
+// is the natural order and must work — so only an empty field, or one still
+// holding the previous pick's own default (prevAuto), takes the new type's
+// default. Returns the mm to show, or null to leave the field as typed.
+function wsZoneDimOnPick(current, prevAuto, typeDefaultMm) {
+  const cur = String(current == null ? '' : current).trim();
+  if (cur === '' || (prevAuto != null && cur === String(prevAuto))) return typeDefaultMm;
+  return null;
+}
+// Pure: the caption a placed zone carries. A CUSTOM zone takes the label typed
+// in the palette (trimmed, capped); every other type keeps its own label, so a
+// typed caption can never make one type read as another on the drawing.
+function wsZoneLabelFor(type, typed) {
+  const t = (typed == null ? '' : String(typed)).trim();
+  if (type && type.id === 'CUSTOM' && t) return t.slice(0, 60);
+  return type ? type.label : 'Zone';
+}
 // DXF layer for a zone. Predefined types get a stable layer; a custom zone
 // derives one from its label so a drawing set stays readable in CAD.
 function wsZoneDxfLayer(zone) {
@@ -24861,20 +24880,48 @@ function wsZoneMode(typeId) {
   if (!t) return;
   if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
   if (!wsNeedScale()) return;
-  // Remember the pick and prefill the W×D inputs with the type default — the
-  // values ACTUALLY used are read back at placement, so they can be edited
-  // between arming and clicking.
+  // Remember the pick and offer the type default in the W×D inputs — but a
+  // dimension the user has already typed STAYS (wsZoneDimOnPick): typing the
+  // size first and then picking the type must work. The values ACTUALLY used
+  // are read back at placement, so they can be edited between arming and
+  // clicking too.
   WS_LAYOUT._zoneType = t.id;
   const zw = document.getElementById('ws-zone-w'), zd = document.getElementById('ws-zone-d');
-  if (zw) zw.value = Math.round(t.w * 1000);
-  if (zd) zd.value = Math.round(t.d * 1000);
+  const auto = WS_LAYOUT._zoneAuto || {};
+  const nw = zw ? wsZoneDimOnPick(zw.value, auto.w, Math.round(t.w * 1000)) : null;
+  const nd = zd ? wsZoneDimOnPick(zd.value, auto.d, Math.round(t.d * 1000)) : null;
+  if (zw && nw != null) zw.value = nw;
+  if (zd && nd != null) zd.value = nd;
+  WS_LAYOUT._zoneAuto = { w: zw ? zw.value : null, d: zd ? zd.value : null };
   WS_LAYOUT._fixture = { code: 'ZONE_' + t.id, label: t.label, w: t.w, d: t.d,
                          round: false, aisle: false, zoneType: t.id,
                          provisionStream: t.provision || null, col: t.col };
   WS._mode = 'layoutfixture';
   document.getElementById('ws-canvas-area').style.cursor = 'crosshair';
   document.getElementById('ws-overlay-svg').style.pointerEvents = 'all';
-  wsLayoutStatus(`Click to place the ${t.label} at the W×D set in the palette — or use ▱ Draw to trace its real outline. Esc to stop.`);
+  const kept = (nw == null || nd == null) ? ' (keeping the size you typed)' : '';
+  const lbl = t.id === 'CUSTOM' ? ' Type its label in the palette first — or double-click it later to rename.' : '';
+  wsLayoutStatus(`Click to place the ${t.label} at the W×D set in the palette${kept} — or use ▱ Draw to trace its real outline.${lbl} Esc to stop.`);
+}
+// Double-click a placed zone to rename it. Any zone type takes a caption — it
+// is presentation only; reconciliation and the provision link key on
+// zoneType / allow ids, never on the label — and the DXF layer of a custom
+// zone follows its label (wsZoneDxfLayer).
+function wsZoneRenameAt(e) {
+  if (WS._mode || typeof WS_LAYOUT === 'undefined') return false;
+  const mpp = wsSweptMpp(); if (!mpp) return false;
+  const p = wsLayoutEvt(e);
+  const eq = wsLayoutHitEquip(p.x, p.y, mpp);
+  if (!eq || !wsIsZone(eq)) return false;
+  const t = WS_ZONE_TYPES[eq.zoneType];
+  const v = prompt('Zone label', wsZoneLabel(eq));
+  if (v == null) return true;
+  wsLayoutSnapshot();
+  eq.label = v.trim().slice(0, 60) || (t ? t.label : 'Zone');
+  wsSelSet([eq.id], 'equip');
+  wsLayoutAutosave(); wsRenderLayoutLayer();
+  wsLayoutStatus(`Zone labelled “${eq.label}” — Ctrl+Z reverts.`);
+  return true;
 }
 // Zones can also be DRAWN as a polygon — click corners, Enter or double-click
 // closes — for the real shape of a store or claim. The measured outline is
@@ -24899,7 +24946,7 @@ function wsZonePolyFinish(pts, mpp) {
     wsLayoutSnapshot();
     const bb = wsPolyBBox(pts);
     const it = { id: 'fx_' + Date.now(), x: (bb.x1 + bb.x2) / 2, y: (bb.y1 + bb.y2) / 2, rot: 0,
-      code: 'ZONE_' + t.id, label: t.label, pts: pts.slice(),
+      code: 'ZONE_' + t.id, label: wsZoneLabelFor(t, document.getElementById('ws-zone-label')?.value), pts: pts.slice(),
       w: (bb.x2 - bb.x1) * mpp, d: (bb.y2 - bb.y1) * mpp,
       known: true, fixture: false, aisle: false, round: false,
       zoneType: t.id, provisionStream: t.provision || null, col: t.col };
@@ -24970,6 +25017,8 @@ function wsFixtureAt(x, y) {
     const zd = +(document.getElementById('ws-zone-d')?.value || 0) / 1000;
     if (zw >= 0.2) f.w = zw;
     if (zd >= 0.2) f.d = zd;
+    // a custom zone takes the caption typed in the palette (wsZoneLabelFor)
+    f.label = wsZoneLabelFor(WS_ZONE_TYPES[f.zoneType], document.getElementById('ws-zone-label')?.value);
   }
   wsLayoutSlot().equip.push({ id, x, y, rot: 0, code: f.code, label: f.label,
     w: f.w, d: f.d, known: true, fixture: !f.aisle, aisle: !!f.aisle, round: !!f.round,
@@ -28364,6 +28413,7 @@ function wsOnCanvasClick(e) {
 }
 
 function wsOnCanvasDblClick(e) {
+  if (!WS._mode && typeof wsZoneRenameAt === 'function' && wsZoneRenameAt(e)) return;   // idle: double-click a zone renames it
   if (WS._mode === 'layoutkerb') { wsCollectKerbFinish(); return; }   // COMMIT the traced kerb
   if (WS._mode === 'layoutman') { wsManFinish(); return; }   // COMMIT the manoeuvre route
   if (WS._mode === 'layoutmark' && WS_LAYOUT._mark) { wsMarkFinish(); return; }   // COMMIT the route, don't discard it

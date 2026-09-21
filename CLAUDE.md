@@ -1174,6 +1174,17 @@ on word boundaries.
 
 A zone and an access aisle can **never** share a colour. One expression decides it.
 
+**Zone palette (2026-09-21).** Picking a zone type offers its default W×D but
+**never overwrites a size the user typed** (`wsZoneDimOnPick`, pure: only an
+empty field, or one still holding the previous pick's own default, takes the
+new default) — typing the dimensions first and then picking the type is the
+natural order. A **Custom zone takes the caption typed in the palette**
+(`wsZoneLabelFor`, pure; read at the click like the W×D, and by the polygon
+draw), and any placed zone renames on **double-click** (`wsZoneRenameAt`,
+undoable). A caption is presentation: reconciliation and the provision link key
+on `zoneType` / `allow` ids, so a predefined type keeps its own label whatever
+is typed, and a custom zone's DXF layer follows its caption (`wsZoneDxfLayer`).
+
 ## Sheet export
 
 `wsExportPDF()` opens the export dialog; `wsSheetExport()` builds an A3 landscape

@@ -471,3 +471,47 @@ test('streams are collected and saved as an array, never null', () => {
     'the save path must normalise to an array');
   void collect;
 });
+
+// ── palette: typed dimensions survive the type pick; custom zones take a label ──
+test('wsZoneDimOnPick: a typed size stays when the type is picked afterwards', () => {
+  // the natural order — type 2500 × 1800, THEN click the zone type — must work
+  assert.equal(ws.wsZoneDimOnPick('2500', null, 3000), null, 'typed with no prior pick: keep it');
+  assert.equal(ws.wsZoneDimOnPick('2500', 3000, 1200), null, 'typed over a previous default: keep it');
+  assert.equal(ws.wsZoneDimOnPick('', null, 3000), 3000, 'empty field: offer the default');
+  assert.equal(ws.wsZoneDimOnPick(' ', null, 3000), 3000, 'blank field: offer the default');
+  assert.equal(ws.wsZoneDimOnPick('3000', 3000, 1200), 1200, 'still on the previous pick\'s default: follow the new type');
+  assert.equal(ws.wsZoneDimOnPick(3000, '3000', 1200), 1200, 'number vs string is the same value');
+});
+
+test('wsZoneLabelFor: only a CUSTOM zone takes the typed caption', () => {
+  const T = ws.WS_ZONE_TYPES;
+  assert.equal(ws.wsZoneLabelFor(T.CUSTOM, '  Mattress store '), 'Mattress store');
+  assert.equal(ws.wsZoneLabelFor(T.CUSTOM, ''), 'Custom zone', 'nothing typed: the type label');
+  assert.equal(ws.wsZoneLabelFor(T.CUSTOM, null), 'Custom zone');
+  assert.equal(ws.wsZoneLabelFor(T.HARDWASTE, 'Anything'), 'Hard waste zone',
+    'a predefined type keeps its own label — a caption can never make one type read as another');
+  assert.equal(ws.wsZoneLabelFor(T.CUSTOM, 'x'.repeat(100)).length, 60, 'capped');
+  assert.equal(ws.wsZoneLabelFor(null, 'x'), 'Zone');
+  // the custom caption is what the DXF layer and the legend key off
+  assert.equal(ws.wsZoneDxfLayer({ zoneType: 'CUSTOM', label: ws.wsZoneLabelFor(T.CUSTOM, 'Mattress store') }), 'A-WASTE-ZONE-MATTRESS-STORE');
+});
+
+test('wiring: the palette keeps typed dimensions, reads the custom label, and double-click renames', () => {
+  const mode = SOURCE.slice(SOURCE.indexOf('function wsZoneMode'), SOURCE.indexOf('function wsZoneRenameAt'));
+  assert.ok(mode.includes('wsZoneDimOnPick(zw.value, auto.w, Math.round(t.w * 1000))') &&
+            mode.includes('wsZoneDimOnPick(zd.value, auto.d, Math.round(t.d * 1000))'),
+    'picking a type goes through the pure rule for both fields');
+  assert.ok(!/zw\.value = Math\.round\(t\.w \* 1000\);/.test(mode), 'the old unconditional overwrite is gone');
+  assert.ok(mode.includes('WS_LAYOUT._zoneAuto = {'), 'the offered default is remembered so the next pick can tell typed from default');
+  const place = SOURCE.slice(SOURCE.indexOf('function wsFixtureAt'), SOURCE.indexOf('// ── MARKUPS'));
+  assert.ok(place.includes("f.label = wsZoneLabelFor(WS_ZONE_TYPES[f.zoneType], document.getElementById('ws-zone-label')?.value);"),
+    'a placed zone reads the palette label at the click, like its W×D');
+  const fin = SOURCE.slice(SOURCE.indexOf('function wsZonePolyFinish'), SOURCE.indexOf('function wsRenderBinThumb'));
+  assert.ok(fin.includes("label: wsZoneLabelFor(t, document.getElementById('ws-zone-label')?.value)"), 'a drawn zone too');
+  assert.ok(SOURCE.includes('id="ws-zone-label"'), 'the palette has the label field');
+  const dbl = SOURCE.slice(SOURCE.indexOf('function wsOnCanvasDblClick'), SOURCE.indexOf('// Saving is AUTOMATIC'));
+  assert.ok(dbl.includes('wsZoneRenameAt(e)) return;'), 'an idle double-click on a zone renames it');
+  const ren = SOURCE.slice(SOURCE.indexOf('function wsZoneRenameAt'), SOURCE.indexOf('function wsZoneDrawMode'));
+  assert.ok(ren.includes('if (!eq || !wsIsZone(eq)) return false;'), 'only zones rename this way');
+  assert.ok(ren.includes('wsLayoutSnapshot();'), 'undoable');
+});

@@ -139,6 +139,8 @@ const LAYOUT_BLOCKS = [
   ['wsZoneColour', /^function wsZoneColour\(/],
   ['wsZoneLabel', /^function wsZoneLabel\(/],
   ['wsIsZone', /^function wsIsZone\(/],
+  ['wsZoneDimOnPick', /^function wsZoneDimOnPick\(/],
+  ['wsZoneLabelFor', /^function wsZoneLabelFor\(/],
   ['wsZoneDxfLayer', /^function wsZoneDxfLayer\(/],
   ['wsZoneLegendItems', /^function wsZoneLegendItems\(/],
   ['wsAllowanceReconcile', /^function wsAllowanceReconcile\(/],
@@ -198,7 +200,9 @@ const LAYOUT_BLOCKS = [
   ['wsUngroupItems', /^function wsUngroupItems\(/],
   ['wsMarqueeRect', /^function wsMarqueeRect\(/],
   ['wsMarqueeHits', /^function wsMarqueeHits\(/],
-  ['wsCloneItem',       /^function wsCloneItem\(/],    ['wsSnapVertexOrtho', /^function wsSnapVertexOrtho\(/],
+  ['wsCloneItem',       /^function wsCloneItem\(/],
+  
+  ['wsSnapVertexOrtho', /^function wsSnapVertexOrtho\(/],
   ['wsSnapAxis',        /^function wsSnapAxis\(/],
   ['WS_DIM_COLOUR',     /^const WS_DIM_COLOUR = /],
   ['wsDimText',         /^function wsDimText\(/],
