@@ -1336,6 +1336,22 @@ after the manoeuvrability engine (`tests/collection-point.test.js`):
   and the metres) — unlike the manoeuvrability overlay, which is chrome.
 - Street furniture (`POLE/TREE/XOVER/PIT/HYDRANT/SIGN`) lives in the shared
   `WS_FIXTURES` library with an `excl` default, usable on any canvas.
+- **A committed kerb is editable like a route markup (2026-09-21).** Click
+  selects it (selection kind `kerb`, from the canvas or the panel's list);
+  the line body drags the whole kerb **with the bins placed along it**
+  (`wsKerbTranslate` — a translation keeps the pack exact, so nothing
+  re-places); corners reshape (`wsKerbMoveVertex`), ⊕ midpoints add one
+  (`wsKerbInsertVertex`), Alt/right-click removes one down to the two-end
+  floor (`wsKerbDeleteVertex`), and a reshape **re-packs** that kerb's bins on
+  drag end through `wsCollectPlaceBins(ids, { noSnap: true })` so the drag
+  stays one undo step. Del deletes the kerb through the panel's own
+  `wsCollectKerbDelete`, bins and all, Ctrl+Z restoring both. `wsKerbHit`
+  (pure, the `wsLayoutHitMarkup` shape) is the one hit-test: the SELECTED
+  kerb's handles are tried before contents so a bin on a corner cannot steal
+  the grab; any kerb's line body only after bins and markups. The click that
+  follows mousedown (`wsLayoutSelectAt`) keeps the kerb selected rather than
+  falling through to the room under it. Hidden with the Bin room layer, like
+  the line itself; the handles are editing chrome and never print.
 - Future **area mode**: holding bays and presentation areas pack a polygon,
   not a line — new kerb entries carry `kind` so they are never forced through
   the line logic.
