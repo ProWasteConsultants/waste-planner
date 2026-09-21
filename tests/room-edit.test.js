@@ -366,7 +366,8 @@ test('the pan cursor is suppressed for the whole room drag', () => {
   // an inline cursor outranks it, so the drag must set one and clear it on release.
   assert.match(SOURCE, /if \(dg\.kind === 'room'\) wsLayoutSetCursor\('move'\);/);
   assert.match(SOURCE, /else if \(dg\.kind === 'roomvert'\) wsLayoutSetCursor\('pointer'\);/);
-  assert.match(SOURCE, /if \(dg\.kind === 'room' \|\| dg\.kind === 'roomvert'\) wsLayoutSetCursor\(null\);/,
+  // the kerb drags hold a cursor too and release on the same line
+  assert.match(SOURCE, /if \(dg\.kind === 'room' \|\| dg\.kind === 'roomvert' \|\| dg\.kind === 'kerbvert' \|\| dg\.kind === 'kerbbody'\) wsLayoutSetCursor\(null\);/,
     'the held cursor is never released on drag end');
   assert.match(SOURCE, /function wsLayoutSetCursor\(c\)[\s\S]{0,220}area\.style\.cursor !== want/,
     'wsLayoutSetCursor must write inline style to outrank the :active rule');

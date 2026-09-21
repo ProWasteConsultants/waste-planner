@@ -19342,6 +19342,12 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
       wsRenderLayoutLayer(); wsLayoutAutosave();
       return;
     }
+    // A selected kerb deletes with the bins placed along it — the same path as
+    // the panel's ✕, so Ctrl+Z restores both.
+    if (WS_LAYOUT.selKind === 'kerb' && WS_LAYOUT.sel) {
+      const ki = wsCollectKerbIndex(WS_LAYOUT.sel);
+      if (ki >= 0) { wsSelSet([]); wsCollectKerbDelete(ki); return; }
+    }
     // A selected route / measure / area deletes as one markup, points and all.
     if (WS_LAYOUT.selKind === 'markup' && WS_LAYOUT.sel) {
       const mi = (slot.markups || []).findIndex(x => x.id === WS_LAYOUT.sel);
@@ -21016,6 +21022,74 @@ function wsKerbProject(pts, x, y) {
   }
   return best;
 }
+// ── Kerb editing (pure) ──────────────────────────────────────────────────────
+// A committed kerb is editable like a route markup: click selects it, the line
+// body drags the whole kerb WITH the bins placed along it, corners reshape,
+// ⊕ midpoints add a corner, Alt/right-click removes one, Del deletes it. The
+// selected kerb's handles are tested first so a bin sitting on a corner does
+// not steal the grab; then any kerb's corner, then the line body.
+function wsKerbHit(kerbs, x, y, vr, lineR, selId) {
+  const d2seg = (a, b) => {
+    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy;
+    const t = L2 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / L2)) : 0;
+    return Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t));
+  };
+  const usable = k => k && k.kind !== 'area' && Array.isArray(k.pts) && k.pts.length >= 2;
+  const nearestVertex = k => {
+    let best = -1, bd = vr;
+    for (let vi = 0; vi < k.pts.length; vi++) {
+      const d = Math.hypot(x - k.pts[vi].x, y - k.pts[vi].y);
+      if (d <= bd) { bd = d; best = vi; }
+    }
+    return best;
+  };
+  const sel = (kerbs || []).find(k => k.id === selId);
+  if (usable(sel)) {
+    const vi = nearestVertex(sel);
+    if (vi >= 0) return { id: sel.id, part: 'vertex', vi };
+    for (let si = 0; si < sel.pts.length - 1; si++) {
+      const a = sel.pts[si], b = sel.pts[si + 1];
+      if (Math.hypot(x - (a.x + b.x) / 2, y - (a.y + b.y) / 2) <= vr) return { id: sel.id, part: 'mid', vi: si };
+    }
+  }
+  for (let i = (kerbs || []).length - 1; i >= 0; i--) {
+    const k = kerbs[i];
+    if (!usable(k)) continue;
+    const vi = nearestVertex(k);
+    if (vi >= 0) return { id: k.id, part: 'vertex', vi };
+    for (let si = 0; si < k.pts.length - 1; si++)
+      if (d2seg(k.pts[si], k.pts[si + 1]) <= lineR) return { id: k.id, part: 'seg', vi: si };
+  }
+  return null;
+}
+// Move the whole kerb by (dx, dy). The bins materialised along it (tagged
+// `kerb: <id>`) travel with it — the pack stays exact under a translation, so
+// nothing needs re-placing. Returns how many bins moved.
+function wsKerbTranslate(kerb, dx, dy, bins) {
+  if (!kerb || !Array.isArray(kerb.pts)) return 0;
+  kerb.pts.forEach(q => { q.x += dx; q.y += dy; });
+  let n = 0;
+  (bins || []).forEach(b => { if (b.kerb === kerb.id) { b.x += dx; b.y += dy; n++; } });
+  return n;
+}
+function wsKerbMoveVertex(kerb, vi, x, y) {
+  if (!kerb || !kerb.pts || vi < 0 || vi >= kerb.pts.length) return false;
+  kerb.pts[vi] = { x, y };
+  return true;
+}
+function wsKerbInsertVertex(kerb, si) {
+  if (!kerb || !kerb.pts || si < 0 || si >= kerb.pts.length - 1) return -1;
+  const a = kerb.pts[si], b = kerb.pts[si + 1];
+  kerb.pts.splice(si + 1, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  return si + 1;
+}
+// A kerb keeps at least its two ends: at the floor it is left untouched and
+// false comes back — deleting the whole kerb is Del on the selection.
+function wsKerbDeleteVertex(kerb, vi) {
+  if (!kerb || !kerb.pts || kerb.pts.length <= 2 || vi < 0 || vi >= kerb.pts.length) return false;
+  kerb.pts.splice(vi, 1);
+  return true;
+}
 // Stretch of kerb covered by a polygon (a sight-splay zone), sampled — a
 // splay scales with the frontage geometry, so it is a drawn shape, not a
 // fixed-width point object.
@@ -21233,8 +21307,8 @@ function wsCollectFlipSide() {
 // the plan, print on the sheet and export to A-KERB-BINS. Re-running replaces
 // the bins tagged to those kerbs (a moved bin snaps back to the pack) — the
 // panel button says so. Undo covers it.
-function wsCollectMaterialise(slot, tag, want, poses) {
-  wsLayoutSnapshot();
+function wsCollectMaterialise(slot, tag, want, poses, opts) {
+  if (!(opts && opts.noSnap)) wsLayoutSnapshot();   // a drag that already snapshotted re-places without a second undo step
   slot.bins = slot.bins.filter(b => !(b[tag] && want.has(b[tag])));
   const lib = WS_EQUIP_DB || [];
   poses.forEach((p, i) => slot.bins.push({ id: 'bin_' + Date.now() + '_' + tag[0] + i + '_' + Math.floor(Math.random() * 999),
@@ -21243,14 +21317,23 @@ function wsCollectMaterialise(slot, tag, want, poses) {
   wsRenderLayoutLayer(); wsLayoutAutosave(); wsCollectPanelRefresh();
   return poses.length;
 }
-function wsCollectPlaceBins(kerbIds) {
+function wsCollectPlaceBins(kerbIds, opts) {
   const mpp = wsSweptMpp(); if (!mpp) return 0;
   const slot = wsLayoutSlot(), c = wsCollectSlot();
   const cp = wsCollectCompute(slot, mpp);
   if (!cp || !cp.kerbs.length) return 0;
   const want = new Set(kerbIds && kerbIds.length ? kerbIds : cp.kerbs.map(k => k.k.id));
-  return wsCollectMaterialise(slot, 'kerb', want, wsCollectKerbBinPoses(cp, c.side, mpp).filter(p => want.has(p.kerbId)));
+  return wsCollectMaterialise(slot, 'kerb', want, wsCollectKerbBinPoses(cp, c.side, mpp).filter(p => want.has(p.kerbId)), opts);
 }
+// Select a kerb from the panel's list (the canvas click does the same through
+// wsKerbHit) — the selection is the ordinary layout selection, kind 'kerb'.
+function wsCollectKerbSelect(i) {
+  const k = wsCollectSlot().kerbs[i]; if (!k) return;
+  wsSelSet([k.id], 'kerb');
+  wsRenderLayoutLayer(); wsCollectPanelRefresh();
+  wsLayoutStatus('Kerb ' + String.fromCharCode(65 + i) + ' selected — drag the line to move it with its bins, corners reshape, ⊕ adds a corner, right-click a corner removes it, Del deletes it.');
+}
+function wsCollectKerbIndex(id) { return wsCollectSlot().kerbs.findIndex(k => k.id === id); }
 // The collection point AREA gets the same treatment: every bulk-method bin
 // packed into the drawn area becomes a real bin tagged `collectArea`. Drawing
 // the area places them; the panel button re-places; deleting the zone
@@ -21443,8 +21526,8 @@ function wsCollectPanelRefresh() {
   }
   const nameOf = i => 'Kerb ' + String.fromCharCode(65 + i);
   wrap.innerHTML = wsCollectTraceHtml() + (cp.kerbs.length ? cp.kerbs.map((ki, i) =>
-    `<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
-      <span style="flex:1;">${nameOf(i)} — ${(ki.L * mpp).toFixed(1)} m${ki.excl.length ? ` <span style="color:rgba(255,255,255,0.4);">(${((ki.L - ki.free.reduce((a, g) => a + (g.s1 - g.s0), 0)) * mpp).toFixed(1)} m blocked)</span>` : ''}</span>
+    `<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;padding:2px 4px;border-radius:4px;${WS_LAYOUT.selKind === 'kerb' && WS_LAYOUT.sel === ki.k.id ? 'background:rgba(0,212,212,0.14);outline:1px solid #00d4d4;' : ''}">
+      <span style="flex:1;cursor:pointer;" onclick="wsCollectKerbSelect(${i})" title="Select this kerb on the plan — drag the line to move it with its bins, corners reshape, Del deletes it">${nameOf(i)} — ${(ki.L * mpp).toFixed(1)} m${ki.excl.length ? ` <span style="color:rgba(255,255,255,0.4);">(${((ki.L - ki.free.reduce((a, g) => a + (g.s1 - g.s0), 0)) * mpp).toFixed(1)} m blocked)</span>` : ''}</span>
       <button class="wsl-btn" style="padding:1px 6px;font-size:10px;color:#ED1C24;" onclick="wsCollectKerbDelete(${i})" title="Remove this kerb and the bins placed along it (Ctrl+Z restores both)">✕</button>
     </div>`).join('') : (WS_COLLECT.trace ? '' : 'No kerb traced yet.'));
   if (cp.kerbs.length && !cp.worst.assess.empty) {
@@ -21585,8 +21668,31 @@ function wsCollectRender(mk, gW, mpp, slot) {
   const side = (slot.collect && slot.collect.side === -1) ? -1 : 1;   // a schedule can exist before any kerb (no collect slot yet)
   cp.kerbs.forEach((ki, i) => {
     const pts = ki.k.pts;
+    const selK = WS_LAYOUT.selKind === 'kerb' && WS_LAYOUT.sel === ki.k.id;
+    // the selected kerb gets the markup halo; handles are drawn after the
+    // blocked stretches so they sit on top (editing chrome — the export clears
+    // the selection first, so none of it prints)
+    if (selK) mk('polyline', { points: pts.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' '),
+      fill: 'none', stroke: '#00d4d4', 'stroke-width': 9, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 0.45 }, gB);
     mk('polyline', { points: pts.map(p => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' '),
       fill: 'none', stroke: '#C58B2A', 'stroke-width': 3.5, 'stroke-linecap': 'round' }, gB);
+    if (selK) {
+      const HS = wsCanvasPerScreen();
+      for (let si = 0; si < pts.length - 1; si++) {
+        const a = pts[si], b = pts[si + 1];
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, rr = 5 * HS, arm = 2.6 * HS;
+        mk('circle', { cx: mx.toFixed(1), cy: my.toFixed(1), r: rr.toFixed(1),
+          fill: 'rgba(13,51,51,0.92)', stroke: '#00d4d4', 'stroke-width': (1.4 * HS).toFixed(2) }, gB);
+        mk('line', { x1: (mx - arm).toFixed(1), y1: my.toFixed(1), x2: (mx + arm).toFixed(1), y2: my.toFixed(1),
+          stroke: '#00d4d4', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' }, gB);
+        mk('line', { x1: mx.toFixed(1), y1: (my - arm).toFixed(1), x2: mx.toFixed(1), y2: (my + arm).toFixed(1),
+          stroke: '#00d4d4', 'stroke-width': (1.6 * HS).toFixed(2), 'stroke-linecap': 'round' }, gB);
+      }
+      const hs = 5.5 * HS;
+      pts.forEach(q => mk('rect', { x: (q.x - hs).toFixed(1), y: (q.y - hs).toFixed(1),
+        width: (hs * 2).toFixed(1), height: (hs * 2).toFixed(1),
+        rx: (2 * HS).toFixed(1), fill: '#0d3333', stroke: '#00d4d4', 'stroke-width': (2 * HS).toFixed(2) }, gB));
+    }
     // blocked stretches, hugged to the line
     ki.excl.forEach(ex => {
       const seg = [];
@@ -22212,6 +22318,16 @@ function wsLayoutSelectAt(x, y, additive) {
                          : `Selected ${eq.label} — drag to move, R rotates, Ctrl+C/V copies, Del deletes.`);
     return;
   }
+  // The kerb line: mousedown already selected it — the click that follows must
+  // keep that selection rather than fall through to the room or clear it.
+  if (WS.layers.binroom !== false) {
+    const hk = wsKerbHit(wsCollectSlot().kerbs, x, y, wsHandleHitR(), 8 * wsCanvasPerScreen(),
+      WS_LAYOUT.selKind === 'kerb' ? WS_LAYOUT.sel : null);
+    if (hk) {
+      if (!(WS_LAYOUT.selKind === 'kerb' && WS_LAYOUT.sel === hk.id)) { wsSelSet([hk.id], 'kerb'); wsRenderLayoutLayer(); }
+      return;
+    }
+  }
   // Rooms sit under everything else, so they are the last thing tested — clicking
   // empty floor inside an outline selects the room rather than clearing selection.
   const rm = wsRoomAt(x, y);
@@ -22378,6 +22494,47 @@ function wsLayoutBind() {
         if (h) { startRoomHandle(room, h); return; }
       }
     }
+    // The kerb (Collection Point): the SELECTED kerb's corner and ⊕ handles
+    // come before contents, same as a room's; the line body of any kerb is
+    // tested after the markups below. Hidden with the Bin room layer.
+    const startKerb = (hk) => {
+      const kerbs = wsCollectSlot().kerbs, k = kerbs.find(x => x.id === hk.id);
+      if (!k) return false;
+      if (e.button === 2 && hk.part !== 'vertex') return false;   // right-click acts on corners only
+      wsSelSet([k.id], 'kerb');
+      WS.isPanning = false;
+      const name = 'Kerb ' + String.fromCharCode(65 + kerbs.indexOf(k));
+      if (hk.part === 'vertex' && (e.altKey || e.button === 2)) {
+        if (k.pts.length > 2) {
+          wsLayoutSnapshot();
+          wsKerbDeleteVertex(k, hk.vi);
+          wsCollectPlaceBins([k.id], { noSnap: true });   // the pack follows the new line
+          wsLayoutAutosave();
+          wsLayoutStatus('Corner removed — the bins re-packed along the kerb.');
+        } else wsLayoutStatus('A kerb keeps at least its two ends — press Del to delete the whole kerb.');
+        if (e.button === 2) WS_LAYOUT._markCtx = true;   // squelch the browser menu that follows
+        WS_LAYOUT.drag = null;
+      } else if (hk.part === 'vertex') {
+        WS_LAYOUT.drag = { kind: 'kerbvert', id: k.id, vi: hk.vi, moved: false };
+        wsLayoutStatus('Reshaping ' + name + ' — drag the corner, release to set (the bins re-pack). Right-click a corner removes it.');
+      } else if (hk.part === 'mid') {
+        wsLayoutSnapshot();
+        const vi = wsKerbInsertVertex(k, hk.vi);
+        WS_LAYOUT.drag = { kind: 'kerbvert', id: k.id, vi, moved: true };
+        wsLayoutStatus('Corner added — drag to position it.');
+      } else {
+        WS_LAYOUT.drag = { kind: 'kerbbody', id: k.id, lastX: p.x, lastY: p.y, startX: p.x, startY: p.y, moved: false };
+        wsLayoutStatus(name + ' selected — drag to move it with its bins, corners reshape, ⊕ adds a corner, right-click a corner removes it, Del deletes it.');
+      }
+      wsRenderLayoutLayer();
+      wsCollectPanelRefresh();
+      e.preventDefault();
+      return true;
+    };
+    if (WS_LAYOUT.selKind === 'kerb' && WS_LAYOUT.sel && WS.layers.binroom !== false) {
+      const hk = wsKerbHit(wsCollectSlot().kerbs, p.x, p.y, wsHandleHitR(), 0, WS_LAYOUT.sel);
+      if (hk && hk.id === WS_LAYOUT.sel && hk.part !== 'seg' && startKerb(hk)) return;
+    }
     const hit = wsLayoutHit(p.x, p.y, mpp);
     let grabbed = null;
     if (hit) {
@@ -22459,6 +22616,13 @@ function wsLayoutBind() {
         e.preventDefault();
         return;
       }
+    }
+    // Any kerb: a corner or the line body selects it (and starts the drag) —
+    // after bins and markups, so a bin standing on the kerb still wins.
+    if (!grabbed && WS.layers.binroom !== false) {
+      const hk = wsKerbHit(wsCollectSlot().kerbs, p.x, p.y, wsHandleHitR(), 8 * wsCanvasPerScreen(),
+        WS_LAYOUT.selKind === 'kerb' ? WS_LAYOUT.sel : null);
+      if (hk && startKerb(hk)) return;
     }
     // An UNSELECTED room's corner can be grabbed directly, without selecting the
     // room first — but only after contents, so a bin sitting on a corner still wins.
@@ -22661,6 +22825,38 @@ function wsLayoutBind() {
         }
         return;
       }
+      if (dg.kind === 'kerbvert' || dg.kind === 'kerbbody') {
+        const k = (slot2.collect && slot2.collect.kerbs || []).find(x => x.id === dg.id);
+        if (k) {
+          if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
+          if (dg.kind === 'kerbvert') {
+            wsLayoutSetCursor('pointer');
+            let vx = wsLayoutSnap(p.x, mpp), vy = wsLayoutSnap(p.y, mpp);
+            if (e.shiftKey) {
+              const sn = wsSnapVertexOrtho({ x: vx, y: vy },
+                dg.vi > 0 ? k.pts[dg.vi - 1] : null, dg.vi < k.pts.length - 1 ? k.pts[dg.vi + 1] : null);
+              vx = sn.x; vy = sn.y;
+            }
+            wsKerbMoveVertex(k, dg.vi, vx, vy);
+          } else {
+            wsLayoutSetCursor('move');
+            // incremental delta, like a whole-room drag; Shift axis-locks against the drag origin
+            let tx = p.x - dg.lastX, ty = p.y - dg.lastY;
+            if (e.shiftKey) {
+              const lock = wsSnapAxis(p.x - dg.startX, p.y - dg.startY);
+              tx = (dg.startX + lock.dx) - dg.lastX;
+              ty = (dg.startY + lock.dy) - dg.lastY;
+            }
+            wsKerbTranslate(k, tx, ty, slot2.bins);   // the bins along it ride with it
+            dg.lastX += tx; dg.lastY += ty;
+          }
+        }
+        if (!WS_LAYOUT._raf) {
+          WS_LAYOUT._raf = true;
+          requestAnimationFrame(() => { WS_LAYOUT._raf = false; wsRenderLayoutLayer(); });
+        }
+        return;
+      }
       if (dg.kind === 'markvert' || dg.kind === 'markbody') {
         const m = (slot2.markups || []).find(x => x.id === dg.id);
         if (m) {
@@ -22788,11 +22984,18 @@ function wsLayoutBind() {
           wsTagBinsToRooms(slot3.rooms, slot3.equip);
           wsRenderLayoutLayer();
         }
+        // A reshaped kerb is a different line: its bins re-pack along it once
+        // the drag settles (a translation carried them exactly, so it does not).
+        if (dg.kind === 'kerbvert') {
+          const n = wsCollectPlaceBins([dg.id], { noSnap: true });
+          wsLayoutStatus('Kerb reshaped' + (n ? ' — ' + n + ' bin' + (n === 1 ? '' : 's') + ' re-packed along it.' : '.'));
+        }
+        if (dg.kind === 'kerbvert' || dg.kind === 'kerbbody') { wsRenderLayoutLayer(); wsCollectPanelRefresh(); }
         WS_LAYOUT._justDragged = true;
         wsLayoutAutosave();
       }
       // release the held edit cursor; the next mousemove re-derives it from hover
-      if (dg.kind === 'room' || dg.kind === 'roomvert') wsLayoutSetCursor(null);
+      if (dg.kind === 'room' || dg.kind === 'roomvert' || dg.kind === 'kerbvert' || dg.kind === 'kerbbody') wsLayoutSetCursor(null);
       WS_LAYOUT.drag = null;
       // chute/receiver grabs draw drag-only radius circles — clear them on
       // release whether or not anything moved
