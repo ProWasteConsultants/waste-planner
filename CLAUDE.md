@@ -206,6 +206,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/bin-library.test.js` | Calculator bin selection: library sizes, collection method, council schedule; kerb cadence |
 | `tests/residential-method.test.js` | Residential method types: stepped-table lookup, review gate, state fallback |
 | `tests/wmp-generator.test.js` | WMP generator: title, guideline auto-load, assembled narrative, polish guard, override provenance, text-library conditions and presets |
+| `tests/wmp-commercial.test.js` | WMP generator commercial rooms: `weeklyL` / `SPLIT_DEFS` / `applySplits` / `COMM` mirrors pinned to the calculator, the 30-apartment + café + office acceptance figures, hydration, residential invariance, template re-homing, Job No. |
 | `tests/plan-slots.test.js` | Plan slots: legacy occupancy keys, per-stage slots (staff), revision freshness, stage park/draft, replace note, wiring conventions |
 | `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers, the Central Coast form map and fill (pdf-lib test skips when not installed) |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
@@ -646,6 +647,70 @@ Rules, all tested in `tests/wmp-generator.test.js`:
 Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
 gradient.
+
+### Commercial rooms, components and Job No. (2026-09-22)
+
+The generator used to keep only `kind: 'res'` rooms and `sec: 'r'` schedule
+rows, so commercial rooms never reached the WMP. Now both kinds hydrate. The
+bin calculator is **unchanged**. Rules, tested in
+`tests/wmp-commercial.test.js`:
+
+- **`room.kind` is the calculator's section; `room.component` is a label.**
+  A fresh hydrate names components `Residential` / `Commercial`.
+  `'Development'` is the calculator's placeholder and is never used as a
+  component (`wmpgCompName`). Staff rename components in the room card
+  (Retail, Café…). Captions read `<Component> — <Room>: <table>`.
+  `wmpgShape.commercial` keys on kind, so a renamed component still switches
+  the commercial text on.
+- **Use rows are the calculator's facts.** Use, quantity and days are
+  read-only in the WMP; change them in the calculator and re-pull. Only
+  `label` (the master's UseLabel) and `level` are WMP presentation, and
+  re-pull carries them by use code. Residential rooms carry `dwLabels` (the
+  master's DwellingLabel) per room. A blank label prints the type.
+- **Volumes go through MIRRORS, pinned to the calculator:** `wmpgComWeeklyL`
+  = `weeklyL`, `WMPG_SPLIT_DEFS` / `wmpgApplySplits` = `SPLIT_DEFS` /
+  `applySplits` (default percentages, because `COMM` carries no per-use
+  splits), and `WMPG_COM_USES` = `COMM` labels and metrics. Rates come from
+  the same published file (`wmpgComRatesFor`: council override field by
+  field over state). Every rate carries `src: council | state`, and the
+  fallback is stated under the 2.2 table, naming the streams when only some
+  are fallback. `room.calcVols` (from `calc_rooms`) is the cross-check:
+  `wmpgComVolDiff` flags drift in the form and QA and never rewrites
+  anything.
+- **The 2.2 table is the master's `WriteCommGen_Dynamic`.** It has Level,
+  Waste source, then Area + Days/wk when every use is floor area, otherwise
+  Qty + Unit + Days/wk. Each stream gets a rate + L/week pair, and there is
+  a Total row. Per-use volumes are pre-separation, so each one can be checked
+  as rate × qty (× days). A room that separates a stream shows the
+  separation as its own rows, and the total is the post-separation one.
+  **Separated streams (CARD, SOFT) are carried for commercial rooms only.**
+  Residential still reads `WMPG_ORDER`, so a residential export is
+  unchanged. A residential CARD row remains dropped, as before.
+- **Residential sections read residential rooms; commercial sections read
+  commercial rooms.** A residential-only project fills byte-identically
+  (verified by replaying saved drafts through the old and new code). The
+  single-component development summary keeps its old shape. Once there is
+  more than one component, it takes the master's per-component columns +
+  Total. The commercial bookmarks keep the "Not applicable" fill when there
+  is no commercial room.
+- **Text:** `WG_COMM_1`, or `_2` when every commercial figure is the state
+  fallback. `WG_COMM_3` is on only when a stream is actually separated,
+  with `{separated_stream}` from the real splits (`wmpgComTextDefaults`,
+  passed as `tbGroup`'s `defaults`; the author's own on/off wins).
+  Commercial wording says tenants, never residents. The Advice Memo fills
+  commercial-conditioned bullets (`MEMO_COLLECTION_BP3`) from the
+  commercial room (`tbIsCommercialSnippet`, `tbGroup` accepting a ctx
+  function).
+- **Bookmarks the master has and an older .dotx may lack** —
+  `BM_Sec_WasteGen_Comm` (the 2.2 tables) and `BM_Tbl2_DevSummaryComm` —
+  are re-homed after their neighbour and named in the export note
+  (`wmpgTplRehome`). They are never dropped silently.
+- **Job No. is `p.projId`, in `app_data.projId`.** A presence check keeps a
+  cleared number cleared. It is editable by staff on the project card and in
+  detail, read-only for others, and searchable. It fills a WMP Project ID
+  still on the `xxxPW` placeholder (on resume and re-pull); a typed Project
+  ID stays. It also prefills the swept path tool's `proj-jobno`
+  (`wsSweptPrefillJobNo`), never over a number typed there.
 
 ## Site preparation & construction stages (C&D) — PWC staff only (2026-09-17)
 
