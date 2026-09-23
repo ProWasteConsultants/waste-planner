@@ -690,8 +690,9 @@ function loadBins() {
     /^function wpCollectMethods\(/, /^function wpCollectMethod\(/, /^function wpBinLib\(/, /^function wpBinSizesRaw\(/, /^function wpBinSizesFor\(/,
     /^function wpBinDefaultMethod\(/, /^function wpCycleCw\(/, /^function wpBinDefSize\(/, /^function wpBinDefCw\(/, /^function wpBinCycleFor\(/,
     /^function wpCouncilScheduleFor\(/,
-    /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_UNITS = /, /^const WMPG_FREQ = /, /^function wmpgFreqLabel\(/, /^function wmpgEsc\(/,
+    /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_COM_ORDER = /, /^const WMPG_UNITS = /, /^const WMPG_FREQ = /, /^function wmpgFreqLabel\(/, /^function wmpgEsc\(/,
     /^const WMPG_METHOD_LABEL = /, /^function wmpgStreamWord\(/, /^function wmpgRoomQty\(/, /^function wmpgRoomVols\(/,
+    /^function wmpgRoomKind\(/, /^function wmpgRoomSec\(/,
     /^function wmpgBinCtx\(/, /^function wmpgBinMethod\(/, /^function wmpgBinOffer\(/, /^function wmpgBinCalcQty\(/, /^function wmpgBinResnap\(/,
     /^function wmpgBinSizeOptions\(/, /^function wmpgBinFreqOptions\(/, /^function wmpgCycleShort\(/, /^function wmpgRoomOfferNote\(/, /^function wmpgAutoBins\(/,
   ].map(p => extractBlock(p).text).join('\n\n');
@@ -799,9 +800,9 @@ test('auto rows (no calculator schedule) and added rows start from the calculato
   assert.ok(/wmpgBinOffer\(room, b\)/.test(add) && /wmpgBinCalcQty\(WMPG\.data, room, b, o\)/.test(add), 'an added row starts from the offer');
   const form = extractBlock(/^function wmpgRenderForm\(/).text;
   assert.ok(!/Object\.keys\(WMPG_BIN_DIMS\)\.map\(Number\)/.test(form), 'the fixed size list is gone from the row');
-  const roomFn = SOURCE.slice(SOURCE.indexOf('const binCtx = wmpgBinCtx();'), SOURCE.indexOf('const binCtx = wmpgBinCtx();') + 6000);
+  const roomFn = extractBlock(/^function wmpgRoomBlock\(/).text;
   assert.ok(/wmpgBinSizeOptions\(o,\+b\.sizeL\)/.test(roomFn) && /wmpgBinFreqOptions\(o,\+b\.colWk\)/.test(roomFn) && /wmpgRoomOfferNote\(d, r, binCtx\)/.test(roomFn), 'the row reads the offer, the room states the source');
-  assert.ok(/default — \$\{WMPG_METHOD_LABEL\[wpBinDefaultMethod\(r\.alloc,'r'\)\]\}/.test(roomFn), 'the blank method option names the calculator’s default');
+  assert.ok(/default — \$\{WMPG_METHOD_LABEL\[wpBinDefaultMethod\(r\.alloc,wmpgRoomSec\(r\)\)\]\}/.test(roomFn), 'the blank method option names the calculator’s default — for the room’s own section (commercial rooms default to bulk)');
   assert.ok(/1 per dwelling = \$\{o\.perDwelling\}/.test(roomFn), 'kerbside individual counts dwellings and offers the number');
   assert.ok(/wpBinLibraryEnsure\(\)/.test(extractBlock(/^async function openWmpGenerator\(/).text), 'the library and council services load before the form renders');
   assert.ok(extractBlock(/^async function wpBinLibraryEnsure\(/).text.includes('if (WS_EQUIP_DB === null) await wsLoadEquipmentDB();'));

@@ -407,6 +407,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .pc-address{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pc-line{flex:1 1 auto;min-width:0;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .pc-created{font-size:10.5px;color:var(--muted);white-space:nowrap;flex-shrink:0;}
+.pc-jobno{flex:0 0 auto;background:#182121;border:1px solid var(--border);border-radius:6px;padding:2px 7px;font-size:11px;font-family:inherit;color:var(--text);width:96px;outline:none;}
+.pc-jobno:focus{border-color:var(--teal);}
 .proj-search{background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 10px;font-size:11.5px;font-family:inherit;color:var(--text);outline:none;width:210px;}
 .proj-search:focus{border-color:var(--teal);}
 .proj-state-sel{background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:11px;font-family:inherit;color:var(--text);outline:none;}
@@ -869,7 +871,7 @@ body.wp-anon .ws-top-chip{display:none;}
     <div class="section-header">
       <div class="section-title">Recent Projects</div>
       <div class="filter-tabs" style="align-items:center;gap:6px;">
-        <input type="search" class="proj-search" id="proj-search" placeholder="Search name, address, council…" oninput="projSearchInput(this.value)">
+        <input type="search" class="proj-search" id="proj-search" placeholder="Search name, address, council, job no…" oninput="projSearchInput(this.value)">
         <select class="proj-state-sel" id="proj-state" onchange="projStateInput(this.value)"><option value="all">All states</option></select>
       </div>
     </div>
@@ -897,6 +899,7 @@ body.wp-anon .ws-top-chip{display:none;}
           <div class="detail-meta" id="detail-meta">Address · Council · Type</div>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <input id="detail-jobno" type="text" placeholder="Job No." title="PWC job number — the WMP's Project ID defaults from it; used in the WMP and Advice Memo file names" onchange="projSetJobNo(currentProjectId, this.value)" onkeydown="if(event.key==='Enter')this.blur()" style="display:none;background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;color:var(--text);width:110px;">
           <select id="detail-alloc" onchange="updateProjectAllocation()" title="Allocated to — org projects only" style="display:none;background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;color:var(--text);max-width:170px;"></select>
           <select id="detail-status" onchange="updateProjectStatus()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;color:var(--text);">
             <option>Design</option>
@@ -9777,7 +9780,7 @@ function renderProjects(filter) {
   const filtered = projects.filter(p =>
     (PROJ_FILTER.status === 'all' || p.status === PROJ_FILTER.status) &&
     (PROJ_FILTER.state === 'all' || p.state === PROJ_FILTER.state) &&
-    (!q || [p.name, p.address, p.council, p.devType].some(f => (f || '').toLowerCase().includes(q))));
+    (!q || [p.name, p.address, p.council, p.devType, p.projId].some(f => (f || '').toLowerCase().includes(q))));
   const grid = document.getElementById('projects-grid');
   const empty = document.getElementById('empty-state');
   const noMatch = document.getElementById('proj-no-match');
@@ -9809,6 +9812,7 @@ function renderProjects(filter) {
       </div>
       <div class="pc-line">${line}</div>
       <span class="status-pill ${statusCls}">${p.status}</span>
+      ${projJobNoCardHtml(p)}
       ${(() => {
         if (typeof currentOrg === 'undefined' || !currentOrg || !p.orgId) return '';
         const mem = (ORG_MEMBERS_CACHE[currentOrg.id] || []).find(m => m.user_id === p.allocatedTo);
@@ -9822,6 +9826,31 @@ function renderProjects(filter) {
       ${p.created ? `<span class="pc-created">${p.created}</span>` : ''}`;
     grid.insertBefore(card, empty);
   });
+}
+
+// ── JOB NO. ────────────────────────────────────────────────────────────────
+// The PWC job number (p.projId): the WMP's Project ID defaults from it, and
+// the WMP and Advice Memo file names and the swept path title block carry it.
+// Staff edit it on the card and in project detail; others see it read-only.
+function projJobNoCardHtml(p) {
+  const esc = t => String(t || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  if (typeof wmpgIsStaff === 'function' && wmpgIsStaff())
+    return `<input class="pc-jobno" value="${esc(p.projId)}" placeholder="Job No." title="PWC job number — WMP and Advice Memo file names" onclick="event.stopPropagation()" onkeydown="event.stopPropagation();if(event.key==='Enter')this.blur()" onchange="projSetJobNo('${esc(p.id)}',this.value)">`;
+  return p.projId ? `<span class="status-pill" style="background:#18212144;color:var(--muted);border:1px solid var(--border);">Job ${esc(p.projId)}</span>` : '';
+}
+function projSetJobNo(id, v) {
+  if (typeof wmpgIsStaff === 'function' && !wmpgIsStaff()) return;
+  const projects = getProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+  const next = String(v || '').trim();
+  if ((p.projId || '') === next) return;
+  p.projId = next;
+  saveProjects(projects);
+  if (typeof saveProjectToDB === 'function' && currentUser) saveProjectToDB(p);
+  const det = document.getElementById('detail-jobno');
+  if (det && currentProjectId === id && det.value !== next) det.value = next;
+  if (typeof wsSweptPrefillJobNo === 'function') wsSweptPrefillJobNo();
+  renderProjects();
 }
 
 function filterProjects(filter, btn) {
@@ -10834,6 +10863,14 @@ function openProjectDetail(id) {
   document.getElementById('detail-title').textContent = p.name;
   document.getElementById('detail-meta').textContent = [p.address, p.council, p.devType].filter(Boolean).join(' · ');
   document.getElementById('detail-status').value = p.status || 'Design';
+  const jobEl = document.getElementById('detail-jobno');
+  if (jobEl) {
+    const staff = typeof wmpgIsStaff === 'function' && wmpgIsStaff();
+    jobEl.value = p.projId || '';
+    jobEl.readOnly = !staff;
+    jobEl.style.display = (staff || p.projId) ? 'block' : 'none';
+  }
+  if (typeof wsSweptPrefillJobNo === 'function') wsSweptPrefillJobNo();
 
   // Allocation — org projects only: work belongs to the org, people are assignees
   const allocSel = document.getElementById('detail-alloc');
@@ -16138,6 +16175,8 @@ async function loadProjectsFromDB() {
         stage_plans: ad.stage_plans || prev.stage_plans || null, // per-stage plan slots (site_prep / construction), staff
         check: ad.check || prev.check || null,
         stages: ad.stages || prev.stages || null,
+        // PWC job number — 'in' so a number cleared on another device stays cleared
+        projId: ('projId' in ad) ? (ad.projId || '') : (prev.projId || ''),
       };
       if (ad.ws) {
         try {
@@ -16178,6 +16217,7 @@ async function saveProjectToDB(project) {
       stage_plans: project.stage_plans || null, // per-stage plan slots — each stage's plan name + revision
       check: project.check || null,   // compliance result carried through signup (anonymous entry)
       stages: project.stages || null, // C&D stage records (site_prep / construction) — server-authoritative
+      projId: project.projId || null, // PWC job number: WMP / Advice Memo file names, swept title block
       ws: (() => { try { return JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) { return null; } })(),
     },
     updated_at: new Date().toISOString(),
@@ -17355,9 +17395,24 @@ function wsPassPdfToSwept() {
   }
 }
 
+// The swept path tool draws its title block from its own Job No. field; the
+// project's job number fills it — never over a number typed there by hand.
+function wsSweptPrefillJobNo() {
+  const p = (typeof getProjects === 'function') ? getProjects().find(x => x.id === currentProjectId) : null;
+  if (!p) return;
+  ['ws-swept-iframe', 'swept-iframe'].forEach(id => {
+    let doc = null; try { doc = document.getElementById(id)?.contentDocument; } catch (e) { return; }
+    const el = doc && doc.getElementById('proj-jobno'); if (!el) return;
+    if (el.value && el.dataset.fromProject !== '1') return;
+    el.value = p.projId || '';
+    el.dataset.fromProject = '1';
+    if (!el.dataset.jobWatch) { el.dataset.jobWatch = '1'; el.addEventListener('input', () => { el.dataset.fromProject = '0'; }); }
+  });
+}
 function wsInitSweptIframe() {
   const iframe = document.getElementById('ws-swept-iframe');
   if (!iframe) return;
+  wsSweptPrefillJobNo();
   if (!iframe.dataset.loaded) {
     const srcIframe = document.getElementById('swept-iframe');
     if (!srcIframe) return;
@@ -17367,7 +17422,7 @@ function wsInitSweptIframe() {
     txt.innerHTML = srcdoc;
     iframe.srcdoc = txt.value;
     iframe.dataset.loaded = '1';
-    iframe.addEventListener('load', () => { setTimeout(wsPassPdfToSwept, 600); }, { once: true });
+    iframe.addEventListener('load', () => { setTimeout(wsPassPdfToSwept, 600); wsSweptPrefillJobNo(); }, { once: true });
   } else {
     wsPassPdfToSwept();
   }
@@ -30621,8 +30676,16 @@ const WMPG_STREAMS = {
   ORG: { doc:'Organics',             colour:'dark green body with lime green lid', recept:'10 litres', notes:'Place unbagged or in approved compostable bags only' },
   REC: { doc:'Commingled recycling', colour:'dark green body with yellow lid',     recept:'25 litres', notes:'Rinse bottles/cans, flatten cardboard, separate lids/packaging. Dispose unbagged. Place large cardboard in recycling bins at the waste room' },
   GLS: { doc:'Glass',                colour:'dark green body with purple lid',     recept:'10 litres', notes:'Bottles and jars only, rinsed, lids removed. Dispose unbagged' },
+  // The calculator's split targets (SPLIT_DEFS). Commercial rooms carry them —
+  // a café separating cardboard has a real CARD bin — so they are streams here
+  // too; residential tables read WMPG_ORDER only, so a residential export is
+  // unchanged by their presence.
+  CARD:{ doc:'Paper & cardboard',    colour:'dark green body with blue lid',       recept:'25 litres', notes:'Flatten cardboard boxes; keep paper and cardboard dry and unbagged.' },
+  SOFT:{ doc:'Soft plastics',        colour:'as specified by the collection contractor', recept:'25 litres', notes:'Clean, dry soft plastics only (film, wrap, bags).' },
 };
 const WMPG_ORDER = ['GW','ORG','REC','GLS'];
+// Commercial tables also print the calculator's split targets (CARD, SOFT).
+const WMPG_COM_ORDER = ['GW','ORG','REC','GLS','CARD','SOFT'];
 // Unit keys match the calculator's alloc keys exactly — do not rename.
 const WMPG_UNITS = [
   { key:'apt_1br', label:'1-bedroom apartment' }, { key:'apt_2br', label:'2-bedroom apartment' },
@@ -30638,13 +30701,20 @@ function wmpgNum(n){ return (Math.round(n*100)/100).toLocaleString('en-AU'); }
 function wmpgUid(){ return 'w' + Math.random().toString(36).slice(2,8); }
 
 // ── ROOM HELPERS ───────────────────────────────────────────────────────────
-function wmpgNewRoom(name, n) {
+function wmpgNewRoom(name, n, kind) {
+  const com = kind === 'com';
   return {
     id: wmpgUid(),
     name: name || ('Bin Room ' + (n || 1)),
     location: '',
-    component: 'Residential',
+    // kind is the calculator's own res/com split; component is the label the
+    // report groups and captions by, and staff may rename it (Retail, Café…)
+    kind: com ? 'com' : 'res',
+    component: com ? 'Commercial' : 'Residential',
     alloc: Object.fromEntries(WMPG_UNITS.map(u => [u.key, 0])),
+    dwLabels: {},   // per-room display label per dwelling type (the master's DwellingLabel)
+    uses: [],       // commercial use rows — see wmpgComUseRows
+    splits: [],     // the calculator's commercial separations (SPLIT_DEFS ids)
     bins: [],
     extras: {
       bulky:   { on:false, type:'bulky waste zone', areaM2:6, w:3000, d:2000, h:1000 },
@@ -30661,6 +30731,7 @@ function wmpgRoomQty(room){ return WMPG_UNITS.reduce((a,u) => a + (+room.alloc[u
   Object.keys(room.alloc).filter(k => !WMPG_UNITS.some(u=>u.key===k)).reduce((a,k)=>a+(+room.alloc[k]||0),0); }
 function wmpgUnitList(d){ return d.unitTypes.filter(u => d.rooms.some(r => (+r.alloc[u.key]||0) > 0)); }
 function wmpgRoomVols(d, room) {
+  if (wmpgRoomKind(room) === 'com') return wmpgComRoomVols(d, room);
   const out = { GW:0, REC:0, ORG:0, GLS:0 };
   d.unitTypes.forEach(u => {
     const q = +room.alloc[u.key] || 0; if (!q) return;
@@ -30669,14 +30740,230 @@ function wmpgRoomVols(d, room) {
   });
   return out;
 }
-function wmpgTotalVols(d) {
-  const out = { GW:0, REC:0, ORG:0, GLS:0 };
-  d.rooms.forEach(r => { const v = wmpgRoomVols(d, r); WMPG_ORDER.forEach(s => out[s] += v[s]); });
+function wmpgTotalVols(d, rooms) {
+  const out = { GW:0, REC:0, ORG:0, GLS:0, CARD:0, SOFT:0 };
+  (rooms || d.rooms).forEach(r => { const v = wmpgRoomVols(d, r); WMPG_COM_ORDER.forEach(s => out[s] += (v[s] || 0)); });
   return out;
 }
 function wmpgRoomStreams(d, room) {
   const v = wmpgRoomVols(d, room);
-  return WMPG_ORDER.filter(s => v[s] > 0 || room.bins.some(b => b.stream === s && b.qty > 0));
+  return (wmpgRoomKind(room) === 'com' ? WMPG_COM_ORDER : WMPG_ORDER).filter(s => v[s] > 0 || room.bins.some(b => b.stream === s && b.qty > 0));
+}
+
+// ── COMMERCIAL ROOMS (2026-09-22) ──────────────────────────────────────────
+// The calculator splits every room into a residential and a commercial
+// section (kind 'res' / 'com'); a commercial room carries use rows
+// {use, value, days} and its bins. The WMP reads the same rows and prices
+// them against the same published rates file, through MIRRORS of the
+// calculator's weeklyL and applySplits (the srcdoc is sandboxed and cannot
+// be called) — pinned to the calculator by tests/wmp-commercial.test.js, the
+// arrangement resTableLookup / wpResTableLookup already has. Use rows are the
+// calculator's facts: area, days and use are read-only here (change them in
+// the calculator); only the printed label and the level are WMP presentation.
+function wmpgRoomKind(room) { return room && room.kind === 'com' ? 'com' : 'res'; }
+function wmpgRoomSec(room) { return wmpgRoomKind(room) === 'com' ? 'c' : 'r'; }
+function wmpgResRooms(d) { return (d.rooms || []).filter(r => wmpgRoomKind(r) === 'res'); }
+function wmpgComRooms(d) { return (d.rooms || []).filter(r => wmpgRoomKind(r) === 'com'); }
+// The dwelling type as this room prints it: the room's own label (the
+// master's DwellingLabel), else the unit type's label.
+function wmpgDwLabel(room, u) { return (room && room.dwLabels && String(room.dwLabels[u.key] || '').trim()) || u.label; }
+// The calculator's use list — label + input metric per use code. MIRROR of
+// the calculator's COMM (labels and metrics only), pinned by test.
+const WMPG_COM_USES = {
+  backpackers: {label:"Backpackers accommodation (per bed)",metric:"Beds (no.)"},
+  backpackers_sydney: {label:"Backpackers accommodation (per m²)",metric:"m² (NLA)"},
+  bakery: {label:"Bakery",metric:"m² (NLA)"},
+  banks: {label:"Banks",metric:"m² (NLA)"},
+  bar_club_function: {label:"Bar / club / function venue",metric:"m² (NLA)"},
+  boarding_house: {label:"Boarding house / guest house (per occupant)",metric:"Occupants (no.)"},
+  boarding_house_sydney: {label:"Boarding house / guest house (per m²)",metric:"m² (NLA)"},
+  bulky_goods: {label:"Bulky goods / department store",metric:"m² (NLA)"},
+  butcher: {label:"Butcher",metric:"m² (NLA)"},
+  cafe: {label:"Cafe",metric:"m² (NLA)"},
+  cattery: {label:"Cattery",metric:"Cats (no.)"},
+  childcare: {label:"Childcare",metric:"m² (NLA)"},
+  community_library: {label:"Community / library",metric:"m² (NLA)"},
+  convention_centre: {label:"Convention / conference centre",metric:"m² (NLA)"},
+  convenience_store: {label:"Convenience store",metric:"m² (NLA)"},
+  delicatessen: {label:"Delicatessen",metric:"m² (NLA)"},
+  education_area: {label:"Education / training (per m²)",metric:"m² teaching area"},
+  education_students: {label:"Education / training (per student)",metric:"Students (no.)"},
+  entertainment_venue: {label:"Entertainment venue",metric:"m² (NLA)"},
+  factories: {label:"Factories",metric:"m² (NLA)"},
+  fish_shop: {label:"Fish shop",metric:"m² (NLA)"},
+  florist: {label:"Florist / plant shop",metric:"m² (NLA)"},
+  function_room: {label:"Function room",metric:"m² (NLA)"},
+  garden_courtyards: {label:"Garden areas / courtyards",metric:"m² (NLA)"},
+  general_retail_large: {label:"General retail (large >100m²)",metric:"m² (NLA)"},
+  retail_nonfood: {label:"General retail (non-food)",metric:"m² (NLA)"},
+  general_retail_small: {label:"General retail (small ≤100m²)",metric:"m² (NLA)"},
+  greengrocer: {label:"Greengrocer",metric:"m² (NLA)"},
+  gym: {label:"Gym",metric:"m² (NLA)"},
+  hairdresser: {label:"Hairdresser / salon",metric:"m² (NLA)"},
+  hotel_beds: {label:"Hotel / motel (by bed count)",metric:"Beds (no.)"},
+  hotel_area: {label:"Hotel / motel (by floor area)",metric:"m² (NLA)"},
+  independent_living: {label:"Independent living",metric:"Apartments (no.)"},
+  kitchen_dining: {label:"Kitchen / dining",metric:"m² (NLA)"},
+  licensed_club: {label:"Licensed club",metric:"m² (NLA)"},
+  office: {label:"Office",metric:"m² (NLA)"},
+  restaurant: {label:"Restaurant",metric:"m² (NLA)"},
+  retirement_village: {label:"Retirement village",metric:"Apartments (no.)"},
+  serviced_apartments: {label:"Serviced apartments (per apartment)",metric:"Apartments (no.)"},
+  serviced_apartments_sydney: {label:"Serviced apartments (per m²)",metric:"m² (NLA)"},
+  show_room: {label:"Showroom",metric:"m² (NLA)"},
+  specialised_grocery: {label:"Specialised grocery",metric:"m² (NLA)"},
+  student_accommodation: {label:"Student accommodation",metric:"Occupants (no.)"},
+  supermarket: {label:"Supermarket",metric:"m² (NLA)"},
+  takeaway: {label:"Takeaway",metric:"m² (NLA)"},
+  warehouse: {label:"Warehouse",metric:"m² (NLA)"},
+};
+// MIRROR of the calculator's weeklyL — keep identical (pinned by test).
+function wmpgComWeeklyL(value, days, ro) {
+  const rate = Number(ro.rate || 0), uv = Number(ro.unitValue || 1), u = String(ro.unit || '').toLowerCase();
+  if (!rate || !uv) return 0;
+  const v = Number(value || 0), d = Math.max(0, Number(days || 0));
+  if (u.includes('l/day/100') && u.includes('m'))  return v * rate * d / uv;  // L/Day/100m²
+  if (u.includes('l/bed/day'))                    return v * rate * d / uv;  // L/Bed/Day
+  if (u.includes('l/bed/week'))                   return v * rate / uv;      // L/Bed/Week
+  if (u.includes('l/apartment/week'))             return v * rate / uv;      // L/Apartment/Week
+  if (u.includes('l/student/week'))               return v * rate / uv;      // L/Student/Week
+  if (u.includes('l/occupant/week'))              return v * rate / uv;      // L/Occupant/Week
+  if (u.includes('l/cat/week'))                   return v * rate / uv;      // L/Cat/Week
+  if (u.includes('l/week'))                       return v * rate / uv;      // L/Week, L/Week/100m²
+  return v * rate / uv;                                                      // fallback
+}
+// Does the rate carry a days term? Per-week units do not — the master's
+// "no days term for per-week units".
+function wmpgComRatePerDay(ro) { const u = String((ro && ro.unit) || '').toLowerCase(); return (u.includes('l/day/100') && u.includes('m')) || u.includes('l/bed/day'); }
+// MIRROR of the calculator's SPLIT_DEFS (pinned by test). The calculator's
+// splitPctFor reads a per-use COMM[use].splits first; COMM carries none, so
+// the default percentage is the one it applies — and the one used here.
+const WMPG_SPLIT_DEFS = {
+  GW_ORG:  { id:'GW_ORG',  from:'GW',  to:'ORG',  label:'Food organics',     pct:35 },
+  GW_SOFT: { id:'GW_SOFT', from:'GW',  to:'SOFT', label:'Soft plastics',     pct:10 },
+  REC_CARD:{ id:'REC_CARD',from:'REC', to:'CARD', label:'Paper & cardboard', pct:40 },
+  REC_GLS: { id:'REC_GLS', from:'REC', to:'GLS',  label:'Glass',             pct:25 },
+};
+// The calculator's persisted splits, either shape ({r,c} or a bare list), as
+// the commercial section's id list.
+function wmpgSplitList(v) {
+  const list = Array.isArray(v) ? v : (v && Array.isArray(v.c) ? v.c : []);
+  const out = [];
+  list.forEach(x => {
+    const id = typeof x === 'string' ? x : (x && (x.id || Object.keys(WMPG_SPLIT_DEFS).find(k => WMPG_SPLIT_DEFS[k].from === x.from && WMPG_SPLIT_DEFS[k].to === x.to)));
+    if (id && WMPG_SPLIT_DEFS[id] && out.indexOf(id) < 0) out.push(id);
+  });
+  return out;
+}
+// MIRROR of the calculator's applySplits with the default percentages:
+// moves volume between streams, never creates or destroys any.
+function wmpgApplySplits(ids, vols) {
+  const moved = [], byFrom = {}, base = {};
+  (ids || []).forEach(id => { const d = WMPG_SPLIT_DEFS[id]; if (d && base[d.from] === undefined) base[d.from] = vols[d.from] || 0; });
+  (ids || []).forEach(id => {
+    const d = WMPG_SPLIT_DEFS[id]; if (!d) return;
+    const pct = d.pct;
+    const run = byFrom[d.from] || 0;
+    const eff = Math.max(0, Math.min(pct, 100 - run));
+    if (eff <= 0) return;
+    byFrom[d.from] = run + eff;
+    const b = base[d.from] || 0;
+    if (b <= 0) { moved.push({ id, from: d.from, to: d.to, pct: eff, amt: 0 }); return; }
+    const amt = b * eff / 100;
+    vols[d.from] = Math.max(0, (vols[d.from] || 0) - amt);
+    vols[d.to] = (vols[d.to] || 0) + amt;
+    moved.push({ id, from: d.from, to: d.to, pct: eff, amt });
+  });
+  return moved;
+}
+// Pure: the unit word a use's quantity is counted in ("m² (NLA)", "beds").
+function wmpgComUnitWord(metric) { const t = String(metric || 'm² (NLA)').replace(/\s*\(no\.\)\s*$/i, ''); return t.charAt(0).toLowerCase() + t.slice(1); }
+function wmpgComUseMeta(use) { return WMPG_COM_USES[use] || { label: String(use || 'Commercial use').replace(/_/g, ' '), metric: 'm² (NLA)' }; }
+// Pure: one row per use — the calculator's figures, the rate per stream with
+// its source (council | state), the weekly volume per stream BEFORE the
+// room's separations (rate × qty × days, the figure a reader can check), and
+// the label/level the report prints. Days clamp exactly as the calculator's.
+function wmpgComUseRows(room) {
+  return ((room && room.uses) || []).map(u => {
+    const meta = wmpgComUseMeta(u.use);
+    const value = Math.max(0, Number(u.value) || 0);
+    const days = Math.max(1, Math.min(7, Number(u.days) || 7));
+    const vols = {}, rates = u.rates || {};
+    WMPG_COM_ORDER.forEach(s => { vols[s] = rates[s] ? wmpgComWeeklyL(value, days, rates[s]) : 0; });
+    return { use: u.use, label: (String(u.label || '').trim()) || meta.label, defaultLabel: meta.label, level: u.level || '',
+      value, days, metric: meta.metric, unit: wmpgComUnitWord(meta.metric), area: /^m²/i.test(meta.metric),
+      rates, vols, noRates: !Object.keys(rates).length };
+  });
+}
+// Pure: the room's weekly volume per stream — Σ over its use rows, then the
+// room's separations, exactly as the calculator sums a commercial section
+// (each tenancy split on its own figures, then added).
+function wmpgComRoomVols(d, room) {
+  const out = { GW:0, REC:0, ORG:0, GLS:0, CARD:0, SOFT:0 };
+  const ids = wmpgSplitList(room && room.splits);
+  wmpgComUseRows(room).forEach(r => {
+    const v = Object.assign({}, r.vols);
+    wmpgApplySplits(ids, v);
+    WMPG_COM_ORDER.forEach(s => out[s] += (v[s] || 0));
+  });
+  return out;
+}
+// Pure: what the separations moved, per stream pair, over the whole room.
+function wmpgComRoomMoves(room) {
+  const ids = wmpgSplitList(room && room.splits), acc = {};
+  wmpgComUseRows(room).forEach(r => {
+    const v = Object.assign({}, r.vols);
+    wmpgApplySplits(ids, v).forEach(m => { const k = m.id; acc[k] = acc[k] || { id: k, from: m.from, to: m.to, pct: m.pct, amt: 0 }; acc[k].amt += m.amt; });
+  });
+  return ids.map(id => acc[id]).filter(Boolean);
+}
+// Pure: the council override profile the calculator would merge for this
+// council, matched the way wmpgApplyRates always has (label or value).
+function wmpgCouncilOverride(R, d) {
+  if (!R || !d || !d.council || !R.COUNCIL_PROFILES) return { ov: null, name: '' };
+  const want = d.council.trim().toLowerCase();
+  const cv = (R.COUNCILS?.[d.state] || []).find(c =>
+    (c.label||'').toLowerCase() === want || (c.value||'').toLowerCase() === want)?.value;
+  for (const key of Object.keys(R.COUNCIL_PROFILES)) {
+    const [ks, kc] = key.split('|');
+    if (ks === d.state && (kc === cv || (kc||'').toLowerCase() === want)) return { ov: R.COUNCIL_PROFILES[key], name: d.council };
+  }
+  return { ov: null, name: '' };
+}
+// Pure: the rate per stream for one use, with its source — the council's
+// override field by field over the state profile (the calculator's
+// deepMerge), 'state' wherever the council has no figure of its own.
+function wmpgComRatesFor(R, d, use) {
+  const prof = R && R.PROFILES && R.PROFILES[d.state];
+  const base = (prof && prof.comRates && prof.comRates[use]) || {};
+  const over = (wmpgCouncilOverride(R, d).ov?.comRates?.[use]) || {};
+  const out = {};
+  WMPG_COM_ORDER.forEach(s => {
+    const b = base[s], o = over[s];
+    if (!b && !o) return;
+    const ro = Object.assign({}, b || {}, o || {});
+    if (!(+ro.rate > 0)) return;
+    out[s] = { rate: +ro.rate, unitValue: +ro.unitValue || 1, unit: ro.unit || '', src: o ? 'council' : 'state' };
+  });
+  return out;
+}
+// Pure: where a room's commercial rates came from — 'council', 'state'
+// (every figure is the state fallback), 'mixed', or 'none'.
+function wmpgComRateScope(rooms) {
+  const srcs = new Set();
+  (rooms || []).forEach(r => (r.uses || []).forEach(u => Object.values(u.rates || {}).forEach(x => srcs.add(x.src || 'state'))));
+  if (!srcs.size) return 'none';
+  if (srcs.size > 1) return 'mixed';
+  return [...srcs][0];
+}
+// Pure: the calculator's own weekly volume per stream for the room (from
+// calc_rooms), against the WMP's — the cross-check that says so when the
+// published rates moved after the calculator last ran.
+function wmpgComVolDiff(d, room) {
+  const c = room && room.calcVols; if (!c) return [];
+  const v = wmpgComRoomVols(d, room);
+  return WMPG_COM_ORDER.filter(s => Math.abs((c[s] || 0) - (v[s] || 0)) > Math.max(1, 0.01 * (c[s] || 0)))
+    .map(s => ({ stream: s, calc: c[s] || 0, wmp: v[s] || 0 }));
 }
 // ── BINS FOLLOW THE CALCULATOR ─────────────────────────────────────────────
 // The size a row may take, its default cadence and its count come from the
@@ -30696,7 +30983,7 @@ function wmpgBinCtx() {
            entry, schedule: entry ? entry.schedule : null, services: entries.length };
 }
 // A row's method: its own, else the calculator's default for the room's mix.
-function wmpgBinMethod(room, b) { return (b && b.method) || wpBinDefaultMethod(room && room.alloc, 'r'); }
+function wmpgBinMethod(room, b) { return (b && b.method) || wpBinDefaultMethod(room && room.alloc, wmpgRoomSec(room)); }
 // What this row may be: the offered sizes, the defaults, and whether the
 // current size is among them. Per-dwelling count under kerbside individual.
 function wmpgBinOffer(room, b, ctx) {
@@ -30704,10 +30991,12 @@ function wmpgBinOffer(room, b, ctx) {
   const method = wmpgBinMethod(room, b);
   const o = wpBinSizesFor(ctx.lib, ctx.schedule, method, b.stream);
   o.ctx = ctx; o.methodDefault = !(b && b.method);
-  o.defSize = wpBinDefSize(o, 'r', b.stream, null);
-  o.defCw = wpBinDefCw(o, 'r', b.stream);
+  o.defSize = wpBinDefSize(o, wmpgRoomSec(room), b.stream, null);
+  o.defCw = wpBinDefCw(o, wmpgRoomSec(room), b.stream);
   o.offered = !o.list.length || o.list.some(e => e.sizeL === +b.sizeL);
-  o.perDwelling = method === 'kerbside_individual' ? wmpgRoomQty(room) : null;
+  // kerbside individual counts dwellings — or, for a commercial section,
+  // tenancies (each use row with a figure), as the calculator's perDwellingUnits does
+  o.perDwelling = method === 'kerbside_individual' ? (wmpgRoomKind(room) === 'com' ? (room.uses || []).filter(u => (Number(u.value) || 0) > 0).length : wmpgRoomQty(room)) : null;
   return o;
 }
 // The count the calculator would give the row: one bin per dwelling under
@@ -30771,7 +31060,7 @@ function wmpgRoomOfferNote(d, room, ctx) {
 }
 function wmpgAutoBins(d, room) {
   const v = wmpgRoomVols(d, room), ctx = wmpgBinCtx();
-  return WMPG_ORDER.filter(s => v[s] > 0).map(s => {
+  return (wmpgRoomKind(room) === 'com' ? WMPG_COM_ORDER : WMPG_ORDER).filter(s => v[s] > 0).map(s => {
     const b = { stream:s, sizeL:0, qty:0, colWk:1, provider:'council', method:null, cycle:null, src:'auto', design:null };
     const o = wmpgBinOffer(room, b, ctx);
     b.sizeL = o.defSize; b.colWk = o.defCw; b.qty = wmpgBinCalcQty(d, room, b, o); b.cycle = wpBinCycleFor(o, b.colWk);
@@ -30882,8 +31171,10 @@ function wmpgShape(d) {
   const providers = new Set(bins.map(b => b.provider).concat(rooms.map(r => r.collection && r.collection.provider)).filter(Boolean));
   if (!providers.size && hint.provider) providers.add(hint.provider);
   const streams = new Set(bins.filter(b => (+b.qty || 0) > 0).map(b => b.stream));
-  const commercial = rooms.some(r => (r.component || '').toLowerCase().includes('commercial')) || !!d.hasCommercial || !!hint.commercial;
-  const residential = rooms.some(r => (r.component || 'Residential').toLowerCase().includes('resid')) || rooms.some(r => Object.values(r.alloc || {}).some(v => +v > 0)) || (!commercial);
+  // kind is the calculator's own section; a renamed component (Café, Office)
+  // is still commercial
+  const commercial = rooms.some(r => r.kind === 'com' || (r.component || '').toLowerCase().includes('commercial')) || !!d.hasCommercial || !!hint.commercial;
+  const residential = rooms.some(r => r.kind !== 'com' && (r.component || 'Residential').toLowerCase().includes('resid')) || rooms.some(r => Object.values(r.alloc || {}).some(v => +v > 0)) || (!commercial);
   const kerbside = [...methods].some(m => /^kerbside/.test(m));
   const bulk = methods.has('bulk') || methods.has('self_haul');
   return {
@@ -30985,9 +31276,11 @@ function wmpgNarrative(d, room) {
   const ramp = col.rampGrade ? ` The transfer route includes a ramp at a gradient of ${col.rampGrade}.` : '';
   const cycles = wmpgCycleWords(room.bins);
   const binsTxt = wmpgBinWords(room.bins);
+  // commercial text says tenants, never residents
+  const com = room && room.kind === 'com';
   const P = [];
   if (method === 'kerbside_individual') {
-    P.push(`Each dwelling is provided with its own bins. Residents will present their bins at the kerb on ${street} for ${provider} collection on the scheduled collection day and return them to their property once serviced. Bins are not to be left on the street at any other time.`);
+    P.push(`${com ? 'Each tenancy is provided with its own bins. Tenants' : 'Each dwelling is provided with its own bins. Residents'} will present their bins at the kerb on ${street} for ${provider} collection on the scheduled collection day and return them to their ${com ? 'tenancy' : 'property'} once serviced. Bins are not to be left on the street at any other time.`);
     if (cycles) P.push(cycles);
     if (binsTxt) P.push(binsTxt);
     P.push(`Waste will be collected by ${provider} using a ${vehicle}.`);
@@ -31005,7 +31298,7 @@ function wmpgNarrative(d, room) {
     else P.push(`Bins will be transferred by the building manager from ${roomName} to the collection point${tug} ahead of each scheduled service and returned once servicing is complete.`);
     if (cycles) P.push(cycles);
     if (binsTxt) P.push(binsTxt);
-    P.push('Servicing will be undertaken outside peak hours to minimise disruption to residents and neighbouring properties.');
+    P.push(`Servicing will be undertaken outside peak hours to minimise disruption to ${com ? 'tenants' : 'residents'} and neighbouring properties.`);
   }
   return P.join('\n\n');
 }
@@ -31165,7 +31458,7 @@ function wmpgBinReset(i, j) {
 function wmpgBinAdd(i) {
   const room = WMPG.data.rooms[i]; if (!room) return;
   const used = new Set(room.bins.map(b => b.stream));
-  const stream = WMPG_ORDER.find(s => !used.has(s)) || 'GW';
+  const stream = (wmpgRoomKind(room) === 'com' ? WMPG_COM_ORDER : WMPG_ORDER).find(s => !used.has(s)) || 'GW';
   const b = { stream, sizeL: 0, qty: 1, colWk: 1, provider: room.collection.provider || 'council', method: null, cycle: null, src: 'auto', design: null };
   const o = wmpgBinOffer(room, b);
   b.sizeL = o.defSize; b.colWk = o.defCw; b.qty = wmpgBinCalcQty(WMPG.data, room, b, o); b.cycle = wpBinCycleFor(o, b.colWk);
@@ -31434,6 +31727,9 @@ function wmpgApplyChuteToDesign(i) {
 // Older saved drafts predate title, provenance and complianceSrc.
 function wmpgUpgradeDraft(d, p) {
   if (!d.title) d.title = wmpgTitleDefault(p, d);
+  // the project's Job No. fills a Project ID still on the placeholder; one
+  // typed in the WMP is the author's and stays
+  if ((!d.projId || d.projId === 'xxxPW') && p && p.projId && String(p.projId).trim()) d.projId = String(p.projId).trim();
   if (d.complianceSrc === undefined) d.complianceSrc = d.compliance ? { kind: 'manual', council: d.council } : null;
   (d.rooms || []).forEach(r => (r.bins || []).forEach(b => {
     if (b.design === undefined) b.design = b.src === 'auto' ? null : { sizeL: b.sizeL, qty: b.qty, colWk: b.colWk, provider: b.provider, method: b.method || null };
@@ -31531,16 +31827,26 @@ function wmpgResMethodNote(rm) {
 }
 function wmpgHydrateRooms(d, p, s) {
   d.residentialMethod = p.residential_method || null;
-  const src = Array.isArray(s.bin_rooms) ? s.bin_rooms.filter(r => (r.kind || 'res') === 'res') : [];
-  const sched = Array.isArray(p.schedule) ? p.schedule.filter(r => r.sec === 'r') : [];
+  // Both kinds of calculator room: residential sections (sec 'r') and
+  // commercial ones (sec 'c'), each matched to its own schedule rows.
+  const src = Array.isArray(s.bin_rooms) ? s.bin_rooms.filter(r => ((r.kind || 'res') === 'res') || (r.kind === 'com')) : [];
+  const sched = Array.isArray(p.schedule) ? p.schedule.filter(r => r.sec === 'r' || r.sec === 'c') : [];
   const calcRooms = Array.isArray(p.calc_rooms) ? p.calc_rooms : [];
 
   if (src.length) {
     d.rooms = src.map((r, i) => {
-      const room = wmpgNewRoom(r.name, i+1);
+      const kind = r.kind === 'com' ? 'com' : 'res';
+      const room = wmpgNewRoom(r.name, i+1, kind);
       room.srcId = r.id;
-      room.component = r.component || 'Residential';
-      WMPG_UNITS.forEach(u => room.alloc[u.key] = Math.max(0, +(r.alloc?.[u.key]) || 0));
+      // The calculator has no component UI; 'Development' is its placeholder,
+      // not a component. Staff name components here.
+      room.component = (r.component && r.component !== 'Development') ? r.component : (kind === 'com' ? 'Commercial' : 'Residential');
+      if (kind === 'com') {
+        room.uses = (Array.isArray(r.com) ? r.com : []).filter(c => c && c.use)
+          .map(c => ({ use: c.use, value: Math.max(0, Number(c.value) || 0), days: Number(c.days) || 7, label: '', level: '', rates: {} }));
+        room.splits = wmpgSplitList(r.splits);
+      }
+      WMPG_UNITS.forEach(u => room.alloc[u.key] = kind === 'com' ? 0 : Math.max(0, +(r.alloc?.[u.key]) || 0));
       // The calculator's chute configuration — type, openings, receivers —
       // carried whole, with a copy as the Design baseline. The generator
       // offers the same options; an edit here is an override.
@@ -31562,8 +31868,12 @@ function wmpgHydrateRooms(d, p, s) {
   // Bins by room — match on the calculator's room id first, then name.
   if (sched.length) {
     d.rooms.forEach(room => {
-      const rows = sched.filter(x => (room.srcId && x.room === room.srcId) || (x.roomName || '') === room.name);
-      room.bins = rows.filter(x => WMPG_STREAMS[x.stream]).map(x => {
+      const sec = wmpgRoomSec(room);
+      // residential rows keep the four base streams exactly as before; a
+      // commercial room keeps its separated streams (cardboard, soft plastics)
+      const okStream = x => WMPG_STREAMS[x.stream] && (sec === 'c' || WMPG_ORDER.includes(x.stream));
+      const rows = sched.filter(x => (x.sec || 'r') === sec && ((room.srcId && x.room === room.srcId) || (x.roomName || '') === room.name));
+      room.bins = rows.filter(okStream).map(x => {
         const prov = (x.method === 'self_haul') ? 'private contractor' : 'council';
         const b = { stream:x.stream, sizeL:+x.sizeL || 1100, qty:+x.qty || 0,
           colWk:(x.colWk == null ? 1 : +x.colWk), provider:prov,
@@ -31581,7 +31891,7 @@ function wmpgHydrateRooms(d, p, s) {
     // Schedule rows that matched nothing (rooms renamed since the calculator
     // ran) fall back onto the single room, rather than silently vanishing.
     if (!d.rooms.some(r => r.bins.length) && d.rooms.length === 1) {
-      d.rooms[0].bins = sched.filter(x => WMPG_STREAMS[x.stream]).map(x => {
+      d.rooms[0].bins = sched.filter(x => x.sec === 'r' && WMPG_STREAMS[x.stream] && WMPG_ORDER.includes(x.stream)).map(x => {
         const b = { stream:x.stream, sizeL:+x.sizeL || 1100, qty:+x.qty || 0,
           colWk:(x.colWk == null ? 1 : +x.colWk), provider:'council', method:x.method || null, cycle:x.cycle || null, src:'calc' };
         b.design = { sizeL:b.sizeL, qty:b.qty, colWk:b.colWk, provider:b.provider, method:b.method };
@@ -31597,6 +31907,12 @@ function wmpgHydrateRooms(d, p, s) {
   d.rooms.forEach(room => {
     const cr = calcRooms.find(x => (room.srcId && x.id === room.srcId) || x.name === room.name);
     if (cr) { room.fpM2 = +cr.fpM2 || 0; room.areaM2 = +cr.areaM2 || 0; }
+    // the calculator's own weekly volumes for a commercial room — the
+    // cross-check wmpgComVolDiff reads
+    if (cr && wmpgRoomKind(room) === 'com' && Array.isArray(cr.bins) && cr.bins.some(b => +b.weeklyVolL > 0)) {
+      room.calcVols = {};
+      cr.bins.forEach(b => { room.calcVols[b.stream] = (room.calcVols[b.stream] || 0) + (+b.weeklyVolL || 0); });
+    }
     Object.keys(WMPG_ALLOW_CODES).forEach(key => {
       const x = room.extras[key];
       if (!cr) { x.design = null; return; }
@@ -31617,6 +31933,9 @@ function wmpgHydrateRooms(d, p, s) {
     if (i === 0 && !room.extras.bulky.design) room.extras.bulky.on = true;
     if (i === 0 && !room.extras.textiles.design) room.extras.textiles.on = true;
     room.extras.wash.on = true;
+    // a commercial room whose every bin is privately collected is a private
+    // contractor's room — the narrative and summary say so
+    if (wmpgRoomKind(room) === 'com' && room.bins.length && room.bins.every(b => b.provider !== 'council')) room.collection.provider = 'private contractor';
   });
 }
 
@@ -31626,16 +31945,7 @@ function wmpgApplyRates(d) {
   const R = WMPG.remote; if (!R) { d.ratesSource = ''; return false; }
   const prof = R.PROFILES?.[d.state];
   if (!prof?.resRates) { d.ratesSource = ''; return false; }
-  let ov = null, ovName = '';
-  if (d.council && R.COUNCIL_PROFILES) {
-    const want = d.council.trim().toLowerCase();
-    const cv = (R.COUNCILS?.[d.state] || []).find(c =>
-      (c.label||'').toLowerCase() === want || (c.value||'').toLowerCase() === want)?.value;
-    for (const key of Object.keys(R.COUNCIL_PROFILES)) {
-      const [ks, kc] = key.split('|');
-      if (ks === d.state && (kc === cv || (kc||'').toLowerCase() === want)) { ov = R.COUNCIL_PROFILES[key]; ovName = d.council; break; }
-    }
-  }
+  const { ov, name: ovName } = wmpgCouncilOverride(R, d);
   d.unitTypes.forEach(u => {
     const base = prof.resRates?.[u.key] || {};
     const over = ov?.resRates?.[u.key] || {};
@@ -31647,6 +31957,8 @@ function wmpgApplyRates(d) {
   });
   d.ratesSource = (ovName ? `${ovName} council rates` : `${d.state} state default rates`)
     + wmpgResMethodNote(d.residentialMethod);
+  // Commercial use rows: the rate per stream and where each came from.
+  wmpgComRooms(d).forEach(room => (room.uses || []).forEach(u => { u.rates = wmpgComRatesFor(R, d, u.use); }));
   return true;
 }
 
@@ -31734,7 +32046,7 @@ function wmpgQA(d) {
   const allocTotal = d.rooms.reduce((a,r) => a + wmpgRoomQty(r), 0);
   if (projTotal && allocTotal !== projTotal)
     err(`Dwelling allocation (${allocTotal}) does not match the project dev summary (${projTotal}) — ${allocTotal < projTotal ? (projTotal-allocTotal) + ' dwellings are unallocated' : 'over-allocated by ' + (allocTotal-projTotal)}.`);
-  if (!allocTotal) err('No dwellings allocated to any room.');
+  if (!allocTotal && !wmpgComRooms(d).length) err('No dwellings allocated to any room.');
 
   d.unitTypes.forEach(u => {
     const used = d.rooms.some(r => (+r.alloc[u.key] || 0) > 0);
@@ -31744,11 +32056,19 @@ function wmpgQA(d) {
   });
 
   d.rooms.forEach(room => {
-    const q = wmpgRoomQty(room), v = wmpgRoomVols(d, room);
+    const q = wmpgRoomQty(room), v = wmpgRoomVols(d, room), com = wmpgRoomKind(room) === 'com';
     if (q > 0 && !room.bins.length) err(`${room.name}: ${q} dwellings allocated but no bins scheduled.`);
-    if (!q && room.bins.length) wrn(`${room.name}: bins scheduled but no dwellings allocated — the generation table will be empty.`);
+    if (!com && !q && room.bins.length) wrn(`${room.name}: bins scheduled but no dwellings allocated — the generation table will be empty.`);
+    if (com) {
+      const uses = wmpgComUseRows(room);
+      if (!uses.length) wrn(`${room.name}: commercial room with no uses — add them in the bin calculator, then Re-pull.`);
+      uses.filter(u => u.noRates).forEach(u => err(`${room.name} — ${u.label}: no published generation rate — its volume is missing from 2.2. Enter the council’s rate before issue.`));
+      if (uses.length && !room.bins.length) err(`${room.name}: commercial uses but no bins scheduled.`);
+      const dv = wmpgComVolDiff(d, room);
+      if (dv.length) wrn(`${room.name}: commercial volumes differ from the bin calculator's (${dv.map(x => WMPG_STREAMS[x.stream].doc + ' ' + wmpgNum(x.calc) + '→' + wmpgNum(x.wmp) + ' L/wk').join('; ')}) — the published rates changed since it ran. Re-run the calculator, then Re-pull.`);
+    }
     if (!room.location) wrn(`${room.name}: no storage location given (e.g. Basement, Lower Ground).`);
-    WMPG_ORDER.forEach(s => {
+    (com ? WMPG_COM_ORDER : WMPG_ORDER).forEach(s => {
       if (v[s] <= 0) return;
       const cap = room.bins.filter(b => b.stream === s).reduce((a,b) => a + b.sizeL * b.qty * (+b.colWk || 0), 0);
       if (cap < v[s]) err(`${room.name} — ${WMPG_STREAMS[s].doc}: ${wmpgNum(cap)} L/wk capacity against ${wmpgNum(v[s])} L/wk generated.`);
@@ -31927,11 +32247,18 @@ function wmpgRepull() {
   // carry the author's writing across
   const keep = ['projId','client','ver','status','author','date','history','title','cover','siteFigure','siteContext','siteContextSrc','guidelinesCouncil','background','compliance','complianceSrc','guidelines','suppliers','contractors','colours','devTypeText','daRef','text','tokens','shapeHint'];
   keep.forEach(k => fresh[k] = WMPG.data[k]);
+  if ((!fresh.projId || fresh.projId === 'xxxPW') && p.projId && String(p.projId).trim()) fresh.projId = String(p.projId).trim();
   // and per-room narrative, matched by name
   fresh.rooms.forEach(nr => {
-    const old = WMPG.data.rooms.find(o => o.name === nr.name);
+    const old = WMPG.data.rooms.find(o => o.name === nr.name && wmpgRoomKind(o) === wmpgRoomKind(nr));
     if (!old) return;
     nr.location = old.location || nr.location;
+    // a component staff named stays named ('Development' was the calculator's placeholder)
+    if (old.component && old.component !== 'Development') nr.component = old.component;
+    nr.dwLabels = Object.assign({}, old.dwLabels || {});
+    // use labels and levels are WMP presentation: carried by use code, in order
+    const pool = (old.uses || []).slice();
+    (nr.uses || []).forEach(u => { const k = pool.findIndex(o => o.use === u.use); if (k < 0) return; const o = pool.splice(k, 1)[0]; u.label = o.label || ''; u.level = o.level || ''; });
     nr.collection = { ...nr.collection, ...old.collection };
     const freshEx = nr.extras; nr.extras = old.extras;
     Object.keys(WMPG_ALLOW_CODES).forEach(k => { if (freshEx[k] && nr.extras[k]) { const wasEdited = wmpgExtraDiff(nr.extras[k]).length > 0; nr.extras[k].design = freshEx[k].design; if (!wasEdited && freshEx[k].design) { nr.extras[k].on = freshEx[k].on; nr.extras[k].areaM2 = freshEx[k].areaM2; } } });
@@ -32062,7 +32389,8 @@ function wmpgSet(path, val) {
   wmpgFollow(path);
   const parts = path.split('.');
   let o = WMPG.data;
-  for (let i = 0; i < parts.length - 1; i++) o = o[parts[i]];
+  // a draft saved before a field existed (a room's dwLabels) gets the object on first write
+  for (let i = 0; i < parts.length - 1; i++) o = (o[parts[i]] == null ? (o[parts[i]] = {}) : o[parts[i]]);
   o[parts[parts.length - 1]] = val;
   if (path === 'siteContext' && WMPG.data.siteContextSrc && WMPG.data.siteContextSrc.kind === 'ai') WMPG.data.siteContextSrc = { kind: 'edited', ts: Date.now() };   // provenance follows the text
   wmpgQueuePreview();
@@ -32848,19 +33176,25 @@ function wmpgRoomBlock(r, i) {
   const units = d.unitTypes;
   const qty = wmpgRoomQty(r);
   const binCtx = wmpgBinCtx();
+  const com = wmpgRoomKind(r) === 'com';
+  const uses = com ? wmpgComUseRows(r) : [];
   return `
   <details class="wmpg-room" ${i===0?'open':''}>
-    <summary><span>${wmpgEsc(r.name)} <span class="wmpg-pill">${qty} dwelling${qty===1?'':'s'}</span> <span class="wmpg-pill">${r.bins.length} bin row${r.bins.length===1?'':'s'}</span></span></summary>
+    <summary><span>${wmpgEsc(r.name)} <span class="wmpg-pill">${wmpgEsc(wmpgCompName(r))}</span> ${com ? `<span class="wmpg-pill">${uses.length} use${uses.length===1?'':'s'}</span>` : `<span class="wmpg-pill">${qty} dwelling${qty===1?'':'s'}</span>`} <span class="wmpg-pill">${r.bins.length} bin row${r.bins.length===1?'':'s'}</span></span></summary>
     <div style="padding:0 10px 10px;">
       <div class="wmpg-grid2">
         ${wmpgIn('Room name','rooms.'+i+'.name',r.name)}
         ${wmpgIn('Location','rooms.'+i+'.location',r.location,{ph:'Basement / Lower Ground'})}
       </div>
-
+      ${wmpgIn(`Component <span class="wmpg-pill" style="text-transform:none;">${com ? 'commercial' : 'residential'} section in the bin calculator</span>`,'rooms.'+i+'.component',r.component,{ph: com ? 'Commercial / Retail / Office / Café' : 'Residential / Tower A'})}
+      <div class="wmpg-note" style="margin-top:2px;">The report groups and captions this room’s tables as “${wmpgEsc(r.component || wmpgCompName(r))} — ${wmpgEsc(r.name)}”, and the development summary has a column per component.</div>
+${com ? wmpgComUsesBlock(r, i, uses) : `
       <div class="wmpg-f"><label>Dwellings in this room</label></div>
       <table class="wmpg-t"><thead><tr>${units.map(u=>`<th>${wmpgEsc(u.label.replace(' apartment','').replace('-bedroom','br'))}</th>`).join('')}</tr></thead>
-      <tbody><tr>${units.map(u=>`<td><input data-path="rooms.${i}.alloc.${u.key}" type="number" min="0" value="${+r.alloc[u.key]||0}" oninput="wmpgSet('rooms.${i}.alloc.${u.key}',parseInt(this.value)||0);wmpgLiveNotes()"></td>`).join('')}</tr></tbody></table>
-
+      <tbody><tr>${units.map(u=>`<td><input data-path="rooms.${i}.alloc.${u.key}" type="number" min="0" value="${+r.alloc[u.key]||0}" oninput="wmpgSet('rooms.${i}.alloc.${u.key}',parseInt(this.value)||0);wmpgLiveNotes()"></td>`).join('')}</tr>
+      <tr>${units.map(u=>`<td><input data-path="rooms.${i}.dwLabels.${u.key}" value="${wmpgEsc((r.dwLabels||{})[u.key]||'')}" placeholder="${wmpgEsc(u.label)}" title="Dwelling label printed for this room — blank = ${wmpgEsc(u.label)}" style="font-size:11.5px;" oninput="wmpgSet('rooms.${i}.dwLabels.${u.key}',this.value)"></td>`).join('')}</tr></tbody></table>
+      <div class="wmpg-note" style="margin-top:-4px;">Second row: the dwelling label this room prints (e.g. “1-bed affordable”). Blank prints the dwelling type.</div>
+`}
       <div class="wmpg-f"><label>Bins &amp; collection <span class="wmpg-pill" style="text-transform:none;">Design tab is the default — edits here are marked as WMP overrides</span></label></div>
       <table class="wmpg-t"><thead><tr><th>Stream</th><th>Size</th><th>Qty</th><th>Frequency</th><th>Method</th><th>Provider</th><th>Source</th><th></th></tr></thead>
       <tbody>${r.bins.map((b,j)=>{
@@ -32878,7 +33212,7 @@ function wmpgRoomBlock(r, i) {
         <td><select data-path="rooms.${i}.bins.${j}.sizeL" onchange="wmpgBinSet(${i},${j},'sizeL',this.value)">${wmpgBinSizeOptions(o,+b.sizeL)}</select>${o.offered?'':hint(`${b.sizeL}L is not offered under ${wmpgEsc(mLabel)}${o.councilSizes.length?' — the council supplies '+o.councilSizes.join('L / ')+'L':o.M.maxL?' (kerbside bins top out at '+o.M.maxL+'L)':''}`,true)}</td>
         <td><input data-path="rooms.${i}.bins.${j}.qty" type="number" min="0" value="${b.qty}" style="width:58px;font-weight:700;" onchange="wmpgBinSet(${i},${j},'qty',this.value)">${o.perDwelling!=null&&o.perDwelling!==+b.qty?hint(`1 per dwelling = ${o.perDwelling} <button class="wmpg-addrow" style="margin:0;padding:1px 6px;" onclick="wmpgBinSet(${i},${j},'qty',${o.perDwelling})">use ${o.perDwelling}</button>`,true):''}</td>
         <td><select data-path="rooms.${i}.bins.${j}.colWk" onchange="wmpgBinSet(${i},${j},'colWk',this.value)">${wmpgBinFreqOptions(o,+b.colWk)}</select>${o.schedule&&o.schedule.cycle&&wpCycleCw(o.schedule.cycle)&&wpCycleCw(o.schedule.cycle)!==+b.colWk?hint(`council: ${wmpgCycleShort(o.schedule.cycle)}`,true):''}</td>
-        <td><select data-path="rooms.${i}.bins.${j}.method" onchange="wmpgBinSet(${i},${j},'method',this.value||null)"><option value="" ${!b.method?'selected':''}>default — ${WMPG_METHOD_LABEL[wpBinDefaultMethod(r.alloc,'r')]}</option>${Object.keys(WMPG_METHOD_LABEL).map(m=>`<option value="${m}" ${b.method===m?'selected':''}>${WMPG_METHOD_LABEL[m]}</option>`).join('')}</select></td>
+        <td><select data-path="rooms.${i}.bins.${j}.method" onchange="wmpgBinSet(${i},${j},'method',this.value||null)"><option value="" ${!b.method?'selected':''}>default — ${WMPG_METHOD_LABEL[wpBinDefaultMethod(r.alloc,wmpgRoomSec(r))]}</option>${Object.keys(WMPG_METHOD_LABEL).map(m=>`<option value="${m}" ${b.method===m?'selected':''}>${WMPG_METHOD_LABEL[m]}</option>`).join('')}</select></td>
         <td><select data-path="rooms.${i}.bins.${j}.provider" onchange="wmpgBinSet(${i},${j},'provider',this.value)"><option value="council" ${b.provider==='council'?'selected':''}>council</option><option value="private contractor" ${b.provider!=='council'?'selected':''}>private</option></select></td>
         <td>${srcCell}</td>
         <td><button class="wmpg-x" title="Remove this row from the WMP" onclick="wmpgBinRemove(${i},${j})">✕</button></td></tr>`;}).join('')}</tbody></table>
@@ -32972,6 +33306,31 @@ function wmpgRoomBlock(r, i) {
   </details>`;
 }
 
+// The commercial room's use rows: the calculator's facts read-only (use,
+// quantity, days — change them there), the printed label and level editable,
+// each stream's rate with its source, and the calculator cross-check.
+function wmpgComUsesBlock(r, i, uses) {
+  const d = WMPG.data;
+  const streams = WMPG_COM_ORDER.filter(s => uses.some(u => u.rates[s]));
+  const vols = wmpgComRoomVols(d, r), moves = wmpgComRoomMoves(r).filter(m => m.amt > 0);
+  const dv = wmpgComVolDiff(d, r);
+  const rateCell = (u, s) => { const ro = u.rates[s]; if (!ro) return '<td style="color:#5E7272;">—</td>';
+    return `<td style="white-space:nowrap;color:#E7EFEF;" title="${wmpgEsc(ro.rate + ' ' + ro.unit + ' · ' + (ro.src === 'council' ? 'council rate' : 'STATE FALLBACK — no council figure'))}">${wmpgNum(ro.rate)} <span class="wmpg-pill${ro.src === 'council' ? '' : ' warn'}" style="text-transform:none;padding:0 4px;">${ro.src === 'council' ? 'council' : 'state'}</span></td>`; };
+  return `
+      <div class="wmpg-f"><label>Commercial uses in this room <span class="wmpg-pill" style="text-transform:none;">from the bin calculator — area and days are changed there</span></label></div>
+      <table class="wmpg-t"><thead><tr><th>Level</th><th>Waste source (printed)</th><th>Qty</th><th>Days/wk</th>${streams.map(s => `<th title="${wmpgEsc(WMPG_STREAMS[s].doc)} rate">${s}</th>`).join('')}</tr></thead>
+      <tbody>${uses.map((u, k) => `<tr>
+        <td><input data-path="rooms.${i}.uses.${k}.level" value="${wmpgEsc(u.level)}" placeholder="Ground" style="width:70px;" oninput="wmpgSet('rooms.${i}.uses.${k}.level',this.value)"></td>
+        <td><input data-path="rooms.${i}.uses.${k}.label" value="${wmpgEsc((r.uses[k] && r.uses[k].label) || '')}" placeholder="${wmpgEsc(u.defaultLabel)}" title="Use label printed in the WMP — blank = ${wmpgEsc(u.defaultLabel)}" oninput="wmpgSet('rooms.${i}.uses.${k}.label',this.value)"></td>
+        <td style="white-space:nowrap;color:#E7EFEF;">${wmpgNum(u.value)} ${wmpgEsc(u.unit)}</td>
+        <td style="color:#E7EFEF;">${u.days}</td>
+        ${streams.map(s => rateCell(u, s)).join('')}</tr>`).join('')}</tbody></table>
+      <div class="wmpg-note">Weekly volume: ${WMPG_COM_ORDER.filter(s => vols[s] > 0).map(s => `${wmpgEsc(WMPG_STREAMS[s].doc)} ${wmpgNum(vols[s])} L`).join(' · ') || 'none — no rates for these uses'}${moves.length ? ' (after ' + moves.map(m => wmpgEsc(WMPG_STREAMS[m.to].doc.toLowerCase()) + ' separated from ' + wmpgEsc(WMPG_STREAMS[m.from].doc.toLowerCase()) + ', ' + m.pct + '%').join('; ') + ')' : ''}. Rate × quantity × days for per-day rates; per-week rates carry no days term.</div>
+      ${uses.some(u => u.noRates) ? `<div class="wmpg-note wmpg-warn">⚠ No published rate for ${wmpgEsc(wmpgList(uses.filter(u => u.noRates).map(u => u.label)))} — not in the volumes. Add the council’s rate in Admin, publish, then ↻ Reload council rates.</div>` : ''}
+      ${dv.length ? `<div class="wmpg-note wmpg-warn">⚠ Differs from the bin calculator’s own figures: ${dv.map(x => wmpgEsc(WMPG_STREAMS[x.stream].doc) + ' ' + wmpgNum(x.calc) + ' → ' + wmpgNum(x.wmp) + ' L/wk').join('; ')} — the published rates changed since the calculator ran. Re-run it, then Re-pull.</div>` : ''}
+      <div class="wmpg-note" style="margin-top:-2px;">Level and label are how this WMP prints the use (the master’s Level and UseLabel); they do not change the calculation.</div>`;
+}
+
 // Bins are owned by the calculator. Rather than duplicate editing here, send
 // the author there — the friction is deliberate: it is what stops a late
 // "just bump it to 5" from silently desyncing three deliverables.
@@ -33030,7 +33389,7 @@ function wmpgLiveNotes() {
   d.rooms.forEach((room, i) => {
     const el = document.getElementById('wmpg-cap-' + i); if (!el) return;
     const v = wmpgRoomVols(d, room), short = [], fp = wmpgRoomFootprint(d, room);
-    WMPG_ORDER.forEach(s => {
+    (wmpgRoomKind(room) === 'com' ? WMPG_COM_ORDER : WMPG_ORDER).forEach(s => {
       if (v[s] <= 0) return;
       const cap = room.bins.filter(b => b.stream === s).reduce((a,b) => a + b.sizeL*b.qty*(+b.colWk||0), 0);
       if (cap < v[s]) short.push(`${WMPG_STREAMS[s].doc} ${wmpgNum(cap)}/${wmpgNum(v[s])} L per week`);
@@ -33068,6 +33427,200 @@ function wmpgLiveNotes() {
    Node kinds: h1|h2|p|kv|bullets|table|caption|pagebreak
    ────────────────────────────────────────────────────────────────────────── */
 
+// ── REPORT TABLES shared by the preview and the .docx (2026-09-22) ────────
+// One builder per table, read by BOTH wmpgDocModel and wmpgTplPayload, so the
+// preview and the exported document cannot print different figures. Shapes
+// follow the Excel master (mod_WMP_Main: WriteDevSummary, WriteCommGen_Dynamic).
+// A room's component as the summary prints it — 'Development' is the
+// calculator's placeholder, never a component.
+function wmpgCompName(room) {
+  const c = room && room.component;
+  return (c && c !== 'Development') ? c : (wmpgRoomKind(room) === 'com' ? 'Commercial' : 'Residential');
+}
+function wmpgUniq(a) { return a.filter((x, i) => a.indexOf(x) === i); }
+// Residential development summary: dwelling type (the room's own label) down
+// the side, one column per residential component. One component keeps the
+// single-column shape the WMP has always printed.
+function wmpgResDevSummary(d) {
+  const rooms = wmpgResRooms(d);
+  const comps = wmpgUniq(rooms.map(wmpgCompName));
+  const labels = [];
+  d.unitTypes.forEach(u => rooms.forEach(r => { if ((+r.alloc[u.key] || 0) > 0) { const l = wmpgDwLabel(r, u); if (labels.indexOf(l) < 0) labels.push(l); } }));
+  const count = (l, comp) => rooms.filter(r => comp == null || wmpgCompName(r) === comp)
+    .reduce((a, r) => a + d.unitTypes.filter(u => wmpgDwLabel(r, u) === l).reduce((b, u) => b + (+r.alloc[u.key] || 0), 0), 0);
+  const totalDw = rooms.reduce((a, r) => a + wmpgRoomQty(r), 0);
+  if (comps.length <= 1) return { header: ['Dwelling type', comps[0] || 'Residential'],
+    rows: labels.map(l => [l, String(count(l))]), total: ['Total dwellings', String(totalDw)] };
+  return { header: ['Dwelling type', ...comps, 'Total'],
+    rows: labels.map(l => [l, ...comps.map(c => String(count(l, c))), String(count(l))]),
+    total: ['Total dwellings', ...comps.map(c => String(rooms.filter(r => wmpgCompName(r) === c).reduce((a, r) => a + wmpgRoomQty(r), 0))), String(totalDw)] };
+}
+// Pure: "200 m²" / "12 beds" / "200 m² + 12 beds" — how the master writes a
+// commercial quantity that may mix floor area with other drivers.
+function wmpgComQtyText(area, drivers) {
+  const parts = [];
+  if (area > 0) parts.push(wmpgNum(area) + ' m²');
+  Object.keys(drivers || {}).forEach(u => { if (drivers[u] > 0) parts.push(wmpgNum(drivers[u]) + ' ' + u); });
+  return parts.join(' + ');
+}
+// Commercial development summary: use (its printed label) down the side, one
+// column per commercial component, and the total — the master's layout.
+function wmpgComDevSummary(d) {
+  const rooms = wmpgComRooms(d);
+  const comps = wmpgUniq(rooms.map(wmpgCompName));
+  const rows = [], acc = {};
+  rooms.forEach(r => wmpgComUseRows(r).forEach(u => {
+    if (!acc[u.label]) { acc[u.label] = {}; rows.push(u.label); }
+    const c = (acc[u.label][wmpgCompName(r)] = acc[u.label][wmpgCompName(r)] || { area: 0, drivers: {} });
+    if (u.area) c.area += u.value; else c.drivers[u.unit] = (c.drivers[u.unit] || 0) + u.value;
+  }));
+  const sum = cells => cells.reduce((t, c) => { if (!c) return t; t.area += c.area; Object.keys(c.drivers).forEach(k => t.drivers[k] = (t.drivers[k] || 0) + c.drivers[k]); return t; }, { area: 0, drivers: {} });
+  const allArea = rows.every(l => Object.values(acc[l]).every(c => !Object.keys(c.drivers).length));
+  const cellText = c => !c ? '—' : (allArea ? wmpgNum(c.area) : (wmpgComQtyText(c.area, c.drivers) || '—'));
+  return {
+    header: ['Use (commercial)', ...comps, allArea ? 'Total area (m²)' : 'Total'],
+    rows: rows.map(l => [l, ...comps.map(c => cellText(acc[l][c])), cellText(sum(comps.map(c => acc[l][c])))]),
+    total: ['Total', ...comps.map(c => cellText(sum(rows.map(l => acc[l][c])))), cellText(sum(rows.flatMap(l => comps.map(c => acc[l][c]))))],
+  };
+}
+// The master's 2.2 table for one commercial room: Level, Waste source, then
+// Area (m²) + Days/week when every use is floor-area based, else Qty + Unit
+// + Days/week; a rate and a L/week pair per stream; a total row. Volumes are
+// rate × quantity (× days for per-day rates) so a reader can check every one.
+// Where the room separates a stream (cardboard out of recycling), the
+// separation is shown as its own rows and the total is the one after it.
+// notes[] names every use priced on the state fallback and every use with no
+// published rate — stated, never silently dropped.
+function wmpgComGenTable(d, room) {
+  const uses = wmpgComUseRows(room);
+  const moves = wmpgComRoomMoves(room).filter(m => m.amt > 0);
+  const streams = WMPG_COM_ORDER.filter(s => uses.some(u => u.rates[s]) || moves.some(m => m.to === s || m.from === s));
+  const allArea = uses.every(u => u.area);
+  const lead = allArea ? ['Level', 'Waste source', 'Area (m²)', 'Days/week in operation'] : ['Level', 'Waste source', 'Qty', 'Unit', 'Days/week in operation'];
+  const header = lead.concat(...streams.map(s => [WMPG_STREAMS[s].doc + ' rate', WMPG_STREAMS[s].doc + ' volume (L/week)']));
+  const pad = () => lead.map(() => '');
+  const pre = {}; streams.forEach(s => pre[s] = 0);
+  const rows = uses.map(u => {
+    const row = [u.level || '—', u.label].concat(allArea ? [wmpgNum(u.value), String(u.days)] : [wmpgNum(u.value), u.unit, String(u.days)]);
+    streams.forEach(s => { const ro = u.rates[s]; pre[s] += u.vols[s] || 0; row.push(ro ? wmpgNum(ro.rate) : ''); row.push(ro && u.vols[s] ? wmpgNum(u.vols[s]) : ''); });
+    return row;
+  });
+  const post = wmpgComRoomVols(d, room);
+  const totalRow = label => { const r = pad(); r[0] = label; return r; };
+  let total;
+  if (!moves.length) {
+    total = totalRow('Total'); streams.forEach(s => { total.push(''); total.push(wmpgNum(pre[s])); });
+  } else {
+    const sub = totalRow('Total (from rates)'); streams.forEach(s => { sub.push(''); sub.push(wmpgNum(pre[s])); }); rows.push(sub);
+    moves.forEach(m => {
+      const r = totalRow(''); r[1] = 'Separated: ' + WMPG_STREAMS[m.to].doc.toLowerCase() + ' from ' + WMPG_STREAMS[m.from].doc.toLowerCase() + ' (' + m.pct + '%)';
+      streams.forEach(s => { r.push(''); r.push(s === m.from ? '−' + wmpgNum(m.amt) : s === m.to ? '+' + wmpgNum(m.amt) : ''); });
+      rows.push(r);
+    });
+    total = totalRow('Total after separation'); streams.forEach(s => { total.push(''); total.push(wmpgNum(post[s] || 0)); });
+  }
+  const notes = [];
+  // name the streams when only some of a use's figures are the fallback
+  const state = uses.map(u => {
+    const all = Object.keys(u.rates), st = all.filter(k => u.rates[k].src === 'state');
+    if (!st.length) return null;
+    return st.length === all.length ? u.label : u.label + ' (' + wmpgList(st.map(wmpgStreamWord)) + ')';
+  }).filter(Boolean);
+  if (state.length) notes.push('State fallback used for ' + wmpgList(state) + ' — no council-specific commercial rate found' + (d.council ? ' for ' + d.council : '') + '; the ' + (d.state || 'state') + ' reference rate applies.');
+  const none = uses.filter(u => u.noRates).map(u => u.label);
+  if (none.length) notes.push('No published generation rate for ' + wmpgList(none) + ' — not included in the volumes above. Enter the council’s rate before issue.');
+  return { header, rows, total, notes, streams };
+}
+// The WG_COMM_1/_2 choice and the {separated_stream} wording follow the
+// project: _2 when every commercial figure is the state fallback, WG_COMM_3
+// only when a commercial room actually separates a stream. An author's own
+// on/off (d.text.off) always wins over these defaults.
+function wmpgComTextDefaults(d) {
+  const rooms = wmpgComRooms(d);
+  const scope = wmpgComRateScope(rooms);
+  const sep = wmpgUniq(rooms.flatMap(r => wmpgSplitList(r.splits))).map(id => WMPG_SPLIT_DEFS[id]);
+  return {
+    on: { WG_COMM_1: scope !== 'state', WG_COMM_2: scope === 'state', WG_COMM_3: sep.length > 0 },
+    separated: wmpgList(sep.map(x => WMPG_STREAMS[x.to].doc.toLowerCase() + ' from ' + WMPG_STREAMS[x.from].doc.toLowerCase())),
+    scope,
+  };
+}
+// Context for the commercial text: the room's collection facts, the actual
+// separations, and — on the state fallback — the compliance reference names
+// the state rather than the council.
+function wmpgComCtx(d, room) {
+  const ctx = tbCtxFor('2.2 Commercial waste volume generation', d, room || wmpgComRooms(d)[0]);
+  const t = wmpgComTextDefaults(d);
+  if (t.separated) ctx.separated_stream = t.separated;
+  if (t.scope === 'state') ctx.compliance = (d.state || 'State') + ' state reference generation rates (state fallback — no council-specific commercial rates found' + (d.council ? ' for ' + d.council : '') + ')';
+  return ctx;
+}
+// Commercial sorting rows: the streams the commercial rooms actually have,
+// labelled from the text library's SORT_COMM_ROW_* snippet when there is one
+// (so the author's wording prints), in the master's black-body colours.
+const WMPG_COM_SORT_TAG = { GW: 'General waste', ORG: 'Organics', REC: 'Recycing', GLS: 'Glass', CARD: 'Cardboard' };
+const WMPG_COM_COLOURS = { GW: 'black body with red lid', ORG: 'black body with lime green lid', REC: 'black body with yellow lid',
+  GLS: 'black body with purple lid', CARD: 'black body with light blue lid', SOFT: 'as specified by the collection contractor' };
+function wmpgComSortRows(d) {
+  const rooms = wmpgComRooms(d);
+  const streams = WMPG_COM_ORDER.filter(s => rooms.some(r => wmpgRoomStreams(d, r).includes(s)));
+  const ov = (d.text && d.text.edit) || {};
+  const lib = s => {
+    const tags = ['SORT_COMM_ROW_' + WMPG_COM_SORT_TAG[s], s === 'REC' ? 'SORT_COMM_ROW_Recycling' : null].filter(Boolean);
+    for (const t of tags) { const r = (typeof tbGet === 'function') ? tbGet(t) : null; if (r) return ov[t] || r.b; }
+    return null;
+  };
+  const rows = streams.map(s => [lib(s) || WMPG_STREAMS[s].doc, WMPG_COM_COLOURS[s], '80L bin', 'direct to the commercial waste storage area', WMPG_STREAMS[s].notes]);
+  if (rooms.some(r => r.extras && r.extras.bulky && r.extras.bulky.on))
+    rows.push(['Bulky waste and e-waste','N/A','N/A','via building management','Contact building management for assistance transferring to the waste storage area']);
+  return rows;
+}
+// Storage and collection rows for one room — the residential tables' own
+// logic, factored so a commercial room gets exactly the same table.
+function wmpgStorageRows(room) {
+  let fpTotal = 0;
+  const rws = room.bins.map(b => {
+    const dim = WMPG_BIN_DIMS[b.sizeL] || [0,0,0];
+    const fp = dim[1]*dim[2]/1e6 * b.qty; fpTotal += fp;
+    return [WMPG_STREAMS[b.stream].doc, `${b.sizeL}L bin`, String(b.qty), String(dim[0]), String(dim[1]), String(dim[2]), fp.toFixed(2)];
+  });
+  const addExtra = (x, label) => {
+    const fp = x.areaM2 != null ? x.areaM2 : x.w*x.d/1e6; fpTotal += fp;
+    rws.push([label, x.type, '1', x.h ? String(x.h) : '-', x.w ? String(x.w) : '-', x.d ? String(x.d) : '-', fp.toFixed(2)]);
+  };
+  if (room.extras.bulky.on)    addExtra(room.extras.bulky, 'Hard waste');
+  if (room.extras.textiles.on) addExtra(room.extras.textiles, 'Textiles');
+  if (room.extras.tug.on)      addExtra(room.extras.tug, 'General waste');
+  if (room.extras.wash.on)     addExtra(room.extras.wash, 'General waste');
+  return { rows: rws, total: ['Total footprint (m²)','','','','','', fpTotal.toFixed(2)] };
+}
+const WMPG_STORAGE_HDR = ['Waste stream','Bin/equipment type','Qty.','Height (mm)','Width (mm)','Depth (mm)','Footprint (m²)'];
+const WMPG_COLLECT_HDR = ['Waste stream','Bin/equipment type','Qty.','Collection frequency','Weekly volume (L)','Service capacity (L/week)','Collection provider'];
+function wmpgCollectRows(d, room) {
+  const v = wmpgRoomVols(d, room);
+  const rws = room.bins.map(b => [WMPG_STREAMS[b.stream].doc, `${b.sizeL}L bin`, String(b.qty),
+    wmpgFreqLabel(b.colWk), wmpgNum(v[b.stream]||0), wmpgNum(b.sizeL*b.qty*(+b.colWk||0)), b.provider]);
+  if (room.extras.bulky.on)    rws.push(['Hard waste', `${room.extras.bulky.areaM2}m² bulky waste zone`, '1', 'on-call', 'N/A', 'N/A', room.collection.provider || 'council']);
+  if (room.extras.textiles.on) rws.push(['Textiles', `${room.extras.textiles.areaM2}m² charity bin`, '1', 'on-call', 'N/A', 'N/A', 'charity/council']);
+  return rws;
+}
+// The summary's collection sentence for a room; commercial rooms say so.
+function wmpgCollectionSentence(d, room) {
+  const multi = d.rooms.length > 1, com = wmpgRoomKind(room) === 'com';
+  const head = com ? (multi ? room.name + ' — commercial waste' : 'Commercial waste') : (multi ? room.name + ' — waste' : 'Waste');
+  return head + ' will be collected from ' + (room.collection.point || '[collection point not yet set]') +
+    ' by ' + (room.collection.provider || 'council') + ' with a ' + (room.collection.vehicle || '[collection vehicle not yet selected]') +
+    (room.collection.street ? ', which will stop on ' + room.collection.street : '') + '.';
+}
+// Is the author's SUMMARY_COLLECTION_COMM snippet switched off? Then the
+// commercial summary sentences are left out, as the library says.
+function wmpgComSummaryOn(d) {
+  const r = (typeof tbGet === 'function') ? tbGet('SUMMARY_COLLECTION_COMM') : null;
+  if (!r) return true;
+  const off = d.text && d.text.off;
+  return (off && off[r.t] != null) ? !off[r.t] : tbDefaultOn(r, d);
+}
+
 function wmpgDocModel() {
   const d = WMPG.data;
   const M = [];
@@ -33084,11 +33637,30 @@ function wmpgDocModel() {
   const compliance = d.compliance || (d.council
     ? `${d.council} — waste management requirements for new developments`
     : 'Relevant council waste management requirements');
-  const totals = wmpgTotalVols(d);
+  // residential sections read the residential rooms, commercial sections the
+  // commercial ones — a residential-only project is exactly as before
+  const resRooms = wmpgResRooms(d), comRooms = wmpgComRooms(d);
+  const resMulti = resRooms.length > 1;
+  const totals = wmpgTotalVols(d, resRooms);
   const usedUnits = wmpgUnitList(d);
   const totalDw = rooms.reduce((a,r) => a + wmpgRoomQty(r), 0);
   const anyChute = rooms.some(r => r.chutesOn);
   const roomLabel = r => `${r.component || 'Residential'} — ${r.name}`;
+  // B3: obligations that follow from the plant actually placed in a room.
+  // Silent when nothing applies, so a simple room reads exactly as before.
+  const equipText = room => {
+    try {
+      // Match on the CALCULATOR room id, which both sides already carry: the
+      // generator stores it as room.srcId, the drawn room as room.calcRoom.
+      // Name matching was a soft link that failed silently on a rename.
+      const snap = (d.reconciliation || []).find(x =>
+        (room.srcId && x.calcRoomId === room.srcId) ||
+        (!room.srcId && x.roomName && room.name &&
+         x.roomName.toLowerCase() === room.name.toLowerCase()));
+      wsWmpEquipmentText(snap, wsEquipLibrary(WS_EQUIP_DB))
+        .forEach(t => M.push({ k:'p', t }));
+    } catch (e) { /* the document must still build without the layout */ }
+  };
 
   const equipLines = room => {
     const out = room.bins.map(b => `${b.qty} × ${b.sizeL}L ${WMPG_STREAMS[b.stream].doc.toLowerCase()}`);
@@ -33098,8 +33670,6 @@ function wmpgDocModel() {
     if (room.extras.wash.on)     out.push('1 × bin wash');
     return out.join('\n');
   };
-  const collectionSentence = room =>
-    `${multi ? room.name + ' — w' : 'W'}aste will be collected from ${room.collection.point || '[collection point not yet set]'} by ${room.collection.provider || 'council'} with a ${room.collection.vehicle || '[collection vehicle not yet selected]'}${room.collection.street ? ', which will stop on ' + room.collection.street : ''}.`;
 
   // ── Waste management summary ────────────────────────────────────────────
   M.push({ k:'h1', t:'Waste management summary' });
@@ -33116,7 +33686,7 @@ function wmpgDocModel() {
     M.push(S({ k:'bullets', items: rooms.filter(r => r.chutesOn).map(r => r.chuteText) }, 'rooms.*.chuteText', 'rooms.*.chutesOn', 'rooms.*.chute'));
   }
   M.push({ k:'kv', t:'Collection:', v:'' });
-  M.push(S({ k:'bullets', items: rooms.map(collectionSentence) }, 'rooms.*.collection'));
+  M.push(S({ k:'bullets', items: rooms.filter(r => wmpgRoomKind(r) === 'res' || wmpgComSummaryOn(d)).map(r => wmpgCollectionSentence(d, r)) }, 'rooms.*.collection'));
   M.push({ k:'pagebreak' });
 
   // ── 1. Introduction ─────────────────────────────────────────────────────
@@ -33150,16 +33720,20 @@ function wmpgDocModel() {
   else M.push(S({ k:'p', field:'background', t: d.background || `${d.daRef ? 'This site is the subject of planning application ' + d.daRef + '. ' : ''}The site is proposed to be developed as ${d.devTypeText ? (/^\d/.test(d.devTypeText) ? 'an ' : 'a ') + d.devTypeText : 'a multi-unit residential development'}.` }, 'background', 'daRef', 'devTypeText'));
   M.push({ k:'h2', t:'1.4. Development summary' });
   M.push({ k:'p', t:'The following table provides a summary of the proposed development, outlining the key components and scale of the project as relevant to waste management.' });
-  cap('Residential development summary', 'unitTypes');
-  M.push(S({ k:'table', header:['Dwelling type','Residential'],
-    rows: usedUnits.map(u => [u.label, String(rooms.reduce((a,r) => a + (+r.alloc[u.key]||0), 0))]),
-    total:['Total dwellings', String(totalDw)] }, 'unitTypes', 'rooms.*.alloc'));
-  if (multi) {
-    M.push({ k:'p', t:`The development incorporates ${rooms.length} separate waste storage areas. Dwellings are allocated to each area as follows.` });
+  if (resRooms.length || !comRooms.length) {
+    cap('Residential development summary', 'unitTypes');
+    M.push(S({ k:'table', ...wmpgResDevSummary(d) }, 'unitTypes', 'rooms.*.alloc', 'rooms.*.dwLabels', 'rooms.*.component'));
+  }
+  if (resMulti) {
+    M.push({ k:'p', t:`The development incorporates ${resRooms.length} separate waste storage areas. Dwellings are allocated to each area as follows.` });
     cap('Dwelling allocation by waste storage area', 'rooms.*.alloc');
     M.push(P({ k:'table', header:['Waste storage area','Location', ...usedUnits.map(u => u.label), 'Total dwellings'],
-      rows: rooms.map(r => [r.name, r.location || '—', ...usedUnits.map(u => String(+r.alloc[u.key]||0)), String(wmpgRoomQty(r))]),
-      total:['Total','', ...usedUnits.map(u => String(rooms.reduce((a,r)=>a+(+r.alloc[u.key]||0),0))), String(totalDw)] }, 'rooms.*.alloc'));
+      rows: resRooms.map(r => [r.name, r.location || '—', ...usedUnits.map(u => String(+r.alloc[u.key]||0)), String(wmpgRoomQty(r))]),
+      total:['Total','', ...usedUnits.map(u => String(resRooms.reduce((a,r)=>a+(+r.alloc[u.key]||0),0))), String(totalDw)] }, 'rooms.*.alloc'));
+  }
+  if (comRooms.length) {
+    cap('Commercial development summary', 'rooms.*.uses');
+    M.push(P({ k:'table', ...wmpgComDevSummary(d) }, 'rooms.*.uses', 'rooms.*.component'));
   }
   M.push({ k:'h2', t:'1.5. Relevant guidelines and standards' });
   // The library's list is generic; the council's OWN document is project data
@@ -33175,42 +33749,59 @@ function wmpgDocModel() {
   // ── 2. Waste generation (one table per room) ────────────────────────────
   M.push({ k:'h1', t:'2. Waste generation' });
   M.push({ k:'h2', t:'2.1. Residential waste volume generation' });
-  tbNodesOr('2.1 Residential waste volume generation', d, null, [{ k:'p', t:`Residential waste generation rates have been applied with reference to ${compliance}. These rates estimate weekly waste volumes generated by dwellings within the development${multi ? ', presented separately for each waste storage area' : ''}.` }]).forEach(n => M.push(n));
+  tbNodesOr('2.1 Residential waste volume generation', d, null, [{ k:'p', t:`Residential waste generation rates have been applied with reference to ${compliance}. These rates estimate weekly waste volumes generated by dwellings within the development${resMulti ? ', presented separately for each waste storage area' : ''}.` }]).forEach(n => M.push(n));
   rooms.forEach((room, ri) => {
-    const q = wmpgRoomQty(room); if (!q) return;
+    const q = wmpgRoomQty(room); if (!q || wmpgRoomKind(room) === 'com') return;
     const streams = wmpgRoomStreams(d, room);
     const v = wmpgRoomVols(d, room);
     const hdr = ['Dwelling type','Qty. of dwellings'];
     streams.forEach(s => { hdr.push(`${WMPG_STREAMS[s].doc} rate (L/dwelling/week)`); hdr.push(`${WMPG_STREAMS[s].doc} volume (L/week)`); });
     const rws = d.unitTypes.filter(u => (+room.alloc[u.key]||0) > 0).map(u => {
-      const n = +room.alloc[u.key] || 0, row = [u.label, String(n)];
+      const n = +room.alloc[u.key] || 0, row = [wmpgDwLabel(room, u), String(n)];
       streams.forEach(s => { const rate = +(d.rates[u.key]?.[s]) || 0; row.push(wmpgNum(rate)); row.push(wmpgNum(rate*n)); });
       return row;
     });
     const tot = ['Total', String(q)];
     streams.forEach(s => { tot.push(''); tot.push(wmpgNum(v[s]||0)); });
     cap(`${roomLabel(room)}: Waste volume generation`, 'rates', `rooms.${ri}.alloc`);
-    M.push(P({ k:'table', header:hdr, rows:rws, total:tot }, 'rates', `rooms.${ri}.alloc`, 'unitTypes'));
+    M.push(P({ k:'table', header:hdr, rows:rws, total:tot }, 'rates', `rooms.${ri}.alloc`, 'unitTypes', `rooms.${ri}.dwLabels`));
   });
-  if (multi) {
+  if (resMulti) {
     cap('Waste volume generation — development total');
     const hdr = ['Waste storage area','Dwellings', ...WMPG_ORDER.filter(s => totals[s] > 0).map(s => `${WMPG_STREAMS[s].doc} (L/week)`)];
     const act = WMPG_ORDER.filter(s => totals[s] > 0);
     M.push({ k:'table', header:hdr,
-      rows: rooms.map(r => { const v = wmpgRoomVols(d,r); return [r.name, String(wmpgRoomQty(r)), ...act.map(s => wmpgNum(v[s]||0))]; }),
+      rows: resRooms.map(r => { const v = wmpgRoomVols(d,r); return [r.name, String(wmpgRoomQty(r)), ...act.map(s => wmpgNum(v[s]||0))]; }),
       total:['Total', String(totalDw), ...act.map(s => wmpgNum(totals[s]||0))] });
+  }
+  if (comRooms.length) {
+    // 2.2 — the master's commercial generation: library text (WG_COMM_1, or
+    // _2 on the state fallback, _3 when a stream is separated, _4, NOTE1),
+    // then one table per component–room
+    M.push({ k:'h2', t:'2.2. Commercial waste volume generation' });
+    const cctx = wmpgComCtx(d);
+    const bank = tbHas('2.2 Commercial waste volume generation') ? tbNodes('2.2 Commercial waste volume generation', cctx, wmpgComTextDefaults(d).on) : [];
+    (bank.length ? bank : [{ k:'p', t:`Commercial waste generation rates have been applied with reference to ${cctx.compliance}. These rates estimate weekly waste volumes generated by commercial tenancies within the development.` }]).forEach(n => M.push(n));
+    rooms.forEach((room, ri) => {
+      if (wmpgRoomKind(room) !== 'com') return;
+      const t = wmpgComGenTable(d, room);
+      cap(`${roomLabel(room)}: Waste volume generation`, `rooms.${ri}.uses`);
+      M.push(P({ k:'table', header:t.header, rows:t.rows, total:t.total }, `rooms.${ri}.uses`, 'rates', `rooms.${ri}.component`));
+      t.notes.forEach(x => M.push(S({ k:'p', t:x }, `rooms.${ri}.uses`)));
+    });
   }
 
   // ── 3. Sorting ──────────────────────────────────────────────────────────
   M.push({ k:'h1', t:'3. Waste stream sorting responsibilities' });
   M.push({ k:'p', t:'All waste streams are to be separated and managed in accordance with the requirements of local council and applicable industry standards. Clear signage should be provided within bin storage areas to assist waste system users to correctly sort their waste. This section can also function as the occupant user guide and may be distributed to residents to support correct use of the waste system.' });
+  if (resRooms.length || !comRooms.length) {
   M.push({ k:'h2', t:'3.1. Residential waste stream sorting' });
   M.push({ k:'p', t:'The residential waste streams, including bin colours, internal receptacle requirements, disposal methods, and key restrictions are outlined below.' });
   cap('Residential waste stream sorting and responsibilities');
-  const allStreams = WMPG_ORDER.filter(s => rooms.some(r => wmpgRoomStreams(d,r).includes(s)));
+  const allStreams = WMPG_ORDER.filter(s => resRooms.some(r => wmpgRoomStreams(d,r).includes(s)));
   // Disposal wording depends on whether the rooms serving that stream have chutes.
   const disposalFor = s => {
-    const serving = rooms.filter(r => wmpgRoomStreams(d,r).includes(s));
+    const serving = resRooms.filter(r => wmpgRoomStreams(d,r).includes(s));
     const chuted = serving.filter(r => r.chutesOn);
     if (!(s === 'GW' || s === 'REC') || !chuted.length) return 'direct to the waste storage area';
     if (chuted.length === serving.length) return 'via the chute intake on each residential level';
@@ -33218,7 +33809,7 @@ function wmpgDocModel() {
   };
   const sortRows = allStreams.map(s => [WMPG_STREAMS[s].doc, d.colours[s] || WMPG_STREAMS[s].colour,
     WMPG_STREAMS[s].recept, disposalFor(s), WMPG_STREAMS[s].notes]);
-  if (rooms.some(r => r.extras.bulky.on))
+  if (resRooms.some(r => r.extras.bulky.on))
     sortRows.push(['Bulky waste and e-waste','N/A','N/A','via building management','Contact building management for assistance transferring to the waste storage area']);
   M.push(P({ k:'table', header:['Waste stream','Bin colour','Max. internal receptacle size','Disposal method','Notes/restrictions'], rows:sortRows }, 'colours', 'rooms.*.extras.textiles', 'rooms.*.extras.bulky'));
   M.push({ k:'p', t:'Other considerations:', b:true });
@@ -33226,40 +33817,41 @@ function wmpgDocModel() {
     tbNodes('3.1 Resi waste other stream sorting text', tbCtxFor('3.1 Resi waste other stream sorting text', d)).forEach(n => M.push(n));
   } else {
   const other = [];
-  if (rooms.some(r => r.extras.textiles.on)) other.push('Textiles — a charity bin is provided within the bin room for residents to dispose of unwanted clothes, bedding and textiles.');
+  if (resRooms.some(r => r.extras.textiles.on)) other.push('Textiles — a charity bin is provided within the bin room for residents to dispose of unwanted clothes, bedding and textiles.');
   other.push('Hazardous waste (e.g. paints, chemicals, batteries) — not to be placed in building bins. Disposal must follow council/EPA guidance.');
   M.push({ k:'bullets', items:other });
+  }
+  }
+  if (comRooms.length) {
+    M.push({ k:'h2', t:'3.2. Commercial waste stream sorting' });
+    M.push({ k:'p', t:'The commercial waste streams, including bin colours, internal receptacle requirements, disposal methods, and key restrictions are outlined below. Tenants are responsible for separating their waste into the correct streams.' });
+    cap('Commercial waste stream sorting and responsibilities');
+    M.push(P({ k:'table', header:['Waste stream','Bin colour','Max. internal receptacle size','Disposal method','Notes/restrictions'], rows:wmpgComSortRows(d) }, 'rooms.*.bins', tbSrcTag('3.2 Commercial waste stream sorting table')));
+    M.push({ k:'p', t:'Other considerations:', b:true });
+    if (tbHas('3.2 Commercial other waste stream sorting text')) tbNodes('3.2 Commercial other waste stream sorting text', tbCtxFor('3.2 Commercial other waste stream sorting text', d, comRooms[0])).forEach(n => M.push(n));
+    else M.push({ k:'bullets', items:[
+      'Clinical waste — must be segregated at source and stored within the tenancy until collection by a licensed contractor.',
+      'Hazardous waste (e.g. paints, chemicals, batteries) — not to be placed in building bins. Disposal must follow council/EPA guidance.'] });
   }
 
   // ── 4. Bin storage areas and equipment ──────────────────────────────────
   let sub = 0; const s4 = () => `4.${++sub}.`;
   M.push({ k:'h1', t:'4. Bin storage areas and equipment' });
   M.push({ k:'p', t:`This section outlines the proposed bin storage and equipment for the development. Provision has been made to ensure sufficient capacity to accommodate the expected waste volumes, with Appendix A confirming that the bin storage area${multi?'s are':' is'} adequately sized to house the bins and equipment.` });
+  if (resRooms.length || !comRooms.length) {
   M.push({ k:'h2', t:s4() + ' Residential bin storage and equipment' });
   M.push({ k:'p', t:'The proposed residential bin storage and equipment requirements are outlined below. Dimensions are indicative only and may vary slightly between manufacturers; equipment models provided are examples only.' });
+  }
   rooms.forEach((room, ri) => {
-    let fpTotal = 0;
-    const rws = room.bins.map(b => {
-      const dim = WMPG_BIN_DIMS[b.sizeL] || [0,0,0];
-      const fp = dim[1]*dim[2]/1e6 * b.qty; fpTotal += fp;
-      return [WMPG_STREAMS[b.stream].doc, `${b.sizeL}L bin`, String(b.qty), String(dim[0]), String(dim[1]), String(dim[2]), fp.toFixed(2)];
-    });
-    const addExtra = (x, label) => {
-      const fp = x.areaM2 != null ? x.areaM2 : x.w*x.d/1e6; fpTotal += fp;
-      rws.push([label, x.type, '1', x.h ? String(x.h) : '-', x.w ? String(x.w) : '-', x.d ? String(x.d) : '-', fp.toFixed(2)]);
-    };
-    if (room.extras.bulky.on)    addExtra(room.extras.bulky, 'Hard waste');
-    if (room.extras.textiles.on) addExtra(room.extras.textiles, 'Textiles');
-    if (room.extras.tug.on)      addExtra(room.extras.tug, 'General waste');
-    if (room.extras.wash.on)     addExtra(room.extras.wash, 'General waste');
-    if (!rws.length) return;
+    if (wmpgRoomKind(room) === 'com') return;
+    const st = wmpgStorageRows(room);
+    if (!st.rows.length) return;
     cap(`${roomLabel(room)}: Bin storage and equipment`, `rooms.${ri}.bins`, `rooms.${ri}.extras`);
-    M.push(P({ k:'table', header:['Waste stream','Bin/equipment type','Qty.','Height (mm)','Width (mm)','Depth (mm)','Footprint (m²)'],
-      rows:rws, total:['Total footprint (m²)','','','','','', fpTotal.toFixed(2)] }, `rooms.${ri}.bins`, `rooms.${ri}.extras`));
+    M.push(P({ k:'table', header:WMPG_STORAGE_HDR, rows:st.rows, total:st.total }, `rooms.${ri}.bins`, `rooms.${ri}.extras`));
   });
 
   const ovr = [];
-  rooms.forEach(room => (room.bins || []).forEach(b => {
+  resRooms.forEach(room => (room.bins || []).forEach(b => {
     if (b.manual && b.manualWhy) ovr.push(room.name + ' — ' + WMPG_STREAMS[b.stream].doc + ': ' + b.qty + ' bins provided' + (b.calcQty != null ? ' (calculated provision ' + b.calcQty + ')' : '') + '. ' + b.manualWhy);
   }));
   if (ovr.length) {
@@ -33281,6 +33873,22 @@ function wmpgDocModel() {
       'Chute access rooms sized and ventilated in accordance with council requirements and Australian Standards.',
       'Signage and labelling provided at chute openings to guide correct disposal.',
       'Operational management of chutes, including cleaning and maintenance, remains the responsibility of the building management.'] }, 'rooms.*.chuteText', 'rooms.*.chutesOn', 'rooms.*.chute'));
+  }
+  if (comRooms.length) {
+    M.push({ k:'h2', t:s4() + ' Commercial bin storage and equipment' });
+    M.push({ k:'p', t:'The proposed commercial bin storage and equipment requirements are outlined below. Dimensions are indicative only and may vary slightly between manufacturers; equipment models provided are examples only.' });
+    rooms.forEach((room, ri) => {
+      if (wmpgRoomKind(room) !== 'com') return;
+      const st = wmpgStorageRows(room);
+      if (!st.rows.length) return;
+      cap(`${roomLabel(room)}: Bin storage and equipment`, `rooms.${ri}.bins`, `rooms.${ri}.extras`);
+      M.push(P({ k:'table', header:WMPG_STORAGE_HDR, rows:st.rows, total:st.total }, `rooms.${ri}.bins`, `rooms.${ri}.extras`));
+    });
+    const covr = [];
+    comRooms.forEach(room => (room.bins || []).forEach(b => {
+      if (b.manual && b.manualWhy) covr.push(room.name + ' — ' + WMPG_STREAMS[b.stream].doc + ': ' + b.qty + ' bins provided' + (b.calcQty != null ? ' (calculated provision ' + b.calcQty + ')' : '') + '. ' + b.manualWhy);
+    }));
+    if (covr.length) { M.push({ k:'p', t:'Departures from the calculated provision', b:true }); M.push({ k:'bullets', items:covr }); }
   }
   M.push({ k:'h2', t:s4() + ' Bin storage area design requirements' });
   M.push({ k:'p', t:`The following design requirements should be incorporated into ${multi?'each of the bin storage areas':'the bin storage area'} to ensure compliance, safe operation, and ease of use:` });
@@ -33310,38 +33918,32 @@ function wmpgDocModel() {
   // ── 5. Collection (one table per room) ──────────────────────────────────
   M.push({ k:'h1', t:'5. Waste collection process' });
   M.push({ k:'p', t:'This section outlines the proposed waste collection process for the development, including bin provision, collection frequency, vehicle access, and servicing arrangements. It also identifies relevant waste service providers to support ongoing management.' });
+  if (resRooms.length || !comRooms.length) {
   M.push({ k:'h2', t:'5.1. Residential waste collection' });
   M.push({ k:'p', t:'The proposed residential waste collection system, including bin sizes, service frequency, and weekly capacity is outlined below.' });
-  rooms.forEach((room, ri) => {
-    const v = wmpgRoomVols(d, room);
-    const rws = room.bins.map(b => [WMPG_STREAMS[b.stream].doc, `${b.sizeL}L bin`, String(b.qty),
-      wmpgFreqLabel(b.colWk), wmpgNum(v[b.stream]||0), wmpgNum(b.sizeL*b.qty*(+b.colWk||0)), b.provider]);
-    if (room.extras.bulky.on)    rws.push(['Hard waste', `${room.extras.bulky.areaM2}m² bulky waste zone`, '1', 'on-call', 'N/A', 'N/A', room.collection.provider || 'council']);
-    if (room.extras.textiles.on) rws.push(['Textiles', `${room.extras.textiles.areaM2}m² charity bin`, '1', 'on-call', 'N/A', 'N/A', 'charity/council']);
+  }
+  const collectTable = (room, ri) => {
+    const rws = wmpgCollectRows(d, room);
     if (!rws.length) return;
     cap(`${roomLabel(room)}: Waste collection summary`, `rooms.${ri}.bins.*.colWk`, `rooms.${ri}.bins.*.provider`);
-    M.push(P({ k:'table', header:['Waste stream','Bin/equipment type','Qty.','Collection frequency','Weekly volume (L)','Service capacity (L/week)','Collection provider'], rows:rws },
+    M.push(P({ k:'table', header:WMPG_COLLECT_HDR, rows:rws },
       `rooms.${ri}.bins.*.colWk`, `rooms.${ri}.bins.*.provider`, `rooms.${ri}.bins`, `rooms.${ri}.extras`));
-  });
-  rooms.forEach((room, ri) => {
-    M.push({ k:'p', t: multi ? `${room.name} — collection process` : 'Residential collection process', b:true });
+  };
+  const narrative = (room, ri, head) => {
+    M.push({ k:'p', t: head, b:true });
     // Template-assembled from the project's own facts (wmpgNarrative); the
     // author's edit wins. Tagged so the preview offers rebuild/polish inline.
     M.push(P({ k:'p', t: wmpgNarrativeText(d, room), narrative: ri }, `rooms.${ri}.collection`, `rooms.${ri}.bins`, `rooms.${ri}.bins.*.method`, `rooms.${ri}.extras.tug`, 'tokens.travel_path'));
-    // B3: obligations that follow from the plant actually placed in this room.
-    // Silent when nothing applies, so a simple room reads exactly as before.
-    try {
-      // Match on the CALCULATOR room id, which both sides already carry: the
-      // generator stores it as room.srcId, the drawn room as room.calcRoom.
-      // Name matching was a soft link that failed silently on a rename.
-      const snap = (d.reconciliation || []).find(x =>
-        (room.srcId && x.calcRoomId === room.srcId) ||
-        (!room.srcId && x.roomName && room.name &&
-         x.roomName.toLowerCase() === room.name.toLowerCase()));
-      wsWmpEquipmentText(snap, wsEquipLibrary(WS_EQUIP_DB))
-        .forEach(t => M.push({ k:'p', t }));
-    } catch (e) { /* the document must still build without the layout */ }
-  });
+    equipText(room);
+  };
+  rooms.forEach((room, ri) => { if (wmpgRoomKind(room) !== 'com') collectTable(room, ri); });
+  rooms.forEach((room, ri) => { if (wmpgRoomKind(room) !== 'com') narrative(room, ri, resMulti ? `${room.name} — collection process` : 'Residential collection process'); });
+  if (comRooms.length) {
+    M.push({ k:'h2', t:'5.2. Commercial waste collection' });
+    M.push({ k:'p', t:'The proposed commercial waste collection system, including bin sizes, service frequency, and weekly capacity is outlined below.' });
+    rooms.forEach((room, ri) => { if (wmpgRoomKind(room) === 'com') collectTable(room, ri); });
+    rooms.forEach((room, ri) => { if (wmpgRoomKind(room) === 'com') narrative(room, ri, comRooms.length > 1 ? `${room.name} — commercial collection process` : 'Commercial collection process'); });
+  }
   M.push({ k:'p', t:'Waste service providers', b:true });
   M.push({ k:'p', t:'The ongoing management of waste services may involve a range of specialist contractors, including waste collection providers, bin washing services, and independent auditors. The following contractors can provide these services to support the effective operation and maintenance of the proposed waste management system.' });
   cap('Contractor details', 'contractors');
@@ -33947,12 +34549,19 @@ function wmpgTplPayload(d) {
   const rooms = d.rooms, multi = rooms.length > 1;
   const councilTxt = d.council || 'the relevant council';
   const compliance = d.compliance || (d.council ? d.council + ' — waste management requirements for new developments' : 'Relevant council waste management requirements');
-  const totals = wmpgTotalVols(d);
+  // residential bookmarks read the residential rooms, commercial bookmarks
+  // the commercial ones — a residential-only project fills exactly as before
+  const resRooms = wmpgResRooms(d), comRooms = wmpgComRooms(d);
+  const resMulti = resRooms.length > 1;
+  const totals = wmpgTotalVols(d, resRooms);
+  const allTotals = wmpgTotalVols(d);
   const usedUnits = wmpgUnitList(d);
   const totalDw = rooms.reduce((a,r) => a + wmpgRoomQty(r), 0);
   const anyChute = rooms.some(r => r.chutesOn);
   const roomLabel = r => (r.component || 'Residential') + ' — ' + r.name;
   const NA = tplP('Not applicable — the development does not include a commercial component.');
+  const NA_RES = tplP('Not applicable — the development does not include a residential component.');
+  const resNA = !resRooms.length && comRooms.length > 0;
 
   const equipLines = room => {
     const out = room.bins.map(b => b.qty + ' × ' + b.sizeL + 'L ' + WMPG_STREAMS[b.stream].doc.toLowerCase());
@@ -33962,15 +34571,12 @@ function wmpgTplPayload(d) {
     if (room.extras.wash.on)     out.push('1 × bin wash');
     return out.join('\n');
   };
-  const collectionSentence = room =>
-    (multi ? room.name + ' — w' : 'W') + 'aste will be collected from ' + (room.collection.point || '[collection point not yet set]') +
-    ' by ' + (room.collection.provider || 'council') + ' with a ' + (room.collection.vehicle || '[collection vehicle not yet selected]') +
-    (room.collection.street ? ', which will stop on ' + room.collection.street : '') + '.';
 
   // diversion estimate, same simple basis as the VBA chart module:
-  // recoverable streams over total generation.
-  const genAll = totals.GW + totals.REC + totals.ORG + totals.GLS;
-  const divPct = genAll > 0 ? Math.round((totals.REC + totals.ORG + totals.GLS) / genAll * 100) : 0;
+  // recoverable streams over total generation — commercial volumes included,
+  // separated cardboard and soft plastics counted as recovered.
+  const genAll = WMPG_COM_ORDER.reduce((a, s) => a + (allTotals[s] || 0), 0);
+  const divPct = genAll > 0 ? Math.round((genAll - allTotals.GW) / genAll * 100) : 0;
 
   const text = {
     BM_ClientName: d.client || '—',
@@ -33997,7 +34603,7 @@ function wmpgTplPayload(d) {
     add('BM_Tbl_WasteMgmtSummary', tplP('Chute requirements', WMPG_TPL_STYLE.body, { b:true }));
     add('BM_Tbl_WasteMgmtSummary', tplBullets(rooms.filter(r => r.chutesOn).map(r => r.chuteText)));
   }
-  add('BM_SUMMARY_COLLECTION', tplBullets(rooms.map(collectionSentence)));
+  add('BM_SUMMARY_COLLECTION', tplBullets(rooms.filter(r => wmpgRoomKind(r) === 'res' || wmpgComSummaryOn(d)).map(r => wmpgCollectionSentence(d, r))));
 
   // 1. Introduction
   if (tbHas('1. Introduction')) tbXml('1. Introduction', tbCtxFor('1. Introduction', d), add, 'BM_Sec_INTRO'); else
@@ -34024,18 +34630,23 @@ function wmpgTplPayload(d) {
     (d.daRef ? 'This site is the subject of planning application ' + d.daRef + '. ' : '') +
     'The site is proposed to be developed as ' + (d.devTypeText ? (/^\d/.test(d.devTypeText) ? 'an ' : 'a ') + d.devTypeText : 'a multi-unit residential development') + '.'));
 
+  if (resNA) add('BM_Tbl1_DevSummaryResi', NA_RES); else {
   add('BM_Tbl1_DevSummaryResi', tplCaption('Residential development summary'));
-  add('BM_Tbl1_DevSummaryResi', tplTable({
-    header:['Dwelling type','Residential'],
-    rows: usedUnits.map(u => [u.label, String(rooms.reduce((a,r) => a + (+r.alloc[u.key]||0), 0))]),
-    total:['Total dwellings', String(totalDw)] }));
-  if (multi) {
-    add('BM_Tbl1_DevSummaryResi', tplP('The development incorporates ' + rooms.length + ' separate waste storage areas. Dwellings are allocated to each area as follows.'));
+  add('BM_Tbl1_DevSummaryResi', tplTable(wmpgResDevSummary(d)));
+  }
+  if (resMulti) {
+    add('BM_Tbl1_DevSummaryResi', tplP('The development incorporates ' + resRooms.length + ' separate waste storage areas. Dwellings are allocated to each area as follows.'));
     add('BM_Tbl1_DevSummaryResi', tplCaption('Dwelling allocation by waste storage area'));
     add('BM_Tbl1_DevSummaryResi', tplTable({
       header:['Waste storage area','Location', ...usedUnits.map(u => u.label), 'Total'],
-      rows: rooms.map(r => [r.name, r.location || '—', ...usedUnits.map(u => String(+r.alloc[u.key]||0)), String(wmpgRoomQty(r))]),
-      total:['Total','', ...usedUnits.map(u => String(rooms.reduce((a,r)=>a+(+r.alloc[u.key]||0),0))), String(totalDw)] }));
+      rows: resRooms.map(r => [r.name, r.location || '—', ...usedUnits.map(u => String(+r.alloc[u.key]||0)), String(wmpgRoomQty(r))]),
+      total:['Total','', ...usedUnits.map(u => String(resRooms.reduce((a,r)=>a+(+r.alloc[u.key]||0),0))), String(totalDw)] }));
+  }
+  // The master's own bookmark for the commercial summary (BM_Tbl2_DevSummaryComm);
+  // a template without it gets the table after the residential one (wmpgTplRehome).
+  if (comRooms.length) {
+    add('BM_Tbl2_DevSummaryComm', tplCaption('Commercial development summary'));
+    add('BM_Tbl2_DevSummaryComm', tplTable(wmpgComDevSummary(d)));
   }
   if (tbHas('1.5 Relevant guidelines and standards')) {
     tbXml('1.5 Relevant guidelines and standards', tbCtxFor('1.5 Relevant guidelines and standards', d), add, 'BM_Sec_GUIDELINES');
@@ -34046,16 +34657,17 @@ function wmpgTplPayload(d) {
   add('BM_Sec_GUIDELINES', tplBullets(d.guidelines));
 
   // 2. Waste generation
+  if (resNA) add('BM_Sec_WasteGen_Resi_Text', NA_RES); else
   if (tbHas('2.1 Residential waste volume generation')) tbXml('2.1 Residential waste volume generation', tbCtxFor('2.1 Residential waste volume generation', d), add, 'BM_Sec_WasteGen_Resi_Text'); else
   add('BM_Sec_WasteGen_Resi_Text', tplP('Residential waste generation rates have been applied with reference to ' + compliance +
-    '. These rates estimate weekly waste volumes generated by dwellings within the development' + (multi ? ', presented separately for each waste storage area' : '') + '.'));
+    '. These rates estimate weekly waste volumes generated by dwellings within the development' + (resMulti ? ', presented separately for each waste storage area' : '') + '.'));
   rooms.forEach(room => {
-    const q = wmpgRoomQty(room); if (!q) return;
+    const q = wmpgRoomQty(room); if (!q || wmpgRoomKind(room) === 'com') return;
     const streams = wmpgRoomStreams(d, room), v = wmpgRoomVols(d, room);
     const hdr = ['Dwelling type','Qty. of dwellings'];
     streams.forEach(s => { hdr.push(WMPG_STREAMS[s].doc + ' rate (L/dwelling/week)'); hdr.push(WMPG_STREAMS[s].doc + ' volume (L/week)'); });
     const rws = d.unitTypes.filter(u => (+room.alloc[u.key]||0) > 0).map(u => {
-      const nQ = +room.alloc[u.key] || 0, row = [u.label, String(nQ)];
+      const nQ = +room.alloc[u.key] || 0, row = [wmpgDwLabel(room, u), String(nQ)];
       streams.forEach(s => { const rate = +(d.rates[u.key]?.[s]) || 0; row.push(wmpgNum(rate)); row.push(wmpgNum(rate*nQ)); });
       return row;
     });
@@ -34064,20 +34676,35 @@ function wmpgTplPayload(d) {
     add('BM_Sec_WasteGen_Resi', tplCaption(roomLabel(room) + ': Waste volume generation'));
     add('BM_Sec_WasteGen_Resi', tplTable({ header:hdr, rows:rws, total:tot }));
   });
-  if (multi) {
+  if (resMulti) {
     const act = WMPG_ORDER.filter(s => totals[s] > 0);
     add('BM_Sec_WasteGen_Resi', tplCaption('Waste volume generation — development total'));
     add('BM_Sec_WasteGen_Resi', tplTable({
       header:['Waste storage area','Dwellings', ...act.map(s => WMPG_STREAMS[s].doc + ' (L/week)')],
-      rows: rooms.map(r => { const v = wmpgRoomVols(d,r); return [r.name, String(wmpgRoomQty(r)), ...act.map(s => wmpgNum(v[s]||0))]; }),
+      rows: resRooms.map(r => { const v = wmpgRoomVols(d,r); return [r.name, String(wmpgRoomQty(r)), ...act.map(s => wmpgNum(v[s]||0))]; }),
       total:['Total', String(totalDw), ...act.map(s => wmpgNum(totals[s]||0))] }));
   }
-  add('BM_Sec_WasteGen_Comm_Text', NA);
+  if (!comRooms.length) add('BM_Sec_WasteGen_Comm_Text', NA);
+  else {
+    // 2.2: WG_COMM_1 (or _2 on the state fallback), _3 when a stream is
+    // separated, _4, NOTE1 — then the master's table per component–room,
+    // at its own BM_Sec_WasteGen_Comm (re-homed after the text if the
+    // template lacks it)
+    const cctx = wmpgComCtx(d);
+    if (tbHas('2.2 Commercial waste volume generation')) tbXml('2.2 Commercial waste volume generation', cctx, add, 'BM_Sec_WasteGen_Comm_Text', wmpgComTextDefaults(d).on);
+    else add('BM_Sec_WasteGen_Comm_Text', tplP('Commercial waste generation rates have been applied with reference to ' + cctx.compliance + '. These rates estimate weekly waste volumes generated by commercial tenancies within the development.'));
+    comRooms.forEach(room => {
+      const t = wmpgComGenTable(d, room);
+      add('BM_Sec_WasteGen_Comm', tplCaption(roomLabel(room) + ': Waste volume generation'));
+      add('BM_Sec_WasteGen_Comm', tplTable({ header:t.header, rows:t.rows, total:t.total }));
+      t.notes.forEach(x => add('BM_Sec_WasteGen_Comm', tplP(x)));
+    });
+  }
 
   // 3. Sorting
-  const allStreams = WMPG_ORDER.filter(s => rooms.some(r => wmpgRoomStreams(d,r).includes(s)));
+  const allStreams = WMPG_ORDER.filter(s => resRooms.some(r => wmpgRoomStreams(d,r).includes(s)));
   const disposalFor = s => {
-    const serving = rooms.filter(r => wmpgRoomStreams(d,r).includes(s));
+    const serving = resRooms.filter(r => wmpgRoomStreams(d,r).includes(s));
     const chuted = serving.filter(r => r.chutesOn);
     if (!(s === 'GW' || s === 'REC') || !chuted.length) return 'direct to the waste storage area';
     if (chuted.length === serving.length) return 'via the chute intake on each residential level';
@@ -34085,48 +34712,48 @@ function wmpgTplPayload(d) {
   };
   const sortRows = allStreams.map(s => [WMPG_STREAMS[s].doc, d.colours[s] || WMPG_STREAMS[s].colour,
     WMPG_STREAMS[s].recept, disposalFor(s), WMPG_STREAMS[s].notes]);
-  if (rooms.some(r => r.extras.bulky.on))
+  if (resRooms.some(r => r.extras.bulky.on))
     sortRows.push(['Bulky waste and e-waste','N/A','N/A','via building management','Contact building management for assistance transferring to the waste storage area']);
+  if (resNA) add('BM_Tbl_SORT_RESI', NA_RES); else
   add('BM_Tbl_SORT_RESI', tplTable({ header:['Waste stream','Bin colour','Max. internal receptacle size','Disposal method','Notes/restrictions'], rows:sortRows }));
   const other = [];
-  if (rooms.some(r => r.extras.textiles.on)) other.push('Textiles — a charity bin is provided within the bin room for residents to dispose of unwanted clothes, bedding and textiles.');
+  if (resRooms.some(r => r.extras.textiles.on)) other.push('Textiles — a charity bin is provided within the bin room for residents to dispose of unwanted clothes, bedding and textiles.');
   other.push('Hazardous waste (e.g. paints, chemicals, batteries) — not to be placed in building bins. Disposal must follow council/EPA guidance.');
   if (tbHas('3.1 Resi waste other stream sorting text')) tbXml('3.1 Resi waste other stream sorting text', tbCtxFor('3.1 Resi waste other stream sorting text', d), add, 'BM_Sec_OTHERSORT_RESI'); else
   add('BM_Sec_OTHERSORT_RESI', tplBullets(other));
-  add('BM_Tbl_SORT_COMM', NA);
-  add('BM_Sec_OTHERSORT_COMM', NA);
+  if (!comRooms.length) { add('BM_Tbl_SORT_COMM', NA); add('BM_Sec_OTHERSORT_COMM', NA); }
+  else {
+    add('BM_Tbl_SORT_COMM', tplTable({ header:['Waste stream','Bin colour','Max. internal receptacle size','Disposal method','Notes/restrictions'], rows:wmpgComSortRows(d) }));
+    if (tbHas('3.2 Commercial other waste stream sorting text')) tbXml('3.2 Commercial other waste stream sorting text', tbCtxFor('3.2 Commercial other waste stream sorting text', d, comRooms[0]), add, 'BM_Sec_OTHERSORT_COMM');
+    else add('BM_Sec_OTHERSORT_COMM', tplBullets([
+      'Clinical waste — must be segregated at source and stored within the tenancy until collection by a licensed contractor.',
+      'Hazardous waste (e.g. paints, chemicals, batteries) — not to be placed in building bins. Disposal must follow council/EPA guidance.']));
+  }
 
   // 4. Storage & equipment
-  rooms.forEach(room => {
-    let fpTotal = 0;
-    const rws = room.bins.map(b => {
-      const dim = WMPG_BIN_DIMS[b.sizeL] || [0,0,0];
-      const fp = dim[1]*dim[2]/1e6 * b.qty; fpTotal += fp;
-      return [WMPG_STREAMS[b.stream].doc, b.sizeL + 'L bin', String(b.qty), String(dim[0]), String(dim[1]), String(dim[2]), fp.toFixed(2)];
-    });
-    const addExtra = (x, label) => { const fp = x.areaM2 != null ? x.areaM2 : x.w*x.d/1e6; fpTotal += fp;
-      rws.push([label, x.type, '1', x.h ? String(x.h) : '-', x.w ? String(x.w) : '-', x.d ? String(x.d) : '-', fp.toFixed(2)]); };
-    if (room.extras.bulky.on)    addExtra(room.extras.bulky, 'Hard waste');
-    if (room.extras.textiles.on) addExtra(room.extras.textiles, 'Textiles');
-    if (room.extras.tug.on)      addExtra(room.extras.tug, 'General waste');
-    if (room.extras.wash.on)     addExtra(room.extras.wash, 'General waste');
-    if (!rws.length) return;
-    add('BM_Sec_StorageEquipment_Resi', tplCaption(roomLabel(room) + ': Bin storage and equipment'));
-    add('BM_Sec_StorageEquipment_Resi', tplTable({
-      header:['Waste stream','Bin/equipment type','Qty.','Height (mm)','Width (mm)','Depth (mm)','Footprint (m²)'],
-      rows:rws, total:['Total footprint (m²)','','','','','', fpTotal.toFixed(2)] }));
+  // One storage table per room, and the deliberate departures from the
+  // calculated provision stated rather than left for a council officer to
+  // discover — residential rooms under _Resi, commercial under _Comm.
+  const storageInto = (bm, list) => list.forEach(room => {
+    const st = wmpgStorageRows(room);
+    if (!st.rows.length) return;
+    add(bm, tplCaption(roomLabel(room) + ': Bin storage and equipment'));
+    add(bm, tplTable({ header:WMPG_STORAGE_HDR, rows:st.rows, total:st.total }));
   });
-  // Deliberate departures from the calculated provision are stated in the
-  // document rather than left for a council officer to discover.
+  const overridesOf = list => { const out = []; list.forEach(room => (room.bins || []).forEach(b => {
+    if (b.manual && b.manualWhy) out.push(room.name + ' — ' + WMPG_STREAMS[b.stream].doc + ': ' + b.qty + ' bins provided' + (b.calcQty != null ? ' (calculated provision ' + b.calcQty + ')' : '') + '. ' + b.manualWhy);
+  })); return out; };
+  if (resNA) add('BM_Sec_StorageEquipment_Resi', NA_RES);
+  storageInto('BM_Sec_StorageEquipment_Resi', resRooms);
   const overrides = [];
-  rooms.forEach(room => (room.bins || []).forEach(b => {
+  resRooms.forEach(room => (room.bins || []).forEach(b => {
     if (b.manual && b.manualWhy) overrides.push(room.name + ' — ' + WMPG_STREAMS[b.stream].doc + ': ' + b.qty + ' bins provided' + (b.calcQty != null ? ' (calculated provision ' + b.calcQty + ')' : '') + '. ' + b.manualWhy);
   }));
   if (overrides.length) {
     add('BM_Sec_StorageEquipment_Resi', tplP('Departures from the calculated provision', WMPG_TPL_STYLE.h3));
     add('BM_Sec_StorageEquipment_Resi', tplBullets(overrides));
   }
-  add('BM_Sec_StorageEquipment_Resi', tplP('Dimensions are indicative only and may vary slightly between manufacturers; equipment models provided are examples only.'));
+  if (!resNA) add('BM_Sec_StorageEquipment_Resi', tplP('Dimensions are indicative only and may vary slightly between manufacturers; equipment models provided are examples only.'));
   if (anyChute) {
     if (tbHas('4.2 Residential chute requirements (if required)')) {
       add('BM_Sec_CHUTE', tplBullets(rooms.filter(r => r.chutesOn).map(r => r.chuteText)));
@@ -34142,7 +34769,13 @@ function wmpgTplPayload(d) {
   } else {
     add('BM_Sec_CHUTE', tplP('Not applicable — the development does not incorporate waste chutes.'));
   }
-  add('BM_Sec_StorageEquipment_Comm', NA);
+  if (!comRooms.length) add('BM_Sec_StorageEquipment_Comm', NA);
+  else {
+    storageInto('BM_Sec_StorageEquipment_Comm', comRooms);
+    const covr = overridesOf(comRooms);
+    if (covr.length) { add('BM_Sec_StorageEquipment_Comm', tplP('Departures from the calculated provision', WMPG_TPL_STYLE.h3)); add('BM_Sec_StorageEquipment_Comm', tplBullets(covr)); }
+    add('BM_Sec_StorageEquipment_Comm', tplP('Dimensions are indicative only and may vary slightly between manufacturers; equipment models provided are examples only.'));
+  }
   if ((TB.byGroup && TB.byGroup['4.4 Bin storage area design requirements'] || []).length) tbXml('4.4 Bin storage area design requirements', tbCtxFor('4.4 Bin storage area design requirements', d), add, 'BM_Sec_BIN_DESIGN'); else
   add('BM_Sec_BIN_DESIGN', tplBullets([
     'Doors wide enough for bin movement (minimum clear width per council standard).',
@@ -34163,22 +34796,28 @@ function wmpgTplPayload(d) {
     rows: d.suppliers.filter(r => r.company || r.type).map(r => [r.type, r.model, r.company, r.web, r.phone]) }));
 
   // 5. Collection
-  rooms.forEach(room => {
-    const v = wmpgRoomVols(d, room);
-    const rws = room.bins.map(b => [WMPG_STREAMS[b.stream].doc, b.sizeL + 'L bin', String(b.qty),
-      wmpgFreqLabel(b.colWk), wmpgNum(v[b.stream]||0), wmpgNum(b.sizeL*b.qty*(+b.colWk||0)), b.provider]);
-    if (room.extras.bulky.on)    rws.push(['Hard waste', room.extras.bulky.areaM2 + 'm² bulky waste zone', '1', 'on-call', 'N/A', 'N/A', room.collection.provider || 'council']);
-    if (room.extras.textiles.on) rws.push(['Textiles', room.extras.textiles.areaM2 + 'm² charity bin', '1', 'on-call', 'N/A', 'N/A', 'charity/council']);
+  const collectInto = (bm, list) => list.forEach(room => {
+    const rws = wmpgCollectRows(d, room);
     if (!rws.length) return;
-    add('BM_Sec_CollectionProcess_Resi', tplCaption(roomLabel(room) + ': Waste collection summary'));
-    add('BM_Sec_CollectionProcess_Resi', tplTable({
-      header:['Waste stream','Bin/equipment type','Qty.','Collection frequency','Weekly volume (L)','Service capacity (L/week)','Collection provider'], rows:rws }));
+    add(bm, tplCaption(roomLabel(room) + ': Waste collection summary'));
+    add(bm, tplTable({ header:WMPG_COLLECT_HDR, rows:rws }));
   });
-  rooms.forEach(room => {
-    add('BM_Sec_RESI_COLLECTION', tplP((multi ? room.name + ' — collection process' : 'Residential collection process'), WMPG_TPL_STYLE.h3));
+  if (resNA) add('BM_Sec_CollectionProcess_Resi', NA_RES);
+  collectInto('BM_Sec_CollectionProcess_Resi', resRooms);
+  resRooms.forEach(room => {
+    add('BM_Sec_RESI_COLLECTION', tplP((resMulti ? room.name + ' — collection process' : 'Residential collection process'), WMPG_TPL_STYLE.h3));
     add('BM_Sec_RESI_COLLECTION', tplP(wmpgNarrativeText(d, room).replace(/\n\n/g, '\n')));
   });
-  add('BM_Sec_CollectionProcess_Comm', NA);
+  if (!comRooms.length) add('BM_Sec_CollectionProcess_Comm', NA);
+  else {
+    // the collection table per commercial room, then its narrative — private
+    // contractor wording when the provider is not council (wmpgNarrative)
+    collectInto('BM_Sec_CollectionProcess_Comm', comRooms);
+    comRooms.forEach(room => {
+      add('BM_Sec_CollectionProcess_Comm', tplP((comRooms.length > 1 ? room.name + ' — commercial collection process' : 'Commercial collection process'), WMPG_TPL_STYLE.h3));
+      add('BM_Sec_CollectionProcess_Comm', tplP(wmpgNarrativeText(d, room).replace(/\n\n/g, '\n')));
+    });
+  }
   if (tbHas('Waste collection times')) tbXml('Waste collection times', tbCtxFor('Waste collection times', d), add, 'BM_COLLECTION_TIMES'); else
   add('BM_COLLECTION_TIMES', tplP('Collection is to occur within the hours permitted by ' + councilTxt + ' and relevant EPA noise guidance. Collection days and times are to be confirmed with the nominated service provider prior to occupation.'));
   add('BM_Tbl_Contractors', tplTable({ header:['Supplier type','Company','Website','Phone'],
@@ -34229,6 +34868,22 @@ function wmpgTplPayload(d) {
   return { text, sections };
 }
 
+// Bookmarks the Excel master has that an older .dotx may not: their content
+// follows the nearest bookmark that exists, and the export says so — never
+// silently dropped (tplInsertAt skips a missing bookmark without a word).
+const WMPG_TPL_REHOME = { BM_Sec_WasteGen_Comm: 'BM_Sec_WasteGen_Comm_Text', BM_Tbl2_DevSummaryComm: 'BM_Tbl1_DevSummaryResi' };
+function wmpgTplRehome(xml, sections) {
+  const has = bm => new RegExp('w:name="' + bm + '"').test(xml);
+  const out = Object.assign({}, sections), moved = [];
+  Object.keys(WMPG_TPL_REHOME).forEach(bm => {
+    if (!out[bm] || has(bm)) return;
+    const to = WMPG_TPL_REHOME[bm];
+    out[to] = (out[to] || '') + out[bm];
+    delete out[bm];
+    moved.push(bm);
+  });
+  return { sections: out, note: moved.length ? ' (template has no ' + moved.join(' / ') + ' bookmark — placed after the neighbouring section; add the bookmark to the .dotx)' : '' };
+}
 // ── fill ───────────────────────────────────────────────────────────────────
 function wmpgTplFill(docXml, payload) {
   let xml = docXml;
@@ -35076,23 +35731,25 @@ async function wmpgBuildTemplateBlob(buf) {
   // BM_SiteAddress paragraph has no run to read.
   const addrRpr = wmpgTplCoverAddressRpr(xml, 0.8);
   if (addrRpr && payload.text.BM_SiteAddress && typeof payload.text.BM_SiteAddress === 'object') payload.text.BM_SiteAddress.rpr = addrRpr;
+  const rehome = wmpgTplRehome(xml, payload.sections);
+  payload.sections = rehome.sections;
   xml = wmpgTplFill(xml, payload);
   // The cover: the master's placeholders filled or removed, the editable
   // title, and the optional project image + credit.
   xml = wmpgTplCoverTitle(xml, d.title);
   xml = wmpgTplCoverPlaceholders(xml, { client: d.client, date: d.date, projectName: d.projectName, address: d.address,
     addressLineAbove: !!(d.address || d.projectName) && /w:name="BM_SiteAddress"/.test(xml) }).xml;
-  WMPG.exportNote = '';
+  WMPG.exportNote = rehome.note;
   if (d.cover && d.cover.image && WMPG.coverImg && WMPG.coverImg.buf) {
     const band = wmpgTplCoverBand(xml);
-    if (!band) WMPG.exportNote = wmpgTplCoverImage(xml, { rId: 'x' }).note;
+    if (!band) WMPG.exportNote += wmpgTplCoverImage(xml, { rId: 'x' }).note || '';
     else {
       const img = await wmpgCoverRender(WMPG.coverImg.buf, WMPG.coverImg.type, band.wEmu, band.hEmu, d.cover.scrim !== false);
       zip.file('word/media/cover_image.jpeg', await img.blob.arrayBuffer());
       const relsFile = zip.file('word/_rels/document.xml.rels');
       if (relsFile) zip.file('word/_rels/document.xml.rels', wmpgTplAddImageRel(await relsFile.async('string'), 'rIdWmpCover', 'media/cover_image.jpeg'));
       const r = wmpgTplCoverImage(xml, { rId: 'rIdWmpCover', credit: wmpgCoverCreditText(d.cover), descr: d.cover.image.name });
-      xml = r.xml; WMPG.exportNote = r.note || '';
+      xml = r.xml; WMPG.exportNote += r.note || '';
     }
   }
   // Figure 1: at the master's own placeholder, the page's text width, the source line rewritten.
@@ -36007,19 +36664,26 @@ function wmpgPhaseWords(f) {
   if (f.cnd) return 'construction and demolition';
   return 'operation';
 }
-function tbGroup(groupName, ctx) {
+// `defaults` (optional, tag → on) sets a snippet's default from the project
+// — the WG_COMM_1/_2 choice follows the rates' source; the author's own
+// on/off still wins.
+function tbGroup(groupName, ctx, defaults) {
   const ov = (WMPG.data && WMPG.data.text) || { off:{}, edit:{} };
   return (TB.byGroup?.[groupName] || [])
     .filter(r => tbCondMet(r.c, WMPG.data))
-    .filter(r => (ov.off && ov.off[r.t] != null) ? !ov.off[r.t] : tbDefaultOn(r))
-    .map(r => ({ tag:r.t, style:r.s, text: tbFill((ov.edit && ov.edit[r.t]) || r.b, ctx) }));
+    .filter(r => (ov.off && ov.off[r.t] != null) ? !ov.off[r.t] : (defaults && defaults[r.t] != null ? !!defaults[r.t] : tbDefaultOn(r)))
+    // ctx may be a function of the snippet: the Advice Memo fills a
+    // commercial-conditioned snippet from the commercial room's facts
+    .map(r => ({ tag:r.t, style:r.s, text: tbFill((ov.edit && ov.edit[r.t]) || r.b, typeof ctx === 'function' ? ctx(r) : ctx) }));
 }
+// Pure: a snippet conditioned on the commercial component (and not negated).
+function tbIsCommercialSnippet(r) { return /(^|[,&]\s*)commercial\b/i.test(String((r && r.c) || '')); }
 // Convenience: bullets and paragraphs for a group, ready for the doc model.
-function tbNodes(groupName, ctx) {
+function tbNodes(groupName, ctx, defaults) {
   const out = [];
   let bullets = [];
   const flush = () => { if (bullets.length) { out.push({ k:'bullets', items:bullets }); bullets = []; } };
-  tbGroup(groupName, ctx).forEach(s => {
+  tbGroup(groupName, ctx, defaults).forEach(s => {
     if (s.style === 'b') bullets.push(s.text);
     else { flush(); out.push({ k:'p', t:s.text, b:s.style === 'h' }); }
   });
@@ -36039,10 +36703,10 @@ function tbNodesOr(groupName, d, room, fallback) {
   const n = tbNodes(groupName, tbCtxFor(groupName, d, room));
   return n.length ? n : (fallback || []);
 }
-function tbXml(groupName, ctx, add, bookmark) {
+function tbXml(groupName, ctx, add, bookmark, defaults) {
   let bullets = [];
   const flush = () => { if (bullets.length) { add(bookmark, tplBullets(bullets)); bullets = []; } };
-  tbGroup(groupName, ctx).forEach(s => {
+  tbGroup(groupName, ctx, defaults).forEach(s => {
     if (s.style === 'b') bullets.push(s.text);
     else { flush(); add(bookmark, tplP(s.text, s.style === 'h' ? WMPG_TPL_STYLE.h3 : WMPG_TPL_STYLE.body)); }
   });
@@ -36789,7 +37453,12 @@ function advPayload(d) {
   if (tbHas('Memo design requirements')) tbXml('Memo design requirements', ctx, add, 'BM_MEMODESIGN');
   else add('BM_MEMODESIGN', tplP('[Design requirements — enable the Memo design requirements group in the text library.]'));
 
-  if (tbHas('Memo collection and access')) tbXml('Memo collection and access', tbCtxFor('Memo collection and access', d, d.rooms[0]), add, 'BM_MEMOCOLLECTION');
+  // commercial-conditioned bullets (MEMO_COLLECTION_BP3) read the commercial
+  // room's collector and vehicle, not the first (residential) room's
+  const memoCtx = tbCtxFor('Memo collection and access', d, d.rooms[0]);
+  const comRoom = wmpgComRooms(d)[0];
+  const comCtx = comRoom ? tbCtxFor('Memo collection and access', d, comRoom) : null;
+  if (tbHas('Memo collection and access')) tbXml('Memo collection and access', comCtx ? (r => tbIsCommercialSnippet(r) ? comCtx : memoCtx) : memoCtx, add, 'BM_MEMOCOLLECTION');
   else add('BM_MEMOCOLLECTION', tplP('[Collection and access advice — enable the Memo collection and access group in the text library.]'));
 
   // One equipment table per bin room, stacked, mirroring the VBA memo.
