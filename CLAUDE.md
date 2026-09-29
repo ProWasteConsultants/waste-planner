@@ -209,6 +209,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/wmp-commercial.test.js` | WMP generator commercial rooms: `weeklyL` / `SPLIT_DEFS` / `applySplits` / `COMM` mirrors pinned to the calculator, the 30-apartment + café + office acceptance figures, hydration, residential invariance, template re-homing, Job No. |
 | `tests/plan-slots.test.js` | Plan slots: legacy occupancy keys, per-stage slots (staff), revision freshness, stage park/draft, replace note, wiring conventions |
 | `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers, the Central Coast form map and fill (pdf-lib test skips when not installed) |
+| `tests/project-title.test.js` | Optional project name / required address: display title fallback, create validation, summary edits synced to the cloud |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
