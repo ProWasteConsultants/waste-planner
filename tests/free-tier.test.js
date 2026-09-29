@@ -119,10 +119,12 @@ test('the calculator handoff parses, validates, persists and applies once', () =
   assert.ok(apply.includes("type: 'ws-calc-fill'"), 'drives the calculator through the existing fill message');
   assert.ok(SOURCE.includes("(typeof wpClaimApply === 'function') ? await wpClaimApply() : null"),
     'showApp hooks the claim dispatch after sign-in');
-  // the calc iframe seeds a commercial room from the handoff, but never
-  // double-seeds a project that already carries its own com room
-  assert.ok(SOURCE.includes("if(Array.isArray(d.com)&amp;&amp;d.com.length&amp;&amp;!ROOMS.some(r=&gt;r.kind==='com')){"));
-  assert.ok(SOURCE.includes('days:Number(c.days)&gt;0?Number(c.days):COMM[c.use].defaultDays'));
+  // the calc iframe seeds a commercial room from the handoff only when there
+  // is none; a project that already carries com rooms is reconciled (one
+  // room) or left alone (several) — never double-seeded
+  assert.ok(SOURCE.includes("const comRooms=ROOMS.filter(r=&gt;r.kind==='com');"));
+  assert.ok(SOURCE.includes("if(!comRooms.length){\n        if(valid.length){const cr=mkRoom('Commercial','com');cr.com=valid;ROOMS.push(cr);}"));
+  assert.ok(SOURCE.includes('days:Number(c.days)&gt;0?Math.min(7,Math.round(Number(c.days))):COMM[c.use].defaultDays'));
 });
 
 // ── §4: caps wired through the UI, checker and paywall ──

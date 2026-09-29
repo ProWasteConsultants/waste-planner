@@ -943,6 +943,9 @@ body.wp-anon .ws-top-chip{display:none;}
             <div class="field"><label>3-bed</label><input id="ds-3br" type="number" min="0" placeholder="0" oninput="saveSummaryField()"></div>
             <div class="field"><label>Townhouses</label><input id="ds-th" type="number" min="0" placeholder="0" oninput="saveSummaryField()"></div>
           </div>
+          <div class="field" style="margin-bottom:4px;"><label>Commercial / non-residential uses <span style="font-weight:400;text-transform:none;color:var(--muted);">(retail, café, office… — used by the bin calculator)</span></label></div>
+          <div id="ds-com"></div>
+          <button class="btn" type="button" onclick="dsComAdd()" style="font-size:11px;padding:5px 10px;margin:2px 0 6px;">+ Add commercial use</button>
           <div id="ds-saved-hint" style="font-size:10px;color:var(--muted);min-height:14px;"></div>
 
           <div class="dc-title" style="margin-top:16px;">Waste Storage Areas <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">allocation set in Bin Calculator</span></div>
@@ -4785,15 +4788,25 @@ window.addEventListener('message', function(e) {
       ROOMS=[mkRoom('Bin Room 1','res')];
       ROOMS[0].alloc={...agg};
     }
-    // Commercial tenancies from the calculator handoff. Only when the project
-    // carries no commercial room of its own — restored rooms are the source of
-    // truth and must not be double-seeded on a re-fill.
-    if(Array.isArray(d.com)&amp;&amp;d.com.length&amp;&amp;!ROOMS.some(r=&gt;r.kind==='com')){
-      const valid=d.com.filter(c=&gt;c&amp;&amp;COMM[c.use]&amp;&amp;Number(c.value)&gt;0);
-      if(valid.length){
-        const cr=mkRoom('Commercial','com');
-        cr.com=valid.map(c=&gt;({use:c.use,value:Number(c.value),days:Number(c.days)&gt;0?Number(c.days):COMM[c.use].defaultDays}));
-        ROOMS.push(cr);
+    // Commercial uses: the project's Development Summary mix (or the
+    // calculator handoff). No commercial room yet → seed one. One commercial
+    // room whose uses differ → the summary was edited outside the calculator;
+    // apply it there and say so, as the unit mix does for room 1. Several
+    // commercial rooms → which room a use belongs to is the calculator's
+    // call, so nothing moves and the note says where to make the change.
+    if(Array.isArray(d.com)){
+      const valid=d.com.filter(c=&gt;c&amp;&amp;COMM[c.use]&amp;&amp;Number(c.value)&gt;0)
+        .map(c=&gt;({use:c.use,value:Number(c.value),days:Number(c.days)&gt;0?Math.min(7,Math.round(Number(c.days))):COMM[c.use].defaultDays}));
+      const comRooms=ROOMS.filter(r=&gt;r.kind==='com');
+      const key=l=&gt;l.map(c=&gt;c.use+':'+Number(c.value)+':'+Number(c.days)).sort().join('|');
+      if(!comRooms.length){
+        if(valid.length){const cr=mkRoom('Commercial','com');cr.com=valid;ROOMS.push(cr);}
+      }else if(key(comRooms.flatMap(r=&gt;r.com))!==key(valid)){
+        const note=comRooms.length===1
+          ?'Commercial uses changed on the project page — applied to '+comRooms[0].name+'.'
+          :'Commercial uses changed on the project page — not applied, because this project has '+comRooms.length+' commercial rooms. Update the uses in each room here.';
+        if(comRooms.length===1)comRooms[0].com=valid;
+        _driftNote=(_driftNote?_driftNote+' ':'')+note;
       }
     }
     renderRooms();
@@ -4844,6 +4857,8 @@ function wsUpdateVolumes() {
         state: document.getElementById('state')?.value || '',
         council: document.getElementById('council')?.value || '',
         apt_1br: _a.apt_1br, apt_2br: _a.apt_2br, apt_3br: _a.apt_3br, townhouses: _a.townhouse,
+        // the commercial mix, read back into the project's Development Summary
+        com: ROOMS.filter(r =&gt; r.kind === 'com').flatMap(r =&gt; r.com.filter(c =&gt; Number(c.value) &gt; 0).map(c =&gt; ({ use: c.use, value: Number(c.value), days: Number(c.days) || 0 }))),
         bin_rooms: serialiseRooms(),
       };
       // per-room bins + footprints, for the layout generator
@@ -9708,6 +9723,56 @@ function getProjects() {
 function saveProjects(projects) {
   localStorage.setItem('pw_projects', JSON.stringify(projects));
 }
+// ── COMMERCIAL MIX ──────────────────────────────────────────────────────────
+// A project's non-residential uses, in the calculator's own shape:
+// summary.com = [{ use, value, days, label? }] where `use` is a COMM code,
+// `value` is the use's own measure (m² or a count) and `days` 0 = the
+// calculator's default for that use. The use list is WMPG_COM_USES (a pinned
+// mirror of the calculator's COMM), read through wpComUses() because it lives
+// in a later script block.
+function wpComUseList() { return (typeof wpComUses === 'function' && wpComUses()) || {}; }
+// Pure: the use list as prompt lines — "code | use | what to measure".
+function wpComPromptList(uses) {
+  return Object.keys(uses || {}).map(k => k + ' | ' + uses[k].label + ' | ' + uses[k].metric).join('\n');
+}
+// Pure: sanitise rows against the use list. Unknown codes and non-positive
+// values are dropped; days outside 1–7 become 0 (= the calculator's default).
+function wpComClean(rows, uses) {
+  return (Array.isArray(rows) ? rows : []).filter(c => c && uses && uses[c.use] && Number(c.value) > 0).map(c => {
+    const d = Math.round(Number(c.days) || 0);
+    const out = { use: c.use, value: Number(c.value), days: d >= 1 && d <= 7 ? d : 0 };
+    if (c.label && String(c.label).trim()) out.label = String(c.label).trim();
+    return out;
+  });
+}
+// Pure: read the AI's "commercial" array. A row it could not match to a use
+// (no code, an unknown code, or no figure) is REPORTED, never guessed onto
+// the nearest use and never silently dropped. Older replies used
+// { type, sqm, days_per_week } — read those too.
+function wpComFromExtract(list, uses) {
+  const rows = [], unmatched = [];
+  (Array.isArray(list) ? list : []).forEach(c => {
+    if (!c || typeof c !== 'object') return;
+    const use = c.use || c.code || null;
+    const value = Number(c.value != null ? c.value : c.sqm) || 0;
+    const days = Number(c.days != null ? c.days : c.days_per_week) || 0;
+    const label = String(c.label || c.type || c.name || '').trim();
+    const clean = wpComClean([{ use, value, days, label }], uses);
+    if (clean.length) rows.push(clean[0]);
+    else unmatched.push({ label: label || String(use || 'Unnamed use'), use: use || null, value,
+      why: !use || !(uses && uses[use]) ? 'no matching use' : 'no figure on the plans' });
+  });
+  return { rows, unmatched };
+}
+// Pure: one-line summary for status messages.
+function wpComSummaryText(rows, uses) {
+  return (rows || []).map(c => {
+    const u = (uses && uses[c.use]) || { label: c.use, metric: '' };
+    const unit = /m²/.test(u.metric) ? 'm²' : '';
+    return (c.label || u.label) + ' ' + c.value + unit;
+  }).join(', ');
+}
+
 // The name a project is SHOWN by. The name is optional and the address is
 // required, so an unnamed project reads as its address — never blank.
 function wpProjectTitle(p) {
@@ -9917,7 +9982,9 @@ async function npExtract() {
     if (extracted.council) populateCouncilSelect('np-council', extracted.state || document.getElementById('np-state').value || 'NSW', extracted.council);
     if (extracted.state) document.getElementById('np-state').value = extracted.state;
     const mix = ['1-bed×' + (extracted.apt_1br||0), '2-bed×' + (extracted.apt_2br||0), '3-bed×' + (extracted.apt_3br||0), 'TH×' + (extracted.townhouses||0)].join('  ');
-    msg.textContent = '✓ Extracted (' + (extracted.confidence || 'medium') + ' confidence): ' + mix + ' — review before creating.';
+    const com = (extracted.com && extracted.com.length) ? '  ·  Commercial: ' + wpComSummaryText(extracted.com, wpComUseList()) : '';
+    const un = (extracted.comUnmatched && extracted.comUnmatched.length) ? '  ·  Not placed (add on the project page): ' + extracted.comUnmatched.map(u => u.label).join(', ') : '';
+    msg.textContent = '✓ Extracted (' + (extracted.confidence || 'medium') + ' confidence): ' + mix + com + un + ' — review before creating.';
   } catch(err) {
     console.error('np extraction error:', err);
     msg.textContent = '⚠️ ' + (err.message || 'Extraction failed');
@@ -9959,6 +10026,7 @@ function createProject() {
       apt_2br: NP.summary?.apt_2br || 0,
       apt_3br: NP.summary?.apt_3br || 0,
       townhouses: NP.summary?.townhouses || 0,
+      com: NP.summary?.com || [],
     },
     ...(NP.name && { pdf_name: NP.name }),
     complianceRuns: 0,
@@ -10768,7 +10836,7 @@ function writeProjectSummary(projectId, summary) {
   if (!p) return false;
   // Only stamp when a field that drives downstream numbers actually changed —
   // stamping on every no-op write would make everything look permanently stale.
-  const watched = ['apt_1br','apt_2br','apt_3br','townhouses','bin_rooms','council','state','address'];
+  const watched = ['apt_1br','apt_2br','apt_3br','townhouses','com','bin_rooms','council','state','address'];
   const changed = watched.some(k => summary[k] !== undefined &&
     JSON.stringify(summary[k]) !== JSON.stringify((p.summary || {})[k]));
   p.summary = { ...(p.summary || {}), ...summary };
@@ -10808,13 +10876,7 @@ function saveSummaryField() {
     const bc = document.getElementById('breadcrumb');
     if (bc) bc.innerHTML = `<span onclick="showScreen('projects',document.getElementById('nav-projects'))" style="cursor:pointer;color:var(--muted)">Projects</span> <span style="color:var(--muted)">›</span> <span>${wpEscHtml(wpProjectTitle(p))}</span>`;
     document.getElementById('detail-meta').textContent = [p.address, p.council, p.devType].filter(Boolean).join(' · ');
-    // Cloud rows win on load, so an edit that stays local is lost on the next
-    // sign-in — debounce the write while the user types.
-    clearTimeout(_dsDbTimer);
-    _dsDbTimer = setTimeout(() => {
-      const cur = getProjects().find(x => x.id === p.id);
-      if (cur && typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(cur);
-    }, 800);
+    dsSyncToDB(p.id);
     // (summaryTs is stamped centrally in writeProjectSummary, and only when a
     // field that drives downstream numbers actually changed.)
   }
@@ -10825,6 +10887,15 @@ function saveSummaryField() {
   if (!addr) { hint.textContent = '⚠ Site address is required — the previous address is kept'; hint.style.color = '#EFB080'; return; }
   hint.textContent = '✓ Saved'; hint.style.color = 'var(--muted)';
   _dsSaveTimer = setTimeout(() => hint.textContent = '', 1500);
+}
+// Cloud rows win on load, so an edit that stays local is lost on the next
+// sign-in — debounce the write while the user types.
+function dsSyncToDB(id) {
+  clearTimeout(_dsDbTimer);
+  _dsDbTimer = setTimeout(() => {
+    const cur = getProjects().find(x => x.id === id);
+    if (cur && typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(cur);
+  }, 800);
 }
 function dsAddressBlur() {
   const el = document.getElementById('ds-address');
@@ -10875,6 +10946,73 @@ function fillSummaryForm(p) {
   document.getElementById('ds-2br').value = s.apt_2br || '';
   document.getElementById('ds-3br').value = s.apt_3br || '';
   document.getElementById('ds-th').value = s.townhouses || '';
+  dsComRender(p);
+}
+
+// ── Development Summary: commercial mix editor ─────────────────────────────
+function dsComRows(p) { return Array.isArray(getProjectSummary(p || {}).com) ? getProjectSummary(p).com.map(c => ({ ...c })) : []; }
+function dsComRender(p) {
+  const el = document.getElementById('ds-com');
+  if (!el) return;
+  p = p || getProjects().find(x => x.id === currentProjectId);
+  const uses = wpComUseList();
+  const codes = Object.keys(uses);
+  const rows = dsComRows(p);
+  const inp = 'padding:7px 8px;font-size:12px;';   // colours come from the page's own .field rules
+  if (!codes.length) { el.innerHTML = '<div style="font-size:11px;color:var(--muted);">Commercial uses are still loading…</div>'; return; }
+  el.innerHTML = rows.length ? rows.map((c, i) => {
+    const u = uses[c.use] || { label: c.use, metric: '' };
+    return `<div class="field" style="display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1fr) 70px 30px;gap:6px;align-items:center;margin-bottom:6px;">
+      <select onchange="dsComSet(${i},'use',this.value)" style="${inp}min-width:0;" title="Use">
+        ${codes.map(k => `<option value="${k}" ${k === c.use ? 'selected' : ''}>${wpEscHtml(uses[k].label)}</option>`).join('')}
+      </select>
+      <input type="number" min="0" step="any" value="${c.value || ''}" placeholder="${wpEscHtml(u.metric)}" title="${wpEscHtml(u.metric)}" onchange="dsComSet(${i},'value',this.value)" style="${inp}min-width:0;">
+      <input type="number" min="1" max="7" value="${c.days || ''}" placeholder="days" title="Trading days per week — blank uses the calculator's default for this use" onchange="dsComSet(${i},'days',this.value)" style="${inp}min-width:0;">
+      <button class="btn" type="button" onclick="dsComRemove(${i})" title="Remove" style="padding:4px 6px;font-size:11px;">✕</button>
+    </div>${c.label ? `<div style="font-size:10px;color:var(--muted);margin:-4px 0 6px 2px;">${wpEscHtml(c.label)}</div>` : ''}`;
+  }).join('') : '<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">None — add one for a mixed-use or commercial development.</div>';
+}
+function dsComSave(rows) {
+  if (!currentProjectId) return;
+  writeProjectSummary(currentProjectId, { com: rows });
+  dsSyncToDB(currentProjectId);
+  renderProjects();
+  const hint = document.getElementById('ds-saved-hint');
+  if (hint) { hint.textContent = '✓ Saved'; hint.style.color = 'var(--muted)'; clearTimeout(_dsSaveTimer); _dsSaveTimer = setTimeout(() => hint.textContent = '', 1500); }
+}
+function dsComAdd() {
+  const p = getProjects().find(x => x.id === currentProjectId); if (!p) return;
+  const rows = dsComRows(p);
+  // A new row is kept in the editor (value 0) but only saved once it has a figure.
+  rows.push({ use: 'general_retail_small', value: 0, days: 0 });
+  DS_COM_DRAFT = rows;
+  dsComRenderRows(rows);
+}
+let DS_COM_DRAFT = null;
+function dsComRenderRows(rows) {
+  // render from an in-editor list (may hold a row with no figure yet)
+  const p = getProjects().find(x => x.id === currentProjectId); if (!p) return;
+  const tmp = { ...p, summary: { ...getProjectSummary(p), com: rows } };
+  dsComRender(tmp);
+}
+function dsComSet(i, k, v) {
+  const p = getProjects().find(x => x.id === currentProjectId); if (!p) return;
+  const rows = DS_COM_DRAFT || dsComRows(p);
+  if (!rows[i]) return;
+  if (k === 'use') { rows[i].use = v; delete rows[i].label; }
+  else if (k === 'value') rows[i].value = Math.max(0, Number(v) || 0);
+  else if (k === 'days') { const d = Math.round(Number(v) || 0); rows[i].days = d >= 1 && d <= 7 ? d : 0; }
+  DS_COM_DRAFT = rows;
+  dsComSave(wpComClean(rows, wpComUseList()));
+  dsComRenderRows(rows);
+}
+function dsComRemove(i) {
+  const p = getProjects().find(x => x.id === currentProjectId); if (!p) return;
+  const rows = DS_COM_DRAFT || dsComRows(p);
+  rows.splice(i, 1);
+  DS_COM_DRAFT = rows;
+  dsComSave(wpComClean(rows, wpComUseList()));
+  dsComRenderRows(rows);
 }
 
 async function refreshPlansUI(projectId) {
@@ -10927,6 +11065,7 @@ function openProjectDetail(id) {
   }
 
   // Dev summary form + plans state
+  DS_COM_DRAFT = null;
   fillSummaryForm(p);
   const volEl = document.getElementById('ds-volumes');
   if (p.volumes) {
@@ -15131,7 +15270,8 @@ async function applyCalcPrefill(pre) {
     levels: '',
     status: 'Design',
     summary: { address: '', council: councilLabel, state: pre.state || 'NSW',
-      apt_1br: pre.mix.apt_1br, apt_2br: pre.mix.apt_2br, apt_3br: pre.mix.apt_3br, townhouses: pre.mix.townhouse },
+      apt_1br: pre.mix.apt_1br, apt_2br: pre.mix.apt_2br, apt_3br: pre.mix.apt_3br, townhouses: pre.mix.townhouse,
+      com: pre.com.filter(c => wpComUseList()[c.use]).map(c => ({ use: c.use, value: c.value, days: c.days || 0 })) },
     complianceRuns: 0,
     created: new Date().toLocaleDateString('en-AU'),
     ts: Date.now(),
@@ -16300,6 +16440,7 @@ window.createProject = async function() {
       apt_2br: NP.summary?.apt_2br || 0,
       apt_3br: NP.summary?.apt_3br || 0,
       townhouses: NP.summary?.townhouses || 0,
+      com: NP.summary?.com || [],
     },
     ...(NP.name && { pdf_name: NP.name }),
     complianceRuns: 0,
@@ -17984,12 +18125,19 @@ async function wsRunAiExtract() {
         apt_2br: extracted.apt_2br || 0,
         apt_3br: extracted.apt_3br || 0,
         townhouses: extracted.townhouses || 0,
+        // an extraction that found no commercial use leaves a hand-entered mix alone
+        ...(extracted.com && extracted.com.length && { com: extracted.com }),
       });
+      if (typeof dsSyncToDB === 'function') dsSyncToDB(WS.projectId);
     }
     WS.extractData = { ...(WS.extractData || {}), ...extracted };
+    if (!(extracted.com && extracted.com.length)) delete WS.extractData.com;
+    if (WS.projectId) { const pp = getProjects().find(x => x.id === WS.projectId); if (pp && getProjectSummary(pp).com) WS.extractData.com = getProjectSummary(pp).com; }
     if (typeof wsPushSummaryToCalc === 'function') wsPushSummaryToCalc();
     if (typeof wsUpdateProjectPill === 'function') wsUpdateProjectPill();
-    wsCalcExtractSay('✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence) — review every figure against the plans.');
+    const comTxt = (extracted.com && extracted.com.length) ? ' Commercial: ' + wpComSummaryText(extracted.com, wpComUseList()) + '.' : '';
+    const unTxt = (extracted.comUnmatched && extracted.comUnmatched.length) ? ' Not placed (add on the project page): ' + extracted.comUnmatched.map(u => u.label + ' — ' + u.why).join('; ') + '.' : '';
+    wsCalcExtractSay('✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence).' + comTxt + unTxt + ' Review every figure against the plans.');
   } catch (err) {
     console.error('design extraction error:', err);
     wsCalcExtractSay('⚠ ' + (err.message || 'Extraction failed'));
@@ -18010,6 +18158,9 @@ function wsPushSummaryToCalc() {
       res_2br: s.apt_2br || 0,
       res_3br: s.apt_3br || 0,
       bin_rooms: s.bin_rooms || null,
+      // the Development Summary's commercial mix; absent on older projects,
+      // which leaves the calculator's own commercial rooms untouched
+      ...(Array.isArray(s.com) && { com: s.com }),
     }, '*');
   }
 }
@@ -18122,6 +18273,8 @@ CRITICAL COUNTING RULES:
 - Do NOT count the same unit twice across sheets
 - Ignore roof plans, lower ground, mezzanine, and plant room levels for unit counts
 
+${wpComPromptRules()}
+
 OUTPUT FORMAT — return ONLY this JSON:
 {
   "address": "string or null",
@@ -18131,9 +18284,9 @@ OUTPUT FORMAT — return ONLY this JSON:
   "apt_1br": 0,
   "apt_2br": 0,
   "apt_3br": 0,
-  "commercial": [],
+  "commercial": [{ "label": "Tenancy 1 — Café", "use": "cafe", "value": 120, "days": 0 }],
   "confidence": "high",
-  "notes": "list units counted per floor"
+  "notes": "list units counted per floor, and each commercial tenancy with its area and where the figure was read"
 }`;
 
     const data = await anthropicMessages({
@@ -18145,7 +18298,23 @@ OUTPUT FORMAT — return ONLY this JSON:
     }, apiKey);
 
     let raw = data.content[0].text.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
-    return JSON.parse(raw);
+    const out = JSON.parse(raw);
+    const m = wpComFromExtract(out.commercial, wpComUseList());
+    out.com = m.rows;
+    out.comUnmatched = m.unmatched;
+    return out;
+}
+// The commercial rules every plan-extraction prompt shares, with the live use list.
+function wpComPromptRules() {
+  return `COMMERCIAL / NON-RESIDENTIAL USES — list EVERY non-residential tenancy or use on the plans (retail, café, restaurant, office, gym, medical, childcare, hotel, etc.), one entry per tenancy:
+- "use": the closest code from this list (code | use | what to measure). If none fits, use null and describe it in "label":
+${wpComPromptList(wpComUseList())}
+- "value": the figure the code measures — floor area in m² for m² uses (read from the tenancy label or area schedule, e.g. "T1 RETAIL 85m²"), or the count for count-based uses (beds, students, apartments…)
+- Do NOT estimate an area from dimensions or scale when no figure is written — use 0
+- "days": trading days per week only if the plans state them, otherwise 0
+- "label": the tenancy name as shown on the plan (e.g. "Tenancy 2 — Retail")
+- Common areas, lobbies, car parks, plant, storage and waste rooms are NOT commercial uses
+- A development with no commercial uses returns "commercial": []`;
 }
 
 function wsRunCalc() {
@@ -29867,8 +30036,7 @@ EXTRACTION RULES:
 2. COUNCIL/LGA — from title block or plan notes
 3. STATE — two-letter abbreviation (NSW, VIC, QLD, etc.)
 4. RESIDENTIAL UNITS — count by reading unit number labels and their bedroom text on every residential floor plan
-5. COMMERCIAL TENANCIES — for any retail, café, restaurant, office, gym, medical use:
-   - Use type, NLA in m² (from label or dimension), estimated days/week
+5. ${wpComPromptRules()}
 
 OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
 {
@@ -29879,7 +30047,7 @@ OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
   "apt_1br": 0,
   "apt_2br": 0,
   "apt_3br": 0,
-  "commercial": [],
+  "commercial": [{ "label": "Tenancy 1 — Café", "use": "cafe", "value": 120, "days": 0 }],
   "confidence": "high",
   "notes": "list units counted per floor e.g. Ground: G01(1b),G02(1b),G03(2b). L01: 101(1b),102(2b). Total: 1b=X, 2b=Y, 3b=Z"
 }`;
@@ -29904,6 +30072,9 @@ OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
     // Strip any accidental markdown fences
     rawText = rawText.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
     const extracted = JSON.parse(rawText);
+    const cm = wpComFromExtract(extracted.commercial, wpComUseList());
+    extracted.com = cm.rows;
+    extracted.comUnmatched = cm.unmatched;
 
     setProgress(100, 'Done!');
     setTimeout(() => {
@@ -29956,14 +30127,20 @@ function showPlanResults(data) {
   // Commercial uses
   const comSection = document.getElementById('pu-commercial-section');
   const comList = document.getElementById('pu-commercial-list');
-  if (data.commercial && data.commercial.length > 0) {
+  const comRows = data.com || [], comMiss = data.comUnmatched || [];
+  if (comRows.length || comMiss.length) {
+    const uses = wpComUseList();
     comSection.style.display = 'block';
-    comList.innerHTML = data.commercial.map(c =>
-      `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--grey);border-radius:6px;margin-bottom:6px;font-size:12px;">
-        <span style="font-weight:600;color:var(--text);">${c.label || c.type}</span>
-        <span style="color:var(--muted);">${c.sqm}m²</span>
-        <span style="color:var(--muted);">${c.days_per_week}d/wk</span>
-      </div>`
+    comList.innerHTML = comRows.map(c => {
+      const u = uses[c.use] || { label: c.use, metric: '' };
+      return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--grey);border-radius:6px;margin-bottom:6px;font-size:12px;">
+        <span style="font-weight:600;color:var(--text);">${wpEscHtml(c.label || u.label)}</span>
+        <span style="color:var(--muted);">${wpEscHtml(u.label)}</span>
+        <span style="color:var(--muted);">${c.value} ${wpEscHtml(/m²/.test(u.metric) ? 'm²' : u.metric)}</span>
+        ${c.days ? `<span style="color:var(--muted);">${c.days}d/wk</span>` : ''}
+      </div>`;
+    }).join('') + comMiss.map(c =>
+      `<div style="padding:7px 10px;border:1px dashed var(--border);border-radius:6px;margin-bottom:6px;font-size:12px;color:var(--muted);">⚠ ${wpEscHtml(c.label)} — ${wpEscHtml(c.why)}; add it in the calculator by hand</div>`
     ).join('');
   } else {
     comSection.style.display = 'none';
@@ -30017,6 +30194,14 @@ function applyPlanPrefill() {
           stateEl.dispatchEvent(new Event('change', {bubbles:true}));
         }
       }
+      // Commercial uses seed a commercial room through the calculator's own fill
+      // (the fill re-seeds room 1 from the mix too, so it carries the same figures)
+      if (data.com && data.com.length) frame.contentWindow.postMessage({ type: 'ws-calc-fill',
+        res_townhouse: parseInt(document.getElementById('pu-townhouses').value) || 0,
+        res_1br: parseInt(document.getElementById('pu-1br').value) || 0,
+        res_2br: parseInt(document.getElementById('pu-2br').value) || 0,
+        res_3br: parseInt(document.getElementById('pu-3br').value) || 0,
+        com: data.com }, '*');
 
       // Update apply button to show success
       const applyBtn = document.getElementById('pu-apply-btn');
@@ -30918,6 +31103,7 @@ function wmpgApplySplits(ids, vols) {
 }
 // Pure: the unit word a use's quantity is counted in ("m² (NLA)", "beds").
 function wmpgComUnitWord(metric) { const t = String(metric || 'm² (NLA)').replace(/\s*\(no\.\)\s*$/i, ''); return t.charAt(0).toLowerCase() + t.slice(1); }
+function wpComUses() { return WMPG_COM_USES; }
 function wmpgComUseMeta(use) { return WMPG_COM_USES[use] || { label: String(use || 'Commercial use').replace(/_/g, ' '), metric: 'm² (NLA)' }; }
 // Pure: one row per use — the calculator's figures, the rate per stream with
 // its source (council | state), the weekly volume per stream BEFORE the

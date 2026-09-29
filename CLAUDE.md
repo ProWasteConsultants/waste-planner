@@ -209,6 +209,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/wmp-commercial.test.js` | WMP generator commercial rooms: `weeklyL` / `SPLIT_DEFS` / `applySplits` / `COMM` mirrors pinned to the calculator, the 30-apartment + café + office acceptance figures, hydration, residential invariance, template re-homing, Job No. |
 | `tests/plan-slots.test.js` | Plan slots: legacy occupancy keys, per-stage slots (staff), revision freshness, stage park/draft, replace note, wiring conventions |
 | `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers, the Central Coast form map and fill (pdf-lib test skips when not installed) |
+| `tests/commercial-mix.test.js` | Commercial mix: AI extraction mapping (`wpComFromExtract`), project-page editor, summary ↔ calculator reconcile |
 | `tests/project-title.test.js` | Optional project name / required address: display title fallback, create validation, summary edits synced to the cloud |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
@@ -712,6 +713,30 @@ bin calculator is **unchanged**. Rules, tested in
   still on the `xxxPW` placeholder (on resume and re-pull); a typed Project
   ID stays. It also prefills the swept path tool's `proj-jobno`
   (`wsSweptPrefillJobNo`), never over a number typed there.
+
+## Commercial mix on the project (2026-09-29)
+
+A project's non-residential uses live in the Development Summary as
+`summary.com = [{ use, value, days, label? }]` — the calculator's own COMM
+rows (`use` a COMM code, `value` its measure, `days` 0 = the use's default).
+Tested in `tests/commercial-mix.test.js`.
+
+- **AI extraction maps to a use code or reports the row.** Both plan-extraction
+  prompts carry `wpComPromptRules()` — the live use list from `WMPG_COM_USES`
+  (via `wpComUses()`, a later script block) — and the reply goes through
+  `wpComFromExtract` (pure). A tenancy with no matching code or no written
+  figure is **named in the status line**, never seated on the nearest use and
+  never dropped. An extraction that finds no commercial use leaves a
+  hand-entered mix alone.
+- **The project page edits it** (`dsCom*`), saved through `writeProjectSummary`
+  (`com` is a watched field) and synced to the cloud (`dsSyncToDB`).
+- **Summary → calculator** rides `ws-calc-fill` `com` (absent on older
+  projects, so their commercial rooms are untouched). No commercial room →
+  one is seeded. One commercial room that differs → the summary is applied to
+  it with a drift note, as the unit mix is for room 1. Several → nothing
+  moves and the note says to update each room in the calculator.
+- **Calculator → summary**: the results `summary.com` is the calculator's
+  commercial rooms, so the project page shows what the calculator holds.
 
 ## Site preparation & construction stages (C&D) — PWC staff only (2026-09-17)
 
