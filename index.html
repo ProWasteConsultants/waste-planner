@@ -895,7 +895,7 @@ body.wp-anon .ws-top-chip{display:none;}
       <div class="detail-back" onclick="showScreen('projects',document.getElementById('nav-projects'))">← Back to Projects</div>
       <div class="detail-header">
         <div>
-          <div class="detail-title" id="detail-title">Project Name</div>
+          <div class="detail-title" id="detail-title" onclick="document.getElementById('ds-name')?.focus()" title="Click to rename" style="cursor:text;">Project Name</div>
           <div class="detail-meta" id="detail-meta">Address · Council · Type</div>
         </div>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
@@ -926,7 +926,8 @@ body.wp-anon .ws-top-chip{display:none;}
         <div class="detail-card">
           <div class="dc-title">Development Summary</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">The single source of truth for this project — used by the bin calculator and other tools. Fill it in manually, or extract it from uploaded plans with AI.</div>
-          <div class="field"><label>Site address</label><input id="ds-address" type="text" placeholder="e.g. 8 Cobar Place, Gregory Hills" oninput="saveSummaryField()"></div>
+          <div class="field"><label>Project name <span style="font-weight:400;text-transform:none;color:var(--muted);">(optional — the address is shown if blank)</span></label><input id="ds-name" type="text" placeholder="e.g. The Mercer" oninput="saveSummaryField()"></div>
+          <div class="field"><label>Site address <span style="color:#EF8080;">*</span></label><input id="ds-address" type="text" placeholder="e.g. 8 Cobar Place, Gregory Hills" oninput="saveSummaryField()" onblur="dsAddressBlur()"></div>
           <div class="field"><label>DA / Planning reference <span style="font-weight:400;text-transform:none;color:var(--muted);">(optional — fills the compliance checker &amp; WMP cover)</span></label><input id="ds-daref" type="text" placeholder="e.g. DA-2026-001234" oninput="saveSummaryField()"></div>
           <div class="field-row">
             <div class="field"><label>Council</label><select id="ds-council" onchange="saveSummaryField()"></select></div>
@@ -9507,8 +9508,8 @@ window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
       </div>
     </div>
 
-    <div class="field"><label>Project Name</label><input type="text" id="np-name" placeholder="e.g. The Mercer — 142 Mercer St"></div>
-    <div class="field"><label>Site Address</label><input type="text" id="np-address" placeholder="e.g. 142 Mercer Street, Fitzroy VIC 3065"></div>
+    <div class="field"><label>Site Address <span style="color:#EF8080;">*</span></label><input type="text" id="np-address" placeholder="e.g. 142 Mercer Street, Fitzroy VIC 3065"></div>
+    <div class="field"><label>Project Name <span style="font-weight:400;text-transform:none;color:var(--muted);">(optional — the address is used if left blank)</span></label><input type="text" id="np-name" placeholder="e.g. The Mercer"></div>
     <div class="field-row">
       <div class="field">
         <label>State</label>
@@ -9707,6 +9708,14 @@ function getProjects() {
 function saveProjects(projects) {
   localStorage.setItem('pw_projects', JSON.stringify(projects));
 }
+// The name a project is SHOWN by. The name is optional and the address is
+// required, so an unnamed project reads as its address — never blank.
+function wpProjectTitle(p) {
+  const name = String((p && p.name) || '').trim();
+  if (name) return name;
+  const addr = String((p && (p.address || (p.summary && p.summary.address))) || '').trim();
+  return addr || 'Untitled project';
+}
 
 const PROJ_FILTER = { status: 'all', state: 'all', q: '' };
 // PWC service pipeline: derived from review_requests, keyed by project_id
@@ -9808,8 +9817,8 @@ function renderProjects(filter) {
     const line = [p.council, p.state, p.devType, p.levels ? p.levels + ' levels' : ''].filter(Boolean).join('  ·  ');
     card.innerHTML = `
       <div class="pc-main">
-        <div class="pc-name">${p.name}</div>
-        <div class="pc-address">${p.address||'—'}</div>
+        <div class="pc-name">${wpEscHtml(wpProjectTitle(p))}</div>
+        <div class="pc-address">${p.name && String(p.name).trim() ? wpEscHtml(p.address || '—') : ''}</div>
       </div>
       <div class="pc-line">${line}</div>
       <span class="status-pill ${statusCls}">${p.status}</span>
@@ -9833,6 +9842,7 @@ function renderProjects(filter) {
 // The PWC job number (p.projId): the WMP's Project ID defaults from it, and
 // the WMP and Advice Memo file names and the swept path title block carry it.
 // Staff edit it on the card and in project detail; others see it read-only.
+function wpEscHtml(t) { return String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function projJobNoCardHtml(p) {
   const esc = t => String(t || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   if (typeof wmpgIsStaff === 'function' && wmpgIsStaff())
@@ -9920,7 +9930,7 @@ function openNewProject() {
   // slot. The DB trigger enforces the same rule; this is just the honest UI.
   if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { showPaywall('project_cap'); return; }
   document.getElementById('modal-overlay').classList.add('active');
-  setTimeout(() => document.getElementById('np-name').focus(), 100);
+  setTimeout(() => document.getElementById('np-address').focus(), 100);
 }
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('active');
@@ -9931,7 +9941,7 @@ document.getElementById('modal-overlay')?.addEventListener('click', e => {
 
 function createProject() {
   const name = document.getElementById('np-name').value.trim();
-  if (!name) { alert('Please enter a project name.'); return; }
+  if (!document.getElementById('np-address').value.trim()) { alert('Please enter the site address.'); document.getElementById('np-address').focus(); return; }
   const project = {
     id: Date.now().toString(),
     name,
@@ -10770,11 +10780,20 @@ function writeProjectSummary(projectId, summary) {
   return true;
 }
 
-let _dsSaveTimer = null;
+let _dsSaveTimer = null, _dsDbTimer = null;
 function saveSummaryField() {
   if (!currentProjectId) return;
+  // The address is required: a cleared field is not saved (the last address
+  // stands) and the hint says so; leaving the field empty puts it back.
+  const addr = document.getElementById('ds-address').value.trim();
+  const nameEl = document.getElementById('ds-name');
+  if (nameEl) {
+    const projects = getProjects();
+    const pp = projects.find(x => x.id === currentProjectId);
+    if (pp && (pp.name || '') !== nameEl.value.trim()) { pp.name = nameEl.value.trim(); saveProjects(projects); }
+  }
   writeProjectSummary(currentProjectId, {
-    address: document.getElementById('ds-address').value.trim(),
+    ...(addr ? { address: addr } : {}),
     daRef: document.getElementById('ds-daref')?.value.trim() || '',
     council: document.getElementById('ds-council').value.trim(),
     state: document.getElementById('ds-state').value,
@@ -10785,16 +10804,35 @@ function saveSummaryField() {
   });
   const p = getProjects().find(x => x.id === currentProjectId);
   if (p) {
+    document.getElementById('detail-title').textContent = wpProjectTitle(p);
+    const bc = document.getElementById('breadcrumb');
+    if (bc) bc.innerHTML = `<span onclick="showScreen('projects',document.getElementById('nav-projects'))" style="cursor:pointer;color:var(--muted)">Projects</span> <span style="color:var(--muted)">›</span> <span>${wpEscHtml(wpProjectTitle(p))}</span>`;
     document.getElementById('detail-meta').textContent = [p.address, p.council, p.devType].filter(Boolean).join(' · ');
+    // Cloud rows win on load, so an edit that stays local is lost on the next
+    // sign-in — debounce the write while the user types.
+    clearTimeout(_dsDbTimer);
+    _dsDbTimer = setTimeout(() => {
+      const cur = getProjects().find(x => x.id === p.id);
+      if (cur && typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(cur);
+    }, 800);
     // (summaryTs is stamped centrally in writeProjectSummary, and only when a
     // field that drives downstream numbers actually changed.)
   }
   renderProjects();
   renderAllocSummary();
   const hint = document.getElementById('ds-saved-hint');
-  hint.textContent = '✓ Saved';
   clearTimeout(_dsSaveTimer);
+  if (!addr) { hint.textContent = '⚠ Site address is required — the previous address is kept'; hint.style.color = '#EFB080'; return; }
+  hint.textContent = '✓ Saved'; hint.style.color = 'var(--muted)';
   _dsSaveTimer = setTimeout(() => hint.textContent = '', 1500);
+}
+function dsAddressBlur() {
+  const el = document.getElementById('ds-address');
+  if (!el || el.value.trim() || !currentProjectId) return;
+  const p = getProjects().find(x => x.id === currentProjectId);
+  el.value = (p && (getProjectSummary(p).address || p.address)) || '';
+  const hint = document.getElementById('ds-saved-hint');
+  if (hint) { hint.textContent = ''; hint.style.color = 'var(--muted)'; }
 }
 
 // Per-room allocation is owned by the bin calculator (it only exists because
@@ -10828,6 +10866,7 @@ function renderAllocSummary() {
 function fillSummaryForm(p) {
   setTimeout(renderAllocSummary, 0);
   const s = getProjectSummary(p);
+  const nm = document.getElementById('ds-name'); if (nm) nm.value = p.name || '';
   document.getElementById('ds-address').value = s.address || p.address || '';
   const dr = document.getElementById('ds-daref'); if (dr) dr.value = s.daRef || '';
   document.getElementById('ds-state').value = s.state || p.state || 'NSW';
@@ -10861,7 +10900,7 @@ function openProjectDetail(id) {
   const p = projects.find(x => x.id === id);
   if (!p) return;
 
-  document.getElementById('detail-title').textContent = p.name;
+  document.getElementById('detail-title').textContent = wpProjectTitle(p);
   document.getElementById('detail-meta').textContent = [p.address, p.council, p.devType].filter(Boolean).join(' · ');
   document.getElementById('detail-status').value = p.status || 'Design';
   const jobEl = document.getElementById('detail-jobno');
@@ -10902,7 +10941,7 @@ function openProjectDetail(id) {
 
   updateProgressTracker(p.status);
   showScreen('project-detail', null);
-  document.getElementById('breadcrumb').innerHTML = `<span onclick="showScreen('projects',document.getElementById('nav-projects'))" style="cursor:pointer;color:var(--muted)">Projects</span> <span style="color:var(--muted)">›</span> <span>${p.name}</span>`;
+  document.getElementById('breadcrumb').innerHTML = `<span onclick="showScreen('projects',document.getElementById('nav-projects'))" style="cursor:pointer;color:var(--muted)">Projects</span> <span style="color:var(--muted)">›</span> <span>${wpEscHtml(wpProjectTitle(p))}</span>`;
 }
 
 function updateProgressTracker(status) {
@@ -14163,13 +14202,13 @@ async function requestWMP() {
   if (s0.council) snapBits.push(s0.council);
   if (p.volumes) snapBits.push('volumes calculated');
   if (p.schedule?.length) snapBits.push('bin schedule ready');
-  if (!confirm('Request a certified Waste Management Plan for "' + p.name + '"?\n\nWe\u2019ll send with your request:\n  \u2022 ' + (snapBits.length ? snapBits.join('\n  \u2022 ') : 'project details as entered') + '\n\nA Pro Waste consultant reviews the design, handles any council negotiation, and issues the certified WMP under our practice. You\u2019ll get an acknowledgement by email with a reference number.')) return;
+  if (!confirm('Request a certified Waste Management Plan for "' + wpProjectTitle(p) + '"?\n\nWe\u2019ll send with your request:\n  \u2022 ' + (snapBits.length ? snapBits.join('\n  \u2022 ') : 'project details as entered') + '\n\nA Pro Waste consultant reviews the design, handles any council negotiation, and issues the certified WMP under our practice. You\u2019ll get an acknowledgement by email with a reference number.')) return;
   btn.disabled = true;
   btn.textContent = '⏳ Submitting…';
   const s = getProjectSummary(p);
   try {
     const payload = {
-      project_id: p.id, project_name: p.name,
+      project_id: p.id, project_name: wpProjectTitle(p),
       address: s.address || p.address || null,
       council: s.council || p.council || null,
       state: s.state || p.state || null,
@@ -14196,7 +14235,7 @@ async function requestWMP() {
     await fetch(REVIEW_FORMSPREE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ ...payload, _subject: `[Waste Planner] WMP Request — ${p.name}` }),
+      body: JSON.stringify({ ...payload, _subject: `[Waste Planner] WMP Request — ${wpProjectTitle(p)}` }),
     });
     btn.dataset.submitted = 'true';
     btn.textContent = '\u2713 WMP Requested';
@@ -14234,7 +14273,7 @@ function wpEngageOpen(source, projectId) {
   const p = projects.find(x => x.id === (projectId || currentProjectId)) || projects[0] || null;
   const prior = p && PROJ_SERVICE.map[p.id];
   if (prior && prior.type === 'wmp' && prior.status !== 'declined') {
-    alert('Pro Waste already has a request for "' + (p.name || 'this project') + '" — we’ll be in touch. Reply to your acknowledgement email to add anything in the meantime.');
+    alert('Pro Waste already has a request for "' + wpProjectTitle(p) + '" — we’ll be in touch. Reply to your acknowledgement email to add anything in the meantime.');
     return;
   }
   let m = document.getElementById('wp-engage-modal');
@@ -14269,7 +14308,7 @@ function wpEngageOpen(source, projectId) {
   m.dataset.source = source || '';
   m.dataset.projectId = p ? p.id : '';
   document.getElementById('wp-engage-proj').textContent = p
-    ? 'For ' + p.name + (p.council ? ' — ' + p.council : '') + '. Your project data travels with the request, so nothing is re-keyed.'
+    ? 'For ' + wpProjectTitle(p) + (p.council ? ' — ' + p.council : '') + '. Your project data travels with the request, so nothing is re-keyed.'
     : 'Your details go straight to a consultant.';
   const prof = (typeof currentProfile !== 'undefined' && currentProfile) || {};
   const nameEl = document.getElementById('wp-engage-name');
@@ -14310,7 +14349,7 @@ async function wpEngageSubmit() {
       // Generator" read this without changes; the engage details ride in
       // the snapshot so no schema change is needed.
       const payload = {
-        project_id: p.id, project_name: p.name,
+        project_id: p.id, project_name: wpProjectTitle(p),
         address: s.address || p.address || null,
         council: s.council || p.council || null,
         state: s.state || p.state || null,
@@ -14344,7 +14383,7 @@ async function wpEngageSubmit() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
           body: JSON.stringify({ ...payload, scope: scopeLabels.join(', '), note, target_date: targetDate, phone,
-            _subject: `[Waste Planner] Engage Pro Waste — ${p.name} (${scopeLabels.join(', ')})` }),
+            _subject: `[Waste Planner] Engage Pro Waste — ${wpProjectTitle(p)} (${scopeLabels.join(', ')})` }),
         });
       } catch (e) {}
       PROJ_SERVICE.map[p.id] = { type: 'wmp', status: 'pending' };
@@ -14377,7 +14416,7 @@ async function requestProWasteReview() {
     return;
   }
 
-  if (!confirm(`Submit "${p.name}" to Pro Waste Consultants for review?\n\nWe'll contact you within 1–2 business days.`)) return;
+  if (!confirm(`Submit "${wpProjectTitle(p)}" to Pro Waste Consultants for review?\n\nWe'll contact you within 1–2 business days.`)) return;
 
   btn.disabled = true;
   btn.textContent = '⏳ Submitting…';
@@ -14386,7 +14425,7 @@ async function requestProWasteReview() {
     // 1. Save to Supabase review_requests table
     const reviewPayload = {
       project_id: p.id,
-      project_name: p.name,
+      project_name: wpProjectTitle(p),
       address: p.address || null,
       council: p.council || null,
       state: p.state || null,
@@ -14406,7 +14445,7 @@ async function requestProWasteReview() {
     // 2. Email notification via Formspree
     const emailBody = {
       type: 'project_review_request',
-      project: p.name,
+      project: wpProjectTitle(p),
       address: p.address || '(not provided)',
       council: p.council || '(not provided)',
       state: p.state || '(not provided)',
@@ -14414,7 +14453,7 @@ async function requestProWasteReview() {
       levels: p.levels || '(not provided)',
       user_email: currentUser?.email || '(not logged in)',
       submitted: new Date().toLocaleString('en-AU'),
-      _subject: `[Waste Planner] Review Request — ${p.name}`,
+      _subject: `[Waste Planner] Review Request — ${wpProjectTitle(p)}`,
     };
     await fetch(REVIEW_FORMSPREE, {
       method: 'POST',
@@ -14451,7 +14490,7 @@ async function requestProWasteReview() {
     btn.dataset.submitted = 'true';
 
     setTimeout(() => {
-      alert(`✅ Review submitted for "${p.name}".\n\nThis project is now marked as Under Review. Pro Waste Consultants will be in touch within 1–2 business days.`);
+      alert(`✅ Review submitted for "${wpProjectTitle(p)}".\n\nThis project is now marked as Under Review. Pro Waste Consultants will be in touch within 1–2 business days.`);
     }, 200);
 
   } catch(err) {
@@ -16240,7 +16279,7 @@ window.createProject = async function() {
   // before the cap was hit (or by an older cached UI state).
   if (typeof wpProjectCapReached === 'function' && wpProjectCapReached()) { closeModal(); showPaywall('project_cap'); return; }
   const name = document.getElementById('np-name').value.trim();
-  if (!name) { alert('Please enter a project name.'); return; }
+  if (!document.getElementById('np-address').value.trim()) { alert('Please enter the site address.'); document.getElementById('np-address').focus(); return; }
   const project = {
     id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
     name,
@@ -29398,8 +29437,8 @@ function wsOpenProject(project, opts = {}) {
   // leaving another project? save its canvas immediately, then swap state sets
   if (WS.projectId && WS.projectId !== project.id) wsFlushState();
   showScreen('workspace', document.getElementById('nav-workspace'));
-  document.getElementById('ws-project-name').textContent = project.name || 'Untitled';
-  document.getElementById('breadcrumb').innerHTML = `<span style="color:var(--text);font-weight:600;">${project.name || 'Untitled'}</span>`;
+  document.getElementById('ws-project-name').textContent = wpProjectTitle(project);
+  document.getElementById('breadcrumb').innerHTML = `<span style="color:var(--text);font-weight:600;">${wpEscHtml(wpProjectTitle(project))}</span>`;
   const switching = WS.projectId !== project.id;
   WS.projectId = project.id;
   if (switching) {
@@ -29596,7 +29635,7 @@ function wsUpdateProjectPill() {
   const ad = document.getElementById('ws-pill-address');
   if (ad) {
     const addr = p && p.address;
-    const dup = addr && p.name && p.name.replace(/\s+/g, ' ').trim().toLowerCase()
+    const dup = addr && wpProjectTitle(p).replace(/\s+/g, ' ').trim().toLowerCase()
       .startsWith(addr.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 12));
     ad.style.display = addr && !dup ? '' : 'none';
     ad.textContent = addr || '';
@@ -30600,7 +30639,7 @@ async function submitToCouncil() {
     const p = getProjects().find(x => x.id === currentProjectId);
     const payload = {
       project_id: currentProjectId,
-      project_name: (p?.name || '') + (note ? ' — ' + note : ''),
+      project_name: (p ? wpProjectTitle(p) : '') + (note ? ' — ' + note : ''),
       address: p?.summary?.address || p?.address || null,
       council: p?.summary?.council || p?.council || null,
       state: p?.summary?.state || p?.state || null,
