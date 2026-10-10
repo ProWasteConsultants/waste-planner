@@ -576,8 +576,10 @@ test('every field the collector reads is actually rendered by the dialog', () =>
     assert.ok(rendered.has(id), '#' + id + ' is read by the collector but never rendered');
   // the always-present controls
   for (const id of ['shd-title', 'shd-sheet', 'shd-no', 'shd-rev', 'shd-pname',
-                    'shd-paddr', 'shd-notes', 'shd-north', 'shd-legend', 'shd-credit'])
+                    'shd-paddr', 'shd-notes', 'shd-legend', 'shd-credit'])
     assert.ok(rendered.has(id), '#' + id + ' missing from the dialog');
+  // no north arrow on the sheet — the base plan carries its own
+  assert.ok(!rendered.has('shd-north') && !SOURCE.includes('wsSheetNorth('), 'north arrow is back on the layout export');
   // and the mode-specific ones
   assert.ok(rendered.has('shd-scale') && rendered.has('shd-showscale'), 'crop-mode controls missing');
   assert.ok(rendered.has('shd-target'), 'full-mode output paper control missing');

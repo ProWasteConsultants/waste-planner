@@ -28810,8 +28810,8 @@ function wsSheetViewportMm(sheet) {
 // diagram + spec table), which is NOT built yet — see the deferrals list in
 // CLAUDE.md. Do not put anything else there.
 // ONE consolidated title card, top-left. Identity, project, drawing title and a
-// compact issue row (date / no. / rev / sheet / scale) with a north arrow in the
-// corner — there is no separate bottom-right card.
+// compact issue row (date / no. / rev / sheet / scale) — there is no separate
+// bottom-right card. No north arrow: the base plan carries its own.
 const WS_SHEET_CARDS = { pad: 4, idW: 146, idH: 52, legendW: 80, rowH: 5.8, legendHdr: 9.5, cardPad: 4 };
 function wsRectsOverlap(a, b) {
   return !!a && !!b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -28923,7 +28923,7 @@ function wsSheetDefaults() {
     drawingNo: '', rev: 'A', sheet: '1 of 1',
     projectName: '', projectAddress: '',
     notes: 'Base plan prepared by others.\nPRELIMINARY — NOT FOR CONSTRUCTION.',
-    north: 0, credit: true, legend: true, scale: null, planScreen: WS_PLAN_SCREEN_DEFAULT,
+    credit: true, legend: true, scale: null, planScreen: WS_PLAN_SCREEN_DEFAULT,
     mode: 'full', target: null, showScale: true,
   };
 }
@@ -29104,8 +29104,6 @@ function wsSheetDlgRender() {
             <select id="shd-scale" onchange="wsSheetDlgSet('scale', parseInt(this.value,10))" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;">${opts}</select></label>`
         : `<label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);">Output paper
             <select id="shd-target" onchange="wsSheetDlgSet('target', this.value || null)" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;">${tOpts}</select></label>`}
-      <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);">North arrow (° clockwise from up)
-        <input id="shd-north" type="number" value="${esc(s.north)}" step="5" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;"></label>
       <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:rgba(255,255,255,0.55);" title="Fades the base plan so the waste layout, markups and swept paths stand out. Annotation is never faded.">Base plan screening
         <select id="shd-screen" onchange="wsSheetDlgSet('planScreen', parseInt(this.value,10))" style="background:#2a2a2a;border:1px solid #444;color:rgba(255,255,255,0.9);padding:5px 7px;font-size:12px;border-radius:5px;">${screenOpts}</select></label>
     </div>
@@ -29452,20 +29450,6 @@ async function wsSheetVehPanel(doc, rect, v, extraCount) {
   });
   doc.setFont('helvetica', 'normal');
 }
-// North arrow, drawn inside the issue card.
-function wsSheetNorth(doc, cx, cy, r, deg) {
-  const a = ((deg || 0) - 90) * Math.PI / 180;
-  doc.setDrawColor(60); doc.setLineWidth(0.25);
-  doc.setFillColor(255, 255, 255); doc.circle(cx, cy, r, 'FD');
-  const tip = { x: cx + Math.cos(a) * r * 0.92, y: cy + Math.sin(a) * r * 0.92 };
-  const bl = { x: cx + Math.cos(a + 2.5) * r * 0.6, y: cy + Math.sin(a + 2.5) * r * 0.6 };
-  const br = { x: cx + Math.cos(a - 2.5) * r * 0.6, y: cy + Math.sin(a - 2.5) * r * 0.6 };
-  doc.setFillColor(20, 20, 20); doc.triangle(tip.x, tip.y, bl.x, bl.y, cx, cy, 'F');
-  doc.setFillColor(165, 165, 165); doc.triangle(tip.x, tip.y, br.x, br.y, cx, cy, 'F');
-  doc.setFontSize(5.4); doc.setTextColor(20); doc.setFont('helvetica', 'bold');
-  doc.text('N', cx - 0.8, cy - r - 0.9);
-  doc.setFont('helvetica', 'normal');
-}
 // TOP-LEFT identity card: logo, company, project, drawing title.
 // The scale line, per mode. Full-sheet defers to the base plan; viewport-crop
 // states a true scale, or says NOT TO SCALE — never nothing, never a guess.
@@ -29482,8 +29466,7 @@ function wsSheetIdCard(doc, rect, s) {
   doc.setFillColor(255, 255, 255); doc.setDrawColor(60); doc.setLineWidth(0.3);
   doc.rect(rect.x, rect.y, rect.w, rect.h, 'FD');
   const lx = rect.x + pad, rw = rect.w - pad * 2;
-  const nr = 7.8;                                  // north arrow radius
-  const textW = rw - nr * 2 - 3;                   // keep text clear of the arrow
+  const textW = rw;
   let y = rect.y + pad;
   const lh = 8.6, lw = lh * (WS_BRAND.logoW / Math.max(1, WS_BRAND.logoH));
   let tx = lx;
@@ -29498,8 +29481,6 @@ function wsSheetIdCard(doc, rect, s) {
     doc.setFontSize(6.8); doc.setFont('helvetica', 'normal'); doc.setTextColor(95);
     doc.text(WS_BRAND.web, tx, y + 5.8);
   }
-  // north arrow tucked into the card's top-right corner
-  wsSheetNorth(doc, rect.x + rect.w - pad - nr, rect.y + pad + nr, nr, s.north);
   y += lh + 2;
   doc.setDrawColor(195); doc.setLineWidth(0.2); doc.line(lx, y, lx + rw, y);
   y += 0.6;
@@ -29569,8 +29550,6 @@ function wsSheetDlgCollect() {
   s.projectAddress = str('shd-paddr', s.projectAddress);
   const notesEl = g('shd-notes');
   if (notesEl) s.notes = notesEl.value;
-  const northEl = g('shd-north');
-  if (northEl) s.north = parseFloat(northEl.value) || 0;
   const screenEl = g('shd-screen');
   if (screenEl) s.planScreen = parseInt(screenEl.value, 10) || WS_PLAN_SCREEN_DEFAULT;
   s.credit = chk('shd-credit', s.credit);
