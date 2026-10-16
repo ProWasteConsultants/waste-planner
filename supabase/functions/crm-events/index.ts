@@ -34,6 +34,11 @@
 // look the sender up in `profiles` (service role — RLS does not apply) and
 // attach email / name / company / tier. A missing profile row degrades to
 // nulls rather than dropping the event.
+//
+// WAITLIST: a second Database Webhook on INSERT into public.waitlist targets
+// this same function. Those rows carry the contact themselves (no user, no
+// profile), so they are relayed as event "waitlist_join" with the row's own
+// email / name / company — see sql/2026-10-16-waitlist.sql.
 
 const RELAYED = new Set([
   "signup",
@@ -68,13 +73,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response("unauthorized", { status: 401 });
   }
 
-  let payload: { record?: Record<string, unknown> };
+  let payload: { table?: string; record?: Record<string, unknown> };
   try {
     payload = await req.json();
   } catch {
     return new Response("bad json", { status: 400 });
   }
   const rec = payload.record;
+  if (payload.table === "waitlist" && rec) {
+    return relay(url, secret, {
+      event: "waitlist_join",
+      user_id: null,
+      email: rec.email ?? null,
+      name: rec.name || null,
+      company: rec.company || null,
+      tier: null,
+      meta: { role: rec.role || null, attribution: rec.attribution ?? null },
+      created_at: rec.created_at ?? new Date().toISOString(),
+    });
+  }
   if (!rec || typeof rec.event !== "string") {
     return new Response("no record", { status: 400 });
   }
@@ -107,6 +124,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
   }
 
+  return relay(url, secret, {
+    event: rec.event,
+    user_id: rec.user_id ?? null,
+    email: profile.email ?? null,
+    name: profile.full_name ?? null,
+    company: profile.company_name ?? null,
+    tier: profile.tier ?? null,
+    meta: rec.meta ?? {},
+    created_at: rec.created_at ?? new Date().toISOString(),
+  });
+});
+
+async function relay(
+  url: string,
+  secret: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -115,19 +149,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // `supabase secrets set` away and never touches the client bundle.
       "x-wp-webhook-secret": secret,
     },
-    body: JSON.stringify({
-      // Duplicated from the header for CRMs whose inbound-webhook triggers
-      // can only filter on body fields (see CRM-SIDE VERIFICATION above).
-      secret,
-      event: rec.event,
-      user_id: rec.user_id ?? null,
-      email: profile.email ?? null,
-      name: profile.full_name ?? null,
-      company: profile.company_name ?? null,
-      tier: profile.tier ?? null,
-      meta: rec.meta ?? {},
-      created_at: rec.created_at ?? new Date().toISOString(),
-    }),
+    // `secret` is duplicated from the header for CRMs whose inbound-webhook
+    // triggers can only filter on body fields (see CRM-SIDE VERIFICATION).
+    body: JSON.stringify({ secret, ...body }),
   });
 
   if (!res.ok) {
@@ -136,4 +160,4 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response(`crm relay failed: ${res.status}`, { status: 502 });
   }
   return new Response("ok", { status: 200 });
-});
+}
