@@ -694,6 +694,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .auth-tabs{display:flex;gap:0;margin-bottom:24px;border:1.5px solid var(--border);border-radius:9px;overflow:hidden;}
 .auth-tab{flex:1;padding:9px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;font-family:inherit;color:var(--muted);transition:all 0.15s;}
 .auth-tab.active{background:var(--teal);color:#fff;}
+/* Launch gate (WP_COMING_SOON): the markup ships gated — wp-cs is on
+   #auth-screen in the HTML — so the sign-up form never flashes before the
+   script runs. Team mode (wp-cs-team) reveals sign-in only, never sign-up. */
+.auth-cs{display:none;text-align:center;}
+.auth-screen.wp-cs .auth-cs{display:block;}
+.auth-screen.wp-cs #auth-value-line,.auth-screen.wp-cs .auth-tabs,.auth-screen.wp-cs #auth-signup{display:none !important;}
+.auth-screen.wp-cs:not(.wp-cs-team) #auth-login{display:none !important;}
+.auth-screen.wp-cs.wp-cs-team .auth-cs-team{display:none;}
 .auth-field{margin-bottom:14px;}
 .auth-field label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;}
 .auth-field input,.auth-field select{width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;color:var(--text);background:#182121;}
@@ -15421,7 +15429,7 @@ renderProjects();
 </script>
 </div>
 <!-- AUTH SCREEN -->
-<div class="auth-screen" id="auth-screen">
+<div class="auth-screen wp-cs" id="auth-screen">
 <svg class="auth-bg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
   <rect width="1440" height="900" fill="#0E211F"/>
   <!-- faint plan grid -->
@@ -15566,6 +15574,16 @@ renderProjects();
       <div class="auth-logo-sub">by Pro Waste Consultants</div>
     </div>
 
+    <!-- COMING SOON — shown while WP_COMING_SOON is on; see LAUNCH GATE -->
+    <div class="auth-cs" id="auth-coming-soon">
+      <div style="display:inline-block;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#3FBFBF;border:1.5px solid rgba(63,191,191,0.4);border-radius:20px;padding:4px 12px;margin-bottom:14px;">Coming soon</div>
+      <div style="font-size:14px;color:var(--text);line-height:1.6;margin-bottom:8px;">Bin room layouts, swept paths and WMP compliance checks — in one place.</div>
+      <div style="font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:18px;">WastePlanner isn&rsquo;t open yet. In the meantime, Pro Waste Consultants can help with your project directly.</div>
+      <a href="https://prowaste.au" style="display:inline-block;font-size:13px;font-weight:700;color:#fff;background:var(--teal);border-radius:9px;padding:10px 18px;text-decoration:none;">Visit Pro Waste Consultants →</a>
+      <div class="auth-msg" id="cs-msg" style="margin-top:12px;"></div>
+      <div class="auth-cs-team" style="margin-top:18px;"><a href="#" onclick="wpTeamSignIn();return false;" style="font-size:11px;color:var(--muted);text-decoration:none;">Team sign-in</a></div>
+    </div>
+
     <!-- value line — swapped for the calc-handoff variant when ?calc= arrived -->
     <div id="auth-value-line" style="text-align:center;font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:14px;">
       <b style="color:var(--text);">Your first project is free.</b> All tools, exports included. No card needed.
@@ -15660,6 +15678,58 @@ renderProjects();
 <script>
 // ── SUPABASE INIT ─────────────────────────────────────────────────────────
 const ADMIN_EMAIL = 'lachy@prowaste.au'; // Only this account sees the Admin nav item
+
+// ── LAUNCH GATE: COMING SOON ──────────────────────────────────────────────
+// Until launch the app is closed to everyone but the PWC team. The auth
+// screen shows "Coming soon"; sign-up and the anonymous ?check=wmp entry are
+// off; a discreet "Team sign-in" link reveals the sign-in form, and an account
+// that signs in without team access is signed straight back out. Launch day:
+// set WP_COMING_SOON = false (and re-check the Supabase Auth settings).
+//
+// This is a CLIENT-SIDE gate. Supabase Auth itself still accepts sign-ups and
+// anonymous sign-ins from anyone who calls the API directly; such an account
+// still cannot get into the app through this page, and RLS still guards the
+// data. The hard lock is "Allow new users to sign up" / "Allow anonymous
+// sign-ins" off in the Supabase dashboard — deliberately not done yet.
+const WP_COMING_SOON = true;
+function wpComingSoon() { return WP_COMING_SOON === true; }
+
+// Who gets past the gate (pure). The @prowaste.au domain counts only once the
+// address is CONFIRMED — while sign-ups stay open server-side, anyone can
+// register an unconfirmed address at any domain. is_staff and the admin
+// address are the other two ways in, as in wmpgIsStaff.
+function wpLaunchGateAllows(user, profile) {
+  if (!user || user.is_anonymous) return false;
+  if (profile && profile.is_staff === true) return true;
+  const email = String(user.email || '').toLowerCase();
+  if (!email) return false;
+  if (email === ADMIN_EMAIL) return true;
+  return /@prowaste\.au$/.test(email) && !!(user.email_confirmed_at || user.confirmed_at);
+}
+
+function wpTeamSignIn() {
+  const scr = document.getElementById('auth-screen');
+  if (scr) scr.classList.add('wp-cs-team');
+  const tabs = document.querySelectorAll('.auth-tab');
+  if (tabs[0]) switchAuthTab('login', tabs[0]);
+  document.getElementById('login-email')?.focus();
+}
+
+// Called by showApp before anything loads. Signs a non-team account out and
+// puts the coming-soon screen back, with a plain reason.
+async function wpLaunchGateBounce() {
+  try { await sb.auth.signOut(); } catch (e) {}
+  currentUser = null; currentProfile = null;
+  const scr = document.getElementById('auth-screen');
+  if (scr) { scr.classList.remove('wp-cs-team'); scr.style.display = 'flex'; }
+  document.getElementById('app-content').style.display = 'none';
+  const btn = document.getElementById('login-btn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Sign In →'; }
+  const msg = document.getElementById('cs-msg');
+  if (msg) { msg.textContent = 'WastePlanner isn’t open yet — this account doesn’t have early access.'; msg.className = 'auth-msg error'; }
+}
+
+if (!wpComingSoon()) document.getElementById('auth-screen')?.classList.remove('wp-cs');
 const { createClient } = supabase;
 const sb = createClient('https://sgyenudbkdxdwciqylfs.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNneWVudWRia2R4ZHdjaXF5bGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc3ODQyODMsImV4cCI6MjA5MzM2MDI4M30.bj7Of3evX_Hc_YpVAUDxBMAx22pLtPci068AoBuSYwo', {
   auth: {
@@ -15875,6 +15945,7 @@ async function handleLogin() {
 let pendingSignup = null;
 
 function handleSignupToPay() {
+  if (wpComingSoon()) return; // launch gate: sign-up is closed
   const name = document.getElementById('signup-name').value.trim();
   const company = document.getElementById('signup-company').value.trim();
   const role = document.getElementById('signup-role').value;
@@ -15919,6 +15990,7 @@ let lastSignupError = null; // surfaced in the UI so failures aren't a mystery
 async function handleSignup() {
   // Called after payment succeeds
   if (!pendingSignup) return;
+  if (wpComingSoon()) { lastSignupError = 'Sign-up is not open yet.'; return null; }
   lastSignupError = null;
   const { name, company, role, email, password } = pendingSignup;
 
@@ -15957,6 +16029,7 @@ async function handleSignup() {
 }
 
 async function handleFreeSignup() {
+  if (wpComingSoon()) return; // launch gate: sign-up is closed
   // Same form, no payment: creates the account immediately with tier 'none',
   // which the ai-user Edge Function treats as the lifetime trial plan.
   const name = document.getElementById('signup-name').value.trim();
@@ -16065,6 +16138,11 @@ sb.auth.onAuthStateChange(async (event, session) => {
 (async () => {
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (session?.user?.is_anonymous && wpComingSoon()) {
+      // Launch gate: no anonymous checker — drop a persisted guest session.
+      try { await sb.auth.signOut(); } catch (e) {}
+      return;
+    }
     if (session?.user?.is_anonymous) {
       // A persisted anonymous session (the landing-page compliance entry)
       // NEVER enters the app proper — it re-enters the checker, with its
@@ -16086,7 +16164,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
     // checker; everyone else gets the auth screen as always.
     let entry = null;
     try { entry = sessionStorage.getItem('wp_anon_entry'); } catch (e) {}
-    if (entry === 'compliance') await wpAnonStart();
+    if (entry === 'compliance' && !wpComingSoon()) await wpAnonStart();
   } catch(e) { console.log('No existing session'); }
 })();
 
@@ -16299,6 +16377,9 @@ function updateProfileUI() {
 }
 
 function showApp() {
+  // The launch gate is checked here because every way into the app — sign
+  // in, 2FA, a restored session, sign-up — ends in this call.
+  if (wpComingSoon() && !wpLaunchGateAllows(currentUser, currentProfile)) { wpLaunchGateBounce(); return false; }
   // Entering the app proper always ends the anonymous checker mode — the
   // guest just became (or signed back in as) a real account.
   if (typeof wpAnonActive === 'function' && wpAnonActive()) wpAnonExit();
@@ -16638,6 +16719,7 @@ function wpAnonGateCopy(trigger) {
 }
 
 async function wpAnonStart() {
+  if (wpComingSoon()) return; // launch gate: no anonymous entry before launch
   // Fresh landing-page arrival: mint the anonymous Supabase session the
   // checker runs under. If anonymous sign-ins are off (or the network is
   // down) the entry still lands somewhere sane: the normal auth screen with
@@ -16656,6 +16738,7 @@ async function wpAnonStart() {
 }
 
 function wpAnonEnter(user) {
+  if (wpComingSoon()) return; // launch gate
   WP_ANON = { user };
   try { sessionStorage.removeItem('wp_anon_entry'); } catch (e) {}
   document.body.classList.add('wp-anon');
