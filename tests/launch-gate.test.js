@@ -64,3 +64,18 @@ test('waitlist wiring: spam trap writes nothing, duplicate reads as already regi
   const crm = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'crm-events', 'index.ts'), 'utf8');
   assert.ok(crm.includes('payload.table === "waitlist"') && crm.includes('"waitlist_join"'), 'CRM relay forwards waitlist rows');
 });
+
+test('coming-soon page: no Privacy/Terms footer; the form states its own collection notice', () => {
+  assert.match(SOURCE, /\.auth-screen\.wp-cs \.auth-legal\{display:none;\}/, 'footer hidden while gated');
+  assert.match(SOURCE, /<div class="auth-legal"[^>]*>\s*<a href="privacy\.html"/, 'the hidden footer is the Privacy · Terms one');
+  const i = SOURCE.indexOf('id="wl-form"'), j = SOURCE.indexOf('id="wl-notice"');
+  assert.ok(i > 0 && j > i && j < SOURCE.indexOf('id="wl-msg"'), 'notice sits inside the form');
+  const notice = SOURCE.slice(j, SOURCE.indexOf('</details>', j));
+  for (const w of ['name, email, company and role', 'only to tell you when WastePlanner opens', 'deleted', 'info@prowaste.au', '<summary'])
+    assert.ok(notice.includes(w), 'notice says: ' + w);
+});
+
+test('the coming-soon card has its own message element — no id shared with another screen', () => {
+  for (const id of ['wl-msg', 'wl-form', 'wl-notice', 'wl-cta', 'auth-coming-soon'])
+    assert.equal(SOURCE.split(`id="${id}"`).length - 1, 1, `id="${id}" is unique`);
+});

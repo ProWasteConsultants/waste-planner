@@ -702,6 +702,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .auth-screen.wp-cs #auth-value-line,.auth-screen.wp-cs .auth-tabs,.auth-screen.wp-cs #auth-signup{display:none !important;}
 .auth-screen.wp-cs:not(.wp-cs-team) #auth-login{display:none !important;}
 .auth-screen.wp-cs.wp-cs-team .auth-cs-team{display:none;}
+/* No Privacy · Terms footer on the coming-soon page; the register-interest
+   form carries its own collection notice (#wl-notice). */
+.auth-screen.wp-cs .auth-legal{display:none;}
+#wl-notice>summary::-webkit-details-marker{display:none;}
 .auth-field{margin-bottom:14px;}
 .auth-field label{display:block;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;}
 .auth-field input,.auth-field select{width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;color:var(--text);background:#182121;}
@@ -15604,9 +15608,13 @@ renderProjects();
         <!-- spam trap: hidden from people, filled in by bots -->
         <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;"><label>Website<input type="text" id="wl-website" tabindex="-1" autocomplete="off"></label></div>
         <button class="auth-btn" id="wl-btn" onclick="wpWaitlistSubmit()">Register interest →</button>
-        <div style="font-size:10.5px;color:var(--muted);text-align:center;margin-top:8px;line-height:1.5;">We&rsquo;ll only use this to tell you when WastePlanner opens. <a href="privacy.html" target="_blank" style="color:var(--muted);">Privacy</a></div>
+        <!-- Collection notice — the full privacy policy is not linked from the coming-soon page, so the notice is stated here in full -->
+        <details id="wl-notice" style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.55;">
+          <summary style="cursor:pointer;text-align:center;color:var(--muted);text-decoration:underline;list-style:none;">How we use your details</summary>
+          <div style="margin-top:8px;">Pro Waste Consultants collects the name, email, company and role you enter, and how you found us, only to tell you when WastePlanner opens. We won&rsquo;t add you to any other mailing list or share your details. They are stored in Australia and deleted once we&rsquo;ve announced the launch, unless you create an account. To be removed sooner, email <a href="mailto:info@prowaste.au" style="color:var(--muted);">info@prowaste.au</a>.</div>
+        </details>
       </div>
-      <div class="auth-msg" id="cs-msg" style="margin-top:12px;"></div>
+      <div class="auth-msg" id="wl-msg" style="margin-top:12px;"></div>
       <div class="auth-cs-team" style="margin-top:18px;"><a href="#" onclick="wpTeamSignIn();return false;" style="font-size:11px;color:var(--muted);text-decoration:none;">Team sign-in</a></div>
     </div>
 
@@ -15693,7 +15701,7 @@ renderProjects();
         <strong>Council Officer access:</strong> $99/month — unlimited WMP compliance reviews, comment bank, RFI output, and guidelines library. Access is limited to the compliance checker in council assessment mode.
       </div>
     </div>
-    <div style="text-align:center;margin-top:16px;font-size:11px;color:var(--muted);">
+    <div class="auth-legal" style="text-align:center;margin-top:16px;font-size:11px;color:var(--muted);">
       <a href="privacy.html" target="_blank" style="color:var(--muted);text-decoration:underline;">Privacy</a>
       &nbsp;·&nbsp;
       <a href="terms.html" target="_blank" style="color:var(--muted);text-decoration:underline;">Terms</a>
@@ -15750,13 +15758,13 @@ function wpWaitlistClean(f) {
 function wpWaitlistOpen() {
   document.getElementById('wl-cta').style.display = 'none';
   document.getElementById('wl-form').style.display = 'block';
-  const msg = document.getElementById('cs-msg');
+  const msg = document.getElementById('wl-msg');
   if (msg) { msg.textContent = ''; msg.className = 'auth-msg'; }
   document.getElementById('wl-name')?.focus();
 }
 
 async function wpWaitlistSubmit() {
-  const msg = document.getElementById('cs-msg');
+  const msg = document.getElementById('wl-msg');
   const btn = document.getElementById('wl-btn');
   const val = id => document.getElementById(id)?.value || '';
   const done = text => {
@@ -15801,7 +15809,7 @@ async function wpLaunchGateBounce() {
   document.getElementById('app-content').style.display = 'none';
   const btn = document.getElementById('login-btn');
   if (btn) { btn.disabled = false; btn.textContent = 'Sign In →'; }
-  const msg = document.getElementById('cs-msg');
+  const msg = document.getElementById('wl-msg');
   if (msg) { msg.textContent = 'WastePlanner isn’t open yet — this account doesn’t have early access.'; msg.className = 'auth-msg error'; }
 }
 
@@ -17284,10 +17292,10 @@ const LEGAL_DOCS = {
       <p>Pro Waste Consultants Pty Ltd ("PWC") is committed to protecting your privacy in accordance with the Privacy Act 1988 (Cth) and the Australian Privacy Principles.</p>
 
       <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">1. Information We Collect</h3>
-      <p>We collect: (a) Account information — name, email, company name, role; (b) Project data — site addresses, development details, bin calculations you create; (c) Uploaded documents — PDFs and plans you upload for analysis; (d) Usage data — tool usage patterns, scan frequency; (e) Payment information — processed by Stripe, we do not store card details.</p>
+      <p>We collect: (a) Account information — name, email, company name, role; (b) Project data — site addresses, development details, bin calculations you create; (c) Uploaded documents — PDFs and plans you upload for analysis; (d) Usage data — tool usage patterns, scan frequency; (e) Payment information — processed by Stripe, we do not store card details; (f) Register-interest details — if you register interest before WastePlanner opens, the name, email, company and role you enter, and how you found us (e.g. the link or campaign you arrived from).</p>
 
       <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">2. How We Use Your Information</h3>
-      <p>We use your information to: provide and improve the Platform; process payments; send service communications; generate anonymised industry benchmarks; comply with legal obligations. We do not sell your personal information to third parties.</p>
+      <p>We use your information to: provide and improve the Platform; process payments; send service communications; generate anonymised industry benchmarks; comply with legal obligations. We do not sell your personal information to third parties. If you register interest, we use those details only to tell you when WastePlanner opens; we do not add you to any other mailing list.</p>
 
       <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">3. AI Processing — Anthropic API</h3>
       <p style="background:#E8F5E9;border-left:3px solid #2E7D32;padding:10px 14px;border-radius:4px;">When you use AI-powered features (compliance checker, plan upload), extracted text and page images from your documents are sent to Anthropic's API for processing. Anthropic's API operates under zero data retention — data sent via the API is not used to train AI models and is not retained after processing. Data is transmitted securely via HTTPS.</p>
@@ -17300,7 +17308,7 @@ const LEGAL_DOCS = {
       <p>We use the following third-party services: <strong>Supabase</strong> (database and authentication, Sydney); <strong>Stripe</strong> (payment processing, subject to Stripe's Privacy Policy); <strong>Anthropic</strong> (AI processing, zero data retention API); <strong>GitHub Pages</strong> (platform hosting).</p>
 
       <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">6. Data Retention</h3>
-      <p>We retain your account data for the duration of your subscription plus 12 months. Project data is retained for 24 months after last access. You may request deletion of your data at any time by emailing lachy@prowaste.au.</p>
+      <p>We retain your account data for the duration of your subscription plus 12 months. Project data is retained for 24 months after last access. You may request deletion of your data at any time by emailing lachy@prowaste.au. Register-interest details are kept until we have told you WastePlanner is open, then deleted unless you create an account; you can ask to be removed sooner by emailing info@prowaste.au.</p>
 
       <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">7. Your Rights</h3>
       <p>You have the right to: access your personal information; correct inaccurate information; request deletion of your information; opt out of marketing communications; make a complaint to the Office of the Australian Information Commissioner (OAIC) at oaic.gov.au.</p>
