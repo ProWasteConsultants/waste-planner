@@ -19632,6 +19632,13 @@ function wsRecvOptsFor(stream, lib) {
 function wsRecvOf(key, lib) { return (lib && lib[key]) || WS_RECV_SPECS[key] || null; }
 function wsRecvIsCompactor(key, lib) { const r = wsRecvOf(key, lib); return r ? !!(r.compactor || key === 'COMPACTOR') : false; }
 const WS_RECV_GAP = 0.6; // clear gap between the chute opening and its receiver
+// A receiver's rotation, in degrees. It follows its chute until it is turned
+// on its own (o.rrot); every place that draws, hit-tests, keeps out or
+// exports a receiver reads this — never ch.rot directly. Pure.
+function wsRecvRot(ch, o) {
+  const r = o ? Number(o.rrot) : NaN;
+  return (o && o.rrot != null && isFinite(r)) ? r : ((ch && ch.rot) || 0);
+}
 function wsRecvDims(recvKey, fpM2, lib) {
   // library-backed receiver: the opening carries the record's dimensions, so
   // the drawing uses real footprints and Admin edits flow through untouched
@@ -20485,6 +20492,13 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
     WS_LAYOUT.undo.push(JSON.stringify(WS_LAYOUT.byPage));
     WS_LAYOUT.byPage = JSON.parse(WS_LAYOUT.redo.pop());
     wsSelSet([]);
+  } else if (a === 'rotate' && WS_LAYOUT.selKind === 'recv') {
+    // a selected receiver turns a quarter on its own — the chute stays put
+    const rc = slot.chutes.find(x => x.id === WS_LAYOUT.sel);
+    const o = rc && rc.openings && rc.openings[WS_LAYOUT.selOp];
+    if (!o || o.rx == null || rc.locked) { wsLayoutStatus('Select a receiver (or its chute) first, then Rotate.'); return; }
+    wsLayoutSnapshot();
+    o.rrot = (Math.floor((wsRecvRot(rc, o) + 0.01) / 90) * 90 + 90) % 360;
   } else if (a === 'rotate') {
     const rows = wsSelected(slot).filter(r => !r.item.locked);
     if (!rows.length) { wsLayoutStatus('Select a bin, chute or equipment item first, then Rotate (or press R).'); return; }
@@ -20499,8 +20513,13 @@ function wsLayoutDo(a) {   // `a` is reassigned by the duplicate path
         return;
       }
       // from a free angle, R lands on the next quarter turn rather than adding 90 to 37.5°
-      t.rot = (Math.floor(((t.rot || 0) + 0.01) / 90) * 90 + 90) % 360;
-      if (t.openings) wsChuteResetRecv(t);
+      const rot0 = t.rot || 0;
+      t.rot = (Math.floor((rot0 + 0.01) / 90) * 90 + 90) % 360;
+      if (t.openings) {
+        wsChuteResetRecv(t);
+        // receivers turned on their own keep their angle relative to the chute
+        t.openings.forEach(o => { if (o.rrot != null) o.rrot = ((((o.rrot + t.rot - rot0) % 360) + 360) % 360); });
+      }
     });
   } else if (a === 'lock') {
     const t = slot.bins.find(x => x.id === WS_LAYOUT.sel) || slot.chutes.find(x => x.id === WS_LAYOUT.sel) ||
@@ -21631,7 +21650,7 @@ function wsLayoutHitChute(x, y, mpp) {
       if (o.rx == null) continue;
       const dm = wsRecvDims(o.recv, o.fpM2);
       if (dm.spec.render === 'none') continue;
-      const a = -(ch.rot || 0) * Math.PI / 180;
+      const a = -wsRecvRot(ch, o) * Math.PI / 180;
       const dx = x - o.rx, dy = y - o.ry;
       const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
       if (Math.abs(lx) <= dm.w / 2 / mpp && Math.abs(ly) <= dm.d / 2 / mpp) return { chute: ch, op: k };
@@ -21774,7 +21793,7 @@ function wsKeepoutFps(slot, mpp, opts) {
       const dm = wsRecvDims(o.recv, o.fpM2);
       if (dm.spec.render === 'none') return;
       if (dm.spec.render === 'carousel') out.push({ ...wsFpCircle(o.rx, o.ry, dm.spec.keepoutR / mpp), why: 'carousel swing' });
-      else out.push({ ...wsFpRect(o.rx, o.ry, dm.w / 2 / mpp, dm.d / 2 / mpp, ch.rot || 0), why: 'receiver' });
+      else out.push({ ...wsFpRect(o.rx, o.ry, dm.w / 2 / mpp, dm.d / 2 / mpp, wsRecvRot(ch, o)), why: 'receiver' });
     });
   });
   slot.equip.forEach(e => {
@@ -23028,7 +23047,7 @@ function wsManEnvBuild(slot, mpp, excludeIds, excludeNearPt) {
       if (excludeNearPt && Math.hypot(o.rx - excludeNearPt.x, o.ry - excludeNearPt.y) < 2) return;
       const dm = wsRecvDims(o.recv, o.fpM2);
       if (dm.spec.render === 'none') return;
-      obstacles.push({ fp: wsFpRect(o.rx, o.ry, dm.w / 2 / mpp, dm.d / 2 / mpp, ch.rot || 0), why: 'the chute bin position' });
+      obstacles.push({ fp: wsFpRect(o.rx, o.ry, dm.w / 2 / mpp, dm.d / 2 / mpp, wsRecvRot(ch, o)), why: 'the chute bin position' });
     });
   });
   return { walls, obstacles };
@@ -23376,7 +23395,15 @@ function wsRotTarget() {
   if (b) { const bt = wsBinType(b.type); return bt ? { item: b, w: bt.w, d: bt.d, kind: 'bin' } : null; }
   const e = slot.equip.find(x => x.id === id);
   if (e) return { item: e, w: e.w, d: e.d, kind: 'equip' };
-  if (WS_LAYOUT.selKind === 'recv') return null; // receivers follow their chute
+  if (WS_LAYOUT.selKind === 'recv') {
+    // a receiver turns on its own; the item is a view onto the opening
+    const rc = slot.chutes.find(x => x.id === id);
+    const o = rc && rc.openings && rc.openings[WS_LAYOUT.selOp];
+    if (!o || o.rx == null) return null;
+    const dm = wsRecvDims(o.recv, o.fpM2, o);
+    if (dm.spec.render === 'none') return null;
+    return { item: { id: rc.id, x: o.rx, y: o.ry, rot: wsRecvRot(rc, o), locked: rc.locked }, w: dm.w, d: dm.d, kind: 'recv', op: WS_LAYOUT.selOp };
+  }
   const ch = slot.chutes.find(x => x.id === id);
   if (ch) { const cs = WS_CHUTE_SPECS[ch.type] || WS_CHUTE_SPECS.SINGLE; return { item: ch, w: cs.w, d: cs.d, kind: 'chute' }; }
   return null;
@@ -23562,12 +23589,13 @@ function wsLayoutSelectAt(x, y, additive) {
   const ch = wsLayoutHitChute(x, y, mpp);
   if (ch) {
     pick(ch.chute.id, ch.op == null ? 'chute' : 'recv');
+    WS_LAYOUT.selOp = ch.op == null ? null : ch.op;   // which receiver, when one is selected
     wsRenderLayoutLayer();
     const cs = WS_CHUTE_SPECS[ch.chute.type] || {};
     const opSel = ch.op == null ? null : ch.chute.openings[ch.op];
     wsLayoutStatus(ch.op == null
-      ? `Selected ${cs.label} — drag to move, R rotates (receivers follow), Del deletes.`
-      : `Selected ${wsRecvDims(opSel.recv, opSel.fpM2, opSel).spec.label} receiver — drag to reposition; the circles show the chute-angle limits.`);
+      ? `Selected ${cs.label} — drag to move, R rotates (receivers turn with it), Del deletes.`
+      : `Selected ${wsRecvDims(opSel.recv, opSel.fpM2, opSel).spec.label} receiver — drag to reposition, R or the ⟳ handle rotates it on its own; the circles show the chute-angle limits.`);
     return;
   }
   const eq = wsLayoutHitEquip(x, y, mpp);
@@ -23693,7 +23721,7 @@ function wsLayoutBind() {
     // the rotation handle wins over everything under it
     const rh = wsRotHandleInfo(mpp);
     if (rh && Math.hypot(p.x - rh.hx, p.y - rh.hy) <= 12) {
-      WS_LAYOUT.drag = { kind: 'rotate', id: rh.item.id, targKind: rh.kind, moved: false };
+      WS_LAYOUT.drag = { kind: 'rotate', id: rh.item.id, targKind: rh.kind, op: rh.op, moved: false };
       WS.isPanning = false;
       e.preventDefault();
       return;
@@ -23928,6 +23956,7 @@ function wsLayoutBind() {
       wsSelSet(ids, grabbed.kind);
       WS_LAYOUT.sel = grabbed.id;
       WS_LAYOUT.selKind = grabbed.kind;
+      WS_LAYOUT.selOp = grabbed.kind === 'recv' ? grabbed.op : null;
       WS.isPanning = false;
       // a locked item can be selected (to unlock it) but never dragged
       WS_LAYOUT.drag = grabbed.locked ? null : grabbed;
@@ -24007,6 +24036,21 @@ function wsLayoutBind() {
           wsTagBinsToRooms(slot2.rooms, slot2.bins);
           wsTagBinsToRooms(slot2.rooms, slot2.equip);
         }
+      } else if (dg.kind === 'rotate' && dg.targKind === 'recv') {
+        // one receiver turns about its own centre; its chute stays put
+        const rc = slot2.chutes.find(x => x.id === dg.id);
+        const o = rc && rc.openings && rc.openings[dg.op];
+        if (o && o.rx != null) {
+          if (!dg.moved) { wsLayoutSnapshot(); dg.moved = true; }
+          let ang = Math.atan2(p.y - o.ry, p.x - o.rx) * 180 / Math.PI + 90;
+          if (e.shiftKey) ang = Math.round(ang / 15) * 15;
+          o.rrot = Math.round((((ang % 360) + 360) % 360) * 10) / 10;
+        }
+        if (!WS_LAYOUT._raf) {
+          WS_LAYOUT._raf = true;
+          requestAnimationFrame(() => { WS_LAYOUT._raf = false; wsRenderLayoutLayer(); });
+        }
+        return;
       } else if (dg.kind === 'rotate') {
         const t = dg.targKind === 'bin' ? slot2.bins.find(x => x.id === dg.id)
                 : dg.targKind === 'equip' ? slot2.equip.find(x => x.id === dg.id)
@@ -24016,7 +24060,7 @@ function wsLayoutBind() {
             wsLayoutSnapshot(); dg.moved = true;
             dg.rot0 = t.rot || 0;
             // chute group rotation: remember where each receiver started
-            dg.recv0 = t.openings ? t.openings.map(o => ({ rx: o.rx, ry: o.ry })) : null;
+            dg.recv0 = t.openings ? t.openings.map(o => ({ rx: o.rx, ry: o.ry, rrot: o.rrot })) : null;
           }
           // handle sits on the local -y axis, so the pointer angle + 90° is the rotation
           let ang = Math.atan2(p.y - t.y, p.x - t.x) * 180 / Math.PI + 90;
@@ -24031,6 +24075,8 @@ function wsLayoutBind() {
               if (!r0 || r0.rx == null) return;
               o.rx = t.x + (r0.rx - t.x) * c - (r0.ry - t.y) * s;
               o.ry = t.y + (r0.rx - t.x) * s + (r0.ry - t.y) * c;
+              // a receiver turned on its own keeps its angle RELATIVE to the chute
+              if (r0.rrot != null) o.rrot = Math.round(((((r0.rrot + t.rot - dg.rot0) % 360) + 360) % 360) * 10) / 10;
             });
           }
         }
@@ -24517,6 +24563,23 @@ function wsRenderLayoutLayer() {
   // ── chutes, receivers and keepouts ──
   const keepouts = [];
   tgt = gW || g;   // waste layout layer: chutes, equipment, bins
+  // A bin inside a receiver reads exactly like a placed bin: solid stream
+  // fill, shaded 1px outline, lid band — the drawBin look, at the receiver's
+  // own position and rotation.
+  const recvBin = (parent, cx, cy, wM, dM, rot, st) => {
+    const bw = wM / 2 / mpp, bd = dM / 2 / mpp;
+    const g3 = mk('g', { transform: `translate(${cx.toFixed(1)},${cy.toFixed(1)}) rotate(${rot})` }, parent);
+    mk('rect', { x: -bw, y: -bd, width: 2 * bw, height: 2 * bd, rx: Math.min(4, bw * 0.15),
+      fill: st.col, stroke: wsShade(st.col), 'stroke-width': 1 }, g3);
+    mk('rect', { x: -bw, y: -bd, width: 2 * bw, height: Math.max(3, bd * 0.28),
+      fill: wsInk(st.col), opacity: 0.25 }, g3);
+    return g3;
+  };
+  // a point offset (metres, receiver-local axes) from the receiver centre
+  const recvPt = (o, rot, lx, ly) => {
+    const ra = rot * Math.PI / 180;
+    return { x: o.rx + (lx * Math.cos(ra) - ly * Math.sin(ra)) / mpp, y: o.ry + (lx * Math.sin(ra) + ly * Math.cos(ra)) / mpp };
+  };
   slot.chutes.forEach(ch => {
     const cs = WS_CHUTE_SPECS[ch.type] || WS_CHUTE_SPECS.SINGLE;
     const a = (ch.rot || 0) * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
@@ -24524,7 +24587,11 @@ function wsRenderLayoutLayer() {
     const toCanvas = (lx, ly) => ({ x: ch.x + (lx * cos - ly * sin) / mpp, y: ch.y + (lx * sin + ly * cos) / mpp });
     // shaft body
     const hw = cs.w / 2 / mpp, hd = cs.d / 2 / mpp;
+    // Paint order: receivers (the bins) first, the chute over them, labels
+    // last — the chute discharges INTO the bins below it, so it sits on top.
+    const grpR = mk('g', {});
     const grp = mk('g', {});
+    const grpL = mk('g', {});
     mk('rect', { x: ch.x - hw, y: ch.y - hd, width: hw * 2, height: hd * 2,
       transform: `rotate(${ch.rot || 0} ${ch.x} ${ch.y})`,
       fill: 'rgba(65,105,225,0.10)', stroke: selected ? '#FFD54F' : WS_CHUTE_BLUE,
@@ -24573,25 +24640,68 @@ function wsRenderLayoutLayer() {
           (exceeds ? ` — exceeds ${geom.maxDeg}°` : '');
       }
       const rw = dm.w / 2 / mpp, rd = dm.d / 2 / mpp;
+      const rr = wsRecvRot(ch, o);
+      const recvSel = selected && WS_LAYOUT.selKind === 'recv' && WS_LAYOUT.selOp === k;
+      const BIN = WS_RECV_SPECS.BIN_1100;
       if (dm.spec.render === 'carousel') {
         mk('circle', { cx: o.rx, cy: o.ry, r: dm.spec.keepoutR / mpp, fill: 'rgba(255,138,80,0.08)',
-          stroke: '#FF8A50', 'stroke-width': 1.2, 'stroke-dasharray': '6 6' }, grp);
-        mk('circle', { cx: o.rx, cy: o.ry, r: dm.spec.dia / 2 / mpp, fill: 'rgba(96,125,139,0.18)',
-          stroke: st.col, 'stroke-width': 2 }, grp);
+          stroke: '#FF8A50', 'stroke-width': 1.2, 'stroke-dasharray': '6 6' }, grpR);
+        mk('circle', { cx: o.rx, cy: o.ry, r: dm.spec.dia / 2 / mpp, fill: 'rgba(96,125,139,0.10)',
+          stroke: st.col, 'stroke-width': 1.5 }, grpR);
+        // four 1100L bins on the turntable, each facing outward
+        [0, 90, 180, 270].forEach(q => {
+          const c4 = recvPt(o, rr + q, 0, -1.22);
+          recvBin(grpR, c4.x, c4.y, BIN.w, BIN.d, rr + q, st);
+        });
         keepouts.push({ kind: 'circle', x: o.rx, y: o.ry, r: dm.spec.keepoutR, why: 'carousel swing' });
+      } else if (dm.spec.render === 'index' && dm.known) {
+        // linear index: a frame holding two 1100L bins, then the clear
+        // zone the bins shuttle into (dashed) — the bins are the real things
+        const fd = (dm.spec.frameD || dm.d) / 2 / mpp;
+        const gI = mk('g', { transform: `translate(${o.rx.toFixed(1)},${o.ry.toFixed(1)}) rotate(${rr})` }, grpR);
+        mk('rect', { x: -rw, y: -rd, width: rw * 2, height: rd * 2, fill: 'none',
+          stroke: st.col, 'stroke-width': 1, 'stroke-dasharray': '6 4', opacity: 0.8 }, gI);
+        mk('rect', { x: -rw, y: -rd, width: rw * 2, height: fd * 2, fill: 'rgba(96,125,139,0.10)',
+          stroke: st.col, 'stroke-width': 1.5 }, gI);
+        const fM = dm.spec.frameD || dm.d;
+        [0.25, 0.75].forEach(f => {
+          const ci = recvPt(o, rr, 0, -dm.d / 2 + fM * f);
+          recvBin(grpR, ci.x, ci.y, BIN.w, BIN.d, rr, st);
+        });
+        keepouts.push({ kind: 'rect', x: o.rx, y: o.ry, w: dm.w, d: dm.d, rot: rr, why: 'receiver' });
+      } else if (dm.spec.render === 'bin' && dm.known) {
+        recvBin(grpR, o.rx, o.ry, dm.w, dm.d, rr, st);
+        keepouts.push({ kind: 'rect', x: o.rx, y: o.ry, w: dm.w, d: dm.d, rot: rr, why: 'receiver' });
       } else {
+        // compactor plant, or a size nobody has given us yet (dashed)
         mk('rect', { x: o.rx - rw, y: o.ry - rd, width: rw * 2, height: rd * 2,
-          transform: `rotate(${ch.rot || 0} ${o.rx} ${o.ry})`,
+          transform: `rotate(${rr} ${o.rx} ${o.ry})`,
           fill: dm.known ? 'rgba(96,125,139,0.18)' : 'rgba(255,138,80,0.10)',
           stroke: st.col, 'stroke-width': 2,
-          'stroke-dasharray': dm.known ? '' : '7 5' }, grp);
-        keepouts.push({ kind: 'rect', x: o.rx, y: o.ry, w: dm.w, d: dm.d, rot: ch.rot || 0, why: 'receiver' });
+          'stroke-dasharray': dm.known ? '' : '7 5' }, grpR);
+        keepouts.push({ kind: 'rect', x: o.rx, y: o.ry, w: dm.w, d: dm.d, rot: rr, why: 'receiver' });
+      }
+      if (recvSel) {
+        const sr = dm.spec.render === 'carousel' ? dm.spec.keepoutR / mpp : null;
+        if (sr) mk('circle', { cx: o.rx, cy: o.ry, r: sr + 4, fill: 'none', stroke: '#FFFFFF', 'stroke-width': 1.5, 'stroke-dasharray': '5 3' }, grpL);
+        else mk('rect', { x: o.rx - rw - 4, y: o.ry - rd - 4, width: rw * 2 + 8, height: rd * 2 + 8,
+          transform: `rotate(${rr} ${o.rx} ${o.ry})`, fill: 'none', stroke: '#FFFFFF', 'stroke-width': 1.5, 'stroke-dasharray': '5 3' }, grpL);
       }
       const overPref = !exceeds && geom.rprefM != null && offsetM > geom.rprefM + 1e-6;
-      const lb = mk('text', { x: o.rx, y: o.ry + 4, fill: exceeds ? WS_CHUTE_RED : '#ECEFF1', 'font-size': 10,
-        'font-weight': 700, 'text-anchor': 'middle' }, grp);
-      lb.textContent = (dm.known ? dm.spec.label : dm.spec.label + ' (size TBC)') +
-        (exceeds ? ` — exceeds ${geom.maxDeg}°` : overPref ? ` — exceeds preferred ${geom.prefDeg}°` : '');
+      const solidBin = dm.known && dm.spec.render === 'bin';
+      const litres = (dm.spec.label || '').match(/^([\d,]+)\s*L/);
+      // a single bin is labelled like any bin (its litres, on the bin); other
+      // receivers carry their name; a warning sits beneath, never on the fill
+      const lb = mk('text', { x: o.rx, y: o.ry + 4, fill: solidBin ? wsInk(st.col) : '#ECEFF1', 'font-size': 10,
+        'font-weight': 700, 'text-anchor': 'middle' }, grpL);
+      lb.textContent = solidBin && litres ? litres[1].replace(',', '')
+        : (dm.known ? dm.spec.label : dm.spec.label + ' (size TBC)');
+      if (exceeds || overPref) {
+        const below = (dm.spec.render === 'carousel' ? dm.spec.keepoutR / mpp : Math.max(rw, rd)) + 12;
+        const wn = mk('text', { x: o.rx, y: o.ry + below, fill: exceeds ? WS_CHUTE_RED : '#FFB74D', 'font-size': 10,
+          'font-weight': 700, 'text-anchor': 'middle' }, grpL);
+        wn.textContent = exceeds ? `exceeds ${geom.maxDeg}°` : `exceeds preferred ${geom.prefDeg}°`;
+      }
     });
     const t = mk('text', { x: ch.x - hw, y: ch.y - hd - 6, fill: '#B0BEC5', 'font-size': 11, 'font-weight': 700 }, grp);
     t.textContent = cs.label + (ch.roomName ? ' — ' + ch.roomName : '');
@@ -25014,7 +25124,7 @@ function wsLayoutDXFEntities(mpp, slotOpt) {
         d += circ('E-CHUTE-RECV', 8, o.rx, o.ry, dm.spec.dia / 2);
         d += circ('E-CHUTE-KEEPOUT', 1, o.rx, o.ry, dm.spec.keepoutR);
       } else {
-        d += rect('E-CHUTE-RECV', 8, o.rx, o.ry, dm.w, dm.d, ch.rot || 0);
+        d += rect('E-CHUTE-RECV', 8, o.rx, o.ry, dm.w, dm.d, wsRecvRot(ch, o));
       }
       d += text('E-CHUTE-RECV', 8, o.rx, o.ry, 150, dm.spec.label + (dm.known ? '' : ' (SIZE TBC)'));
     });

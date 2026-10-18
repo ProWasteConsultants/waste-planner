@@ -221,6 +221,7 @@ const LAYOUT_BLOCKS = [
   ['wsCalloutDims',     /^function wsCalloutDims\(/],
   ['WS_RECV_SPECS',     /^const WS_RECV_SPECS = \{/],
   ['wsRecvDims',        /^function wsRecvDims\(/],
+  ['wsRecvRot',         /^function wsRecvRot\(/],
   ['WS_CHUTE_DEFAULTS', /^const WS_CHUTE_DEFAULTS = /],
   ['WS_CHUTE_ANGLE',    /^const WS_CHUTE_ANGLE = \{/],
   ['WS_CHUTE_ANGLE_HARD_MAX', /^const WS_CHUTE_ANGLE_HARD_MAX = /],

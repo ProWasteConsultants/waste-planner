@@ -61,6 +61,7 @@ const BLOCKS = [
   ['WS_RECV_SPECS',     /^const WS_RECV_SPECS = \{/],
   ['WS_RECV_GAP',       /^const WS_RECV_GAP = /],
   ['wsRecvDims',        /^function wsRecvDims\(/],
+  ['wsRecvRot',         /^function wsRecvRot\(/],
   ['wsMarkLen',         /^function wsMarkLen\(/],
   ['WS_CALLOUT_CHAR_W', /^const WS_CALLOUT_CHAR_W = /],
   ['WS_CALLOUT_MIN_W',  /^const WS_CALLOUT_MIN_W = /],
