@@ -20,6 +20,7 @@ function loadFreePlan({ user = null, profile = null, projects = [], staff = fals
     /^function wpFreeRunsCap\(\)/,
     /^function wpFreeRunsRemaining\(/,
     /^function wpProjectCapReached\(\)/,
+    /^function wpFreeSlotsUsed\(\)/,
   ];
   const code = blocks.map(p => extractBlock(p).text).join('\n\n');
   const factory = new Function('currentUser', 'currentProfile', 'getProjects', 'wmpgIsStaff',
@@ -91,7 +92,8 @@ test('the old anonymous mode stays gone — no guest entry point, no lite caps',
 // ── §2: auth screen defaults and copy ──
 test('fresh visitors see Create Account with the free-plan value line', () => {
   assert.ok(SOURCE.includes('Your first project is free.'), 'the value line leads');
-  assert.ok(SOURCE.includes('All tools, exports included. No card needed.'));
+  assert.ok(SOURCE.includes('Every tool, in the app. No card needed.'), 'free = every tool, no exports (access tiers)');
+  assert.ok(!SOURCE.includes('exports included'), 'no copy promises free exports any more');
   assert.ok(SOURCE.includes('Your bin calculation is ready to save.'), 'calc-handoff variant exists');
   assert.ok(SOURCE.includes('Already have an account?'), 'sign-in escape hatch under signup');
   assert.ok(!SOURCE.includes('or sign in for full access'), 'old divider copy removed');
@@ -158,8 +160,9 @@ test('the paywall keeps what you have, offers checkout, and the Pro Waste handof
   const fn = extractBlock(/^function showPaywall\(reason\)/).text;
   assert.ok(fn.includes("logEvent('paywall_shown', { reason: reason || null })"));
   assert.ok(fn.includes('stays yours'), 'keep-what-you-have, stated plainly');
-  assert.ok(fn.includes("wpEngageOpen('paywall')"), '§4a: Engage Pro Waste replaces the external fee-proposal link');
-  assert.ok(fn.includes('wpPaywallUpgrade()'), 'the upgrade button routes to Stripe checkout');
+  assert.ok(fn.includes("wpFeeProposal('paywall_"), '§4a: Engage Pro Waste for this project — the in-app Engage modal until a form URL is set');
+  assert.ok(fn.includes("showPricing()"), 'the Subscribe button routes to Stripe checkout');
+  assert.ok(fn.includes("'Subscribe'") && fn.includes('Engage Pro Waste for this project'), 'both options, named as the brief names them');
   assert.ok(!/only|hurry|last chance/i.test(fn), 'no pressure copy');
 });
 
@@ -205,7 +208,7 @@ test('one button, one label, five placements — all routed through wpEngageOpen
   assert.ok(SOURCE.includes("wpEngageOpen('project_card','${p.id}')"));
   // 2. project header: the old Request WMP button now opens the modal for non-staff
   assert.ok(SOURCE.includes("if (!wmpgIsStaff()) return wpEngageOpen('project_header');"));
-  assert.ok(SOURCE.includes("'\\u{1F91D} Engage Pro Waste Consultants'"), 'header label for non-staff');
+  assert.ok(SOURCE.includes("'\\u{1F4C4} Get your WMP prepared by Pro Waste'"), 'header label for non-staff — WMPs stay PWC-prepared');
   // 3. design tab nudge, gated on calculated rooms and per-project dismissal
   assert.ok(SOURCE.includes('Bins sized — want Pro Waste to confirm the room and prepare the WMP?'));
   assert.ok(SOURCE.includes("wpEngageOpen('design_tab')"));
@@ -218,7 +221,7 @@ test('one button, one label, five placements — all routed through wpEngageOpen
   assert.ok(SOURCE.includes('type: &#x27;wp-engage&#x27;, source: &#x27;compliance&#x27;'));
   assert.ok(SOURCE.includes("if (typeof wpEngageOpen === 'function') wpEngageOpen(e.data.source || 'compliance');"));
   // 5. paywall: Engage replaces the external fee-proposal link
-  assert.ok(SOURCE.includes("closePaywall();wpEngageOpen('paywall')"));
+  assert.ok(extractBlock(/^function wpFeeProposal\(/).text.includes('wpEngageOpen(source'), 'the paywall option lands in the Engage modal');
   assert.ok(!SOURCE.includes('request-a-fee-proposal" target="_blank"'), 'no external form link left in the paywall');
 });
 

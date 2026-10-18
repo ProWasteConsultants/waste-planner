@@ -49,6 +49,13 @@ const RELAYED = new Set([
   "paywall_shown",
   "subscribed",
   "wmp_requested",
+  // access tiers (sql/2026-10-18-access-tiers.sql)
+  "export_blocked",
+  "paywall_option",
+  "project_engaged",
+  "project_disengaged",
+  "team_invite_sent",     // meta.invitee_email — the CRM sends the invite email
+  "team_invite_accepted",
 ]);
 
 Deno.serve(async (req: Request): Promise<Response> => {

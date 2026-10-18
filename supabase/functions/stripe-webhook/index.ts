@@ -1,8 +1,9 @@
 // ── stripe-webhook ──────────────────────────────────────────────────────────
 // Keeps profiles.tier in sync with Stripe. The critical path is CANCELLATION:
 // when a subscription ends, the profile reverts to tier 'none' — the free
-// plan. Projects stay readable and exportable (that is the free plan's
-// promise); only the caps come back. Without this function a cancelled
+// plan. Projects stay readable and usable in-app; the caps come back and
+// exports stop, except on Pro Waste-engaged projects (access tiers,
+// sql/2026-10-18-access-tiers.sql). Nothing is deleted. Without this function a cancelled
 // subscriber keeps their paid tier forever.
 //
 // HOW STRIPE REACHES THIS FUNCTION (as wired 2026-09-07, verified end to

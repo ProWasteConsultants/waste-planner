@@ -920,12 +920,14 @@ body.wp-anon .ws-top-chip{display:none;}
             <option>Under Review</option>
             <option>Approved</option>
           </select>
-          <button class="btn" onclick="deleteProject()" style="color:#C62828;border-color:#FFCDD2;">Delete</button>
+          <button id="btn-delete-project" class="btn" onclick="deleteProject()" style="color:#C62828;border-color:#FFCDD2;">Delete</button>
           <button id="btn-request-wmp" class="btn btn-primary" onclick="openWmpGenerator()" style="background:var(--green);color:var(--dark);border-color:var(--green);font-weight:700;">📄 Generate WMP</button>
           <button id="btn-request-review" class="btn btn-primary" onclick="requestProWasteReview()" style="background:var(--teal);color:#fff;border-color:var(--teal);">📋 Request Review</button>
           <button id="btn-submit-council" class="btn" onclick="openCouncilSubmit()" style="border-color:#1565C0;color:#7EB3F5;">🏛 Submit to Council</button>
         </div>
       </div>
+
+      <div id="detail-engage" style="display:none;margin:0 0 16px;background:var(--grey);border:1px solid var(--border);border-radius:12px;padding:14px 18px;font-size:12.5px;color:var(--text);"></div>
 
       <div class="progress-track" id="progress-track">
         <div class="pt-step active" id="pt-design"><div class="pt-dot">1</div><div class="pt-label">Design</div></div>
@@ -5675,8 +5677,36 @@ function drawPreliminaryWatermark(){
   ctx.restore();
 }
 
+// Access tiers: every export here asks the platform first (its wpExportGate).
+// Until the platform has said yes, refuse and ask — it answers with
+// wp-export-go (run it) or opens the upgrade modal. A missed push never
+// silently allows.
+// Declarations only (hoisted), so the gate works wherever this sits in the
+// script, even if code above it threw.
+var WP_EXP_OK, WP_EXP_RUN, WP_EXP_ON;
+function wpExpGate(kind, run) {
+  wpExpListen();
+  if (WP_EXP_OK === true) return true;
+  (WP_EXP_RUN = WP_EXP_RUN || {})[kind] = run;
+  try { window.parent.postMessage({ type: &#x27;wp-export-blocked&#x27;, kind: kind }, &#x27;*&#x27;); } catch (e) {}
+  return false;
+}
+function wpExpListen() {
+  if (WP_EXP_ON) return;
+  WP_EXP_ON = true;
+  window.addEventListener(&#x27;message&#x27;, function (e) {
+    if (e.source !== window.parent || !e.data) return;
+    if (e.data.type === &#x27;wp-export-ent&#x27;) WP_EXP_OK = e.data.canExport === true;
+    if (e.data.type === &#x27;wp-export-go&#x27; &amp;&amp; WP_EXP_RUN &amp;&amp; WP_EXP_RUN[e.data.kind]) {
+      var run = WP_EXP_RUN[e.data.kind]; delete WP_EXP_RUN[e.data.kind];
+      WP_EXP_OK = true; run();
+    }
+  });
+}
+wpExpListen();
+
 function exportDXF(){
-  if(!S.result)return;const r=S.result,sc=r.mpp*1000;
+  if(!S.result)return;if(!wpExpGate(&#x27;swept_dxf&#x27;,exportDXF))return;const r=S.result,sc=r.mpp*1000;
   let d=&#x27;0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n&#x27;;
   [[&#x27;SWEPT_ENVELOPE&#x27;,&#x27;3&#x27;],[&#x27;FRONT_RIGHT&#x27;,&#x27;4&#x27;],[&#x27;FRONT_LEFT&#x27;,&#x27;6&#x27;],[&#x27;REAR_RIGHT&#x27;,&#x27;2&#x27;],[&#x27;REAR_LEFT&#x27;,&#x27;1&#x27;],[&#x27;INNER_WHEEL&#x27;,&#x27;30&#x27;],[&#x27;VEHICLE_PATH&#x27;,&#x27;5&#x27;],[&#x27;WAYPOINTS&#x27;,&#x27;7&#x27;]].forEach(([n,c])=&gt;{d+=`0\nLAYER\n2\n${n}\n70\n0\n62\n${c}\n`;});
   d+=&#x27;0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n&#x27;;
@@ -5688,7 +5718,7 @@ function exportDXF(){
 }
 
 function exportPDF(){
-  if(!S.result)return;
+  if(!S.result)return;if(!wpExpGate(&#x27;swept_pdf&#x27;,exportPDF))return;
   const url=canvas.toDataURL(&#x27;image/png&#x27;,0.95),v=S.v;
   const w=window.open(&#x27;&#x27;,&#x27;_blank&#x27;);
   w.document.write(`&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Swept Path&lt;/title&gt;&lt;style&gt;*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;}.hdr{background:#0A3D38;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;}.ht{font-size:17px;font-weight:700;}.hs{font-size:11px;opacity:0.5;margin-top:2px;}.specs{padding:12px 20px;display:flex;gap:10px;flex-wrap:wrap;border-bottom:1px solid #eee;}.sp{background:#F4F7F4;padding:8px 14px;border-radius:6px;}.sl{font-size:9px;color:#888;text-transform:uppercase;}.sv{font-size:14px;font-weight:700;color:#0A3D38;font-family:monospace;}img{width:100%;display:block;}.leg{padding:10px 20px;display:flex;gap:14px;flex-wrap:wrap;font-size:11px;border-bottom:1px solid #eee;}.li{display:flex;align-items:center;gap:5px;}.ls{width:20px;height:3px;border-radius:1px;}.ft{padding:8px 20px;font-size:10px;color:#aaa;}&lt;/style&gt;&lt;/head&gt;&lt;body&gt;
@@ -6819,7 +6849,36 @@ async function submitLead() {
   setTimeout(() =&gt; downloadPDF(), 400);
 }
 
+// Access tiers: every export here asks the platform first (its wpExportGate).
+// Until the platform has said yes, refuse and ask — it answers with
+// wp-export-go (run it) or opens the upgrade modal. A missed push never
+// silently allows.
+// Declarations only (hoisted), so the gate works wherever this sits in the
+// script, even if code above it threw.
+var WP_EXP_OK, WP_EXP_RUN, WP_EXP_ON;
+function wpExpGate(kind, run) {
+  wpExpListen();
+  if (WP_EXP_OK === true) return true;
+  (WP_EXP_RUN = WP_EXP_RUN || {})[kind] = run;
+  try { window.parent.postMessage({ type: &#x27;wp-export-blocked&#x27;, kind: kind }, &#x27;*&#x27;); } catch (e) {}
+  return false;
+}
+function wpExpListen() {
+  if (WP_EXP_ON) return;
+  WP_EXP_ON = true;
+  window.addEventListener(&#x27;message&#x27;, function (e) {
+    if (e.source !== window.parent || !e.data) return;
+    if (e.data.type === &#x27;wp-export-ent&#x27;) WP_EXP_OK = e.data.canExport === true;
+    if (e.data.type === &#x27;wp-export-go&#x27; &amp;&amp; WP_EXP_RUN &amp;&amp; WP_EXP_RUN[e.data.kind]) {
+      var run = WP_EXP_RUN[e.data.kind]; delete WP_EXP_RUN[e.data.kind];
+      WP_EXP_OK = true; run();
+    }
+  });
+}
+wpExpListen();
+
 function downloadPDF() {
+  if (!wpExpGate(&#x27;health_check_pdf&#x27;, downloadPDF)) return;
   const R = results;
   const fname = document.getElementById(&#x27;lead-fname&#x27;).value.trim();
   const lname = document.getElementById(&#x27;lead-lname&#x27;).value.trim();
@@ -9147,7 +9206,36 @@ function copyRFI() {
   navigator.clipboard.writeText(text).then(()=&gt;alert(&#x27;Copied to clipboard&#x27;));
 }
 
+// Access tiers: every export here asks the platform first (its wpExportGate).
+// Until the platform has said yes, refuse and ask — it answers with
+// wp-export-go (run it) or opens the upgrade modal. A missed push never
+// silently allows.
+// Declarations only (hoisted), so the gate works wherever this sits in the
+// script, even if code above it threw.
+var WP_EXP_OK, WP_EXP_RUN, WP_EXP_ON;
+function wpExpGate(kind, run) {
+  wpExpListen();
+  if (WP_EXP_OK === true) return true;
+  (WP_EXP_RUN = WP_EXP_RUN || {})[kind] = run;
+  try { window.parent.postMessage({ type: &#x27;wp-export-blocked&#x27;, kind: kind }, &#x27;*&#x27;); } catch (e) {}
+  return false;
+}
+function wpExpListen() {
+  if (WP_EXP_ON) return;
+  WP_EXP_ON = true;
+  window.addEventListener(&#x27;message&#x27;, function (e) {
+    if (e.source !== window.parent || !e.data) return;
+    if (e.data.type === &#x27;wp-export-ent&#x27;) WP_EXP_OK = e.data.canExport === true;
+    if (e.data.type === &#x27;wp-export-go&#x27; &amp;&amp; WP_EXP_RUN &amp;&amp; WP_EXP_RUN[e.data.kind]) {
+      var run = WP_EXP_RUN[e.data.kind]; delete WP_EXP_RUN[e.data.kind];
+      WP_EXP_OK = true; run();
+    }
+  });
+}
+wpExpListen();
+
 function downloadRFI() {
+  if (!wpExpGate(&#x27;compliance_rfi&#x27;, downloadRFI)) return;
   const issues = state.comments.filter(c=&gt;c.result===&#x27;flag&#x27;||c.result===&#x27;fail&#x27;);
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;—&#x27;;
   const ref  = document.getElementById(&#x27;proj-ref&#x27;).value || &#x27;—&#x27;;
@@ -9226,6 +9314,7 @@ function exportReport() {
       window.parent.postMessage({ type: &#x27;wp-anon-gate&#x27;, trigger: &#x27;export&#x27; }, &#x27;*&#x27;);
     return;
   }
+  if (!wpExpGate(&#x27;compliance_report&#x27;, exportReport)) return;
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;Unknown&#x27;;
   const ref  = document.getElementById(&#x27;proj-ref&#x27;).value || &#x27;—&#x27;;
   const councilName = document.getElementById(&#x27;council-select&#x27;).options[document.getElementById(&#x27;council-select&#x27;).selectedIndex]?.text || &#x27;—&#x27;;
@@ -9594,6 +9683,8 @@ function showScreen(name, navEl) {
   }
   // Usage telemetry for the screens that answer "which tools drive value"
   if (['workspace','compliance','costcheck'].includes(name) && typeof logEvent === 'function') logEvent('screen_view', { screen: name });
+  // The tool iframes learn whether this project may export (access tiers)
+  if (typeof wpPushExportEnt === 'function') setTimeout(wpPushExportEnt, 0);
   // Update nav
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   if (navEl) navEl.classList.add('active');
@@ -9798,7 +9889,8 @@ const PROJ_FILTER = { status: 'all', state: 'all', q: '' };
 // PWC service pipeline: derived from review_requests, keyed by project_id
 const PROJ_SERVICE = { map: {}, fetchedAt: 0 };
 const SERVICE_LABELS = {
-  'wmp:pending':       { label: 'Pro Waste engaged',  c: '#FFB74D' },
+  // "requested", not "engaged": engaged is the staff-set pwc_engaged flag
+  'wmp:pending':       { label: 'Engagement requested', c: '#FFB74D' },
   'wmp:proposal_sent': { label: 'Fee proposal sent',  c: '#CE93D8' },
   'wmp:inprogress':    { label: 'WMP in preparation', c: '#7EB3F5' },
   'wmp:rfi':           { label: 'RFI active',         c: '#EF8080' },
@@ -9900,6 +9992,7 @@ function renderProjects(filter) {
       <div class="pc-line">${line}</div>
       <span class="status-pill ${statusCls}">${p.status}</span>
       ${projJobNoCardHtml(p)}
+      ${projEngageCardHtml(p)}
       ${(() => {
         if (typeof currentOrg === 'undefined' || !currentOrg || !p.orgId) return '';
         const mem = (ORG_MEMBERS_CACHE[currentOrg.id] || []).find(m => m.user_id === p.allocatedTo);
@@ -9909,7 +10002,7 @@ function renderProjects(filter) {
       })()}
       ${(() => { const s = PROJ_SERVICE.map[p.id]; const m = s && SERVICE_LABELS[s.type + ':' + s.status]; return m ? `<span class="status-pill" style="background:${m.c}22;color:${m.c};">${m.label}</span>` : ''; })()}
       ${(() => { const s = PROJ_SERVICE.map[p.id]; return (s && s.resp) ? `<span class="status-pill" style="background:#2E7D3222;color:#81C784;cursor:pointer;" onclick="event.stopPropagation();viewReviewResponse('${p.id}')">📄 View response</span>` : ''; })()}
-      ${(() => { const s = PROJ_SERVICE.map[p.id]; return (s && s.type === 'wmp' && s.status !== 'declined') ? '' : `<span class="status-pill" style="background:#0E7C7B18;color:var(--teal);cursor:pointer;border:1px solid #0E7C7B44;" onclick="event.stopPropagation();wpEngageOpen('project_card','${p.id}')">🤝 Engage Pro Waste Consultants</span>`; })()}
+      ${(() => { const s = PROJ_SERVICE.map[p.id]; return (p.pwcEngaged || p.shared || (s && s.type === 'wmp' && s.status !== 'declined')) ? '' : `<span class="status-pill" style="background:#0E7C7B18;color:var(--teal);cursor:pointer;border:1px solid #0E7C7B44;" onclick="event.stopPropagation();wpEngageOpen('project_card','${p.id}')">🤝 Engage Pro Waste Consultants</span>`; })()}
       ${p.created ? `<span class="pc-created">${p.created}</span>` : ''}`;
     grid.insertBefore(card, empty);
   });
@@ -9939,6 +10032,129 @@ function projSetJobNo(id, v) {
   if (det && currentProjectId === id && det.value !== next) det.value = next;
   if (typeof wsSweptPrefillJobNo === 'function') wsSweptPrefillJobNo();
   renderProjects();
+}
+
+// ── PRO WASTE PROJECTS: ENGAGEMENT AND THE DESIGN TEAM ────────────────────
+// pwc_engaged is set and cleared by PWC staff only (wp_set_engagement, a
+// staff-checked RPC; a trigger keeps client writes off the columns). An
+// engaged project unlocks exports, stops counting toward the owner's free
+// project, and lets the owner invite the design team — each invitee gets
+// that project only. Clearing it leaves the project read-only for anyone
+// without a subscription; nothing is deleted.
+function projEngageCardHtml(p) {
+  if (p.pwcEngaged) return `<span class="status-pill" style="background:#4BED1222;color:#4BED12;border:1px solid #4BED1255;" title="${p.pwcJobNumber ? 'Pro Waste job ' + wpEscHtml(p.pwcJobNumber) : 'Pro Waste project'}">✓ Engaged with Pro Waste Consultants</span>`;
+  if (p.engagementEndedAt) return '<span class="status-pill" style="background:#90A4AE22;color:#90A4AE;">Engagement ended · read-only</span>';
+  return '';
+}
+function projEngageRender(p) {
+  const box = document.getElementById('detail-engage');
+  if (!box || !p) return;
+  const staff = typeof wmpgIsStaff === 'function' && wmpgIsStaff();
+  const ent = wpEntitlements(p.id);
+  const parts = [];
+  if (p.pwcEngaged) {
+    parts.push(`<div style="font-weight:700;color:#4BED12;">✓ Engaged with Pro Waste Consultants${p.pwcJobNumber ? ` <span style="color:var(--muted);font-weight:600;">· Job ${wpEscHtml(p.pwcJobNumber)}</span>` : ''}</div>
+      <div style="color:var(--muted);margin-top:3px;">${p.shared
+        ? 'Exports are unlocked on this project for the whole design team. Pro Waste prepares the WMP from this project’s data.'
+        : 'Exports are unlocked on this project for you and your design team, and it doesn’t count toward your free project. Pro Waste prepares the WMP from this project’s data.'}</div>`);
+  } else if (p.engagementEndedAt) {
+    parts.push(`<div style="font-weight:700;">Engagement with Pro Waste has ended</div>
+      <div style="color:var(--muted);margin-top:3px;">${ent.readOnly ? 'This project is read-only: everything is here to view, but changes aren’t saved and exports need a subscription.' : 'You have a subscription, so the project stays fully editable.'}</div>`);
+  }
+  if (p.shared && !staff) parts.push('<div style="color:var(--muted);margin-top:6px;">Shared with you by the project owner as part of the design team.</div>');
+  if (staff) {
+    parts.push(`<div style="margin-top:${parts.length ? 10 : 0}px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <span style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);">PWC staff</span>
+      ${p.pwcEngaged
+        ? `<button class="btn" onclick="projSetEngaged('${wpEscHtml(p.id)}', false)">End engagement</button>`
+        : `<button class="btn btn-primary" onclick="projSetEngaged('${wpEscHtml(p.id)}', true)" style="background:var(--teal);color:#fff;border-color:var(--teal);">Mark engaged with Pro Waste</button>`}
+    </div>`);
+  }
+  if (p.pwcEngaged && (ent.isOwner || staff) && !p.orgId) {
+    parts.push(`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+      <div style="font-weight:700;margin-bottom:4px;">Design team</div>
+      <div style="color:var(--muted);margin-bottom:8px;">Invite your architect, planner or developer. They get this project only — with exports — once they sign in with the invited email.</div>
+      <div id="proj-team-list" style="margin-bottom:8px;color:var(--muted);">Loading…</div>
+      <div style="display:flex;gap:8px;">
+        <input id="proj-team-email" type="email" placeholder="name@firm.com" onkeydown="if(event.key==='Enter')projTeamInvite()" style="flex:1;background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;font-family:inherit;color:var(--text);">
+        <button class="btn" onclick="projTeamInvite()">Invite</button>
+      </div>
+      <div id="proj-team-msg" style="font-size:11.5px;color:#EF8080;min-height:15px;margin-top:4px;"></div>
+    </div>`);
+  }
+  box.innerHTML = parts.join('');
+  box.style.display = parts.length ? 'block' : 'none';
+  if (document.getElementById('proj-team-list')) projTeamLoad(p.id);
+}
+
+async function projSetEngaged(id, on) {
+  if (!(typeof wmpgIsStaff === 'function' && wmpgIsStaff())) return;
+  const projects = getProjects();
+  const p = projects.find(x => x.id === id); if (!p) return;
+  let job = null;
+  if (on) {
+    job = prompt('Mark “' + wpProjectTitle(p) + '” as engaged with Pro Waste.\n\nThis unlocks exports for the owner and their design team, and the project stops counting toward their free project.\n\nPro Waste job number (optional, e.g. 657PW):', p.pwcJobNumber || p.projId || '');
+    if (job === null) return;
+  } else if (!confirm('End Pro Waste’s engagement on “' + wpProjectTitle(p) + '”?\n\nThe project becomes read-only for the owner and team unless they subscribe. Nothing is deleted, and you can re-engage it later.')) return;
+  const { data, error } = await sb.rpc('wp_set_engagement', { p_project: id, p_engaged: !!on, p_job_number: job || null });
+  if (error) { alert('Could not change engagement: ' + (error.message || error) + (/function|schema/i.test(error.message || '') ? '\n\nRun sql/2026-10-18-access-tiers.sql first.' : '')); return; }
+  p.pwcEngaged = data.pwc_engaged === true;
+  p.engagedAt = data.engaged_at || null;
+  p.engagedBy = data.engaged_by || null;
+  p.pwcJobNumber = data.pwc_job_number || null;
+  p.engagementEndedAt = data.engagement_ended_at || null;
+  if (on && p.pwcJobNumber && !p.projId) { p.projId = p.pwcJobNumber; if (!p.shared) saveProjectToDB(p); }
+  saveProjects(projects);
+  if (typeof logEvent === 'function') logEvent(on ? 'project_engaged' : 'project_disengaged', { project_id: id, owner_id: p.ownerId || null, job: p.pwcJobNumber || null });
+  if (currentProjectId === id) projEngageRender(p);
+  if (typeof wpPushExportEnt === 'function') wpPushExportEnt();
+  renderProjects();
+}
+
+async function projTeamLoad(projectId) {
+  const el = document.getElementById('proj-team-list');
+  if (!el) return;
+  const { data, error } = await sb.from('project_members').select('id,email,accepted_at,created_at').eq('project_id', projectId).order('created_at');
+  if (error) { el.textContent = 'Team list unavailable.'; return; }
+  el.innerHTML = (data || []).length
+    ? data.map(m => `<div style="display:flex;justify-content:space-between;align-items:center;background:#18212166;border-radius:6px;padding:5px 10px;margin-bottom:4px;">
+        <span>✉ ${wpEscHtml(m.email)} <span style="opacity:.7">(${m.accepted_at ? 'joined' : 'invited'})</span></span>
+        <button onclick="projTeamRemove('${wpEscHtml(m.id)}','${wpEscHtml(projectId)}')" style="background:none;border:none;color:#EF8080;cursor:pointer;font-size:11px;font-family:inherit;">Remove</button></div>`).join('')
+    : 'No one invited yet.';
+}
+
+function projTeamEmailClean(v) {
+  const e = String(v || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 254 ? e : null;
+}
+
+async function projTeamInvite() {
+  const pid = currentProjectId;
+  const p = getProjects().find(x => x.id === pid);
+  const msg = document.getElementById('proj-team-msg');
+  const input = document.getElementById('proj-team-email');
+  if (!p || !msg || !input) return;
+  msg.style.color = '#EF8080';
+  if (!p.pwcEngaged) { msg.textContent = 'The design team opens once Pro Waste is engaged on this project.'; return; }
+  const email = projTeamEmailClean(input.value);
+  if (!email) { msg.textContent = 'Enter a valid email address.'; return; }
+  if (currentUser?.email && email === currentUser.email.toLowerCase()) { msg.textContent = 'That’s you — you already have this project.'; return; }
+  const { error } = await sb.from('project_members').insert({ project_id: pid, email });
+  if (error) {
+    msg.textContent = error.code === '23505' ? 'Already invited.' : 'Could not invite: ' + (error.message || error);
+    return;
+  }
+  input.value = '';
+  msg.style.color = '#81C784';
+  msg.textContent = 'Invited. They’ll see this project when they sign in with ' + email + '.';
+  if (typeof logEvent === 'function') logEvent('team_invite_sent', { project_id: pid, invitee_email: email });
+  projTeamLoad(pid);
+}
+
+async function projTeamRemove(memberId, projectId) {
+  if (!confirm('Remove this person from the project? They lose access to it straight away.')) return;
+  await sb.from('project_members').delete().eq('id', memberId);
+  projTeamLoad(projectId);
 }
 
 function filterProjects(filter, btn) {
@@ -10166,6 +10382,16 @@ function wpPlanStageLabel(stage) {
   return stage === 'site_prep' ? 'Site preparation' : stage === 'construction' ? 'Construction' : 'Occupancy';
 }
 // Pure: where a stage's plan lives (cache key + cloud path).
+// Storage folder a project's plans and documents live under: its owner's.
+// A shared project (design team, or staff on a client's engaged project)
+// reads and writes the owner's folder — the storage policy in
+// sql/2026-10-18-access-tiers.sql lets them. Own and org projects are
+// unchanged (the signed-in user's folder).
+function wpProjectStorageUid(projectId) {
+  const p = (typeof getProjects === 'function') ? getProjects().find(x => x.id === projectId) : null;
+  if (p && p.shared && p.ownerId) return p.ownerId;
+  return (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : undefined;
+}
 function wpPlanSlot(projectId, stage, uid) {
   const st = wpPlanStage(stage);
   const suffix = st === 'occupancy' ? '' : '.' + st;
@@ -10223,7 +10449,7 @@ async function wpPlanRev(buf) {
 // the plan's name and revision on the project record for the stage, so every
 // caller that stores a plan gets the freshness stamp — none can forget it.
 async function storeProjectPdf(projectId, buf, name, stage) {
-  const slot = wpPlanSlot(projectId, stage, currentUser?.id);
+  const slot = wpPlanSlot(projectId, stage, wpProjectStorageUid(projectId));
   const rev = await wpPlanRev(buf);
   await idbPutPdf(slot.idbKey, buf, name, rev);
   const projects = getProjects();
@@ -10240,7 +10466,7 @@ async function storeProjectPdf(projectId, buf, name, stage) {
   return rev;
 }
 async function loadProjectPdf(projectId, stage) {
-  const slot = wpPlanSlot(projectId, stage, currentUser?.id);
+  const slot = wpPlanSlot(projectId, stage, wpProjectStorageUid(projectId));
   let rec = null;
   try { rec = await idbGetPdf(slot.idbKey); } catch(e) {}
   const meta = wpPlanMeta(getProjects().find(x => x.id === projectId), slot.stage);
@@ -10264,7 +10490,7 @@ async function loadProjectPdf(projectId, stage) {
   return rec || null;
 }
 async function removeProjectPdf(projectId, stage) {
-  const slot = wpPlanSlot(projectId, stage, currentUser?.id);
+  const slot = wpPlanSlot(projectId, stage, wpProjectStorageUid(projectId));
   try { await idbDeletePdf(slot.idbKey); } catch(e) {}
   const projects = getProjects();
   const p = projects.find(x => x.id === projectId);
@@ -10289,7 +10515,7 @@ async function docStore(projectId, buf, name, kind) {
   await idbPutPdf('doc:' + projectId + ':' + id, buf, name);
   if (currentUser && sb?.storage) {
     try { await sb.storage.from(PLANS_BUCKET)
-      .upload(`${currentUser.id}/${projectId}/docs/${id}_${name}`, new Blob([buf]), { upsert: true }); } catch(e) {}
+      .upload(`${wpProjectStorageUid(projectId)}/${projectId}/docs/${id}_${name}`, new Blob([buf]), { upsert: true }); } catch(e) {}
   }
   const projects = getProjects();
   const p = projects.find(x => x.id === projectId);
@@ -10313,7 +10539,7 @@ async function docLoad(projectId, docId) {
   if (meta && currentUser && sb?.storage) {
     try {
       const { data, error } = await sb.storage.from(PLANS_BUCKET)
-        .download(`${currentUser.id}/${projectId}/docs/${docId}_${meta.name}`);
+        .download(`${wpProjectStorageUid(projectId)}/${projectId}/docs/${docId}_${meta.name}`);
       if (!error && data) { const buf = await data.arrayBuffer(); await idbPutPdf('doc:' + projectId + ':' + docId, buf, meta.name); return { buf, name: meta.name }; }
     } catch(e) {}
   }
@@ -10326,7 +10552,7 @@ async function docDelete(projectId, docId) {
   if (p) { p.docs = (p.docs || []).filter(d => d.id !== docId); saveProjects(projects); if (typeof saveProjectToDB === 'function') saveProjectToDB(p); }
   try { await idbDeletePdf('doc:' + projectId + ':' + docId); } catch(e) {}
   if (meta && currentUser && sb?.storage) {
-    try { await sb.storage.from(PLANS_BUCKET).remove([`${currentUser.id}/${projectId}/docs/${docId}_${meta.name}`]); } catch(e) {}
+    try { await sb.storage.from(PLANS_BUCKET).remove([`${wpProjectStorageUid(projectId)}/${projectId}/docs/${docId}_${meta.name}`]); } catch(e) {}
   }
   docsRender();
 }
@@ -10471,7 +10697,7 @@ function docSetKind(docId, kind) {
 // IDB first (works offline/anon), bucket .thumb.png beside the doc second, a
 // fresh render (page 1 at ~480px / DXF extents) only when neither exists.
 function docThumbKey(projectId, docId) { return 'thumb:' + projectId + ':' + docId; }
-function docThumbPath(projectId, d) { return `${currentUser?.id}/${projectId}/docs/${d.id}_${d.name}.thumb.png`; }
+function docThumbPath(projectId, d) { return `${wpProjectStorageUid(projectId)}/${projectId}/docs/${d.id}_${d.name}.thumb.png`; }
 async function docThumbEnsure(projectId, d) {
   try {
     const cached = await idbGetPdf(docThumbKey(projectId, d.id));
@@ -10691,6 +10917,10 @@ window.addEventListener('message', async (e) => {
 window.addEventListener('message', async (e) => {
   if (!e.data) return;
   const anon = (typeof wpAnonActive === 'function') && wpAnonActive();
+  if (e.data.type === 'wp-export-blocked') {
+    if (typeof wpExportBlockedFrom === 'function') wpExportBlockedFrom(e.source, e.data.kind || null);
+    return;
+  }
   if (e.data.type === 'wp-paywall') {
     // A guest's "cap" is the one free check — that wall is the signup gate,
     // never the upgrade paywall (there is no account to upgrade yet).
@@ -10769,7 +10999,7 @@ async function docSignedUrl(projectId, docId) {
   const p = getProjects().find(x => x.id === projectId);
   const meta = p?.docs?.find(d => d.id === docId);
   if (!meta) return { error: 'Document not found on this project' };
-  const path = `${currentUser.id}/${projectId}/docs/${docId}_${meta.name}`;
+  const path = `${wpProjectStorageUid(projectId)}/${projectId}/docs/${docId}_${meta.name}`;
   let uploadErr = null;
   try {
     const rec = await idbGetPdf('doc:' + projectId + ':' + docId);
@@ -11061,6 +11291,10 @@ function openProjectDetail(id) {
     jobEl.style.display = (staff || p.projId) ? 'block' : 'none';
   }
   if (typeof wsSweptPrefillJobNo === 'function') wsSweptPrefillJobNo();
+  projEngageRender(p);
+  const delBtn = document.getElementById('btn-delete-project');
+  if (delBtn) delBtn.style.display = p.shared ? 'none' : '';
+  if (typeof wpPushExportEnt === 'function') wpPushExportEnt();
 
   // Allocation — org projects only: work belongs to the org, people are assignees
   const allocSel = document.getElementById('detail-alloc');
@@ -14539,7 +14773,7 @@ async function wpEngageSubmit() {
       } catch (e) {}
       PROJ_SERVICE.map[p.id] = { type: 'wmp', status: 'pending' };
       const wmpBtn = document.getElementById('btn-request-wmp');
-      if (wmpBtn && !(typeof wmpgIsStaff === 'function' && wmpgIsStaff())) { wmpBtn.dataset.submitted = 'true'; wmpBtn.textContent = '✓ Pro Waste engaged'; }
+      if (wmpBtn && !(typeof wmpgIsStaff === 'function' && wmpgIsStaff())) { wmpBtn.dataset.submitted = 'true'; wmpBtn.textContent = '✓ Engagement requested'; }
       if (typeof renderProjects === 'function') renderProjects();
     }
     if (typeof logEvent === 'function') logEvent('wmp_requested', {
@@ -14920,12 +15154,35 @@ async function loadAdminUsers() {
         <div style="text-align:right;flex-shrink:0;">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:${tc};background:${tc}18;padding:2px 8px;border-radius:20px;margin-bottom:3px;">${u.tier||'none'}</div>
           <div style="font-size:10px;color:var(--text-3);">Joined ${d}</div>
+          ${adminSubscriberBtnHtml(u)}
         </div>
       </div>`;
     }).join('');
   } catch(err) {
     list.innerHTML = `<div style="font-size:12px;color:#C62828;text-align:center;padding:30px;">Error: ${err.message}</div>`;
   }
+}
+
+// Manual subscriber grant — while Stripe is in test mode this is how early
+// users are unlocked by hand (wp_staff_set_subscriber: tier 'standard',
+// tier_source 'manual'). A Stripe-billed account is never touched, and
+// revoking only ever removes a manual grant.
+function adminSubscriberBtnHtml(u) {
+  if (!u || !u.email || u.is_staff) return '';
+  const esc = wpEscHtml(u.email);
+  if (u.tier_source === 'manual')
+    return `<button onclick="adminSetSubscriber('${esc}', false)" style="margin-top:4px;background:none;border:1px solid #FFCDD2;color:#EF8080;border-radius:6px;font-size:10px;padding:2px 8px;cursor:pointer;font-family:inherit;">Revoke manual subscription</button>`;
+  if (u.stripe_subscription_id || (u.tier && u.tier !== 'none'))
+    return `<div style="font-size:10px;color:var(--text-3);">${u.stripe_subscription_id ? 'Stripe-billed' : 'paid'}</div>`;
+  return `<button onclick="adminSetSubscriber('${esc}', true)" style="margin-top:4px;background:none;border:1px solid var(--teal);color:var(--teal);border-radius:6px;font-size:10px;padding:2px 8px;cursor:pointer;font-family:inherit;">Grant subscriber</button>`;
+}
+async function adminSetSubscriber(email, on) {
+  if (!confirm((on ? 'Grant a subscription to ' : 'Revoke the manual subscription for ') + email + '?\n\n' +
+    (on ? 'They get unlimited projects, exports and paid AI limits, with no charge. WMPs stay Pro Waste-prepared.' : 'They return to the free plan: one project, no exports. Nothing of theirs is deleted.'))) return;
+  const { error } = await sb.rpc('wp_staff_set_subscriber', { p_email: email, p_on: !!on });
+  if (error) { alert('Could not change the subscription: ' + (error.message || error)); return; }
+  if (typeof logEvent === 'function') logEvent(on ? 'subscriber_granted' : 'subscriber_revoked', { email, source: 'manual' });
+  loadAdminUsers();
 }
 
 // ── TWO-FACTOR AUTHENTICATION ─────────────────────────────────────────────
@@ -15620,7 +15877,7 @@ renderProjects();
 
     <!-- value line — swapped for the calc-handoff variant when ?calc= arrived -->
     <div id="auth-value-line" style="text-align:center;font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:14px;">
-      <b style="color:var(--text);">Your first project is free.</b> All tools, exports included. No card needed.
+      <b style="color:var(--text);">Your first project is free.</b> Every tool, in the app. No card needed.
     </div>
 
     <div class="auth-tabs">
@@ -16166,7 +16423,7 @@ async function handleFreeSignup() {
   await loadProfile();
   showApp();
   applyRoleAccess();
-  alert('\u2705 Welcome to WastePlanner!\n\nYour first project is free \u2014 every tool, exports included, no card needed.\n\nUpgrade anytime for unlimited projects and daily AI use.');
+  alert('\u2705 Welcome to WastePlanner!\n\nYour first project is free \u2014 every tool works in the app, no card needed.\n\nExports come with a subscription (unlimited projects and exports) or with a Pro Waste project, when Pro Waste prepares your WMP.');
 }
 
 async function handleLogout() {
@@ -16298,47 +16555,235 @@ function wpFreeRunsCap() { return wpIsFreePlan() ? WP_FREE_RUNS_CAP : null; }
 
 function wpFreeRunsRemaining(proj) {
   if (!wpIsFreePlan() || !proj) return null;    // null = uncapped / no project
+  if (proj.pwcEngaged) return null;             // a Pro Waste project has no check limit
   return Math.max(0, WP_FREE_RUNS_CAP - (Number(proj.complianceRuns) || 0));
 }
 
 function wpProjectCapReached() {
-  return wpIsFreePlan() && wpProjectsCreated() >= 1;
+  return wpIsFreePlan() && wpFreeSlotsUsed() >= 1;
 }
 
-// The paywall. Plain copy, no countdown, no dark patterns: what you have
-// stays yours (readable and exportable), here is what upgrading adds, and a
-// human path for people who would rather hand the job to Pro Waste.
+// Free slots used. A project Pro Waste has engaged does not use the free
+// slot (sql/2026-10-18-access-tiers.sql): the server count is
+// projects_created − projects_engaged, both monotonic and kept by trigger, so
+// deleting a project can neither free a slot nor cost one. The local floor
+// counts only the user's OWN personal projects that were never engaged — a
+// project shared with them, or an org's, is not theirs to count.
+function wpFreeSlotsUsed() {
+  const n = Number(currentProfile?.projects_created);
+  const e = Number(currentProfile?.projects_engaged);
+  const server = (Number.isFinite(n) ? n : 0) - (Number.isFinite(e) ? e : 0);
+  const uid = currentUser?.id || null;
+  const local = getProjects().filter(p => !p.orgId && !p.shared && !p.pwcEngaged && !p.engagedAt
+    && (!p.ownerId || !uid || p.ownerId === uid)).length;
+  return Math.max(server, local, 0);
+}
+
+// ── ACCESS TIERS: FREE · PRO WASTE PROJECT · SUBSCRIBER ───────────────────
+// One rule, resolved in this order: subscriber (a paid tier, or staff) →
+// a Pro Waste-engaged project → free. Free: one project, every tool in-app,
+// NO exports. Engaged project: exports on that project for its owner and the
+// design team they invite. Subscriber: unlimited projects and exports. WMPs
+// stay PWC-prepared at every level.
+//
+// wpEntitlementsResolve is PURE and mirrors the server's wp_entitlements
+// (sql/2026-10-18-access-tiers.sql) — tests/access-tiers.test.js pins both.
+// The server is the truth for the project cap and the read-only rule
+// (triggers). Exports are rendered in the browser, so the export refusal is
+// this check: hidden buttons are not relied on, every export path asks
+// wpExportGate before it writes a file.
+function wpEntitlementsResolve(c) {
+  c = c || {};
+  const staff = !!c.staff;
+  const paid = ['standard', 'founding', 'council_paid'].includes(c.tier);
+  const p = c.project || null;
+  const isOwner = !!(p && !p.shared && (!p.ownerId || !c.uid || p.ownerId === c.uid || !!p.orgId));
+  const isMember = !!(p && p.shared);
+  const isEngaged = !!(p && p.pwcEngaged);
+  const ended = !!(p && !p.pwcEngaged && p.engagementEndedAt);
+  const plan = staff ? 'staff' : paid ? 'subscriber' : isEngaged ? 'engaged' : 'free';
+  return {
+    plan,
+    canCreateProject: staff || paid || (Number(c.slotsUsed) || 0) < 1,
+    canExport: staff || paid || isEngaged,
+    aiTier: (staff || paid) ? 'paid' : 'free',
+    isEngaged,
+    readOnly: ended && !staff && !paid,
+    isOwner,
+    isMember,
+  };
+}
+
+function wpEntitlements(projectId) {
+  const project = projectId ? (getProjects().find(p => p.id === projectId) || null) : null;
+  return wpEntitlementsResolve({
+    staff: typeof wmpgIsStaff === 'function' && wmpgIsStaff(),
+    tier: currentProfile?.tier || 'none',
+    uid: currentUser?.id || null,
+    slotsUsed: wpFreeSlotsUsed(),
+    project,
+  });
+}
+
+// The project an export belongs to: the project the user has open. Design
+// workspace exports pass the workspace's own project (wsExportProjectId).
+function wpExportProjectId() {
+  return (typeof currentProjectId !== 'undefined' && currentProjectId) || null;
+}
+function wsExportProjectId() {
+  try { if (typeof WS !== 'undefined' && WS && WS.projectId) return WS.projectId; } catch (e) {}
+  return wpExportProjectId();
+}
+
+// Every export asks this before it writes a file. Allowed → true. Refused →
+// the upgrade modal opens instead of the download, export_blocked is logged
+// with which export it was, and the caller returns.
+function wpExportGate(kind, projectId) {
+  if (typeof wpAnonActive === 'function' && wpAnonActive()) {
+    if (typeof wpAnonGate === 'function') wpAnonGate('export');
+    return false;
+  }
+  const pid = projectId === undefined ? wpExportProjectId() : projectId;
+  const ent = wpEntitlements(pid);
+  if (ent.canExport) return true;
+  if (typeof logEvent === 'function') logEvent('export_blocked', { export: kind || null, project_id: pid || null, plan: ent.plan });
+  showExportUpgrade(kind, pid, ent);
+  return false;
+}
+
+// The tool iframes (swept path, health check, compliance checker) are
+// sandboxed srcdocs and cannot call wpExportGate. The platform pushes the
+// current answer to them; an iframe that has not heard yet refuses and asks
+// (wp-export-blocked), and the platform either runs it (wp-export-go) or
+// shows the upgrade modal — so a missed push can never silently allow.
+const WP_EXPORT_IFRAMES = ['swept-iframe', 'ws-swept-iframe', 'costcheck-iframe', 'compliance-iframe'];
+function wpExportIframeProject(id) {
+  return id === 'ws-swept-iframe' ? wsExportProjectId() : wpExportProjectId();
+}
+function wpPushExportEnt() {
+  WP_EXPORT_IFRAMES.forEach(id => {
+    const canExport = wpEntitlements(wpExportIframeProject(id)).canExport;
+    try { document.getElementById(id)?.contentWindow?.postMessage({ type: 'wp-export-ent', canExport }, '*'); } catch (e) {}
+  });
+}
+
+// An iframe refused an export it had no answer for: re-ask the rule here,
+// then run it there (allowed) or open the upgrade modal (refused).
+function wpExportBlockedFrom(win, kind) {
+  const id = WP_EXPORT_IFRAMES.find(i => document.getElementById(i)?.contentWindow === win);
+  if (!id || !wpExportGate(kind, wpExportIframeProject(id))) return;
+  try {
+    win.postMessage({ type: 'wp-export-ent', canExport: true }, '*');
+    win.postMessage({ type: 'wp-export-go', kind }, '*');
+  } catch (e) {}
+}
+WP_EXPORT_IFRAMES.forEach(id => {
+  try { document.getElementById(id)?.addEventListener('load', () => setTimeout(wpPushExportEnt, 50)); } catch (e) {}
+});
+
+// One line per level — the paywall, the export modal and the pricing page
+// all read these, so the three never describe the levels differently.
+const WP_TIER_LINES = [
+  ['Free', 'try one project, no exports.'],
+  ['Pro Waste project', 'full access for your design team when Pro Waste prepares your WMP.'],
+  ['Subscription', 'unlimited projects and exports.'],
+];
+function wpTierLinesHtml() {
+  return '<div style="background:#F4F7F7;border-radius:10px;padding:10px 14px;margin:0 0 18px;font-size:12.5px;line-height:1.7;color:#374151;">' +
+    WP_TIER_LINES.map(([k, v]) => `<div><b style="color:#0A3D38;">${k}:</b> ${v}</div>`).join('') + '</div>';
+}
+
+// "Get a fee proposal" / "Engage Pro Waste for this project". When the
+// prowaste.au fee-proposal form's address is set, it opens there with the
+// project id and UTM tags; until then it is the in-app Engage modal, which
+// files the request (with the project data) into PWC's WMP queue.
+const WP_FEE_PROPOSAL_URL = null;   // e.g. 'https://prowaste.au/fee-proposal' — set once confirmed
+function wpFeeProposalUrl(base, projectId, source) {
+  if (!base) return null;
+  const u = new URL(base);
+  if (projectId) u.searchParams.set('project_id', projectId);
+  u.searchParams.set('utm_source', 'wasteplanner');
+  u.searchParams.set('utm_medium', 'app');
+  u.searchParams.set('utm_campaign', source || 'fee_proposal');
+  return u.toString();
+}
+function wpFeeProposal(source, projectId) {
+  const url = wpFeeProposalUrl(WP_FEE_PROPOSAL_URL, projectId, source);
+  if (url) { window.open(url, '_blank', 'noopener'); return; }
+  if (typeof wpEngageOpen === 'function') wpEngageOpen(source, projectId || undefined);
+}
+
+function wpUpgradeModalShell(id, closeFn) {
+  let m = document.getElementById(id);
+  if (m) return m;
+  m = document.createElement('div');
+  m.id = id;
+  m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11500;align-items:center;justify-content:center;';
+  m.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;width:460px;max-width:94vw;max-height:92vh;overflow:auto;padding:28px 30px;">
+      <div data-r="title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:10px;"></div>
+      <div data-r="body" style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:14px;"></div>
+      <div data-r="tiers"></div>
+      <button data-r="sub" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;"></button>
+      <button data-r="pwc" style="display:block;width:100%;margin-top:10px;padding:11px;border-radius:9px;font-size:13px;font-weight:600;border:1.5px solid var(--teal);color:var(--teal);background:none;cursor:pointer;font-family:inherit;"></button>
+      <button data-r="close" style="display:block;margin:14px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Not now</button>
+    </div>`;
+  m.addEventListener('click', ev => { if (ev.target === m) closeFn(); });
+  m.querySelector('[data-r="close"]').onclick = closeFn;
+  document.body.appendChild(m);
+  return m;
+}
+
+// The paywall: project cap or compliance cap. Plain copy, no countdown, no
+// dark patterns: what you have stays yours to use in-app, and two ways on —
+// subscribe, or engage Pro Waste for a project.
 function showPaywall(reason) {
   if (typeof logEvent === 'function') logEvent('paywall_shown', { reason: reason || null });
   const copy = reason === 'project_cap'
     ? { title: 'Your free plan includes one project',
-        body: 'You’ve used your free project. Everything in it stays yours — every tool keeps working and every export stays available. Upgrading adds unlimited projects and daily AI use.' }
+        body: 'You’ve used your free project. Everything in it stays yours and every tool keeps working on it. For more projects, subscribe — or engage Pro Waste for a project: an engaged project doesn’t use your free slot.' }
     : { title: 'You’ve used both free compliance checks on this project',
-        body: 'Your two included checks for this project are done. The results are saved and stay readable and exportable. Upgrading adds 10 checks a day across unlimited projects.' };
-  let m = document.getElementById('wp-paywall-modal');
-  if (!m) {
-    m = document.createElement('div');
-    m.id = 'wp-paywall-modal';
-    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11500;align-items:center;justify-content:center;';
-    m.innerHTML = `
-      <div style="background:var(--white);border-radius:16px;width:440px;max-width:94vw;padding:28px 30px;">
-        <div id="wp-paywall-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:10px;"></div>
-        <div id="wp-paywall-body" style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:20px;"></div>
-        <button onclick="wpPaywallUpgrade()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Upgrade — from $149/month</button>
-        <button onclick="closePaywall();wpEngageOpen('paywall')" style="display:block;width:100%;margin-top:10px;padding:11px;border-radius:9px;font-size:13px;font-weight:600;border:1.5px solid var(--teal);color:var(--teal);background:none;cursor:pointer;font-family:inherit;">🤝 Engage Pro Waste Consultants</button>
-        <button onclick="closePaywall()" style="display:block;margin:14px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Not now</button>
-      </div>`;
-    m.addEventListener('click', ev => { if (ev.target === m) closePaywall(); });
-    document.body.appendChild(m);
-  }
-  m.querySelector('#wp-paywall-title').textContent = copy.title;
-  m.querySelector('#wp-paywall-body').textContent = copy.body;
+        body: 'Your two included checks for this project are done, and the results stay saved in the project. Subscribing adds 10 checks a day across unlimited projects; a Pro Waste project has no check limit.' };
+  const pid = (typeof currentProjectId !== 'undefined' && currentProjectId) || (getProjects().find(p => !p.orgId && !p.shared) || {}).id || null;
+  const m = wpUpgradeModalShell('wp-paywall-modal', closePaywall);
+  m.querySelector('[data-r="title"]').textContent = copy.title;
+  m.querySelector('[data-r="body"]').textContent = copy.body;
+  m.querySelector('[data-r="tiers"]').innerHTML = wpTierLinesHtml();
+  const sub = m.querySelector('[data-r="sub"]'), pwc = m.querySelector('[data-r="pwc"]');
+  sub.textContent = 'Subscribe';
+  pwc.textContent = '🤝 Engage Pro Waste for this project';
+  sub.onclick = () => { wpUpgradeChoice('paywall', reason, 'subscribe'); closePaywall(); showPricing(); };
+  pwc.onclick = () => { wpUpgradeChoice('paywall', reason, 'engage'); closePaywall(); wpFeeProposal('paywall_' + (reason || ''), pid); };
   m.style.display = 'flex';
 }
 function closePaywall() {
   const m = document.getElementById('wp-paywall-modal');
   if (m) m.style.display = 'none';
 }
+function wpUpgradeChoice(surface, reason, option) {
+  if (typeof logEvent === 'function') logEvent('paywall_option', { surface, reason: reason || null, option });
+}
+
+// Export refused: the upgrade modal opens instead of the download.
+function showExportUpgrade(kind, projectId, ent) {
+  const m = wpUpgradeModalShell('wp-export-modal', closeExportUpgrade);
+  m.querySelector('[data-r="title"]').textContent = 'Exports are included with a subscription or a Pro Waste project';
+  m.querySelector('[data-r="body"]').textContent = (ent && ent.readOnly)
+    ? 'Pro Waste’s engagement on this project has ended. The project and everything in it are still here to view; exports and edits need a subscription.'
+    : 'Everything you’ve built stays here and every tool keeps working in the app. To take drawings, sheets and reports away, subscribe or have Pro Waste prepare the WMP for this project.';
+  m.querySelector('[data-r="tiers"]').innerHTML = wpTierLinesHtml();
+  const sub = m.querySelector('[data-r="sub"]'), pwc = m.querySelector('[data-r="pwc"]');
+  sub.textContent = 'Subscribe';
+  pwc.textContent = 'Get a fee proposal';
+  sub.onclick = () => { wpUpgradeChoice('export', kind, 'subscribe'); closeExportUpgrade(); showPricing(); };
+  pwc.onclick = () => { wpUpgradeChoice('export', kind, 'fee_proposal'); closeExportUpgrade(); wpFeeProposal('export_' + (kind || ''), projectId); };
+  m.style.display = 'flex';
+}
+function closeExportUpgrade() {
+  const m = document.getElementById('wp-export-modal');
+  if (m) m.style.display = 'none';
+}
+
 function wpPaywallUpgrade() {
   closePaywall();
   showPricing();
@@ -16367,7 +16812,8 @@ function updateProfileUI() {
   const wmpBtn = document.getElementById('btn-request-wmp');
   if (wmpBtn && wmpBtn.dataset.submitted !== 'true') {
     const staff = (typeof wmpgIsStaff === 'function') && wmpgIsStaff();
-    wmpBtn.textContent = staff ? '\u{1F4C4} Generate WMP' : '\u{1F91D} Engage Pro Waste Consultants';
+    // WMPs stay PWC-prepared at every level, subscribers included
+    wmpBtn.textContent = staff ? '\u{1F4C4} Generate WMP' : '\u{1F4C4} Get your WMP prepared by Pro Waste';
     wmpBtn.title = staff ? 'Open the WMP generator' : 'A Pro Waste consultant prepares your WMP, advises on the design, or answers an RFI \u2014 from this project\u2019s data';
   }
   const queueNav = document.getElementById('nav-wmp-queue');
@@ -16433,9 +16879,22 @@ function updateProfileUI() {
   // Seat members don't own a Stripe subscription — their access rides the
   // organisation's plan, so billing controls would dead-end at Stripe.
   const isSeat = p.tier_source === 'seat';
+  // A subscription granted by hand while billing is in test mode has no
+  // Stripe subscription either — same dead end, same hidden controls.
+  const isManual = p.tier_source === 'manual';
   const billingActions = document.getElementById('sub-billing-actions');
-  if (billingActions) billingActions.style.display = isSeat ? 'none' : 'contents';
-  if (sd && isSeat) {
+  if (billingActions) billingActions.style.display = (isSeat || isManual) ? 'none' : 'contents';
+  if (sd && isManual) {
+    sd.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
+      <div>
+        <div style="font-weight:600;font-size:13px;">Subscription</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Granted by Pro Waste — unlimited projects and exports, no charge</div>
+      </div>
+      <span style="background:#E8F5E9;color:#2E7D32;font-size:10px;font-weight:700;padding:3px 10px;border-radius:10px;">Active</span>
+    </div>`;
+  }
+  else if (sd && isSeat) {
     const seatOrg = (typeof myOrgs !== 'undefined' && myOrgs.length) ? myOrgs[0].name : 'your organisation';
     sd.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;">
@@ -16453,9 +16912,7 @@ function updateProfileUI() {
         <div style="font-size:11px;color:var(--muted);margin-top:2px;">Manage billing via Stripe customer portal</div>
       </div>
       ${p.tier && p.tier !== 'none'
-        ? (p.trial_ends_at && new Date(p.trial_ends_at) > new Date()
-            ? `<span style="background:#FFF3E0;color:#E65100;font-size:10px;font-weight:700;padding:3px 10px;border-radius:10px;">Trial — first charge ${new Date(p.trial_ends_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</span>`
-            : '<span style="background:#E8F5E9;color:#2E7D32;font-size:10px;font-weight:700;padding:3px 10px;border-radius:10px;">Active</span>')
+        ? '<span style="background:#E8F5E9;color:#2E7D32;font-size:10px;font-weight:700;padding:3px 10px;border-radius:10px;">Active</span>'
         : '<button onclick="showPricing()" style="background:var(--teal);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;">Upgrade</button>'}
     </div>`;
 }
@@ -16494,8 +16951,14 @@ async function loadProjectsFromDB() {
   let q = sb.from('projects').select('*');
   if (typeof currentOrg !== 'undefined' && currentOrg) q = q.eq('org_id', currentOrg.id);
   else q = q.eq('user_id', currentUser.id).is('org_id', null);
-  const { data, error } = await q.order('created_at', { ascending: false });
+  const { data: own, error } = await q.order('created_at', { ascending: false });
   if (error) { console.error('Load projects error:', error); return; }
+  // Personal context also lists the Pro Waste projects shared with this
+  // account (project_members) and, for staff, every engaged project — the
+  // WMP is prepared from the client's own project data.
+  const shared = (typeof currentOrg !== 'undefined' && currentOrg) ? [] : await wpLoadSharedProjects();
+  const ownIds = new Set((own || []).map(p => p.id));
+  const data = own ? own.concat(shared.filter(p => !ownIds.has(p.id))) : null;
   if (data) {
     // True merge: cloud rows win on shared ids but keep local-only fields and
     // local-only projects; app_data restores docs metadata + canvas state.
@@ -16522,6 +16985,14 @@ async function loadProjectsFromDB() {
         stages: ad.stages || prev.stages || null,
         // PWC job number — 'in' so a number cleared on another device stays cleared
         projId: ('projId' in ad) ? (ad.projId || '') : (prev.projId || ''),
+        // Access tiers — staff-set engagement (sql/2026-10-18-access-tiers.sql)
+        pwcEngaged: p.pwc_engaged === true,
+        engagedAt: p.engaged_at || null,
+        engagedBy: p.engaged_by || null,
+        pwcJobNumber: p.pwc_job_number || null,
+        engagementEndedAt: p.engagement_ended_at || null,
+        // not this account's own row: a design-team or staff view of a client project
+        shared: !!(p.user_id && p.user_id !== currentUser.id && !p.org_id),
       };
       if (ad.ws) {
         try {
@@ -16536,9 +17007,44 @@ async function loadProjectsFromDB() {
   }
 }
 
+// Projects shared with this account: accept any pending design-team invites
+// to the account's confirmed email, then read the projects they open (RLS:
+// projects_member_read; staff also see engaged projects). Before the
+// access-tiers migration both calls fail and this returns nothing.
+async function wpLoadSharedProjects() {
+  if (typeof sb === 'undefined' || !sb || !currentUser) return [];
+  try {
+    const { data: n } = await sb.rpc('wp_accept_project_invites');
+    if (n > 0 && typeof logEvent === 'function') logEvent('team_invite_accepted', { count: n });
+  } catch (e) {}
+  const out = [];
+  try {
+    const { data: mem } = await sb.from('project_members').select('project_id').eq('user_id', currentUser.id);
+    const ids = (mem || []).map(m => m.project_id);
+    if (ids.length) {
+      const { data } = await sb.from('projects').select('*').in('id', ids);
+      (data || []).forEach(p => out.push(p));
+    }
+  } catch (e) {}
+  if (typeof wmpgIsStaff === 'function' && wmpgIsStaff()) {
+    try {
+      const { data } = await sb.from('projects').select('*').not('engaged_at', 'is', null).neq('user_id', currentUser.id);
+      (data || []).forEach(p => { if (!out.some(x => x.id === p.id)) out.push(p); });
+    } catch (e) {}
+  }
+  return out;
+}
+
 async function saveProjectToDB(project) {
   if (!currentUser) return;
-  const { error } = await sb.from('projects').upsert({
+  // A project whose Pro Waste engagement has ended is read-only without a
+  // subscription. The server refuses the write (trg_wp_ended_read_only); the
+  // client does not send it, and says why once.
+  if (typeof wpEntitlementsResolve === 'function' && wpEntitlements(project.id).readOnly) {
+    wpReadOnlyNotice(project);
+    return;
+  }
+  const row = {
     id: project.id,
     // Org projects keep their original owner when a colleague saves them —
     // the row belongs to the org; user_id is just provenance.
@@ -16566,8 +17072,20 @@ async function saveProjectToDB(project) {
       ws: (() => { try { return JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) { return null; } })(),
     },
     updated_at: new Date().toISOString(),
-  });
+  };
+  // A shared project (design team, or staff on a client's engaged project)
+  // is UPDATED, never upserted: the row exists and belongs to its owner, and
+  // an upsert would need insert rights the team never has.
+  const { error } = project.shared
+    ? await sb.from('projects').update(row).eq('id', project.id)
+    : await sb.from('projects').upsert(row);
+  if (error && /project_read_only/.test(error.message || '')) { wpReadOnlyNotice(project); return; }
   if (error) console.error('Save project error (add app_data jsonb column if missing):', error);
+}
+function wpReadOnlyNotice(project) {
+  if (!project || wpReadOnlyNotice.shown === project.id) return;
+  wpReadOnlyNotice.shown = project.id;
+  alert('“' + wpProjectTitle(project) + '” is read-only: Pro Waste’s engagement on it has ended. Everything in it is still here to view — changes are not saved without a subscription.');
 }
 
 async function deleteProjectFromDB(id) {
@@ -16891,7 +17409,7 @@ function wpAnonToAuth(tab) {
   if (line) {
     line.innerHTML = (claim?.kind === 'compliance'
       ? '<b style="color:var(--text);">Your compliance result is ready to keep.</b> Create a free account and it attaches to your first project — nothing re-runs.'
-      : '<b style="color:var(--text);">Your first project is free.</b> All tools, exports included. No card needed.') +
+      : '<b style="color:var(--text);">Your first project is free.</b> Every tool, in the app. No card needed.') +
       (wpAnonActive() ? ' <a href="#" onclick="wpAnonBackToResult();return false;" style="color:var(--teal);text-decoration:none;white-space:nowrap;">← Back to your check</a>' : '');
   }
   document.getElementById('app-content').style.display = 'none';
@@ -16931,7 +17449,12 @@ document.addEventListener('keydown', e => {
     <!-- Plan selection view -->
     <div id="pricing-plan-view">
       <div class="pricing-modal-title">Upgrade to Waste Planner</div>
-      <div class="pricing-modal-sub">Your free project and everything in it stays yours. Upgrade for unlimited projects and daily AI use — cancel anytime.</div>
+      <div class="pricing-modal-sub">Your free project and everything in it stays yours. Subscribe for unlimited projects, exports and daily AI use — cancel anytime.</div>
+      <div class="pricing-tiers" style="background:var(--lt);border-radius:10px;padding:10px 16px;margin:0 0 16px;font-size:12px;line-height:1.7;color:var(--teal);">
+        <div><b>Free:</b> try one project, no exports.</div>
+        <div><b>Pro Waste project:</b> full access for your design team when Pro Waste prepares your WMP.</div>
+        <div><b>Subscription:</b> unlimited projects and exports.</div>
+      </div>
 
       <div class="pricing-cards">
         <div class="pricing-card featured">
@@ -16940,13 +17463,15 @@ document.addEventListener('keydown', e => {
           <div class="pricing-card-price">$149<span>/month</span></div>
           <div class="pricing-card-founding">Founding price — locked for life</div>
           <ul class="pricing-card-features">
+            <li>Unlimited projects</li>
+            <li>Every export — PDF sheets, DXF, images, compliance reports</li>
             <li>Unlimited bin calculator + volumes</li>
-            <li>Unlimited layout generator + DXF</li>
+            <li>Unlimited layout generator</li>
             <li>AI plan upload — 10/day</li>
             <li>Compliance checker — 10 scans/day</li>
             <li>Swept path generator</li>
             <li>Project history + file saving</li>
-            <li>25–30% off Pro Waste WMP fees</li>
+            <li>WMPs prepared by Pro Waste — 25–30% off fees</li>
           </ul>
           <button class="pricing-cta primary" onclick="selectPlan('founding')">Upgrade — $149/month →</button>
         </div>
@@ -17152,9 +17677,8 @@ async function handlePayment() {
 
     // Create the REAL subscription server-side: billed from day one (no
     // trial), tier written by the billing system (the browser can no longer
-    // set its own tier — the DB trigger blocks it). The create-subscription
-    // edge function must drop trial_period_days to match; until it does, any
-    // trial_ends_at it returns is displayed honestly below.
+    // set its own tier — the DB trigger blocks it). create-subscription has
+    // no trial_period_days, so there is no trial to describe.
     const { data: { session } } = await sb.auth.getSession();
     if (!session) throw new Error('No session after sign-in');
     const subResp = await fetch(`${AI_PROXY_BASE}/create-subscription`, {
@@ -17168,20 +17692,14 @@ async function handlePayment() {
       btn.disabled = false; btn.textContent = 'Subscribe →';
       return;
     }
-    if (currentProfile) { currentProfile.tier = subOut.tier; currentProfile.trial_ends_at = subOut.trial_ends_at; }
+    if (currentProfile) { currentProfile.tier = subOut.tier; currentProfile.trial_ends_at = null; }
     if (typeof updateProfileUI === 'function') updateProfileUI();
 
     if (typeof logEvent === 'function') logEvent('subscribed', { plan: selectedPlan || null, tier: subOut.tier || null });
     closePricing();
     showApp();
-    if (subOut.trial_ends_at) {
-      // Server still granted a trial (edge function not yet de-trialed) — say
-      // what actually happened rather than pretending it billed today.
-      const firstCharge = new Date(subOut.trial_ends_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long' });
-      alert(`🎉 You're on ${PLAN_LABELS[selectedPlan].name}!\n\nFull access from right now. Your first charge is on ${firstCharge}.`);
-    } else {
-      alert(`🎉 You're on ${PLAN_LABELS[selectedPlan].name}!\n\nUnlimited projects and daily AI use are live now. Manage or cancel anytime from your profile.`);
-    }
+    if (typeof wpPushExportEnt === 'function') wpPushExportEnt();
+    alert(`🎉 You're on ${PLAN_LABELS[selectedPlan].name}!\n\nUnlimited projects, exports and daily AI use are live now. Manage or cancel anytime from your profile.`);
     applyRoleAccess();
     document.getElementById('sidebar-upgrade-btn')?.remove();
 
@@ -22521,6 +23039,7 @@ function wsManOverlayRender(mk, gW, mpp, slot) {
 
 // ── worst-point snapshot for the report ──
 async function wsManSnapshot() {
+  if (!wsExportAllowed('manoeuvre_png')) return;
   const res = WS_MAN.res; if (!res) return;
   const mpp = wsLayoutMpp(); if (!mpp) return;
   wsManStop();
@@ -26143,6 +26662,7 @@ function wsLayoutStampAt(x, y) {
 }
 
 function wsLayoutExportDXF() {
+  if (!wsExportAllowed('layout_dxf')) return;
   const mpp = wsLayoutMpp(); if (!mpp) return;
   const ents = wsLayoutDXFEntities(mpp);
   const blocks = wsLayoutDXFBlocks(mpp,
@@ -27789,6 +28309,7 @@ function wsRampVehSvg(smp, sec, map) {
 
 // ── snapshot export ──
 async function wsRampSnapshot() {
+  if (!wsExportAllowed('ramp_png')) return;
   if (!WS_RAMP.segs.length) { wsRampMsg('Nothing to export yet.', true); return; }
   const svg = document.getElementById('ws-ramp-svg');
   const ser = new XMLSerializer().serializeToString(svg);
@@ -28564,6 +29085,7 @@ function wsCalibrationCircle(){
 }
 
 function wsSweptDXF(){
+  if (!wsExportAllowed('swept_dxf')) return;
   const s = wsSweptSlot();
   const done = s.paths.filter(p => p.result);
   if (!done.length) return;
@@ -29182,7 +29704,13 @@ function wsLegendItems(layers, content) {
 let WS_SHEET_DLG = null;
 // Button entry point. An async handler that throws produces an unhandled rejection
 // and, from the user's side, absolutely nothing — so every failure is surfaced.
+// Access tiers: every Design-workspace export asks wpExportGate about the
+// workspace's own project before it writes a file (refused → upgrade modal).
+function wsExportAllowed(kind) {
+  return typeof wpExportGate === 'function' && wpExportGate(kind, wsExportProjectId());
+}
 function wsExportPDF() {
+  if (!wsExportAllowed('sheet_pdf')) return;
   wsExportPDFAsync().catch(e => {
     console.error(e);
     alert('Could not open the export dialog: ' + (e && e.message ? e.message : e));
@@ -29368,6 +29896,7 @@ function wsSheetOverlayClone(crop) {
   return clone;
 }
 function wsSheetExportSafe() {
+  if (!wsExportAllowed('sheet_pdf')) return;
   wsSheetExport().catch(e => {
     console.error(e);
     const b = document.getElementById('ws-sheet-go');
@@ -29736,6 +30265,7 @@ function wsSheetDlgCollect() {
   return s;
 }
 function wsExportDXF() {
+  if (!wsExportAllowed('dxf')) return;
   const slot = (typeof wsLayoutSlot === 'function') ? wsLayoutSlot() : null;
   const hasLayout = slot && (slot.bins.length || slot.rooms.length);
   let hasSwept = false;
