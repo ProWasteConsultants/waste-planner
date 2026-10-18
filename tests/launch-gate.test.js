@@ -29,11 +29,37 @@ test('wpLaunchGateAllows: staff, the admin and confirmed @prowaste.au in; everyo
   assert.equal(ok({ is_anonymous: true, email: '' }, { is_staff: true }), false, 'anonymous guest');
 });
 
+test('a design-team member with a confirmed email gets in; an unconfirmed one does not', () => {
+  const { wpLaunchGateAllows: ok } = loadGate();
+  assert.equal(ok({ email: 'arch@firm.com', email_confirmed_at: '2026-01-01' }, null, true), true, 'team member');
+  assert.equal(ok({ email: 'arch@firm.com' }, null, true), false, 'unconfirmed: could be anyone');
+  assert.equal(ok({ email: 'arch@firm.com', email_confirmed_at: '2026-01-01' }, null, false), false, 'not on a team');
+  assert.equal(ok({ is_anonymous: true, email_confirmed_at: 'x' }, null, true), false, 'anonymous never');
+  const chk = extractBlock(/^async function wpLaunchGateTeamCheck\(/).text;
+  assert.ok(chk.indexOf("rpc('wp_accept_project_invites')") < chk.indexOf("from('project_members')"), 'pending invites accepted before counting');
+});
+
+test('email links: the hash session is read, stripped, and a reset or invitation asks for a password', () => {
+  const { wpAuthLinkParse: P } = new Function(extractBlock(/^function wpAuthLinkParse\(/).text + '\n;return { wpAuthLinkParse };')();
+  assert.deepStrictEqual(P('#access_token=a&refresh_token=r&expires_in=3600&type=invite'), { access_token: 'a', refresh_token: 'r', type: 'invite' });
+  assert.equal(P('#access_token=a&refresh_token=r&type=recovery').type, 'recovery');
+  assert.deepStrictEqual(P('#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'), { error: 'Email link is invalid or has expired' });
+  assert.equal(P(''), null);
+  assert.equal(P('#pw-app'), null, 'an ordinary anchor is not a link');
+  assert.equal(P('#access_token=a'), null, 'no refresh token, no session');
+  const consume = extractBlock(/^async function wpAuthLinkConsume\(/).text;
+  assert.ok(consume.indexOf('history.replaceState') < consume.indexOf('setSession'), 'tokens leave the address bar before anything else');
+  assert.ok(SOURCE.includes('const linkType = await wpAuthLinkConsume();'), 'consumed at boot, before the session is read');
+  assert.ok(SOURCE.includes('if (!currentProfile) await wpEnsureProfile();'), 'an invitee without a profile gets one');
+  assert.match(extractBlock(/^async function wpEnsureProfile\(/).text, /tier: 'none'/, 'same tier rule as signup');
+});
+
 test('the gate is wired into every way in', () => {
   assert.match(SOURCE, /^const WP_COMING_SOON = (true|false);$/m, 'one switch');
   assert.match(SOURCE, /<div class="auth-screen wp-cs" id="auth-screen">/, 'markup ships gated — fails closed');
   const showApp = extractBlock(/^function showApp\(/).text;
-  assert.match(showApp.split('\n').slice(0, 5).join('\n'), /wpLaunchGateAllows\(currentUser, currentProfile\)/, 'showApp checks before loading anything');
+  assert.match(showApp.split('\n').slice(0, 5).join('\n'), /wpLaunchGateAllows\(currentUser, currentProfile, wpLaunchGateTeamCheck\.ok === true\)/, 'showApp checks before loading anything');
+  assert.ok(showApp.indexOf('wpLaunchGateTeamCheck().then(ok => ok ? showApp() : wpLaunchGateBounce())') < showApp.indexOf("getElementById('app-content').style.display = 'flex'"), 'the team check runs before the app opens, and a non-member is bounced');
   for (const fn of [/^function handleSignupToPay\(/, /^async function handleFreeSignup\(/, /^async function handleSignup\(/, /^async function wpAnonStart\(/, /^function wpAnonEnter\(/])
     assert.match(extractBlock(fn).text, /wpComingSoon\(\)/, `${fn} is closed while gated`);
   assert.match(SOURCE, /\.auth-screen\.wp-cs #auth-value-line,\.auth-screen\.wp-cs \.auth-tabs,\.auth-screen\.wp-cs #auth-signup\{display:none !important;\}/, 'sign-up form hidden even in team mode');
