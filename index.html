@@ -10114,11 +10114,11 @@ async function projSetEngaged(id, on) {
 async function projTeamLoad(projectId) {
   const el = document.getElementById('proj-team-list');
   if (!el) return;
-  const { data, error } = await sb.from('project_members').select('id,email,accepted_at,created_at').eq('project_id', projectId).order('created_at');
+  const { data, error } = await sb.from('project_members').select('id,email,accepted_at,created_at,notified_at,notify_status').eq('project_id', projectId).order('created_at');
   if (error) { el.textContent = 'Team list unavailable.'; return; }
   el.innerHTML = (data || []).length
     ? data.map(m => `<div style="display:flex;justify-content:space-between;align-items:center;background:#18212166;border-radius:6px;padding:5px 10px;margin-bottom:4px;">
-        <span>✉ ${wpEscHtml(m.email)} <span style="opacity:.7">(${m.accepted_at ? 'joined' : 'invited'})</span></span>
+        <span>✉ ${wpEscHtml(m.email)} <span style="opacity:.7">(${m.accepted_at ? 'joined' : m.notified_at ? 'invited · emailed' : /^failed/.test(m.notify_status || '') ? 'invited · email failed — remove and re-invite to retry' : 'invited'})</span></span>
         <button onclick="projTeamRemove('${wpEscHtml(m.id)}','${wpEscHtml(projectId)}')" style="background:none;border:none;color:#EF8080;cursor:pointer;font-size:11px;font-family:inherit;">Remove</button></div>`).join('')
     : 'No one invited yet.';
 }
@@ -10139,19 +10139,45 @@ async function projTeamInvite() {
   const email = projTeamEmailClean(input.value);
   if (!email) { msg.textContent = 'Enter a valid email address.'; return; }
   if (currentUser?.email && email === currentUser.email.toLowerCase()) { msg.textContent = 'That’s you — you already have this project.'; return; }
-  const { error } = await sb.from('project_members').insert({ project_id: pid, email });
+  const { data: row, error } = await sb.from('project_members').insert({ project_id: pid, email }).select('id').single();
   if (error) {
     msg.textContent = error.code === '23505' ? 'Already invited.' : 'Could not invite: ' + (error.message || error);
     return;
   }
   input.value = '';
-  msg.style.color = '#81C784';
-  msg.textContent = 'Invited — we’ve emailed ' + email + '. They’ll see this project when they sign in with that address.';
-  // Analytics only. The invitation email is sent from the project_members
-  // row itself (Database Webhook → crm-events "team_invite"), never from an
-  // events row a client could forge with any address.
+  msg.style.color = 'var(--muted)';
+  msg.textContent = 'Invited — sending the email…';
   if (typeof logEvent === 'function') logEvent('team_invite_sent', { project_id: pid });
   projTeamLoad(pid);
+  // The email: the project-invite edge function, through Supabase Auth's
+  // own mailer. The invite stands whether or not the email goes — they see
+  // the project when they sign in with that address — so a failed send is
+  // stated, never treated as a failed invite.
+  const sent = await projTeamSendEmail(row.id);
+  msg.style.color = sent.ok ? '#81C784' : '#FFB74D';
+  msg.textContent = sent.ok
+    ? (sent.status === 'sign_in_link'
+        ? email + ' already has a WastePlanner account — we’ve emailed them a sign-in link. The project is waiting in their list.'
+        : 'Invitation emailed to ' + email + '. They’ll see this project once they accept it.')
+    : 'Invited, but the email didn’t send (' + sent.error + '). ' + email + ' will still see the project when they sign in with that address.';
+  projTeamLoad(pid);
+}
+async function projTeamSendEmail(memberId) {
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) return { ok: false, error: 'not signed in' };
+    if (typeof AI_PROXY_BASE === 'undefined') return { ok: false, error: 'email service not configured' };
+    const r = await fetch(`${AI_PROXY_BASE}/project-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+      body: JSON.stringify({ member_id: memberId }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: out.error || ('email service ' + r.status) };
+    return { ok: true, status: out.status };
+  } catch (e) {
+    return { ok: false, error: 'email service unreachable' };
+  }
 }
 
 async function projTeamRemove(memberId, projectId) {

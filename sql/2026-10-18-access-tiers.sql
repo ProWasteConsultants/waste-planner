@@ -118,6 +118,12 @@ returns uuid language sql stable security definer set search_path = public as $$
   select user_id from public.projects where id::text = p_project;
 $$;
 
+-- Invitation email bookkeeping, written only by the project-invite edge
+-- function (service role): sent once per row, and what happened.
+alter table public.project_members
+  add column if not exists notified_at timestamptz,
+  add column if not exists notify_status text;
+
 create unique index if not exists project_members_once
   on public.project_members (project_id, lower(email));
 create index if not exists project_members_user on public.project_members (user_id);
@@ -138,7 +144,7 @@ drop policy if exists project_members_invite on public.project_members;
 create policy project_members_invite on public.project_members
   for insert to authenticated
   with check (public.wp_project_engaged(project_id::text)
-              and user_id is null and accepted_at is null
+              and user_id is null and accepted_at is null and notified_at is null
               and (public.wp_project_owner(project_id::text) = auth.uid()
                    or public.wp_is_staff(auth.uid())));
 
@@ -148,12 +154,11 @@ create policy project_members_remove on public.project_members
   using (public.wp_project_owner(project_id::text) = auth.uid()
          or public.wp_is_staff(auth.uid()));
 
--- INVITATION EMAIL — one dashboard step this file cannot do: Database →
--- Webhooks → new webhook on INSERT into public.project_members, type
--- "Supabase Edge Function", target crm-events (the same function the events
--- and waitlist webhooks use). Each new row is relayed as event "team_invite"
--- with the invitee as the contact, and a CRM workflow on that event sends
--- the email. Removing and re-inviting someone sends it again.
+-- INVITATION EMAIL: the app calls the project-invite edge function after
+-- inserting a row; it sends through Supabase Auth's own mailer (the Invite
+-- user template for a new address, a sign-in link for an existing account)
+-- and stamps notified_at, once per row. Removing and re-inviting someone
+-- sends it again. See supabase/functions/project-invite/index.ts.
 
 -- Accept on sign-in: every pending invite to this account's CONFIRMED email.
 -- An unconfirmed address could be anyone's, so it accepts nothing.

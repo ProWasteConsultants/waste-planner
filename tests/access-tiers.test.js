@@ -165,15 +165,22 @@ test('the SQL states the same rule, ships GRANTs + RLS, and keeps engagement sta
   assert.match(SQL, /where uuid = v_uid and tier_source = 'manual';/, 'revoking only removes a manual grant');
 });
 
-test('invite email: sent from the project_members row, with the invitee as the contact — never from a client event', () => {
-  const crm = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'crm-events', 'index.ts'), 'utf8');
-  assert.match(crm, /if \(payload\.table === "project_members" && rec\) \{\s*return relay\(url, secret, await teamInvite\(rec, serviceKey\)\);/);
-  assert.match(crm, /event: "team_invite",\s*user_id: null,\s*email: rec\.email \?\? null,/, 'the invitee is the contact');
-  assert.ok(!crm.includes('"team_invite_sent"'), 'the client analytics event is not relayed — it could carry any address');
-  assert.ok(crm.indexOf('auth !== `Bearer ${serviceKey}`') < crm.indexOf('payload.table === "project_members"'), 'service-key check runs first');
+test('invite email: the project-invite function, through Supabase Auth, once per row, only by whoever made the invite', () => {
+  const fnSrc = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'project-invite', 'index.ts'), 'utf8');
+  assert.ok(fnSrc.indexOf('auth.getUser()') < fnSrc.indexOf('inviteUserByEmail(m.email'), 'caller is authenticated first');
+  assert.match(fnSrc, /if \(m\.invited_by !== user\.id && !me\?\.is_staff\) return jsonRes\(\{ error: "Not your invite" \}, 403/);
+  assert.match(fnSrc, /if \(m\.notified_at\) return jsonRes\(\{ status: "already_sent" \}/, 'one email per row');
+  assert.match(fnSrc, /if \(!project\?\.pwc_engaged\)/, 'engaged projects only');
+  assert.match(fnSrc, /inviteUserByEmail\(m\.email, \{ data: meta \}\)/, 'new address → Invite user template with project + inviter');
+  assert.match(fnSrc, /signInWithOtp\(\{\s*email: m\.email,\s*options: \{ shouldCreateUser: false \}/, 'existing account → sign-in link, never a new account');
   const inv = extractBlock(/^async function projTeamInvite\(/).text;
-  assert.ok(!/invitee_email|logEvent\([^)]*email/.test(inv), 'no address in the client event');
-  assert.match(SQL, /Webhooks → new webhook on INSERT into public\.project_members/, 'the SQL says which webhook to add');
+  assert.ok(inv.indexOf(".insert({ project_id: pid, email })") < inv.indexOf('projTeamSendEmail(row.id)'), 'the row first, then the email for that row');
+  assert.ok(!/invitee_email|logEvent\([^)]*email/.test(inv), 'no address in the analytics event');
+  assert.match(inv, /Invited, but the email didn’t send/, 'a failed send is stated, and the invite stands');
+  assert.match(SQL, /add column if not exists notified_at timestamptz/);
+  assert.match(SQL, /and user_id is null and accepted_at is null and notified_at is null/, 'a client cannot pre-stamp a row as sent');
+  const crm = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'crm-events', 'index.ts'), 'utf8');
+  assert.ok(!crm.includes('team_invite_sent') && !crm.includes('project_members'), 'not routed through the CRM');
 });
 
 // ── §6 ──
