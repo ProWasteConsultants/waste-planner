@@ -16031,13 +16031,35 @@ function wpComingSoon() { return WP_COMING_SOON === true; }
 // address is CONFIRMED — while sign-ups stay open server-side, anyone can
 // register an unconfirmed address at any domain. is_staff and the admin
 // address are the other two ways in, as in wmpgIsStaff.
-function wpLaunchGateAllows(user, profile) {
+// A fourth way in: a design-team member — someone invited to a Pro Waste-
+// engaged project (project_members) — with a CONFIRMED email. teamMember is
+// looked up by wpLaunchGateTeamCheck; this rule stays pure.
+function wpLaunchGateAllows(user, profile, teamMember) {
   if (!user || user.is_anonymous) return false;
   if (profile && profile.is_staff === true) return true;
   const email = String(user.email || '').toLowerCase();
   if (!email) return false;
   if (email === ADMIN_EMAIL) return true;
-  return /@prowaste\.au$/.test(email) && !!(user.email_confirmed_at || user.confirmed_at);
+  const confirmed = !!(user.email_confirmed_at || user.confirmed_at);
+  if (teamMember === true && confirmed) return true;
+  return /@prowaste\.au$/.test(email) && confirmed;
+}
+
+// Is the signed-in account on a project's design team? Accepts any pending
+// invites to its confirmed email first, so a brand-new invitee arriving from
+// the invitation email counts on their first visit. The answer is kept on
+// the function itself for showApp's synchronous gate.
+async function wpLaunchGateTeamCheck() {
+  wpLaunchGateTeamCheck.ok = false;
+  if (typeof sb === 'undefined' || !sb || !currentUser || currentUser.is_anonymous) return false;
+  if (!(currentUser.email_confirmed_at || currentUser.confirmed_at)) return false;
+  try { await sb.rpc('wp_accept_project_invites'); } catch (e) {}
+  try {
+    const { count, error } = await sb.from('project_members')
+      .select('id', { count: 'exact', head: true }).eq('user_id', currentUser.id);
+    wpLaunchGateTeamCheck.ok = !error && (count || 0) > 0;
+  } catch (e) {}
+  return wpLaunchGateTeamCheck.ok;
 }
 
 // ── REGISTER INTEREST (coming-soon card) ──
@@ -16101,6 +16123,7 @@ function wpTeamSignIn() {
 // Called by showApp before anything loads. Signs a non-team account out and
 // puts the coming-soon screen back, with a plain reason.
 async function wpLaunchGateBounce() {
+  wpLaunchGateTeamCheck.ok = false; wpLaunchGateTeamCheck.asked = null;
   try { await sb.auth.signOut(); } catch (e) {}
   currentUser = null; currentProfile = null;
   const scr = document.getElementById('auth-screen');
@@ -16110,6 +16133,113 @@ async function wpLaunchGateBounce() {
   if (btn) { btn.disabled = false; btn.textContent = 'Sign In →'; }
   const msg = document.getElementById('wl-msg');
   if (msg) { msg.textContent = 'WastePlanner isn’t open yet — this account doesn’t have early access.'; msg.className = 'auth-msg error'; }
+}
+
+// ── EMAIL LINKS: invitation · sign-in link · password reset ──────────────
+// Supabase's emailed links land here with the session in the URL hash
+// (#access_token=…&refresh_token=…&type=invite|magiclink|recovery|signup),
+// or an error (#error=…&error_description=…) when the link is used or
+// expired. The client is built with detectSessionInUrl off, so this reads the
+// hash itself, signs the session in, and strips the tokens from the address
+// bar. Pure parse first.
+function wpAuthLinkParse(hash) {
+  const h = String(hash || '').replace(/^#/, '');
+  if (!h || h.indexOf('=') < 0) return null;
+  const q = new URLSearchParams(h);
+  if (q.get('error') || q.get('error_code')) {
+    return { error: (q.get('error_description') || q.get('error_code') || q.get('error')).replace(/\+/g, ' ') };
+  }
+  const access_token = q.get('access_token'), refresh_token = q.get('refresh_token');
+  if (!access_token || !refresh_token) return null;
+  return { access_token, refresh_token, type: q.get('type') || '' };
+}
+
+async function wpAuthLinkConsume() {
+  const link = wpAuthLinkParse(location.hash);
+  if (!link) return null;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  if (link.error) {
+    const msg = document.getElementById('login-msg');
+    if (msg) { msg.textContent = 'That email link didn’t work (' + link.error + '). Links can be used once and expire — ask for a new one.'; msg.className = 'auth-msg error'; }
+    return null;
+  }
+  const { error } = await sb.auth.setSession({ access_token: link.access_token, refresh_token: link.refresh_token });
+  if (error) {
+    const msg = document.getElementById('login-msg');
+    if (msg) { msg.textContent = 'That email link didn’t work (' + error.message + ').'; msg.className = 'auth-msg error'; }
+    return null;
+  }
+  return link.type;
+}
+
+// A first visit from an invitation has an auth account but no profile row —
+// signup is what normally writes it. Same row, same tier rule.
+async function wpEnsureProfile() {
+  if (currentProfile || !currentUser || typeof sb === 'undefined' || !sb) return;
+  const meta = currentUser.user_metadata || {};
+  const { error } = await sb.from('profiles').upsert({
+    uuid: currentUser.id, email: currentUser.email,
+    full_name: meta.full_name || '', company_name: meta.company_name || '', tier: 'none',
+  }, { onConflict: 'uuid' });
+  if (error) console.error('Profile create error:', error);
+  await loadProfile();
+}
+
+// After a password-reset link: set a new password. After an invitation: set
+// a password (they arrived without one) and their name.
+function wpSetPasswordPrompt(kind) {
+  let m = document.getElementById('wp-setpw-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'wp-setpw-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11600;display:flex;align-items:center;justify-content:center;';
+    m.innerHTML = `
+      <div style="background:var(--white);border-radius:16px;width:420px;max-width:94vw;padding:26px 30px;">
+        <div id="wp-setpw-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:6px;"></div>
+        <div id="wp-setpw-body" style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:14px;"></div>
+        <input id="wp-setpw-name" placeholder="Your name" style="display:none;width:100%;box-sizing:border-box;border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;margin-bottom:8px;">
+        <input id="wp-setpw-company" placeholder="Company (optional)" style="display:none;width:100%;box-sizing:border-box;border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;margin-bottom:8px;">
+        <input id="wp-setpw-pw" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" style="width:100%;box-sizing:border-box;border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;margin-bottom:8px;">
+        <input id="wp-setpw-pw2" type="password" placeholder="Confirm password" autocomplete="new-password" style="width:100%;box-sizing:border-box;border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;">
+        <div id="wp-setpw-msg" style="font-size:12px;color:#C62828;min-height:16px;margin-top:8px;"></div>
+        <button id="wp-setpw-go" onclick="wpSetPasswordSubmit()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:var(--teal);color:#fff;">Save</button>
+        <button onclick="document.getElementById('wp-setpw-modal').style.display='none'" style="display:block;margin:12px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Later</button>
+      </div>`;
+    document.body.appendChild(m);
+  }
+  const invite = kind === 'invite';
+  m.dataset.kind = kind;
+  document.getElementById('wp-setpw-title').textContent = invite ? 'Welcome to WastePlanner' : 'Set a new password';
+  document.getElementById('wp-setpw-body').textContent = invite
+    ? 'You’ve been added to a project’s design team. Set a password so you can sign in again later.'
+    : 'Choose a new password for ' + (currentUser?.email || 'your account') + '.';
+  document.getElementById('wp-setpw-name').style.display = invite ? 'block' : 'none';
+  document.getElementById('wp-setpw-company').style.display = invite ? 'block' : 'none';
+  document.getElementById('wp-setpw-name').value = currentProfile?.full_name || '';
+  document.getElementById('wp-setpw-company').value = currentProfile?.company_name || '';
+  document.getElementById('wp-setpw-msg').textContent = '';
+  m.style.display = 'flex';
+}
+async function wpSetPasswordSubmit() {
+  const m = document.getElementById('wp-setpw-modal');
+  const msg = document.getElementById('wp-setpw-msg');
+  const pw = document.getElementById('wp-setpw-pw').value;
+  if (pw.length < 8) { msg.textContent = 'Use at least 8 characters.'; return; }
+  if (pw !== document.getElementById('wp-setpw-pw2').value) { msg.textContent = 'The two passwords don’t match.'; return; }
+  const go = document.getElementById('wp-setpw-go');
+  go.disabled = true; go.textContent = 'Saving…';
+  const { error } = await sb.auth.updateUser({ password: pw });
+  if (error) { msg.textContent = error.message; go.disabled = false; go.textContent = 'Save'; return; }
+  if (m.dataset.kind === 'invite' && currentUser) {
+    const full_name = document.getElementById('wp-setpw-name').value.trim();
+    const company_name = document.getElementById('wp-setpw-company').value.trim();
+    if (full_name || company_name) {
+      await sb.from('profiles').update({ full_name, company_name }).eq('uuid', currentUser.id);
+      await loadProfile();
+    }
+  }
+  go.disabled = false; go.textContent = 'Save';
+  m.style.display = 'none';
 }
 
 if (!wpComingSoon()) document.getElementById('auth-screen')?.classList.remove('wp-cs');
@@ -16520,6 +16650,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
 // Check for existing session on load
 (async () => {
   try {
+    const linkType = await wpAuthLinkConsume();
     const { data: { session } } = await sb.auth.getSession();
     if (session?.user?.is_anonymous && wpComingSoon()) {
       // Launch gate: no anonymous checker — drop a persisted guest session.
@@ -16540,7 +16671,18 @@ sb.auth.onAuthStateChange(async (event, session) => {
       currentUser = session.user;
       try { localStorage.setItem('wp_known_user', '1'); } catch (e) {}
       await loadProfile();
+      if (!currentProfile) await wpEnsureProfile();
       showApp();
+      // Once the app is actually showing — a design-team invitee passes the
+      // gate only after its async check — never over the auth screen.
+      if (linkType === 'recovery' || linkType === 'invite') {
+        let tries = 0;
+        const t = setInterval(() => {
+          const inApp = currentUser && document.getElementById('app-content')?.style.display === 'flex';
+          if (inApp) wpSetPasswordPrompt(linkType);
+          if (inApp || ++tries > 20) clearInterval(t);
+        }, 500);
+      }
       return;
     }
     // No session at all: a fresh landing-page arrival opens the anonymous
@@ -16962,7 +17104,15 @@ function updateProfileUI() {
 function showApp() {
   // The launch gate is checked here because every way into the app — sign
   // in, 2FA, a restored session, sign-up — ends in this call.
-  if (wpComingSoon() && !wpLaunchGateAllows(currentUser, currentProfile)) { wpLaunchGateBounce(); return false; }
+  if (wpComingSoon() && !wpLaunchGateAllows(currentUser, currentProfile, wpLaunchGateTeamCheck.ok === true)) {
+    // Not staff: a design-team member still gets in. Ask once, then come back.
+    if (wpLaunchGateTeamCheck.asked !== currentUser?.id) {
+      wpLaunchGateTeamCheck.asked = currentUser?.id || null;
+      wpLaunchGateTeamCheck().then(ok => ok ? showApp() : wpLaunchGateBounce());
+      return false;
+    }
+    wpLaunchGateBounce(); return false;
+  }
   // Entering the app proper always ends the anonymous checker mode — the
   // guest just became (or signed back in as) a real account.
   if (typeof wpAnonActive === 'function' && wpAnonActive()) wpAnonExit();
