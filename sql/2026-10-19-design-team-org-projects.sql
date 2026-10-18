@@ -49,6 +49,7 @@ create policy project_members_remove on public.project_members
 -- notified_at with the service key. service_role skips RLS but still needs
 -- table privileges, which a table created by a migration may not have.
 grant select, update on public.project_members to service_role;
+grant select on public.projects, public.profiles to service_role;
 
 notify pgrst, 'reload schema';
 

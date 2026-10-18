@@ -133,6 +133,7 @@ grant select, insert, delete on public.project_members to authenticated;
 -- The project-invite edge function reads the row and stamps notified_at with
 -- the service key. service_role skips RLS but still needs table privileges.
 grant select, update on public.project_members to service_role;
+grant select on public.projects, public.profiles to service_role;
 
 drop policy if exists project_members_read on public.project_members;
 create policy project_members_read on public.project_members

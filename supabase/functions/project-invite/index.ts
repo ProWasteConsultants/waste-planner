@@ -91,7 +91,8 @@ Deno.serve(async (req) => {
   const { data: project, error: pErr } = await sbAdmin.from("projects")
     .select("name, address, pwc_engaged").eq("id", m.project_id).maybeSingle();
   if (pErr) return jsonRes({ error: "could not read the project: " + pErr.message }, 500, cors);
-  if (!project?.pwc_engaged) return jsonRes({ error: "The project is not engaged with Pro Waste" }, 409, cors);
+  if (!project) return jsonRes({ error: "project " + m.project_id + " not visible to the service key — check the service_role grant on projects" }, 404, cors);
+  if (!project.pwc_engaged) return jsonRes({ error: "The project is not engaged with Pro Waste" }, 409, cors);
 
   const { data: inviter } = m.invited_by === user.id
     ? { data: me }
