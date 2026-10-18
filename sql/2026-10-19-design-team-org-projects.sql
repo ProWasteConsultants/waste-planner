@@ -45,6 +45,11 @@ create policy project_members_remove on public.project_members
   for delete to authenticated
   using (public.wp_project_team_manager(project_id::text, auth.uid()));
 
+-- The project-invite edge function reads the invite row and stamps
+-- notified_at with the service key. service_role skips RLS but still needs
+-- table privileges, which a table created by a migration may not have.
+grant select, update on public.project_members to service_role;
+
 notify pgrst, 'reload schema';
 
 -- ── ROLLBACK (back to creator-or-staff) ───────────────────────────────────

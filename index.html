@@ -10121,7 +10121,7 @@ async function projTeamLoad(projectId) {
   if (error) { el.textContent = 'Team list unavailable.'; return; }
   el.innerHTML = (data || []).length
     ? data.map(m => `<div style="display:flex;justify-content:space-between;align-items:center;background:#18212166;border-radius:6px;padding:5px 10px;margin-bottom:4px;">
-        <span>✉ ${wpEscHtml(m.email)} <span style="opacity:.7">(${m.accepted_at ? 'joined' : m.notified_at ? 'invited · emailed' : /^failed/.test(m.notify_status || '') ? 'invited · email failed — remove and re-invite to retry' : 'invited'})</span></span>
+        <span>✉ ${wpEscHtml(m.email)} <span style="opacity:.7">(${m.accepted_at ? 'joined' : m.notified_at ? 'invited · emailed' : /^failed/.test(m.notify_status || '') ? 'invited · email failed' : 'invited · not emailed'})</span>${(!m.accepted_at && !m.notified_at) ? ` <a href="#" onclick="projTeamRetryEmail('${wpEscHtml(m.id)}','${wpEscHtml(m.email)}','${wpEscHtml(projectId)}');return false;" style="color:var(--teal);font-size:11px;margin-left:6px;">Retry email</a>` : ''}</span>
         <button onclick="projTeamRemove('${wpEscHtml(m.id)}','${wpEscHtml(projectId)}')" style="background:none;border:none;color:#EF8080;cursor:pointer;font-size:11px;font-family:inherit;">Remove</button></div>`).join('')
     : 'No one invited yet.';
 }
@@ -10164,6 +10164,16 @@ async function projTeamInvite() {
         : 'Invitation emailed to ' + email + '. They’ll see this project once they accept it.')
     : 'Invited, but the email didn’t send (' + sent.error + '). ' + email + ' will still see the project when they sign in with that address.';
   projTeamLoad(pid);
+}
+async function projTeamRetryEmail(memberId, email, projectId) {
+  const msg = document.getElementById('proj-team-msg');
+  if (msg) { msg.style.color = 'var(--muted)'; msg.textContent = 'Sending the email to ' + email + '…'; }
+  const sent = await projTeamSendEmail(memberId);
+  if (msg) {
+    msg.style.color = sent.ok ? '#81C784' : '#FFB74D';
+    msg.textContent = sent.ok ? 'Emailed ' + email + '.' : 'The email didn’t send (' + sent.error + ').';
+  }
+  projTeamLoad(projectId);
 }
 async function projTeamSendEmail(memberId) {
   try {
