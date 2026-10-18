@@ -152,6 +152,32 @@ server, mirrored by `wpEntitlementsResolve` (pure) in `index.html`;
 - The three one-line descriptions are `WP_TIER_LINES`, repeated verbatim on
   the pricing page (a test compares them).
 
+## Account deletion and billing self-service (2026-10-19)
+
+- **Each person deletes their own account** — Account Settings › *Delete my
+  account…* (`wpDeleteAccountOpen` / `wpDeleteAccount`) → the
+  `delete-account` edge function. An org admin never deletes someone else;
+  they remove the member from the org, and that person keeps their login.
+- The function refuses first, then acts: typed email must match; the **only
+  admin of an org with other members** is refused (the `leaveOrg` rule); a
+  personal Stripe subscription is **cancelled before any data changes**.
+- Projects sort three ways: **org projects stay with the org** (ownership to
+  another member, an admin first); **Pro Waste-engaged projects are kept for
+  PWC's records** (ownership to `engaged_by`); every other personal project
+  is deleted with **only its own files** — never the whole storage folder,
+  because org and engaged plans live in the uploader's folder too. Ownership
+  is handed over before `auth.admin.deleteUser`, so no foreign key can take a
+  kept project with the login. Invite cleanup matches emails exactly (`eq`,
+  never `ilike` — `_` is a wildcard).
+- Grants: `sql/2026-10-19-delete-account.sql` (this project's tables do not
+  grant `service_role` by default). Privacy policy (both copies) states what
+  is kept.
+- **Cancel / change plan** is Stripe's Customer Portal (`customer-portal`
+  function, source recorded in the repo). Cancelling keeps the account (the
+  webhook drops it to the free plan). Plan switching appears only when enabled
+  in Stripe › Settings › Billing › Customer portal. Seat members' billing is
+  their org admin's.
+
 ## Email links (invitation · sign-in link · password reset)
 
 The Supabase client runs with `detectSessionInUrl: false`, so the app reads
@@ -284,6 +310,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/commercial-mix.test.js` | Commercial mix: AI extraction mapping (`wpComFromExtract`), project-page editor, summary ↔ calculator reconcile |
 | `tests/project-title.test.js` | Optional project name / required address: display title fallback, create validation, summary edits synced to the cloud |
 | `tests/access-tiers.test.js` | Access tiers: entitlement rule, free slots + engaged credit, every export gated (parent + iframes), engagement + design team, the SQL mirror, copy and events |
+| `tests/delete-account.test.js` | Account deletion: own account only, refusals and subscription cancel before any change, org/engaged projects kept, only the deleted projects' files removed |
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
