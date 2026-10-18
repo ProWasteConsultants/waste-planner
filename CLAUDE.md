@@ -15,6 +15,7 @@ check this list before widening who can use the app.
 | 3 | **No PITR — daily backups only.** | **Real customer data.** | **Confirmed 2026-08-24: point-in-time recovery is NOT enabled.** The project has daily backups, which sets a recovery point objective of **up to 24 hours** — a customer who spends a day on a layout can lose that day, and nothing in the app warns them. A restore has also still never been **rehearsed**, so the retention window and the restore path are both untested. And daily backups cover **Postgres only**: uploaded plan PDFs live in Supabase **Storage** (`PLANS_BUCKET`), which they do not include. A restore that brings back every `projects` row and no plan PDFs is a half-restore — every project would open pointing at a drawing that is gone. Decide the acceptable RPO before real customer data, then enable PITR or accept 24h in writing, back up Storage separately, and rehearse once end to end. |
 | 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
 | 10 | **Coming-soon launch gate.** `WP_COMING_SOON = true` in `index.html` closes the app to everyone but the PWC team (`profiles.is_staff`, the admin address, or a *confirmed* `@prowaste.au` address — `wpLaunchGateAllows`, pure). The auth screen shows "Coming soon"; a discreet *Team sign-in* link reveals sign-in only; sign-up and the `?check=wmp` anonymous entry are off; `showApp` signs any other account straight back out. The markup ships gated (`wp-cs` on `#auth-screen`), so it fails closed. The card's **Register interest** form writes to `public.waitlist` (`wpWaitlistClean` pure, `wpWaitlistSubmit`; `sql/2026-10-16-waitlist.sql`): anyone inserts, only `is_staff` reads, one row per email (a repeat reads as "already on the list"), a hidden spam-trap field writes nothing. A Database Webhook on `waitlist` INSERT → `crm-events` relays it as `waitlist_join`. **Client-side only, by decision (2026-10-16):** Supabase Auth still accepts sign-ups and anonymous sign-ins via the API — such an account still cannot get into the app through this page, and RLS guards the data. | **Launch.** | Launch day: set `WP_COMING_SOON = false`. If the hard lock is wanted before then, turn off *Allow new users to sign up* and *Allow anonymous sign-ins* in Supabase Auth. Tested by `tests/launch-gate.test.js`. |
+| 11 | **Access tiers: run the migration + wire the leftovers.** `sql/2026-10-18-access-tiers.sql` must run before engagement, team invites and the manual subscriber grant work (until then the staff controls report it). `WP_FEE_PROPOSAL_URL` is `null`, so "Get a fee proposal" opens the in-app Engage modal rather than the prowaste.au form. Invite emails need the `project-invite` edge function **deployed** (Verify JWT on), and the Supabase *Invite user* email template edited to name the project (`{{ .Data.project_title }}`, `{{ .Data.inviter_name }}` — sample in the function's header). They go through Supabase Auth's own mailer, so the project's SMTP settings govern delivery. While gate 10 is on, an invitee outside PWC cannot get past the coming-soon screen. Open decisions left at their defaults: price unchanged; engaged access lasts until staff clear it; engaged projects keep free AI limits; on-screen previews are not exports. | **Launch** of the tiers to outside users. | Without the SQL every staff action errors; without the email the invitee never hears about the project. |
 | 9 | **ai-user anonymous allowance.** The `?check=wmp` entry hands the checker an `is_anonymous` session token; the ai-user edge function (not in this repo) must grant such tokens exactly ONE lifetime `compliance` run and refuse every other tool tag. Also: "Allow anonymous sign-ins" must be ON in Supabase Auth (off = graceful signup-first fallback, but the offer stops being "no account needed"). | **Pointing the planner landing page at real traffic.** | Until verified, an anonymous check either fails server-side or draws from an unintended allowance bucket. Client + DB fences are done (`sql/2026-09-12-anon-compliance-entry.sql`); this is the last leg. |
 
 **Closed:** Cross-device plan freshness (gate 4). Every stored plan carries a
@@ -92,6 +93,59 @@ merges cloud rows over the `pw_projects` cache (a cache, not a store), and
 the free-project cap reads `profiles.projects_created`, a monotonic counter
 kept by trigger (`sql/2026-09-07-free-tier-enforcement.sql`) — clearing the
 browser cannot reset it.
+
+## Access tiers: Free · Pro Waste project · Subscriber (2026-10-18)
+
+Resolved in this order — subscriber → engaged project → free — by ONE rule:
+`wp_entitlements(project)` in `sql/2026-10-18-access-tiers.sql` on the
+server, mirrored by `wpEntitlementsResolve` (pure) in `index.html`;
+`tests/access-tiers.test.js` pins the two.
+
+- **Free** (tier `none`): one project, every tool in-app, **no exports**, the
+  existing free AI limits. **Subscriber**: a paid tier (`standard`,
+  `founding`, `council_paid`) or staff — unlimited projects and exports, paid
+  AI limits. **Pro Waste project**: `projects.pwc_engaged` — exports on that
+  project for its owner and invited design team, and it does not use the
+  owner's free slot (`profiles.projects_engaged`, monotonic like
+  `projects_created`; slots used = created − engaged).
+- **WMPs stay PWC-prepared at every level.** Non-staff see *Get your WMP
+  prepared by Pro Waste*; the generator is staff-only as before.
+- **Every export asks `wpExportGate(kind, projectId)` before it writes a
+  file** — refused → the upgrade modal and `export_blocked`. Design-workspace
+  exports go through `wsExportAllowed` (fails closed). The sandboxed tool
+  iframes (swept path, health check, compliance checker) carry `wpExpGate`:
+  they refuse until the platform pushes `wp-export-ent`, and a refusal asks
+  the platform (`wp-export-blocked` → `wp-export-go` or the modal), so a
+  missed push never silently allows. A new export path must call the gate.
+- **What the server can enforce**: the project cap, the read-only rule and
+  engagement itself are triggers/RPCs. Exports are rendered in the browser
+  from data the user can already read, so there is no endpoint to refuse;
+  the export refusal is the client asking the rule. Hard enforcement would
+  need server-side rendering — known, accepted.
+- **Engagement is staff-only**: `wp_set_engagement` (staff-checked RPC) and a
+  trigger that keeps client writes off the columns. Staff toggle it in
+  project detail (`projSetEngaged`). Ending it leaves the project
+  **read-only** for non-subscribers (`trg_wp_ended_read_only`; the client
+  does not send the save) — never deleted.
+- **Design team**: `project_members`, invited by email by the owner of an
+  engaged project, accepted on sign-in to a **confirmed** email
+  (`wp_accept_project_invites`). Members see that project only. The
+  invitation email is the `project-invite` edge function, called by the app
+  with the new row's id: Supabase Auth's *Invite user* email for a new
+  address (project + inviter in the user metadata), a sign-in link for an
+  existing account. Only the row's inviter (or staff) can trigger it, once
+  per row (`notified_at`); a failed send is stated and the invite stands.
+  Never email an address taken from client input or an `events` row. A project not
+  owned by the signed-in user is `p.shared`: saved with `update`, never
+  `upsert`, and its plans/documents live in the **owner's** storage folder
+  (`wpProjectStorageUid`; storage policies in the same SQL). Staff see every
+  engaged project in their list, which is how the WMP generator reads a
+  client's own project data.
+- **Manual subscriber grant** (Stripe stays in test mode): Admin › users ›
+  *Grant subscriber* → `wp_staff_set_subscriber` (tier `standard`,
+  `tier_source 'manual'`); never touches a Stripe-billed account.
+- The three one-line descriptions are `WP_TIER_LINES`, repeated verbatim on
+  the pricing page (a test compares them).
 
 ## Supabase
 
@@ -212,6 +266,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/cd-stages.test.js` | Site preparation & construction stages: the Terrigal fixture, estimator rules, overrides, prefill, appendix renderers, the Central Coast form map and fill (pdf-lib test skips when not installed) |
 | `tests/commercial-mix.test.js` | Commercial mix: AI extraction mapping (`wpComFromExtract`), project-page editor, summary ↔ calculator reconcile |
 | `tests/project-title.test.js` | Optional project name / required address: display title fallback, create validation, summary edits synced to the cloud |
+| `tests/access-tiers.test.js` | Access tiers: entitlement rule, free slots + engaged credit, every export gated (parent + iframes), engagement + design team, the SQL mirror, copy and events |
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 

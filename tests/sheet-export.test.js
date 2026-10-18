@@ -594,8 +594,9 @@ test('the collector never dereferences a missing element', () => {
 
 test('both export entry points surface their errors', () => {
   // An async onclick handler that rejects shows the user nothing.
-  assert.match(SOURCE, /function wsExportPDF\(\) \{\s*\r?\n\s*wsExportPDFAsync\(\)\.catch\(/);
-  assert.match(SOURCE, /function wsSheetExportSafe\(\) \{\s*\r?\n\s*wsSheetExport\(\)\.catch\(/);
+  // (the access-tier export gate comes first — refused exports open the upgrade modal)
+  assert.match(SOURCE, /function wsExportPDF\(\) \{\s*\r?\n\s*if \(!wsExportAllowed\('sheet_pdf'\)\) return;\s*\r?\n\s*wsExportPDFAsync\(\)\.catch\(/);
+  assert.match(SOURCE, /function wsSheetExportSafe\(\) \{\s*\r?\n\s*if \(!wsExportAllowed\('sheet_pdf'\)\) return;\s*\r?\n\s*wsSheetExport\(\)\.catch\(/);
   assert.match(SOURCE, /onclick="wsSheetExportSafe\(\)"/, 'the dialog button must use the guarded wrapper');
 });
 

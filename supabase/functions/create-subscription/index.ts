@@ -12,7 +12,8 @@
 //
 // Cancellation is handled by the companion stripe-webhook function: on
 // customer.subscription.deleted the profile reverts to tier 'none' (the free
-// plan — projects stay readable and exportable, only the caps return).
+// plan — projects stay readable in-app; caps return, exports stop except on
+// Pro Waste-engaged projects).
 //
 // NOTE: edge functions deploy from the Supabase project, not this repo. This
 // file is the source of truth for what to paste/deploy.
