@@ -9944,7 +9944,7 @@ function renderProjects(filter) {
   // Context filter: personal shows un-org'd projects; an org context shows only
   // that org's projects. Local cache holds both, tagged with orgId.
   const projects = getProjects().filter(p =>
-    (typeof currentOrg !== 'undefined' && currentOrg) ? p.orgId === currentOrg.id : !p.orgId);
+    (typeof currentOrg !== 'undefined' && currentOrg) ? p.orgId === currentOrg.id : (!p.orgId || p.shared));
 
   // state dropdown reflects the states that actually exist
   const sel = document.getElementById('proj-state');
@@ -10070,7 +10070,10 @@ function projEngageRender(p) {
         : `<button class="btn btn-primary" onclick="projSetEngaged('${wpEscHtml(p.id)}', true)" style="background:var(--teal);color:#fff;border-color:var(--teal);">Mark engaged with Pro Waste</button>`}
     </div>`);
   }
-  if (p.pwcEngaged && (ent.isOwner || staff) && !p.orgId) {
+  // Owner, a member of the project's org (isOwner covers org projects), or
+  // staff — the same people sql/2026-10-19-design-team-org-projects.sql lets
+  // manage the team. Never a design-team member themselves.
+  if (p.pwcEngaged && (ent.isOwner || staff) && !p.shared) {
     parts.push(`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
       <div style="font-weight:700;margin-bottom:4px;">Design team</div>
       <div style="color:var(--muted);margin-bottom:8px;">Invite your architect, planner or developer. They get this project only — with exports — once they sign in with the invited email.</div>
@@ -16985,9 +16988,14 @@ async function loadProjectsFromDB() {
   // Personal context also lists the Pro Waste projects shared with this
   // account (project_members) and, for staff, every engaged project — the
   // WMP is prepared from the client's own project data.
-  const shared = (typeof currentOrg !== 'undefined' && currentOrg) ? [] : await wpLoadSharedProjects();
+  // An org project the user is a member of already shows in that org's
+  // context, so it is not listed again here as shared.
+  const myOrgIds = new Set(((typeof myOrgs !== 'undefined' && myOrgs) || []).map(o => o.id));
   const ownIds = new Set((own || []).map(p => p.id));
-  const data = own ? own.concat(shared.filter(p => !ownIds.has(p.id))) : null;
+  const shared = ((typeof currentOrg !== 'undefined' && currentOrg) ? [] : await wpLoadSharedProjects())
+    .filter(p => !ownIds.has(p.id) && !(p.org_id && myOrgIds.has(p.org_id)));
+  const sharedIds = new Set(shared.map(p => p.id));
+  const data = own ? own.concat(shared) : null;
   if (data) {
     // True merge: cloud rows win on shared ids but keep local-only fields and
     // local-only projects; app_data restores docs metadata + canvas state.
@@ -17021,7 +17029,7 @@ async function loadProjectsFromDB() {
         pwcJobNumber: p.pwc_job_number || null,
         engagementEndedAt: p.engagement_ended_at || null,
         // not this account's own row: a design-team or staff view of a client project
-        shared: !!(p.user_id && p.user_id !== currentUser.id && !p.org_id),
+        shared: sharedIds.has(p.id),
       };
       if (ad.ws) {
         try {

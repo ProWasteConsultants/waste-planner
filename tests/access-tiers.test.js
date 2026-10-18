@@ -143,6 +143,20 @@ test('a shared project is updated, never upserted; a read-only one is not writte
   assert.ok(!/\$\{currentUser\.id\}\/\$\{projectId\}/.test(SOURCE), 'no storage path still assumes the signed-in user owns the project');
 });
 
+test('design team on an organisation project: any org member manages it; a team member never does', () => {
+  const r = extractBlock(/^function projEngageRender\(/).text;
+  assert.match(r, /if \(p\.pwcEngaged && \(ent\.isOwner \|\| staff\) && !p\.shared\) \{/, 'org projects get the Design team box');
+  assert.ok(!/!p\.orgId\) \{/.test(r), 'no longer hidden on org projects');
+  const sql2 = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-10-19-design-team-org-projects.sql'), 'utf8');
+  assert.match(sql2, /join public\.org_members om on om\.org_id = pr\.org_id/);
+  for (const pol of ['project_members_read', 'project_members_invite', 'project_members_remove'])
+    assert.match(sql2, new RegExp('create policy ' + pol + '[\\s\\S]*?wp_project_team_manager\\(project_id::text, auth\\.uid\\(\\)\\)'), pol + ' uses the one manager rule');
+  assert.match(sql2, /and user_id is null and accepted_at is null and notified_at is null/, 'invite policy keeps its row guards');
+  // shared = loaded because of a team membership / staff, not "someone else created it"
+  assert.ok(SOURCE.includes('shared: sharedIds.has(p.id),'));
+  assert.ok(SOURCE.includes("? p.orgId === currentOrg.id : (!p.orgId || p.shared));"), 'a shared org project shows in the personal list');
+});
+
 // ── §5 ──
 test('the SQL states the same rule, ships GRANTs + RLS, and keeps engagement staff-only', () => {
   assert.match(SQL, /v_plan := case when v_staff then 'staff'\s*when v_paid then 'subscriber'\s*when v_engaged then 'engaged'\s*else 'free' end;/, 'same resolution order');
