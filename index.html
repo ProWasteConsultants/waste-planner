@@ -1537,7 +1537,8 @@ body.wp-anon .ws-top-chip{display:none;}
 
       </div>
 
-      <button onclick="handleLogout()" style="background:none;border:1px solid #FFCDD2;color:#C62828;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;max-width:320px;width:100%;margin-bottom:20px;">Sign Out</button>
+      <button onclick="handleLogout()" style="background:none;border:1px solid #FFCDD2;color:#C62828;border-radius:8px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;max-width:320px;width:100%;margin-bottom:10px;">Sign Out</button>
+      <div style="margin-bottom:20px;"><button onclick="wpDeleteAccountOpen()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;font-family:inherit;text-decoration:underline;padding:0;">Delete my account…</button></div>
 
       <!-- Legal: findable rather than prominent -->
       <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:24px;display:flex;align-items:center;flex-wrap:wrap;">
@@ -16598,6 +16599,96 @@ async function handleFreeSignup() {
   alert('\u2705 Welcome to WastePlanner!\n\nYour first project is free \u2014 every tool works in the app, no card needed.\n\nExports come with a subscription (unlimited projects and exports) or with a Pro Waste project, when Pro Waste prepares your WMP.');
 }
 
+// ── DELETE ACCOUNT ─────────────────────────────────────────────────────────
+// Each person deletes their OWN account (an org admin removes members from
+// the org instead). The work is the delete-account edge function: org
+// projects stay with the org, Pro Waste-engaged projects are kept for PWC's
+// records, other personal projects and their files are deleted, a personal
+// subscription is cancelled, and the only admin of an org with other members
+// is refused until they hand over. Typing the account's email is the
+// confirmation, checked again on the server.
+function wpDeleteAccountOpen() {
+  if (!currentUser) return;
+  let m = document.getElementById('wp-delacct-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'wp-delacct-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11600;display:flex;align-items:center;justify-content:center;';
+    m.innerHTML = `
+      <div style="background:var(--white);border-radius:16px;width:480px;max-width:94vw;max-height:92vh;overflow:auto;padding:26px 30px;">
+        <div style="font-size:17px;font-weight:700;color:#C62828;margin-bottom:10px;">Delete your account</div>
+        <div style="font-size:13px;color:#374151;line-height:1.6;">
+          This can’t be undone. When you delete your account:
+          <ul style="margin:8px 0 8px 18px;padding:0;">
+            <li>Your <b>personal projects</b>, with their plans and documents, are deleted.</li>
+            <li><b>Organisation projects</b> stay with the organisation.</li>
+            <li>Projects <b>Pro Waste was engaged on</b> are kept for Pro Waste’s professional records.</li>
+            <li>Any <b>subscription</b> you pay for is cancelled straight away.</li>
+            <li>Your profile and login are deleted.</li>
+          </ul>
+          To keep your account and just stop paying, use <b>Cancel Subscription</b> instead.
+        </div>
+        <label style="display:block;font-size:12px;color:#6B7280;margin:14px 0 4px;">Type your email address to confirm</label>
+        <input id="wp-delacct-email" type="email" autocomplete="off" placeholder="" style="width:100%;box-sizing:border-box;border:1.5px solid #D8E2E1;border-radius:8px;padding:9px 12px;font-size:13px;font-family:inherit;">
+        <div id="wp-delacct-msg" style="font-size:12px;color:#C62828;min-height:16px;margin-top:8px;line-height:1.5;"></div>
+        <button id="wp-delacct-go" onclick="wpDeleteAccount()" style="width:100%;padding:12px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:#C62828;color:#fff;">Delete my account</button>
+        <button onclick="document.getElementById('wp-delacct-modal').style.display='none'" style="display:block;margin:12px auto 0;background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;">Keep my account</button>
+      </div>`;
+    m.addEventListener('click', ev => { if (ev.target === m) m.style.display = 'none'; });
+    document.body.appendChild(m);
+  }
+  const input = document.getElementById('wp-delacct-email');
+  input.value = '';
+  input.placeholder = currentUser.email || '';
+  document.getElementById('wp-delacct-msg').textContent = '';
+  const go = document.getElementById('wp-delacct-go');
+  go.disabled = false; go.textContent = 'Delete my account';
+  m.style.display = 'flex';
+}
+
+async function wpDeleteAccount() {
+  const msg = document.getElementById('wp-delacct-msg');
+  const typed = (document.getElementById('wp-delacct-email').value || '').trim().toLowerCase();
+  if (!currentUser?.email || typed !== currentUser.email.toLowerCase()) {
+    msg.textContent = 'Type your account’s email address exactly to confirm.';
+    return;
+  }
+  const go = document.getElementById('wp-delacct-go');
+  go.disabled = true; go.textContent = 'Deleting…';
+  msg.textContent = '';
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) throw new Error('not signed in');
+    const r = await fetch(`${AI_PROXY_BASE}/delete-account`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+      body: JSON.stringify({ confirm_email: typed }),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok || !out.deleted) {
+      msg.textContent = out.error || ('Deletion failed (' + r.status + ').');
+      go.disabled = false; go.textContent = 'Delete my account';
+      return;
+    }
+    // The login no longer exists: clear this device's copies and sign out.
+    try {
+      localStorage.removeItem('pw_projects');
+      localStorage.removeItem('wp_known_user');
+      Object.keys(localStorage).filter(k => k.startsWith('ws_state_')).forEach(k => localStorage.removeItem(k));
+    } catch (e) {}
+    document.getElementById('wp-delacct-modal').style.display = 'none';
+    try { await sb.auth.signOut(); } catch (e) {}
+    alert('Your account has been deleted.' +
+      (out.subscription_cancelled ? ' Your subscription was cancelled.' : '') +
+      (out.kept_with_organisation ? '\n' + out.kept_with_organisation + ' organisation project(s) stay with the organisation.' : '') +
+      (out.kept_for_pro_waste ? '\n' + out.kept_for_pro_waste + ' Pro Waste project(s) are kept for Pro Waste’s records.' : ''));
+    location.reload();
+  } catch (e) {
+    msg.textContent = 'Couldn’t reach the server (' + (e.message || e) + '). Refresh the page to see whether your account still exists before trying again.';
+    go.disabled = false; go.textContent = 'Delete my account';
+  }
+}
+
 async function handleLogout() {
   await sb.auth.signOut();
   currentUser = null; currentProfile = null;
@@ -18023,7 +18114,7 @@ const LEGAL_DOCS = {
       <p>We use the following third-party services: <strong>Supabase</strong> (database and authentication, Sydney); <strong>Stripe</strong> (payment processing, subject to Stripe's Privacy Policy); <strong>Anthropic</strong> (AI processing, zero data retention API); <strong>GitHub Pages</strong> (platform hosting).</p>
 
       <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">6. Data Retention</h3>
-      <p>We retain your account data for the duration of your subscription plus 12 months. Project data is retained for 24 months after last access. You may request deletion of your data at any time by emailing lachy@prowaste.au. Register-interest details are kept until we have told you WastePlanner is open, then deleted unless you create an account; you can ask to be removed sooner by emailing info@prowaste.au.</p>
+      <p>We retain your account data for the duration of your subscription plus 12 months. Project data is retained for 24 months after last access. You can delete your account at any time from Account Settings (&ldquo;Delete my account&rdquo;), or ask us to delete your data by emailing lachy@prowaste.au. When an account is deleted, its personal projects and files are deleted; projects that belong to an organisation stay with that organisation, and projects Pro Waste Consultants was engaged on are kept for our professional records. Register-interest details are kept until we have told you WastePlanner is open, then deleted unless you create an account; you can ask to be removed sooner by emailing info@prowaste.au.</p>
 
       <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">7. Your Rights</h3>
       <p>You have the right to: access your personal information; correct inaccurate information; request deletion of your information; opt out of marketing communications; make a complaint to the Office of the Australian Information Commissioner (OAIC) at oaic.gov.au.</p>
