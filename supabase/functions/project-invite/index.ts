@@ -75,19 +75,24 @@ Deno.serve(async (req) => {
   const sbAdmin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   // ── The invite row, and the right to send it ─────────────────────────────
-  const { data: m } = await sbAdmin.from("project_members")
+  // A failed read is reported with the database's own message — "not found"
+  // would hide a key or permission problem behind a wrong diagnosis.
+  const { data: m, error: mErr } = await sbAdmin.from("project_members")
     .select("id, project_id, email, invited_by, accepted_at, notified_at")
     .eq("id", body.member_id).maybeSingle();
-  if (!m) return jsonRes({ error: "Invite not found" }, 404, cors);
+  if (mErr) return jsonRes({ error: "could not read the invite: " + mErr.message }, 500, cors);
+  if (!m) return jsonRes({ error: "invite " + body.member_id + " not found by the service key — check SUPABASE_SERVICE_ROLE_KEY and the service_role grant on project_members" }, 404, cors);
   const { data: me } = await sbAdmin.from("profiles")
     .select("is_staff, full_name, company_name").eq("uuid", user.id).maybeSingle();
   if (m.invited_by !== user.id && !me?.is_staff) return jsonRes({ error: "Not your invite" }, 403, cors);
   if (m.accepted_at) return jsonRes({ status: "already_joined" }, 200, cors);
   if (m.notified_at) return jsonRes({ status: "already_sent" }, 200, cors);
 
-  const { data: project } = await sbAdmin.from("projects")
+  const { data: project, error: pErr } = await sbAdmin.from("projects")
     .select("name, address, pwc_engaged").eq("id", m.project_id).maybeSingle();
-  if (!project?.pwc_engaged) return jsonRes({ error: "The project is not engaged with Pro Waste" }, 409, cors);
+  if (pErr) return jsonRes({ error: "could not read the project: " + pErr.message }, 500, cors);
+  if (!project) return jsonRes({ error: "project " + m.project_id + " not visible to the service key — check the service_role grant on projects" }, 404, cors);
+  if (!project.pwc_engaged) return jsonRes({ error: "The project is not engaged with Pro Waste" }, 409, cors);
 
   const { data: inviter } = m.invited_by === user.id
     ? { data: me }

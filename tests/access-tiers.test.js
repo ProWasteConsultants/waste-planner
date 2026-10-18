@@ -184,7 +184,8 @@ test('invite email: the project-invite function, through Supabase Auth, once per
   assert.ok(fnSrc.indexOf('auth.getUser()') < fnSrc.indexOf('inviteUserByEmail(m.email'), 'caller is authenticated first');
   assert.match(fnSrc, /if \(m\.invited_by !== user\.id && !me\?\.is_staff\) return jsonRes\(\{ error: "Not your invite" \}, 403/);
   assert.match(fnSrc, /if \(m\.notified_at\) return jsonRes\(\{ status: "already_sent" \}/, 'one email per row');
-  assert.match(fnSrc, /if \(!project\?\.pwc_engaged\)/, 'engaged projects only');
+  assert.match(fnSrc, /if \(!project\.pwc_engaged\) return jsonRes/, 'engaged projects only');
+  assert.match(fnSrc, /if \(!project\) return jsonRes\(\{ error: "project " \+ m\.project_id \+ " not visible to the service key/, 'an invisible project is not reported as unengaged');
   assert.match(fnSrc, /inviteUserByEmail\(m\.email, \{ data: meta \}\)/, 'new address → Invite user template with project + inviter');
   assert.match(fnSrc, /signInWithOtp\(\{\s*email: m\.email,\s*options: \{ shouldCreateUser: false \}/, 'existing account → sign-in link, never a new account');
   const inv = extractBlock(/^async function projTeamInvite\(/).text;
