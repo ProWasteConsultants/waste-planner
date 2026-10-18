@@ -165,6 +165,17 @@ test('the SQL states the same rule, ships GRANTs + RLS, and keeps engagement sta
   assert.match(SQL, /where uuid = v_uid and tier_source = 'manual';/, 'revoking only removes a manual grant');
 });
 
+test('invite email: sent from the project_members row, with the invitee as the contact — never from a client event', () => {
+  const crm = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'crm-events', 'index.ts'), 'utf8');
+  assert.match(crm, /if \(payload\.table === "project_members" && rec\) \{\s*return relay\(url, secret, await teamInvite\(rec, serviceKey\)\);/);
+  assert.match(crm, /event: "team_invite",\s*user_id: null,\s*email: rec\.email \?\? null,/, 'the invitee is the contact');
+  assert.ok(!crm.includes('"team_invite_sent"'), 'the client analytics event is not relayed — it could carry any address');
+  assert.ok(crm.indexOf('auth !== `Bearer ${serviceKey}`') < crm.indexOf('payload.table === "project_members"'), 'service-key check runs first');
+  const inv = extractBlock(/^async function projTeamInvite\(/).text;
+  assert.ok(!/invitee_email|logEvent\([^)]*email/.test(inv), 'no address in the client event');
+  assert.match(SQL, /Webhooks → new webhook on INSERT into public\.project_members/, 'the SQL says which webhook to add');
+});
+
 // ── §6 ──
 test('one line per level, the same everywhere; WMPs stay PWC-prepared; Stripe stays in test mode', () => {
   const { WP_TIER_LINES } = new Function(extractBlock(/^const WP_TIER_LINES = \[/).text + '\n;return { WP_TIER_LINES };')();
@@ -177,7 +188,7 @@ test('one line per level, the same everywhere; WMPs stay PWC-prepared; Stripe st
   const pay = extractBlock(/^async function handlePayment\(\)/).text;
   assert.ok(!/first charge is on|alert\([^)]*trial/i.test(pay), 'no trial wording left in checkout');
   const crm = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'crm-events', 'index.ts'), 'utf8');
-  for (const e of ['export_blocked', 'paywall_option', 'project_engaged', 'project_disengaged', 'team_invite_sent', 'team_invite_accepted'])
+  for (const e of ['export_blocked', 'paywall_option', 'project_engaged', 'project_disengaged', 'team_invite_accepted'])
     assert.ok(crm.includes(`"${e}"`), 'CRM relays ' + e);
 });
 

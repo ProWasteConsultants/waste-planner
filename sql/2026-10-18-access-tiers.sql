@@ -148,6 +148,13 @@ create policy project_members_remove on public.project_members
   using (public.wp_project_owner(project_id::text) = auth.uid()
          or public.wp_is_staff(auth.uid()));
 
+-- INVITATION EMAIL — one dashboard step this file cannot do: Database →
+-- Webhooks → new webhook on INSERT into public.project_members, type
+-- "Supabase Edge Function", target crm-events (the same function the events
+-- and waitlist webhooks use). Each new row is relayed as event "team_invite"
+-- with the invitee as the contact, and a CRM workflow on that event sends
+-- the email. Removing and re-inviting someone sends it again.
+
 -- Accept on sign-in: every pending invite to this account's CONFIRMED email.
 -- An unconfirmed address could be anyone's, so it accepts nothing.
 create or replace function public.wp_accept_project_invites()

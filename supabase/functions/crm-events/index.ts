@@ -39,6 +39,16 @@
 // this same function. Those rows carry the contact themselves (no user, no
 // profile), so they are relayed as event "waitlist_join" with the row's own
 // email / name / company — see sql/2026-10-16-waitlist.sql.
+//
+// DESIGN-TEAM INVITES: a third Database Webhook on INSERT into
+// public.project_members targets this function too. Each row is relayed as
+// event "team_invite" with the INVITEE as the contact (email = the invited
+// address), plus who invited them and to which project, so a CRM workflow
+// on that event sends the invitation email. It is driven by the table, not
+// by a client event, on purpose: RLS only lets the owner of a Pro Waste-
+// engaged project (or staff) insert a row, whereas anyone signed in can
+// write an `events` row — relaying an address from there would let any
+// account make our CRM email any address. See sql/2026-10-18-access-tiers.sql.
 
 const RELAYED = new Set([
   "signup",
@@ -54,7 +64,6 @@ const RELAYED = new Set([
   "paywall_option",
   "project_engaged",
   "project_disengaged",
-  "team_invite_sent",     // meta.invitee_email — the CRM sends the invite email
   "team_invite_accepted",
 ]);
 
@@ -99,6 +108,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       created_at: rec.created_at ?? new Date().toISOString(),
     });
   }
+  if (payload.table === "project_members" && rec) {
+    return relay(url, secret, await teamInvite(rec, serviceKey));
+  }
   if (!rec || typeof rec.event !== "string") {
     return new Response("no record", { status: 400 });
   }
@@ -142,6 +154,53 @@ Deno.serve(async (req: Request): Promise<Response> => {
     created_at: rec.created_at ?? new Date().toISOString(),
   });
 });
+
+// The invitation, built from the row plus two service-role lookups (the
+// project's title and the inviter's name). A failed lookup still sends the
+// invite, with nulls the CRM template can fall back on.
+const APP_URL = "https://wasteplanner.au/";
+async function restGet(table: string, params: Record<string, string>, serviceKey: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  if (!supabaseUrl) return null;
+  try {
+    const q = new URL(`${supabaseUrl}/rest/v1/${table}`);
+    for (const [k, v] of Object.entries(params)) q.searchParams.set(k, v);
+    q.searchParams.set("limit", "1");
+    const r = await fetch(q, { headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}` } });
+    return r.ok ? ((await r.json())?.[0] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+async function teamInvite(rec: Record<string, unknown>, serviceKey: string) {
+  const project = await restGet("projects", { id: `eq.${rec.project_id}`, select: "name,address,council,pwc_job_number" }, serviceKey);
+  const inviter = rec.invited_by
+    ? await restGet("profiles", { uuid: `eq.${rec.invited_by}`, select: "email,full_name,company_name" }, serviceKey)
+    : null;
+  const title = (project?.name && String(project.name).trim()) || project?.address || null;
+  return {
+    event: "team_invite",
+    user_id: null,
+    email: rec.email ?? null,          // the invitee — the CRM's contact for this event
+    name: null,
+    company: null,
+    tier: null,
+    meta: {
+      project_id: rec.project_id ?? null,
+      project_title: title,
+      project_address: project?.address ?? null,
+      council: project?.council ?? null,
+      pwc_job_number: project?.pwc_job_number ?? null,
+      inviter_name: inviter?.full_name ?? null,
+      inviter_company: inviter?.company_name ?? null,
+      inviter_email: inviter?.email ?? null,
+      // they sign in (or create an account) with THIS address — the invite
+      // is accepted against a confirmed email, nothing in the link grants it
+      sign_in_url: APP_URL,
+    },
+    created_at: rec.created_at ?? new Date().toISOString(),
+  };
+}
 
 async function relay(
   url: string,

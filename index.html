@@ -10146,8 +10146,11 @@ async function projTeamInvite() {
   }
   input.value = '';
   msg.style.color = '#81C784';
-  msg.textContent = 'Invited. They’ll see this project when they sign in with ' + email + '.';
-  if (typeof logEvent === 'function') logEvent('team_invite_sent', { project_id: pid, invitee_email: email });
+  msg.textContent = 'Invited — we’ve emailed ' + email + '. They’ll see this project when they sign in with that address.';
+  // Analytics only. The invitation email is sent from the project_members
+  // row itself (Database Webhook → crm-events "team_invite"), never from an
+  // events row a client could forge with any address.
+  if (typeof logEvent === 'function') logEvent('team_invite_sent', { project_id: pid });
   projTeamLoad(pid);
 }
 
