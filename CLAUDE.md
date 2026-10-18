@@ -311,6 +311,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/project-title.test.js` | Optional project name / required address: display title fallback, create validation, summary edits synced to the cloud |
 | `tests/access-tiers.test.js` | Access tiers: entitlement rule, free slots + engaged credit, every export gated (parent + iframes), engagement + design team, the SQL mirror, copy and events |
 | `tests/delete-account.test.js` | Account deletion: own account only, refusals and subscription cancel before any change, org/engaged projects kept, only the deleted projects' files removed |
+| `tests/chute-receivers.test.js` | Chute receivers: solid bin rendering, paint order under the chute, independent rotation (`wsRecvRot`) on every consumer |
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
@@ -1283,6 +1284,19 @@ slab×[not deflecting_above]`; the max horizontal transition is
   receiver-bundled compactor IS the room's compaction plant (record's own
   ratio, footprint counted once); index/carousel bin counts floor the
   collection-bin count because those bins exist physically.
+- **Receivers draw like placed bins and sit UNDER the chute (2026-10-19).**
+  A bin receiver, and the bins inside an index or carousel, are solid stream
+  fills with the `wsShade` 1 px outline and lid band (`recvBin`), the same
+  look as a placed bin; compactors and unknown sizes keep the outline box.
+  Paint order inside each chute is receivers → chute symbol/connectors →
+  labels (`grpR`, `grp`, `grpL`), so the chute reads as over the bins.
+- **A receiver rotates independently of its chute.** `opening.rrot` is its
+  own angle; `wsRecvRot(ch, o)` (pure) is the one reader — `rrot` when set,
+  else the chute's `rot` (so old drawings are unchanged). Hit-test, keep-outs,
+  manoeuvre obstacles and the DXF all read it. Select a receiver (`selKind
+  'recv'`, `selOp` = opening index) and use R or its ⟳ handle; Shift snaps to
+  15°. Rotating the chute carries a receiver that has its own angle round by
+  the same amount, so it keeps its angle relative to the chute.
 
 ## Equipment, compaction and reconciliation
 
