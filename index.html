@@ -36311,7 +36311,7 @@ function wmpgLoadJSZip() {
 // the staff gate real: Storage RLS then refuses the download for non-staff, so
 // the branded template can't be pulled from a public URL found in page source.
 // Falls back to WMPG_TEMPLATE_URL (public R2) when blank.
-const WMPG_TEMPLATE_SUPABASE = 'wmp_template.docx';
+const WMPG_TEMPLATE_SUPABASE = 'xxxPW_Address_WMP_Master.docx';
 
 async function wmpgGetTemplate() {
   // Client-side gate (UX). The enforcing gate is Storage RLS above.
@@ -38770,16 +38770,15 @@ async function creqRun() {
    ────────────────────────────────────────────────────────────────────────── */
 
 const ADV = { templateBuf: null };
-const ADV_TEMPLATE_SUPABASE = 'adv_template.docx';
+const ADV_TEMPLATE_SUPABASE = 'xxxPW_Address_ADVMaster.docx';
 const ADV_TEMPLATE_IDB_KEY = 'wmpg:adv-template';
 
+// Template bytes: session cache → private bucket (cached into IDB) → IDB → null.
+// The bucket comes first, as for the WMP master, so a re-uploaded memo reaches
+// every staff device instead of being shadowed by an older cached copy.
 async function advGetTemplate() {
   if (!wmpgIsStaff()) return null;           // same gate as the WMP template
   if (ADV.templateBuf) return ADV.templateBuf;
-  try {
-    const rec = await idbGetPdf(ADV_TEMPLATE_IDB_KEY);
-    if (rec?.buf) { ADV.templateBuf = rec.buf; return rec.buf; }
-  } catch(e) {}
   if (typeof sb !== 'undefined' && sb) {
     try {
       const { data, error } = await sb.storage.from('pwc-templates').download(ADV_TEMPLATE_SUPABASE);
@@ -38795,6 +38794,10 @@ async function advGetTemplate() {
       }
     } catch(e) {}
   }
+  try {
+    const rec = await idbGetPdf(ADV_TEMPLATE_IDB_KEY);
+    if (rec?.buf) { ADV.templateBuf = rec.buf; return rec.buf; }
+  } catch(e) {}
   return null;
 }
 function advPickTemplate() { document.getElementById('adv-tpl-file')?.click(); }
@@ -38812,8 +38815,9 @@ function advPayload(d) {
   const text = {
     BM_ClientName: d.client || '—',
     BM_Date: d.date,
-    BM_SiteAddress: { v: (d.address || d.projectName || '[Site address]') + '\n',
-      rpr: '<w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI" w:cs="Segoe UI"/><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="52"/>' },
+    // a plain run: the memo's address line takes its paragraph's own style
+    // (ProWaste-Heading3). The WMP cover's white 26pt run printed white on white here.
+    BM_SiteAddress: d.address || d.projectName || '[Site address]',
     BM_ProjectID: d.projId,
   };
   const sections = {};
