@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Terms / Privacy versions and dates: the one config (WP_LEGAL) -->
+<script src="legal.js"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waste Planner — Pro Waste Consultants</title>
@@ -297,6 +299,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   box-shadow:0 4px 14px rgba(0,0,0,0.5);
 }
 .rail-account:hover .rail-account-info{display:block;}
+/* Terms · Privacy under the account chip — on every screen, never prominent */
+.rail-legal{display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px 0 0;}
+.rail-legal a{font-size:8.5px;line-height:1.5;color:#8CA3A3;text-decoration:none;}
+.rail-legal a:hover{color:#E8EFEF;text-decoration:underline;}
 .ws-embed .side-nav{display:none!important}
 
 /* ── TOOL STRIP — Actions / Layers / Markups / Set Scale as a second thin rail
@@ -833,6 +839,7 @@ body.wp-anon .ws-top-chip{display:none;}
       </select>
     </div>
   </div>
+  <div class="rail-legal"><a href="terms" target="_blank" rel="noopener">Terms</a><a href="privacy" target="_blank" rel="noopener">Privacy</a></div>
 </div>
 
 <!-- MAIN CONTENT — no top header bar; the project/council chip floats over it -->
@@ -1684,6 +1691,7 @@ body.wp-anon .ws-top-chip{display:none;}
               </div>
               <div id="pu-confidence-badge" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:10px;"></div>
             </div>
+            <div class="wp-aid" style="padding:7px 18px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:#B26A00;background:rgba(245,124,0,0.08);">Design aid only — verify before submission</div>
             <div style="padding:16px 18px;">
               <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Residential Units — edit if needed</div>
               <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:8px;">
@@ -5714,6 +5722,8 @@ function drawVehicleSpecBox(){
   ctx.restore();
 }
 
+// The design-aid notice — same words as the platform&#x27;s wpDesignAid() (pinned).
+const WP_DESIGN_AID=&#x27;Design aid only — verify before submission&#x27;;
 function drawDisclaimer(){
   const txt=&#x27;INDICATIVE SWEPT PATH — WASTE PLANNING PURPOSES ONLY. Generated using Ackermann steering geometry; design vehicle parameters per Austroads AP-G34-23 where applicable. Verify with a qualified traffic engineer for DA submission. Pro Waste Consultants — Waste Planner Platform.&#x27;;
   const bh=18,by=canvas.height-bh;
@@ -5772,6 +5782,8 @@ function exportDXF(){
   function poly(pts,layer,closed){d+=`0\nLWPOLYLINE\n8\n${layer}\n70\n${closed?1:0}\n90\n${pts.length}\n`;pts.forEach(p=&gt;{d+=`10\n${(p.x*sc).toFixed(1)}\n20\n${(-p.y*sc).toFixed(1)}\n`;});}
   poly(r.hull,&#x27;SWEPT_ENVELOPE&#x27;,true);poly(r.tkFR,&#x27;FRONT_RIGHT&#x27;,false);poly(r.tkFL,&#x27;FRONT_LEFT&#x27;,false);poly(r.tkRR,&#x27;REAR_RIGHT&#x27;,false);poly(r.tkRL,&#x27;REAR_LEFT&#x27;,false);poly(r.tkRWI,&#x27;INNER_WHEEL&#x27;,false);poly(r.tkPath,&#x27;VEHICLE_PATH&#x27;,false);
   S.wp.forEach((p,i)=&gt;{d+=`0\nPOINT\n8\nWAYPOINTS\n10\n${(p.x*sc).toFixed(1)}\n20\n${(-p.y*sc).toFixed(1)}\n0\nTEXT\n8\nWAYPOINTS\n10\n${(p.x*sc+250).toFixed(1)}\n20\n${(-p.y*sc+250).toFixed(1)}\n40\n300\n1\n${i===0?&#x27;START&#x27;:i===S.wp.length-1?&#x27;END&#x27;:&#x27;WP&#x27;+i}\n`;});
+  {const xs=r.hull.map(p=&gt;p.x*sc),ys=r.hull.map(p=&gt;-p.y*sc);const x0=xs.length?Math.min(...xs):0,y0=ys.length?Math.min(...ys):0;
+   d+=`0\nTEXT\n8\nWAYPOINTS\n10\n${x0.toFixed(1)}\n20\n${(y0-900).toFixed(1)}\n40\n300\n1\nDESIGN AID ONLY - VERIFY BEFORE SUBMISSION\n`;}
   d+=&#x27;0\nENDSEC\n0\nEOF\n&#x27;;
   const a=document.createElement(&#x27;a&#x27;);a.href=URL.createObjectURL(new Blob([d],{type:&#x27;text/plain&#x27;}));a.download=`swept_${S.v.id||&#x27;custom&#x27;}.dxf`;a.click();
 }
@@ -5785,7 +5797,7 @@ function exportPDF(){
   &lt;div class=&quot;specs&quot;&gt;&lt;div class=&quot;sp&quot;&gt;&lt;div class=&quot;sl&quot;&gt;Vehicle&lt;/div&gt;&lt;div class=&quot;sv&quot; style=&quot;font-size:12px&quot;&gt;${v.name}&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;sp&quot;&gt;&lt;div class=&quot;sl&quot;&gt;Length&lt;/div&gt;&lt;div class=&quot;sv&quot;&gt;${(v.wb+v.fo+v.ro).toFixed(2)}m&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;sp&quot;&gt;&lt;div class=&quot;sl&quot;&gt;Width&lt;/div&gt;&lt;div class=&quot;sv&quot;&gt;${v.bw}m&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;sp&quot;&gt;&lt;div class=&quot;sl&quot;&gt;Wheelbase&lt;/div&gt;&lt;div class=&quot;sv&quot;&gt;${v.wb}m&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;sp&quot;&gt;&lt;div class=&quot;sl&quot;&gt;Min Radius&lt;/div&gt;&lt;div class=&quot;sv&quot;&gt;${v.minR}m&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
   &lt;img src=&quot;${url}&quot;&gt;
   &lt;div class=&quot;leg&quot;&gt;&lt;div class=&quot;li&quot;&gt;&lt;div class=&quot;ls&quot; style=&quot;background:#00E5FF&quot;&gt;&lt;/div&gt;Front Right&lt;/div&gt;&lt;div class=&quot;li&quot;&gt;&lt;div class=&quot;ls&quot; style=&quot;background:#CE93D8&quot;&gt;&lt;/div&gt;Front Left&lt;/div&gt;&lt;div class=&quot;li&quot;&gt;&lt;div class=&quot;ls&quot; style=&quot;background:#69F0AE&quot;&gt;&lt;/div&gt;Rear Right&lt;/div&gt;&lt;div class=&quot;li&quot;&gt;&lt;div class=&quot;ls&quot; style=&quot;background:#FF5252&quot;&gt;&lt;/div&gt;Rear Left/Inner&lt;/div&gt;&lt;div class=&quot;li&quot;&gt;&lt;div class=&quot;ls&quot; style=&quot;background:#FFD740&quot;&gt;&lt;/div&gt;Inner Wheel&lt;/div&gt;&lt;div class=&quot;li&quot;&gt;&lt;div class=&quot;ls&quot; style=&quot;background:#448AFF&quot;&gt;&lt;/div&gt;Path&lt;/div&gt;&lt;div class=&quot;li&quot;&gt;&lt;div class=&quot;ls&quot; style=&quot;background:#00E676&quot;&gt;&lt;/div&gt;Envelope&lt;/div&gt;&lt;/div&gt;
-  &lt;div class=&quot;ft&quot;&gt;Swept path calculated using Ackermann steering geometry / bicycle model; design vehicle parameters per Austroads AP-G34-23 where applicable. Verify against council requirements and site conditions. Pro Waste Consultants — Waste Planner Platform.&lt;/div&gt;
+  &lt;div class=&quot;ft&quot;&gt;Swept path calculated using Ackermann steering geometry / bicycle model; design vehicle parameters per Austroads AP-G34-23 where applicable. Verify against council requirements and site conditions. Pro Waste Consultants — Waste Planner Platform.&lt;br&gt;&lt;b&gt;${WP_DESIGN_AID}&lt;/b&gt;&lt;/div&gt;
   &lt;/body&gt;&lt;/html&gt;`);
   w.document.close();setTimeout(()=&gt;w.print(),500);
 }
@@ -7665,6 +7677,7 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
           &lt;/div&gt;
           &lt;div class=&quot;readiness-bar-wrap&quot;&gt;&lt;div class=&quot;readiness-bar&quot; id=&quot;readiness-bar&quot; style=&quot;width:0%&quot;&gt;&lt;/div&gt;&lt;/div&gt;
           &lt;div class=&quot;ai-summary-box&quot; id=&quot;ai-summary-text&quot;&gt;—&lt;/div&gt;
+          &lt;div class=&quot;wp-aid&quot; style=&quot;font-size:11px;font-weight:600;color:#C2410C;margin:6px 0 2px;&quot;&gt;Design aid only — verify before submission&lt;/div&gt;
           &lt;div id=&quot;checked-against-line&quot; style=&quot;font-size:11px;color:var(--muted);margin-bottom:10px;display:none;&quot;&gt;&lt;/div&gt;
           &lt;div class=&quot;action-row&quot;&gt;
             &lt;button class=&quot;btn btn-primary&quot; onclick=&quot;switchTab(&#x27;comments&#x27;,document.querySelectorAll(&#x27;.panel-tab&#x27;)[1])&quot;&gt;View All Comments&lt;/button&gt;
@@ -9233,13 +9246,16 @@ function updateHLLegend() {
 // 20-page cap, so every referenced page is reachable.)
 
 // ── RFI OUTPUT ────────────────────────────────────────────────────────────
+// The design-aid notice: results, RFI and every export of this tool. Same
+// words as the platform&#x27;s wpDesignAid() (a test pins them).
+const WP_DESIGN_AID=&#x27;Design aid only — verify before submission&#x27;;
 function buildRFI(data) {
   const issues = state.comments.filter(c=&gt;c.result===&#x27;flag&#x27;||c.result===&#x27;fail&#x27;);
   const addr = document.getElementById(&#x27;dev-address&#x27;).value || &#x27;the subject development&#x27;;
   const ref  = document.getElementById(&#x27;proj-ref&#x27;).value || &#x27;—&#x27;;
   const councilName = document.getElementById(&#x27;council-select&#x27;).options[document.getElementById(&#x27;council-select&#x27;).selectedIndex]?.text || &#x27;&#x27;;
   let html = `&lt;h3&gt;REQUEST FOR INFORMATION — WASTE MANAGEMENT PLAN&lt;/h3&gt;
-&lt;div style=&quot;margin-bottom:12px;color:var(--muted);font-size:11px;&quot;&gt;Application: ${ref} | Address: ${addr} | Council: ${councilName}&lt;/div&gt;`;
+&lt;div style=&quot;margin-bottom:12px;color:var(--muted);font-size:11px;&quot;&gt;Application: ${ref} | Address: ${addr} | Council: ${councilName}&lt;br&gt;${WP_DESIGN_AID}&lt;/div&gt;`;
   if (!issues.length) {
     html += &#x27;&lt;div style=&quot;color:var(--pass);font-weight:600;&quot;&gt;No issues identified — WMP appears satisfactory.&lt;/div&gt;&#x27;;
   } else {
@@ -9300,6 +9316,7 @@ function downloadRFI() {
   const ref  = document.getElementById(&#x27;proj-ref&#x27;).value || &#x27;—&#x27;;
   let text = `REQUEST FOR INFORMATION — WASTE MANAGEMENT PLAN\nApplication: ${ref}\nAddress: ${addr}\n\n`;
   issues.forEach((c,i) =&gt; { text += `${i+1}. ${c.section||c.category}\n${c.rfi_comment||c.assessment}\n\n`; });
+  text += `—\n${WP_DESIGN_AID}\n`;
   const blob = new Blob([text],{type:&#x27;text/plain&#x27;});
   const a = document.createElement(&#x27;a&#x27;);
   a.href = URL.createObjectURL(blob);
@@ -9395,6 +9412,8 @@ function exportReport() {
   .comment{padding:12px 0;border-bottom:1px solid #eee;}
   .pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;display:inline-block;margin-right:8px;}
   .summary{background:#E0F2F2;padding:14px;border-radius:8px;margin-bottom:20px;font-size:12px;line-height:1.7;}
+  .aid{margin-top:24px;padding-top:8px;border-top:1px solid #ddd;color:#6B7280;font-size:11px;text-align:center;}
+  @media print{.aid{position:fixed;bottom:0;left:0;right:0;margin:0;border:0;background:#fff;}}
   &lt;/style&gt;&lt;/head&gt;&lt;body&gt;
   &lt;h1&gt;WMP Compliance Report&lt;/h1&gt;
   &lt;div class=&quot;meta&quot;&gt;Address: ${addr} | Ref: ${ref} | Council: ${councilName} | ${new Date().toLocaleDateString(&#x27;en-AU&#x27;)} | Generated by Pro Waste Consultants — Waste Planner&lt;/div&gt;
@@ -9411,6 +9430,7 @@ function exportReport() {
     &lt;div style=&quot;margin-top:5px;color:#555;&quot;&gt;${c.assessment}&lt;/div&gt;
     ${c.fix?`&lt;div style=&quot;margin-top:5px;color:#167E7E;font-size:12px;&quot;&gt;💡 ${c.fix}&lt;/div&gt;`:&#x27;&#x27;}
   &lt;/div&gt;`).join(&#x27;&#x27;)}
+  &lt;div class=&quot;aid&quot;&gt;${WP_DESIGN_AID}&lt;/div&gt;
   &lt;/body&gt;&lt;/html&gt;`);
   w.document.close(); w.print();
 }
@@ -10313,7 +10333,7 @@ async function npExtract() {
     const mix = ['1-bed×' + (extracted.apt_1br||0), '2-bed×' + (extracted.apt_2br||0), '3-bed×' + (extracted.apt_3br||0), 'TH×' + (extracted.townhouses||0)].join('  ');
     const com = (extracted.com && extracted.com.length) ? '  ·  Commercial: ' + wpComSummaryText(extracted.com, wpComUseList()) : '';
     const un = (extracted.comUnmatched && extracted.comUnmatched.length) ? '  ·  Not placed (add on the project page): ' + extracted.comUnmatched.map(u => u.label).join(', ') : '';
-    msg.textContent = '✓ Extracted (' + (extracted.confidence || 'medium') + ' confidence): ' + mix + com + un + ' — review before creating.';
+    msg.textContent = '✓ Extracted (' + (extracted.confidence || 'medium') + ' confidence): ' + mix + com + un + ' — review before creating. ' + wpDesignAid() + '.';
   } catch(err) {
     console.error('np extraction error:', err);
     msg.textContent = '⚠️ ' + (err.message || 'Extraction failed');
@@ -12282,7 +12302,7 @@ async function rdbResExtract() {
     const skipped = parsed.skipped.length
       ? ` ${parsed.skipped.length} line${parsed.skipped.length === 1 ? '' : 's'} could not be read and were left out — ${parsed.skipped.slice(0, 3).map(x => `“${x.line}” (${x.why})`).join('; ')}${parsed.skipped.length > 3 ? '; …' : ''}. Add those bands by hand.`
       : '';
-    rdbMsg(`Read ${parsed.steps.length} band${parsed.steps.length === 1 ? '' : 's'} from ${doc.council_name} v${doc.version} — saved as a DRAFT.${skipped} Check every band against the document, then Save and Mark live.`);
+    rdbMsg(`Read ${parsed.steps.length} band${parsed.steps.length === 1 ? '' : 's'} from ${doc.council_name} v${doc.version} — saved as a DRAFT.${skipped} ${wpDesignAid()}. Check every band against the document, then Save and Mark live.`);
   } catch (e) {
     rdbMsg('Extraction failed: ' + (e.message || e) + ' — the bands can still be typed in by hand.', true);
   }
@@ -12921,7 +12941,7 @@ function eqpRender() {
   if (!EQP.rows.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No proposals — drop spec sheets above, or extract one with AI.</div>'; return; }
   const cats = _eqpCats || [];
   const taken = new Set(EQL.items.map(x => x.code).filter(Boolean));
-  wrap.innerHTML = EQP.rows.map(p => {
+  wrap.innerHTML = `<div class="wp-aid" style="font-size:11px;font-weight:600;color:#EFB080;margin-bottom:6px;">${cgbEsc(wpDesignAid())}</div>` + EQP.rows.map(p => {
     const dupes = eqpNearDuplicates(p, EQL.items);
     const code = p.proposed_code || slugCode(p.label, new Set(taken));
     return `
@@ -13386,7 +13406,7 @@ async function crqExtract(councilKey, localFile) {
         (sweep.missing.length ? ` — ⚠ NOT transcribed: ${sweep.missing.slice(0, 8).join(', ')}${sweep.missing.length > 8 ? ', …' : ''}; re-run to try again` : '') : '') +
       (sweep.error ? ` · ⚠ the rate table could not be read (${sweep.error})` : '') +
       (truncated ? ' · ⚠ still hit the length cap after ' + passes + ' passes — complete rows were kept, but requirements late in the document may be missing; re-run to continue' : '') +
-      '. Existing rows were left as they were — look for ≈ possible duplicate flags.');
+      '. Existing rows were left as they were — look for ≈ possible duplicate flags. ' + wpDesignAid() + '.');
     crqLoad();
   } catch (err) { crqMsg('Extraction failed: ' + (err.message || err), true); }
 }
@@ -13851,6 +13871,7 @@ function crqRatesReport(rr) {
       `<button class="btn" style="padding:1px 7px;font-size:10px;" onclick="crqPlaceFixed('${u.r.id}')">Place</button></span>`;
   };
   el.innerHTML = '<div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 12px;max-height:360px;overflow:auto;">' +
+    li(cgbEsc(wpDesignAid()), '#EFB080') +
     li('<b>Generation rates from ' + cgbEsc(rr.council || 'the guideline') + '</b>' + (rr.councilValue ? '' : ' — <b style="color:#EF8080;">not in the councils list for ' + cgbEsc(rr.state || 'this state') + ' (Scope → + Add council), so nothing could be placed</b>'), 'var(--text)') +
     rr.added.map(a => li('✓ added · ' + cgbEsc(cell(a)) + ' <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', '#3DD68C')).join('') +
     (rr.newUses || []).map(u => li('＋ new use · ' + cgbEsc(u.label) + ' <span style="color:var(--muted);">(' + cgbEsc(u.metric) + ', ' + u.default_days + ' days/wk — the guideline names it and the uses list did not have it)</span>', '#3DD68C')).join('') +
@@ -14460,7 +14481,7 @@ function ssxRender() {
       <label style="font-size:10px;color:var(--muted);display:block;">${label}
         <input type="text" data-ssx="${i}:${key}" value="${val ?? ''}" style="width:100%;background:#182121;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;">
       </label>`;
-  wrap.innerHTML = SSX.items.map((it, i) => `
+  wrap.innerHTML = `<div class="wp-aid" style="font-size:11px;font-weight:600;color:#EFB080;margin-bottom:8px;">${ssxEsc(wpDesignAid())}</div>` + SSX.items.map((it, i) => `
     <div style="border:1px solid var(--border);border-radius:8px;background:#182121;padding:12px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
         <div style="font-weight:700;font-size:13px;">${ssxEsc(it.label || 'Unnamed item')}</div>
@@ -16425,7 +16446,7 @@ renderProjects();
       </div>
       <label style="display:flex;align-items:flex-start;gap:8px;margin:2px 0 14px;cursor:pointer;">
         <input type="checkbox" id="signup-terms" style="margin-top:2px;accent-color:var(--teal);flex-shrink:0;">
-        <span style="font-size:11px;color:var(--muted);line-height:1.5;">I agree to the <a href="#" onclick="showLegal('terms');return false;" style="color:var(--teal);">Terms of Service</a> and <a href="#" onclick="showLegal('privacy');return false;" style="color:var(--teal);">Privacy Policy</a>. I understand AI-generated outputs are indicative only and not professional advice.</span>
+        <span style="font-size:11px;color:var(--muted);line-height:1.5;">I agree to the <a href="terms" target="_blank" rel="noopener" style="color:var(--teal);">Terms of Service</a> and <a href="privacy" target="_blank" rel="noopener" style="color:var(--teal);">Privacy Policy</a></span>
       </label>
       <button class="auth-btn" id="signup-btn" onclick="handleSignupToPay()">Continue to payment →</button>
       <button class="auth-btn" style="background:none;border:1px solid var(--border);color:var(--text);margin-top:8px;" onclick="handleFreeSignup()">Create a free account — try the AI tools once</button>
@@ -16438,9 +16459,9 @@ renderProjects();
       </div>
     </div>
     <div class="auth-legal" style="text-align:center;margin-top:16px;font-size:11px;color:var(--muted);">
-      <a href="privacy.html" target="_blank" style="color:var(--muted);text-decoration:underline;">Privacy</a>
+      <a href="privacy" target="_blank" rel="noopener" style="color:var(--muted);text-decoration:underline;">Privacy</a>
       &nbsp;·&nbsp;
-      <a href="terms.html" target="_blank" style="color:var(--muted);text-decoration:underline;">Terms</a>
+      <a href="terms" target="_blank" rel="noopener" style="color:var(--muted);text-decoration:underline;">Terms</a>
     </div>
   </div>
 </div>
@@ -16620,6 +16641,113 @@ async function wpEnsureProfile() {
   }, { onConflict: 'uuid' });
   if (error) console.error('Profile create error:', error);
   await loadProfile();
+}
+
+// ── TERMS OF SERVICE / PRIVACY POLICY ACCEPTANCE ────────────────────────────
+// Versions and dates live in legal.js (window.WP_LEGAL). Acceptance is
+// recorded server-side by wp_accept_terms (sql/2026-10-20-legal-acceptance.sql),
+// which stamps the server's clock — the browser cannot write the columns.
+function wpLegal() { return (typeof window !== 'undefined' && window.WP_LEGAL) || null; }
+function wpLegalDoc(doc) { const L = wpLegal(); return L && (doc === 'terms' || doc === 'privacy') ? L[doc] : null; }
+// Dotted version compare: '2.0' vs '1.10'. Blank / missing sorts lowest.
+function wpLegalVersionCmp(a, b) {
+  const blank = v => v == null || String(v).trim() === '';
+  if (blank(a) || blank(b)) return blank(a) === blank(b) ? 0 : (blank(a) ? -1 : 1);
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0), pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+// Pure: does this account have to accept before continuing?
+//   accepted the current versions            → no
+//   ticked the sign-up box for them (meta)   → no, but record it server-side
+//   on or after reacceptFrom                 → yes ('update')
+//   account created on/after publishedAt     → yes ('new': invited, never ticked a box)
+//   otherwise (existing user, before the date) → not yet
+// Dates are Australia/Melbourne days ('YYYY-MM-DD', read at +10:00).
+function wpLegalNeeds(profile, user, L, now) {
+  if (!L || !L.terms || !L.privacy || !user || user.is_anonymous) return { need: false };
+  const ok = (t, p) => wpLegalVersionCmp(t, L.terms.version) >= 0 && wpLegalVersionCmp(p, L.privacy.version) >= 0;
+  if (profile && ok(profile.terms_version, profile.privacy_version)) return { need: false };
+  const meta = user.user_metadata || {};
+  if (ok(meta.terms_version, meta.privacy_version)) return { need: false, record: true };
+  const day = d => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) ? Date.parse(d + 'T00:00:00+10:00') : NaN;
+  const t = +now;
+  if (t >= day(L.reacceptFrom)) return { need: true, why: 'update' };
+  const created = user.created_at ? Date.parse(user.created_at) : NaN;
+  if (created >= day(L.publishedAt)) return { need: true, why: 'new' };
+  return { need: false };
+}
+// What the sign-up box agreed to, carried in the auth user's metadata.
+function wpLegalSignupMeta() {
+  const L = wpLegal();
+  return L ? { terms_version: L.terms.version, privacy_version: L.privacy.version } : {};
+}
+async function wpLegalRecord(source) {
+  const L = wpLegal();
+  if (!L || typeof sb === 'undefined' || !sb) return { ok: false };
+  try {
+    const { data, error } = await sb.rpc('wp_accept_terms', { p_terms: L.terms.version, p_privacy: L.privacy.version, p_source: source || 'app' });
+    if (error) return { ok: false, error: error.message || String(error) };
+    if (typeof currentProfile !== 'undefined' && currentProfile) {
+      currentProfile.terms_version = L.terms.version; currentProfile.privacy_version = L.privacy.version; currentProfile.terms_accepted_at = data;
+    }
+    return { ok: true, at: data };
+  } catch (e) { return { ok: false, error: e.message || String(e) }; }
+}
+async function wpLegalCheck() {
+  if (typeof currentUser === 'undefined' || !currentUser) return;
+  const r = wpLegalNeeds(typeof currentProfile !== 'undefined' ? currentProfile : null, currentUser, wpLegal(), Date.now());
+  if (r.record) { await wpLegalRecord('signup'); return; }
+  if (!r.need) return;
+  try { if (sessionStorage.getItem('wp_legal_ok_' + currentUser.id)) return; } catch (e) {}
+  wpLegalModal(r.why);
+}
+// Blocking: no close button, no click-away. Accept, or sign out.
+function wpLegalModal(why) {
+  const L = wpLegal(); if (!L) return;
+  let m = document.getElementById('wp-legal-modal');
+  if (m) m.remove();
+  m = document.createElement('div');
+  m.id = 'wp-legal-modal';
+  m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true'); m.setAttribute('aria-labelledby', 'wp-legal-title');
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:11800;display:flex;align-items:center;justify-content:center;padding:16px;';
+  const link = d => `<a href="${L[d].path}" target="_blank" rel="noopener" style="color:#0E7C7B;font-weight:600;">${L[d].title}</a> (Version ${L[d].version}${L[d].date && L[d].date !== 'TBC' ? ', ' + L[d].date : ''})`;
+  m.innerHTML = `
+    <div style="background:var(--white);border-radius:16px;width:460px;max-width:100%;max-height:92vh;overflow:auto;padding:26px 30px;">
+      <div id="wp-legal-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:8px;">${why === 'new' ? 'Before you continue' : 'We’ve updated our Terms and Privacy Policy'}</div>
+      <div style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:14px;">
+        ${why === 'new' ? 'To use WastePlanner, please read and accept the' : 'To keep using WastePlanner, please read and accept the updated'}
+        ${link('terms')} and ${link('privacy')}. Each opens in a new tab.
+      </div>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:#374151;cursor:pointer;margin-bottom:14px;">
+        <input type="checkbox" id="wp-legal-agree" style="margin-top:3px;accent-color:#0E7C7B;flex-shrink:0;">
+        <span>I agree to the Terms of Service and Privacy Policy</span>
+      </label>
+      <div id="wp-legal-msg" style="font-size:12px;color:#C62828;min-height:16px;margin-bottom:8px;"></div>
+      <button id="wp-legal-accept" disabled style="width:100%;padding:11px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:not-allowed;font-family:inherit;background:#9CC9C8;color:#fff;">Accept and continue</button>
+      <div style="text-align:center;margin-top:10px;"><button id="wp-legal-out" style="background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;text-decoration:underline;">Sign out instead</button></div>
+    </div>`;
+  document.body.appendChild(m);
+  const box = m.querySelector('#wp-legal-agree'), btn = m.querySelector('#wp-legal-accept'), msg = m.querySelector('#wp-legal-msg');
+  box.onchange = () => { btn.disabled = !box.checked; btn.style.background = box.checked ? '#0E7C7B' : '#9CC9C8'; btn.style.cursor = box.checked ? 'pointer' : 'not-allowed'; };
+  btn.onclick = async () => {
+    if (!box.checked) return;
+    btn.disabled = true; btn.textContent = 'Saving…'; msg.textContent = '';
+    const r = await wpLegalRecord(why === 'new' ? 'signup' : 'reaccept');
+    if (!r.ok && !/wp_accept_terms|schema cache|does not exist|function/i.test(r.error || '')) {
+      msg.textContent = 'Could not save your acceptance (' + r.error + '). Please try again.';
+      btn.disabled = false; btn.textContent = 'Accept and continue'; return;
+    }
+    // The record call missing on the server (SQL not run yet) must not lock
+    // anyone out: they accepted, so let them in for this session.
+    if (!r.ok) { console.warn('Terms acceptance not recorded:', r.error); try { sessionStorage.setItem('wp_legal_ok_' + currentUser.id, '1'); } catch (e) {} }
+    if (typeof logEvent === 'function') logEvent('terms_accepted', { terms_version: wpLegal().terms.version, privacy_version: wpLegal().privacy.version, why, recorded: !!r.ok });
+    m.remove();
+  };
+  m.querySelector('#wp-legal-out').onclick = () => { m.remove(); if (typeof handleLogout === 'function') handleLogout(); };
 }
 
 // After a password-reset link: set a new password. After an invitation: set
@@ -16921,8 +17049,6 @@ function handleSignupToPay() {
 
   // Store details — NO account created yet, only after payment
   pendingSignup = { name, company, role, email, password };
-  console.log('pendingSignup set:', pendingSignup);
-  console.log('pricing-modal element:', document.getElementById('pricing-modal'));
 
   // All roles must pay
   const pricingModal = document.getElementById('pricing-modal');
@@ -16947,7 +17073,9 @@ async function handleSignup() {
   const { data, error } = await sb.auth.signUp({
     email, password,
     options: {
-      data: { full_name: name, company_name: company, role },
+      // the versions the sign-up box agreed to — wpLegalCheck records them
+      // server-side if the call below has no session yet
+      data: { full_name: name, company_name: company, role, ...wpLegalSignupMeta() },
       emailRedirectTo: window.location.origin + window.location.pathname  // follows current domain (wasteplanner.au or github.io)
     }
   });
@@ -16971,6 +17099,7 @@ async function handleSignup() {
       tier: 'none',
     }, { onConflict: 'uuid' });
     if (profileError) console.error('Profile save error:', profileError);
+    await wpLegalRecord('signup');
     pendingSignup = null;
     return data.user;
   }
@@ -17645,6 +17774,10 @@ function showApp() {
   if (typeof wpAnonActive === 'function' && wpAnonActive()) wpAnonExit();
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app-content').style.display = 'flex';
+  // Terms / Privacy: a newer version than this account accepted → the
+  // blocking accept modal (from WP_LEGAL.reacceptFrom); a sign-up box ticked
+  // before the session existed → recorded now, no modal.
+  if (typeof wpLegalCheck === 'function') wpLegalCheck();
   loadProjectsFromDB();
   // Orgs load in the background: accepts pending invites, restores the saved
   // workspace context, and re-fetches projects if that context is an org.
@@ -18235,6 +18368,7 @@ document.addEventListener('keydown', e => {
           <button onclick="backToPricing()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;font-family:inherit;">← Back to plans</button>
         </div>
         <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:var(--muted);margin-top:10px;">🔒 Secured by Stripe · GST included · Cancel anytime</div>
+        <div style="text-align:center;font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;">By subscribing you agree to the <a href="terms" target="_blank" rel="noopener" style="color:var(--teal);">Terms of Service</a> and <a href="privacy" target="_blank" rel="noopener" style="color:var(--teal);">Privacy Policy</a>.</div>
       </div>
     </div>
 
@@ -18485,83 +18619,10 @@ window.applyRoleAccess = function() {
 
 <script>
 // ── LEGAL DOCUMENTS ───────────────────────────────────────────────────────
+// Terms of Service and Privacy Policy are the standalone pages
+// (wasteplanner.au/terms, /privacy — versions and dates in legal.js, never
+// computed). Only the AI policy is still an in-app modal; it has no page yet.
 const LEGAL_DOCS = {
-  terms: {
-    title: 'Terms of Service',
-    content: `
-      <h2 style="font-size:15px;font-weight:700;color:#0A3D38;margin-bottom:4px;">Waste Planner — Terms of Service</h2>
-      <p style="color:#6B7280;font-size:12px;margin-bottom:20px;">Last updated: ${new Date().toLocaleDateString('en-AU', {month:'long',year:'numeric'})}</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">1. Acceptance of Terms</h3>
-      <p>By creating an account or using Waste Planner ("the Platform"), you agree to be bound by these Terms of Service. The Platform is operated by Pro Waste Consultants Pty Ltd ("PWC", "we", "us"). If you do not agree to these terms, do not use the Platform.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">2. Description of Service</h3>
-      <p>Waste Planner is a software-as-a-service platform providing waste management planning tools for the Australian property development industry. Tools include bin calculators, layout generators, swept path analysis, and AI-powered compliance checking.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">3. AI-Generated Content Disclaimer</h3>
-      <p style="background:#FFF3E0;color:#5D4037;border-left:3px solid #F57C00;padding:10px 14px;border-radius:4px;font-weight:600;">IMPORTANT: All AI-generated outputs from this Platform — including compliance assessments, RFI comments, bin calculations, and advice — are indicative only and do not constitute professional advice. They must not be relied upon as the sole basis for any planning application, development approval, or regulatory submission without independent verification by a qualified waste management consultant or relevant professional.</p>
-      <p style="margin-top:10px;">Pro Waste Consultants accepts no liability for decisions made based solely on AI-generated outputs from this Platform.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">4. Subscriptions and Payment</h3>
-      <p>Subscriptions are billed monthly in advance. All prices are in Australian dollars and include GST where applicable. You may cancel your subscription at any time by contacting lachy@prowaste.au. Cancellations take effect at the end of the current billing period. No refunds are provided for partial months.</p>
-      <p style="margin-top:8px;">Founding member pricing ($149/month) is locked for the life of the subscription provided the subscription remains active and is not cancelled.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">5. Acceptable Use</h3>
-      <p>You agree not to: (a) use the Platform for any unlawful purpose; (b) upload documents you are not authorised to submit for processing; (c) attempt to reverse engineer, scrape, or extract data from the Platform; (d) share your account credentials with others; (e) use the Platform to generate outputs for resale without written permission from PWC.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">6. Intellectual Property</h3>
-      <p>All Platform tools, algorithms, interfaces, and documentation are the intellectual property of Pro Waste Consultants. You retain ownership of documents you upload. You grant PWC a limited licence to process uploaded documents for the purpose of providing the service. PWC may use aggregated, anonymised data derived from platform usage for benchmarking and product improvement.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">7. Limitation of Liability</h3>
-      <p>To the maximum extent permitted by Australian law, PWC's total liability to you for any claim arising from use of the Platform is limited to the total subscription fees paid by you in the 3 months preceding the claim. PWC is not liable for any indirect, consequential, or incidental damages.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">8. Governing Law</h3>
-      <p>These terms are governed by the laws of Victoria, Australia. Any disputes are subject to the exclusive jurisdiction of the courts of Victoria.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">9. Changes to Terms</h3>
-      <p>We may update these terms from time to time. Continued use of the Platform after changes constitutes acceptance of the updated terms. Material changes will be notified by email.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">10. Contact</h3>
-      <p>Pro Waste Consultants Pty Ltd<br>Email: lachy@prowaste.au<br>Website: prowasteconsultants.com.au</p>
-    `
-  },
-  privacy: {
-    title: 'Privacy Policy',
-    content: `
-      <h2 style="font-size:15px;font-weight:700;color:#0A3D38;margin-bottom:4px;">Waste Planner — Privacy Policy</h2>
-      <p style="color:#6B7280;font-size:12px;margin-bottom:20px;">Last updated: ${new Date().toLocaleDateString('en-AU', {month:'long',year:'numeric'})}</p>
-
-      <p>Pro Waste Consultants Pty Ltd ("PWC") is committed to protecting your privacy in accordance with the Privacy Act 1988 (Cth) and the Australian Privacy Principles.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">1. Information We Collect</h3>
-      <p>We collect: (a) Account information — name, email, company name, role; (b) Project data — site addresses, development details, bin calculations you create; (c) Uploaded documents — PDFs and plans you upload for analysis; (d) Usage data — tool usage patterns, scan frequency; (e) Payment information — processed by Stripe, we do not store card details; (f) Register-interest details — if you register interest before WastePlanner opens, the name, email, company and role you enter, and how you found us (e.g. the link or campaign you arrived from).</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">2. How We Use Your Information</h3>
-      <p>We use your information to: provide and improve the Platform; process payments; send service communications; generate anonymised industry benchmarks; comply with legal obligations. We do not sell your personal information to third parties. If you register interest, we use those details only to tell you when WastePlanner opens; we do not add you to any other mailing list.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">3. AI Processing — Anthropic API</h3>
-      <p style="background:#E8F5E9;border-left:3px solid #2E7D32;padding:10px 14px;border-radius:4px;">When you use AI-powered features (compliance checker, plan upload), extracted text and page images from your documents are sent to Anthropic's API for processing. Anthropic's API operates under zero data retention — data sent via the API is not used to train AI models and is not retained after processing. Data is transmitted securely via HTTPS.</p>
-      <p style="margin-top:8px;">By using AI features, you confirm you are authorised to submit the relevant documents for third-party processing.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">4. Data Storage</h3>
-      <p>Your account data and project records are stored in Supabase (PostgreSQL database) hosted on Amazon Web Services in the ap-southeast-2 (Sydney) region. Data is stored on Australian soil. Supabase operates under SOC 2 Type II certification.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">5. Third-Party Services</h3>
-      <p>We use the following third-party services: <strong>Supabase</strong> (database and authentication, Sydney); <strong>Stripe</strong> (payment processing, subject to Stripe's Privacy Policy); <strong>Anthropic</strong> (AI processing, zero data retention API); <strong>GitHub Pages</strong> (platform hosting).</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">6. Data Retention</h3>
-      <p>We retain your account data for the duration of your subscription plus 12 months. Project data is retained for 24 months after last access. You can delete your account at any time from Account Settings (&ldquo;Delete my account&rdquo;), or ask us to delete your data by emailing lachy@prowaste.au. When an account is deleted, its personal projects and files are deleted; projects that belong to an organisation stay with that organisation, and projects Pro Waste Consultants was engaged on are kept for our professional records. Register-interest details are kept until we have told you WastePlanner is open, then deleted unless you create an account; you can ask to be removed sooner by emailing info@prowaste.au.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">7. Your Rights</h3>
-      <p>You have the right to: access your personal information; correct inaccurate information; request deletion of your information; opt out of marketing communications; make a complaint to the Office of the Australian Information Commissioner (OAIC) at oaic.gov.au.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">8. Security</h3>
-      <p>We implement reasonable technical and organisational measures to protect your data including: encrypted transmission (HTTPS/TLS); row-level database security; secure authentication via Supabase Auth; payment processing via PCI-DSS compliant Stripe.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">9. Contact</h3>
-      <p>Privacy enquiries: lachy@prowaste.au<br>Pro Waste Consultants Pty Ltd, Melbourne Victoria</p>
-    `
-  },
   ai: {
     title: 'AI Usage & Disclaimer',
     content: `
@@ -19546,7 +19607,7 @@ async function wsRunAiExtract() {
     if (typeof wsUpdateProjectPill === 'function') wsUpdateProjectPill();
     const comTxt = (extracted.com && extracted.com.length) ? ' Commercial: ' + wpComSummaryText(extracted.com, wpComUseList()) + '.' : '';
     const unTxt = (extracted.comUnmatched && extracted.comUnmatched.length) ? ' Not placed (add on the project page): ' + extracted.comUnmatched.map(u => u.label + ' — ' + u.why).join('; ') + '.' : '';
-    wsCalcExtractSay('✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence).' + comTxt + unTxt + ' Review every figure against the plans.');
+    wsCalcExtractSay('✓ Summary extracted (' + (extracted.confidence || 'medium') + ' confidence).' + comTxt + unTxt + ' Review every figure against the plans. ' + wpDesignAid() + '.');
   } catch (err) {
     console.error('design extraction error:', err);
     wsCalcExtractSay('⚠ ' + (err.message || 'Extraction failed'));
@@ -23818,6 +23879,10 @@ async function wsManSnapshot() {
                      : 'Does not fit — ' + mm(res.hits[0].depth) + ' mm interference at the marked point', 16, 54);
   cx.fillStyle = 'rgba(255,255,255,0.6)';
   cx.fillText('Operator allowance ' + Math.round(wsManBufferM() * 1000) + ' mm · ' + new Date().toISOString().slice(0, 10), 16, 74);
+  // footer band: the design-aid notice, on every exported snapshot
+  cx.fillStyle = 'rgba(16,23,23,0.85)'; cx.fillRect(0, out.height - 26, out.width, 26);
+  cx.fillStyle = 'rgba(255,255,255,0.85)'; cx.font = '13px sans-serif';
+  cx.fillText(wpDesignAid(), 16, out.height - 9);
   const a = document.createElement('a');
   a.href = out.toDataURL('image/png'); a.download = 'bin-manoeuvre-check.png'; a.click();
 }
@@ -25417,7 +25482,7 @@ function wsDXFLayersIn(payload) {
 // scanning the payload itself — never hardcoded — so a new layer can never be
 // referenced without being defined.
 function wsDXFDocument(blocksSection, entities) {
-  const layers = wsDXFLayersIn(String(blocksSection || '') + String(entities || ''));
+  const layers = wsDXFLayersIn(String(blocksSection || '') + String(entities || '') + wsDXFNoticeEntity(entities));
   let t = '0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n0\nENDSEC\n';
   t += '0\nSECTION\n2\nTABLES\n';
   t += '0\nTABLE\n2\nLTYPE\n70\n1\n' +
@@ -25428,7 +25493,7 @@ function wsDXFDocument(blocksSection, entities) {
        '0\nSTYLE\n2\nSTANDARD\n70\n0\n40\n0.0\n41\n1.0\n50\n0.0\n71\n0\n42\n2.5\n3\ntxt\n4\n\n0\nENDTAB\n';
   t += '0\nENDSEC\n';
   return t + String(blocksSection || '') +
-    '0\nSECTION\n2\nENTITIES\n' + String(entities || '') + '0\nENDSEC\n0\nEOF\n';
+    '0\nSECTION\n2\nENTITIES\n' + String(entities || '') + wsDXFNoticeEntity(entities) + '0\nENDSEC\n0\nEOF\n';
 }
 function wsLayoutDXFBlocks(mpp, mmx, mmy, slotOpt) {
   const slot = slotOpt || wsLayoutSlot(), defs = {};
@@ -29163,6 +29228,10 @@ async function wsRampSnapshot() {
   g.fillStyle = res && res.ok ? '#4BED12' : '#ED1C24'; g.font = '700 26px sans-serif';
   g.fillText(res ? (res.ok ? '✓ CLEARS along the full profile' : '✕ SCRAPES — red intervals') : '', 30, 122);
   if (sec && sec.assumed) { g.fillStyle = '#FFD740'; g.font = '22px sans-serif'; g.fillText('⚠ underside heights are category assumptions — confirm with the contractor before citing', 620, 122); }
+  // footer band: the design-aid notice, on every exported snapshot
+  g.fillStyle = 'rgba(16,23,23,0.85)'; g.fillRect(0, H - 40, W, 40);
+  g.fillStyle = 'rgba(255,255,255,0.85)'; g.font = '20px sans-serif';
+  g.fillText(wpDesignAid(), 30, H - 14);
   const a = document.createElement('a');
   a.href = cnv.toDataURL('image/png'); a.download = 'ramp-section-check.png'; a.click();
   wsRampMsg('Snapshot downloaded.');
@@ -30241,6 +30310,30 @@ function wsOnCanvasDblClick(e) {
 // Blank fields are omitted from the title block rather than printed empty. The
 // ABN, street address and phone are left blank on purpose: they belong on a
 // legal drawing and must be entered by someone who knows them, not guessed.
+// ── DESIGN-AID NOTICE ──────────────────────────────────────────────────────
+// Printed near AI extraction and compliance-checker results and in the footer
+// of every export (sheet PDF, DXF, PNG snapshots, WMP / memo .docx, print,
+// issued package). One wording, read through this function from every block;
+// the sandboxed tool iframes cannot reach it and carry their own copy of the
+// same words (a test pins them). ASCII form for DXF (AC1009 is not Unicode).
+function wpDesignAid(ascii) {
+  return ascii ? 'DESIGN AID ONLY - VERIFY BEFORE SUBMISSION' : 'Design aid only — verify before submission';
+}
+// Pure: a DXF TEXT entity carrying the notice, set just below the drawing's
+// extents (read from the entities' own 10/20 coordinates) at a height that
+// scales with them, on its own layer so it can be frozen but not lost.
+function wsDXFNoticeEntity(entities) {
+  const lines = String(entities || '').split('\n'), xs = [], ys = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    const code = lines[i].trim(), v = parseFloat(lines[i + 1]);
+    if (!Number.isFinite(v)) continue;
+    if (code === '10') xs.push(v); else if (code === '20') ys.push(v);
+  }
+  const lo = a => a.length ? Math.min(...a) : 0, hi = a => a.length ? Math.max(...a) : 0;
+  const h = Math.max(2.5, Math.max(hi(xs) - lo(xs), hi(ys) - lo(ys)) / 120);
+  const r = v => +v.toFixed(3);
+  return `0\nTEXT\n8\nWP-NOTES\n62\n7\n10\n${r(lo(xs))}\n20\n${r(lo(ys) - 2.5 * h)}\n30\n0.0\n40\n${r(h)}\n1\n${wpDesignAid(true)}\n`;
+}
 const WS_BRAND = {
   company: 'Pro Waste Consultants',
   abn: '',                       // TODO: fill before the first external-facing export
@@ -31056,7 +31149,7 @@ function wsSheetBottomText(doc, s, page) {
   const notes = String(s.notes || '').split(/\r?\n/).map(t => t.trim()).filter(Boolean);
   // a reduced full sheet must say so on the drawing, not only in the dialog
   if (s._fullNote) notes.unshift(s._fullNote);
-  if (!notes.length) return;
+  notes.unshift(wpDesignAid());   // on every sheet, whatever the notes field says
   doc.setFontSize(5.6); doc.setTextColor(45);
   // "small caps" in a core PDF font: upper-cased and letter-spaced
   const line = notes.join('   ·   ').toUpperCase();
@@ -31728,6 +31821,8 @@ function applyPlanPrefill() {
 
 
 function showLegal(doc) {
+  const page = wpLegalDoc(doc);
+  if (page) { window.open(page.path, '_blank', 'noopener'); return; }
   const content = LEGAL_DOCS[doc];
   if (!content) return;
   document.getElementById('legal-modal-title').textContent = content.title;
@@ -32369,8 +32464,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Terms + Privacy are the standalone pages (same repo, linkable from
     // anywhere); the AI policy stays an in-app modal — it has no page yet.
     legal.innerHTML = [
-      `<a href="terms.html" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Terms</a>`,
-      `<a href="privacy.html" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Privacy</a>`,
+      `<a href="terms" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Terms</a>`,
+      `<a href="privacy" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Privacy</a>`,
       `<a href="#" onclick="showLegal('ai');return false;" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">AI Policy</a>`
     ].join('<span style="color:var(--border);font-size:10px;margin:0 8px;">·</span>');
   }
@@ -33144,7 +33239,7 @@ async function wmpgGenerateSiteContext() {
     d.siteContextSrc = { kind: 'ai', ts: Date.now() };
     wmpgFollow('siteContext');
     wmpgRenderForm(); wmpgQueuePreview();
-    wmpgFlash('Site context written — check the surrounding land uses against what you know of the site; edit freely, it is marked as AI-drafted until issue.');
+    wmpgFlash('Site context written — check the surrounding land uses against what you know of the site; edit freely, it is marked as AI-drafted until issue. ' + wpDesignAid() + '.');
   } catch (e) { wmpgFlash('Site context failed: ' + (e.message || e) + ' — nothing changed.', true); }
 }
 async function wmpgPolishNarrative(i) {
@@ -33163,7 +33258,7 @@ async function wmpgPolishNarrative(i) {
     room.collection.narrative = polished;
     room.collection.polished = true;
     wmpgRenderForm(); wmpgQueuePreview();
-    wmpgFlash('Wording polished. Every figure, stream, vehicle and placeholder from the draft is still present.');
+    wmpgFlash('Wording polished. Every figure, stream, vehicle and placeholder from the draft is still present. ' + wpDesignAid() + '.');
   } catch (e) { wmpgFlash('Polish failed: ' + (e.message || e) + ' — the draft is unchanged.', true); }
 }
 
@@ -35876,6 +35971,8 @@ function wmpgBuildHtml(forPrint) {
   .toc-h2{margin:2px 0 2px 22px;color:#555;}
   .toc-note{font-size:8.5pt;color:#8a9a9a;margin-top:10px;}
   .foot{margin-top:38px;padding-top:8px;border-top:1px solid #d9e2e2;font-size:8pt;color:#8a9a9a;text-align:right;}
+  .aidfoot{display:none;}
+  @media print{.aidfoot{display:block;position:fixed;bottom:0;left:0;right:0;text-align:center;font-size:7.5pt;color:#8a9a9a;}}
   ${forPrint ? '' : `.tbsec{position:relative;border-left:2px solid transparent;margin-left:-12px;padding-left:10px;border-radius:3px;}
   .tbsec:hover{border-left-color:${teal};background:#f2f8f8;}
   .tbx{position:absolute;right:0;top:-4px;font:600 8.5pt 'Segoe UI',system-ui,sans-serif;color:${teal};background:#fff;border:1px solid ${teal};border-radius:4px;padding:2px 8px;cursor:pointer;opacity:0;transition:opacity .12s;z-index:2;}
@@ -35915,7 +36012,8 @@ function wmpgBuildHtml(forPrint) {
     <div class="toc"><h1>Table of contents</h1>${toc}<div class="toc-note">Page numbers are generated in Word — in the exported .docx press Ctrl+A then F9 to build the full table of contents.</div></div>
     <div class="pb"></div>
     ${body}
-    <div class="foot">${esc(wmpgFileName('docx'))} — generated with Waste Planner · Pro Waste Consultants Pty Ltd · ABN 88 693 080 349</div>
+    <div class="foot">${esc(wmpgFileName('docx'))} — generated with Waste Planner · Pro Waste Consultants Pty Ltd · ABN 88 693 080 349<br>${esc(wpDesignAid())}</div>
+    <div class="aidfoot">${esc(wpDesignAid())}</div>
   </div>${forPrint?'<scr'+'ipt>window.onload=()=>setTimeout(()=>window.print(),300);</scr'+'ipt>'
     // The mapping read the other way: click a section, land on the input that
     // feeds it (buttons and links keep their own jobs). A text-library-only
@@ -36117,7 +36215,8 @@ async function wmpgExportDocx(skipQA) {
         footers:{ default: new D.Footer({ children:[ new D.Paragraph({
           alignment:D.AlignmentType.RIGHT,
           children:[ run(fileLabel + ' | Page ', {size:16, color:'8A9A9A'}),
-            new D.TextRun({ children:[ D.PageNumber.CURRENT ], size:16, color:'8A9A9A' }) ] }) ] }) },
+            new D.TextRun({ children:[ D.PageNumber.CURRENT ], size:16, color:'8A9A9A' }) ] }),
+          new D.Paragraph({ alignment:D.AlignmentType.CENTER, children:[ run(wpDesignAid(), {size:14, color:'8A9A9A'}) ] }) ] }) },
         children,
       }],
     });
@@ -37472,6 +37571,29 @@ async function wmpgCoverRemove() {
   wmpgRenderForm(); wmpgQueuePreview();
 }
 
+// ── The design-aid notice in a filled master's footer ──────────────────────
+// Pure: the notice as a Word paragraph (7pt grey, centred).
+function wpDocxAidPara() {
+  const t = wpDesignAid().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:color w:val="8A9A9A"/><w:sz w:val="14"/><w:szCs w:val="14"/></w:rPr>' +
+    '<w:t xml:space="preserve">' + t + '</w:t></w:r></w:p>';
+}
+// Pure: a footer part with the notice appended once (idempotent).
+function wpDocxFooterWithAid(xml) {
+  const s = String(xml || '');
+  if (!/<\/w:ftr>\s*$/.test(s) || s.includes(wpDesignAid())) return s;
+  return s.replace(/<\/w:ftr>\s*$/, wpDocxAidPara() + '</w:ftr>');
+}
+// Every footer part of the master gets the notice, so it prints on every
+// page the master's sections cover. A master with no footer parts gets it as
+// a closing paragraph instead (before the body's last sectPr) — never lost.
+async function wpDocxStampAid(zip, xml) {
+  const parts = zip.file(/^word\/footer\d*\.xml$/);
+  for (const f of parts) zip.file(f.name, wpDocxFooterWithAid(await f.async('string')));
+  if (parts.length) return { xml, footers: parts.length };
+  const i = xml.lastIndexOf('<w:sectPr');
+  return { xml: i >= 0 ? xml.slice(0, i) + wpDocxAidPara() + xml.slice(i) : xml, footers: 0 };
+}
 async function wmpgBuildTemplateBlob(buf) {
   await wmpgLoadJSZip();
   const zip = await JSZip.loadAsync(buf);
@@ -37525,6 +37647,7 @@ async function wmpgBuildTemplateBlob(buf) {
     const r = cdTplAppendixE(xml, cdNodesXml(cdAppendixNodes(cdSt, { rates: cdRates(), profile: cdCouncilProfile(d.council) })));
     xml = r.xml; if (r.note) WMPG.exportNote = (WMPG.exportNote || '') + r.note;
   }
+  xml = (await wpDocxStampAid(zip, xml)).xml;
   zip.file('word/document.xml', xml);
   const ctFile = zip.file('[Content_Types].xml');
   if (ctFile) zip.file('[Content_Types].xml', wmpgTplEnsureContentType(wmpgTplEnsureContentType(wmpgTplFixContentTypes(await ctFile.async('string')), 'jpeg', 'image/jpeg'), 'png', 'image/png'));
@@ -38261,6 +38384,11 @@ async function pkgBuild() {
     out.setProducer('Waste Planner — Pro Waste Consultants');
     out.setCreationDate(new Date());
 
+    // the design-aid notice in the foot of every page of the package
+    out.getPages().forEach(pg => {
+      const { width } = pg.getSize(), t = wpDesignAid(), sz = 6.5;
+      pg.drawText(t, { x: (width - font.widthOfTextAtSize(t, sz)) / 2, y: 6, size: sz, font, color: PDFLib.rgb(0.42, 0.45, 0.48) });
+    });
     pkgStatus('Writing combined PDF…');
     const bytes = await out.save();
     const clean = s => String(s||'').replace(/[\/\\:*?"<>|,]/g,'').replace(/\s+/g,'_');
@@ -39268,6 +39396,7 @@ async function advExport() {
     if (!/w:name="BM_MEMODESIGN"/.test(xml))
       throw new Error('This document has no advice memo bookmarks — load the PWC ADV master.');
     xml = wmpgTplFill(xml, advPayload(d));
+    xml = (await wpDocxStampAid(zip, xml)).xml;
     zip.file('word/document.xml', xml);
     const ct = zip.file('[Content_Types].xml');
     if (ct) zip.file('[Content_Types].xml', wmpgTplFixContentTypes(await ct.async('string')));

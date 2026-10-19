@@ -10,6 +10,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
+const fs = require('node:fs');
+const path = require('node:path');
 const { scriptBlocks, buildSource, extractBlock, BLOCKS, LAYOUT_BLOCKS, SOURCE, decodeSrcdoc, srcdocIframeIds } = require('./extract.js');
 
 // ── embedded tools (srcdoc iframes) ──
@@ -104,7 +106,11 @@ test('top-level DOM wiring is guarded', () => {
 });
 
 test('external <script src> tags are absolute https URLs', () => {
+  // the one same-origin script: the legal-documents config, shared with
+  // terms.html / privacy.html — it must exist beside index.html
+  const LOCAL = ['legal.js'];
   for (const b of EXTERNAL) {
+    if (LOCAL.includes(b.src)) { assert.ok(fs.existsSync(path.join(__dirname, '..', b.src)), b.src + ' is missing'); continue; }
     assert.match(b.src, /^https:\/\//, `insecure or relative script src: ${b.src} (index.html:${b.startLine})`);
   }
 });

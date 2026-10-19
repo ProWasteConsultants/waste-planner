@@ -16,6 +16,7 @@ check this list before widening who can use the app.
 | 6 | **Org-level custom equipment records.** The `equipment` table is one shared library. | Any **external organisation** placing equipment. | One firm's custom plant would appear in every other firm's picker and bin calculator. Needs org scoping on the table plus RLS, same shape as gate 1. |
 | 10 | **Coming-soon launch gate.** `WP_COMING_SOON = true` in `index.html` closes the app to everyone but the PWC team (`profiles.is_staff`, the admin address, or a *confirmed* `@prowaste.au` address — `wpLaunchGateAllows`, pure) **and design-team members** (2026-10-19: an account on any `project_members` row, with a confirmed email — `wpLaunchGateTeamCheck` accepts pending invites first, then `showApp` re-runs the pure rule with `teamMember`). The auth screen shows "Coming soon"; a discreet *Team sign-in* link reveals sign-in only; sign-up and the `?check=wmp` anonymous entry are off; `showApp` signs any other account straight back out. The markup ships gated (`wp-cs` on `#auth-screen`), so it fails closed. The card's **Register interest** form writes to `public.waitlist` (`wpWaitlistClean` pure, `wpWaitlistSubmit`; `sql/2026-10-16-waitlist.sql`): anyone inserts, only `is_staff` reads, one row per email (a repeat reads as "already on the list"), a hidden spam-trap field writes nothing. A Database Webhook on `waitlist` INSERT → `crm-events` relays it as `waitlist_join`. **Client-side only, by decision (2026-10-16):** Supabase Auth still accepts sign-ups and anonymous sign-ins via the API — such an account still cannot get into the app through this page, and RLS guards the data. | **Launch.** | Launch day: set `WP_COMING_SOON = false`. If the hard lock is wanted before then, turn off *Allow new users to sign up* and *Allow anonymous sign-ins* in Supabase Auth. Tested by `tests/launch-gate.test.js`. |
 | 11 | **Access tiers: run the migration + wire the leftovers.** `sql/2026-10-18-access-tiers.sql` (then `sql/2026-10-19-design-team-org-projects.sql`) must run before engagement, team invites and the manual subscriber grant work (until then the staff controls report it). `WP_FEE_PROPOSAL_URL` is `null`, so "Get a fee proposal" opens the in-app Engage modal rather than the prowaste.au form. Invite emails need the `project-invite` edge function **deployed** (Verify JWT on), and the Supabase *Invite user* email template edited to name the project (`{{ .Data.project_title }}`, `{{ .Data.inviter_name }}` — sample in the function's header). They go through Supabase Auth's own mailer, so the project's SMTP settings govern delivery. Invitees get past the coming-soon screen (gate 10's design-team rule). Open decisions left at their defaults: price unchanged; engaged access lasts until staff clear it; engaged projects keep free AI limits; on-screen previews are not exports. | **Launch** of the tiers to outside users. | Without the SQL every staff action errors; without the email the invitee never hears about the project. |
+| 12 | **Terms / Privacy v2.0 go-live.** The final documents' text goes into `terms.html` / `privacy.html` word for word, and their date into `legal.js` (`date`, and `publishedAt` = the day they go live). Until then the pages still carry the old draft text, so **do not merge a build that records `2.0` at sign-up before the text is in.** Then: run `sql/2026-10-20-legal-acceptance.sql`; deploy `legal-notice`, dry-run it, get Lachy's approval, send; set `reacceptFrom` to the effective date it used (≥ 30 days out). Also set the Terms URL in Stripe › Settings › Business › Public details (Customer Portal shows it). The deployed `ai-extract`, `ai-user` and `org-seats` functions are not in the repo, so "no prompt / response / document logging" is unverified for them. | **Launch**, and the notice email. | Acceptance recorded against a version whose text was never shown is worthless; an existing user asked to re-accept before the notice period ends is the breach the 30 days exist to avoid. |
 | 9 | **ai-user anonymous allowance.** The `?check=wmp` entry hands the checker an `is_anonymous` session token; the ai-user edge function (not in this repo) must grant such tokens exactly ONE lifetime `compliance` run and refuse every other tool tag. Also: "Allow anonymous sign-ins" must be ON in Supabase Auth (off = graceful signup-first fallback, but the offer stops being "no account needed"). | **Pointing the planner landing page at real traffic.** | Until verified, an anonymous check either fails server-side or draws from an unintended allowance bucket. Client + DB fences are done (`sql/2026-09-12-anon-compliance-entry.sql`); this is the last leg. |
 
 **Closed:** Cross-device plan freshness (gate 4). Every stored plan carries a
@@ -287,6 +288,60 @@ and `tests/council-pipeline.test.js`.
   functions deploy publish-rates` (Verify JWT on). It replaces the deployed
   function of the same name, whose source was never in the repo.
 
+## Terms, Privacy and the design-aid notice (2026-10-20)
+
+Tested in `tests/legal.test.js`.
+
+- **One config: `legal.js`** (`window.WP_LEGAL`, loaded by `index.html` and
+  the two pages). It holds each document's version, its fixed date (never
+  computed), `publishedAt` and `reacceptFrom`. The pages are
+  `wasteplanner.au/terms` and `/privacy` (`terms.html` / `privacy.html`;
+  GitHub Pages serves them extensionless). `showLegal('terms'|'privacy')`
+  opens them. Only the AI policy is still an in-app modal (`LEGAL_DOCS.ai`).
+- **Sign-up**: the unticked `#signup-terms` box links both pages in a new
+  tab. Both sign-up paths refuse without it. The agreed versions ride the
+  auth metadata (`wpLegalSignupMeta`), and `wpLegalRecord('signup')` records
+  them.
+- **The record is server-side only.** `wp_accept_terms` (SECURITY DEFINER)
+  sets `profiles.terms_version`, `privacy_version` and `terms_accepted_at`
+  with the server's `now()`, and appends to `legal_acceptances`. A trigger
+  discards any direct client write to the three columns, the same guard
+  `projects_created` has (`sql/2026-10-20-legal-acceptance.sql`).
+- **Re-acceptance** is `wpLegalNeeds` (pure). It runs from `showApp`, so it
+  covers every way into the app:
+  - an account on the current versions → nothing;
+  - an account whose box was ticked but not yet recorded → recorded, no modal;
+  - on or after `reacceptFrom` (a Melbourne day) → the blocking modal
+    `wpLegalModal`: no click-away, accept is disabled until ticked, the only
+    other way out is signing out;
+  - an account created on or after `publishedAt` that never ticked a box
+    (an invitation) → asked at once.
+
+  If the RPC is missing on the server, the user is not locked out; the
+  failure is logged to the console for that session only.
+- **The notice email is `supabase/functions/legal-notice`.** It goes through
+  Resend, is staff only, and is a **dry run by default**.
+  - Sending needs `confirm: "SEND <count> <date>"` from the dry run.
+  - The effective date must be at least 30 days out (`checkEffectiveDate`).
+  - `legal_notice_log` allows one send per version.
+  - It logs nothing about recipients.
+  - The wording lives in `notice.mjs` (pure), and is a draft until Lachy
+    approves it.
+- **"Design aid only — verify before submission"** is `wpDesignAid()`.
+  Inside the compliance and swept iframes it is `WP_DESIGN_AID`, pinned to
+  the same words. It appears:
+  - beside the checker results;
+  - beside every AI-extraction result and message (`.wp-aid`);
+  - in the footer of the sheet PDF (`wsSheetBottomText`), every DXF
+    (`wsDXFNoticeEntity`, layer `WP-NOTES`, ASCII), the PNG snapshots, the
+    issued package (every page), WMP print, the generic and template WMP
+    .docx (`wpDocxStampAid`: every footer part, else a closing paragraph),
+    the advice memo, and the checker's report and RFI.
+
+  Deliberately not on: the council's own Central Coast form (a statutory
+  AcroForm is never stamped) and the Cost / Health Check PDF (off the nav,
+  not a design deliverable).
+
 ## Email links (invitation · sign-in link · password reset)
 
 The Supabase client runs with `detectSessionInUrl: false`, so the app reads
@@ -423,6 +478,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/chute-receivers.test.js` | Chute receivers: solid bin rendering, paint order under the chute, independent rotation (`wsRecvRot`) on every consumer |
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
 | `tests/publish-rates.test.js` | Publish rates: the brief's JSON shape from the tables, draft councils excluded, every validation refusal, removal guard, R2 SigV4 against AWS vectors, COMM/unit mirrors, the landing backup script; per-council commercial lists (`comList`), typed-in uses (`USES`) in the calculator and WMP |
+| `tests/legal.test.js` | Terms / Privacy: one config, sign-up consent, server-side record, re-acceptance rule + modal, the notice email's guards, the design-aid notice on results and every export |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`

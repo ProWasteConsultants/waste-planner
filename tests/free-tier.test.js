@@ -101,7 +101,7 @@ test('fresh visitors see Create Account with the free-plan value line', () => {
   assert.ok(SOURCE.includes("if (!localStorage.getItem('wp_known_user'))"));
   const marks = SOURCE.split("localStorage.setItem('wp_known_user', '1')").length - 1;
   assert.equal(marks, 3, 'known-user marked on session boot, sign-in, and free signup');
-  assert.ok(SOURCE.includes('href="privacy.html"') && SOURCE.includes('href="terms.html"'),
+  assert.ok(SOURCE.includes('href="privacy" target="_blank"') && SOURCE.includes('href="terms" target="_blank"'),
     'auth screen links the standalone legal pages');
 });
 

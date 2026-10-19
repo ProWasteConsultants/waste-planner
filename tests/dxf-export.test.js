@@ -69,6 +69,8 @@ const BLOCKS = [
   ['wsCalloutDims',     /^function wsCalloutDims\(/],
   ['wsDXFBlockName',    /^function wsDXFBlockName\(/],
   ['wsDXFLayersIn',     /^function wsDXFLayersIn\(/],
+  ['wpDesignAid',       /^function wpDesignAid\(/],
+  ['wsDXFNoticeEntity', /^function wsDXFNoticeEntity\(/],
   ['wsDXFDocument',     /^function wsDXFDocument\(/],
   ['wsLayoutDXFBlocks', /^function wsLayoutDXFBlocks\(/],
   ['wsLayoutDXFEntities', /^function wsLayoutDXFEntities\(/],
