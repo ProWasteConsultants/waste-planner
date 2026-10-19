@@ -292,7 +292,7 @@ test('extracted generation rates map onto the rate tables in their exact row for
   assert.ok(ex.includes(".insert(rows).select();") && ex.includes('const saved = (ins && ins.length === rows.length) ? ins : rows;'),
     'the report is built from the SAVED rows, so its pick-a-use and split buttons address real row ids');
   assert.ok(ex.includes('rates → tables:') && ex.includes('not placed — '), 'and reports added / kept / not placed with the reason');
-  assert.ok(ex.includes('⬆ Publish to live to push them to the calculator'), 'going live stays the explicit publish, as for a hand-typed rate');
+  assert.ok(ex.includes('⬆ Publish rates to calculator to push them live'), 'going live stays the explicit publish, as for a hand-typed rate');
 });
 
 // ── pattern 4: a premises must never be silently relabelled onto another ──

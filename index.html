@@ -1025,6 +1025,7 @@ body.wp-anon .ws-top-chip{display:none;}
             <span id="rdb-council-actions" style="display:none;gap:4px;">
               <button class="btn" style="padding:4px 8px;font-size:11px;" title="Rename the selected council (its rates and guidelines follow the rename)" onclick="rdbRenameCouncil()">✎ Rename</button>
               <button class="btn" style="padding:4px 8px;font-size:11px;color:#EF8080;" title="Remove the selected council from every picker — its rate overrides and guidelines are kept" onclick="rdbDeleteSelectedCouncil()">🗑 Delete</button>
+              <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);margin-left:4px;" title="Only listed councils, and their rates, go into waste_rates.json — the free calculator on go.wasteplanner.au and every other calculator. A new council is a draft until this is ticked; the change goes out on the next ⬆ Publish rates to calculator."><input type="checkbox" id="rdb-council-published" onchange="rdbSetCouncilPublished(this.checked)"> Listed on the free calculator</label>
             </span>
             <button class="btn" id="rdb-add-council-btn" style="padding:4px 8px;font-size:11px;" title="Add a council to the selected state" onclick="rdbAddCouncilToggle(true)">+ Add council</button>
             <span id="rdb-add-council-wrap" style="display:none;gap:6px;align-items:center;">
@@ -1085,7 +1086,7 @@ body.wp-anon .ws-top-chip{display:none;}
                 <b>1</b> ⇪ Save the PDF (it appears in the Library) →
                 <b>2</b> 🧾 Extract to list on its Library row — extraction only <b>adds</b> rows, it never deletes or overwrites what is here (a new document version adds its rows beside the old ones; tidy by hand) →
                 <b>3</b> it is live. Rows that look like an existing one carry a <b>≈ possible duplicate</b> flag so you can spot and remove them — nothing is merged automatically.<br><br>
-                <b>Generation rates are not here</b> — extraction writes them straight into the Residential and Commercial rate tables in the Council &amp; state database section below, in the tables' own format (add-only: a rate the table already holds is never overwritten). Edit them there, then ⬆ Publish to live.</span></span>
+                <b>Generation rates are not here</b> — extraction writes them straight into the Residential and Commercial rate tables in the Council &amp; state database section below, in the tables' own format (add-only: a rate the table already holds is never overwritten). Edit them there, then ⬆ Publish rates to calculator.</span></span>
             </div>
             <div id="crq-status" style="font-size:11px;color:var(--muted);"></div>
           </div>
@@ -1098,15 +1099,17 @@ body.wp-anon .ws-top-chip{display:none;}
             <div class="adm-group-body">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Rates for the selected scope
-              <span class="adm-help" tabindex="0">?<span class="adm-help-pop">These are the numbers the calculator, the WMP and the checker read, for the state/council chosen in Scope at the top. Blank council cells inherit the state defaults. Saving stores edits; <b>⬆ Publish to live</b> regenerates <code>waste_rates.json</code> on R2 so the calculator and the Excel generator pick up changes immediately — nothing is live until you publish.</span></span>
+              <span class="adm-help" tabindex="0">?<span class="adm-help-pop">These are the numbers the calculator, the WMP and the checker read, for the state/council chosen in Scope at the top. Blank council cells inherit the state defaults. Saving stores edits; <b>⬆ Publish rates to calculator</b> regenerates <code>waste_rates.json</code> on R2 — the free calculator on go.wasteplanner.au, the prowaste.au embed, the in-app calculator and the WMP read it — so nothing is live until you publish. The file is checked first: a blank or negative figure, a unit the calculator has no formula for or a malformed council blocks the publish and every problem is listed. Only councils ticked <b>Listed on the free calculator</b> go out. The file it replaces is kept as <code>waste_rates.prev.json</code>.</span></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn" title="Read the generation rates already extracted from this council's guideline and place the ones the tables do not yet hold — add-only; a rate the table has is kept. Use after adding the council to the list, or when an extraction reported rates it could not place." onclick="crqPullRatesForScope()">⇩ Pull rates from guideline</button>
               <button class="btn" onclick="rdbLoad()">↻ Load</button>
-              <button class="btn btn-primary" onclick="rdbPublish()" style="background:var(--green);color:var(--dark);font-weight:700;">⬆ Publish to live</button>
+              <button class="btn btn-primary" onclick="rdbPublish()" style="background:var(--green);color:var(--dark);font-weight:700;">⬆ Publish rates to calculator</button>
             </div>
           </div>
           <div id="rdb-status" style="font-size:11px;color:var(--muted);min-height:16px;margin-bottom:10px;"></div>
+          <!-- the last publish: version + counts, or every validation error -->
+          <div id="rdb-publish-result" style="margin-bottom:10px;"></div>
           <!-- what the last extraction / pull did with the guideline's generation
                rates: added / kept / not placed, each with its reason -->
           <div id="rdb-rates-note" style="margin-bottom:12px;"></div>
@@ -2711,7 +2714,7 @@ function ratesSourceInfo(){
   const ov=co?((RATES_REMOTE?.COUNCIL_PROFILES?.[`${st}|${co}`])||COUNCIL_PROFILES[`${st}|${co}`]||null):null;
   const ovRes=!!(ov&amp;&amp;ov.resRates&amp;&amp;Object.keys(ov.resRates).length);
   const ovCom=!!(ov&amp;&amp;ov.comRates&amp;&amp;Object.keys(ov.comRates).length);
-  const when=RATES_REMOTE&amp;&amp;(RATES_REMOTE.published_at||RATES_REMOTE.generated_at||(RATES_REMOTE.meta&amp;&amp;RATES_REMOTE.meta.published_at))||null;
+  const when=RATES_REMOTE&amp;&amp;(RATES_REMOTE.version||RATES_REMOTE.published_at||RATES_REMOTE.generated_at||(RATES_REMOTE.meta&amp;&amp;RATES_REMOTE.meta.published_at))||null;
   return {remote,label,value:co,ov:!!ov,ovRes,ovCom,when};
 }
 function ratesNoteHtml(){
@@ -2720,7 +2723,7 @@ function ratesNoteHtml(){
   if(!i.remote)src='built-in state defaults — the published rates file could not be loaded';
   else if(!i.value)src=`${g('state').value} state defaults (published rates)`;
   else if(i.ov)src=`&lt;b&gt;${escAttr(i.label)}&lt;/b&gt; override (published rates${i.ovRes?'':'; residential inherits the state defaults'}${i.ovCom?'':'; commercial inherits the state defaults'})`;
-  else src=`${g('state').value} state defaults — &lt;b style=&quot;color:#EFB080&quot;&gt;no published override for ${escAttr(i.label)}&lt;/b&gt; (value ${escAttr(i.value)}). Save its rates and ⬆ Publish to live, then ↻`;
+  else src=`${g('state').value} state defaults — &lt;b style=&quot;color:#EFB080&quot;&gt;no published override for ${escAttr(i.label)}&lt;/b&gt; (value ${escAttr(i.value)}). Save its rates and ⬆ Publish rates to calculator, then ↻`;
   // The residential METHOD sits above the rates: a stepped-table council does
   // not use a generation rate for residential at all, so saying only which
   // rates loaded would describe numbers that are not being used.
@@ -11646,7 +11649,7 @@ async function rdbSaveRes() {
       await sb.from('res_rates').delete().match({ state: d.state, council_value: d.council_value, unit_type: d.unit_type, stream: d.stream });
     }
     RDB.dirty = false;
-    rdbMsg('✓ Saved. Hit “Publish to live” to push to the calculator.');
+    rdbMsg('✓ Saved. Hit “⬆ Publish rates to calculator” to push them live.');
     return true;
   } catch(err) { rdbMsg('Save failed: ' + (err.message || err), false); return false; }
 }
@@ -11665,6 +11668,8 @@ function admScopeSync() {
   // rename / delete act on the selected council only; State defaults has neither
   const acts = document.getElementById('rdb-council-actions');
   if (acts) acts.style.display = label ? 'inline-flex' : 'none';
+  const pub = document.getElementById('rdb-council-published');
+  if (pub) { const c = rdbSelectedCouncil(); pub.checked = !!(c && c.published === true); }
   if (typeof cgScopeChanged === 'function') cgScopeChanged(label);
 }
 function admScopeChanged() { admScopeSync(); rdbLoadRates(); }
@@ -11698,8 +11703,29 @@ async function rdbAddCouncil() {
     rdbAddCouncilToggle(false);
     RDB._selectAfterLoad = value;   // the new council becomes the scope
     await rdbLoad();
-    rdbMsg('✓ ' + label + ' added to ' + st + ' and selected.');
+    rdbMsg('✓ ' + label + ' added to ' + st + ' and selected — a draft: tick “Listed on the free calculator” when its rates are ready to go public.');
   } catch(err) { rdbMsg('Add failed: ' + (err.message || err), false); }
+}
+// The public-file gate (councils.published, sql/2026-10-19-publish-rates.sql).
+// Unticking a council that is live is a removal from the free calculator —
+// the publish itself asks again before it drops one from the live file.
+async function rdbSetCouncilPublished(on) {
+  const c = rdbSelectedCouncil(); if (!c) return;
+  const box = document.getElementById('rdb-council-published');
+  if (!on && c.published === true && !confirm('Take ' + c.label + ' off the free calculator? On the next publish it leaves waste_rates.json, its own rates stop applying there, and ?council=' + c.value + ' ad links stop selecting it.')) {
+    if (box) box.checked = true; return;
+  }
+  try {
+    const { error } = await sb.from('councils').update({ published: !!on }).eq('id', c.id);
+    if (error) throw error;
+    c.published = !!on;
+    rdbMsg(on ? '✓ ' + c.label + ' will be listed on the free calculator from the next ⬆ Publish rates to calculator.'
+              : '✓ ' + c.label + ' is now a draft — it leaves the public file on the next publish.');
+  } catch (err) {
+    if (box) box.checked = c.published === true;
+    const m = err.message || String(err);
+    rdbMsg('Could not change the listing: ' + m + (/published/.test(m) ? ' — run sql/2026-10-19-publish-rates.sql first.' : ''), false);
+  }
 }
 async function rdbRenameCouncil() {
   const c = rdbSelectedCouncil(); if (!c) return;
@@ -11793,7 +11819,7 @@ async function rdbSaveCom() {
       if (error) throw error;
     }
     RDB.dirtyCom = false;
-    rdbMsg('✓ Commercial rates saved. Publish to push live.');
+    rdbMsg('✓ Commercial rates saved. ⬆ Publish rates to calculator to push them live.');
     return true;
   } catch(err) { rdbMsg('Commercial save failed: ' + (err.message || err), false); return false; }
 }
@@ -12088,7 +12114,7 @@ async function rdbSaveMeta() {
     const { error } = await sb.from('waste_meta').upsert(rows, { onConflict: 'state,council_value,field_key' });
     if (error) throw error;
     RDB.dirtyMeta = false;
-    rdbMsg('✓ Info saved. Publish to push live.');
+    rdbMsg('✓ Info saved.');
     // the kerbside service reaches the calculator directly — no publish step
     if (typeof wpRefreshCouncilSchedules === 'function') wpRefreshCouncilSchedules();
     return true;
@@ -13137,7 +13163,7 @@ async function crqExtract(councilKey, localFile) {
     const rateNote = !rows.some(crqIsRate) ? '' :
       ` · rates → tables: ${rr.added.length} added` + (rr.kept.length ? `, ${rr.kept.length} already set (kept)` : '') +
       (rr.unplaced.length ? `, ${rr.unplaced.length} not placed — ` + rr.unplaced.slice(0, 4).map(u => `${u.r.clause_ref || '?'}: ${u.why}`).join('; ') + (rr.unplaced.length > 4 ? '; …' : '') : '') +
-      (rr.added.length ? ' — ⬆ Publish to live to push them to the calculator' : '');
+      (rr.added.length ? ' — ⬆ Publish rates to calculator to push them live' : '');
     if (typeof rdbLoadRates === 'function') rdbLoadRates();
     crqMsg(`✓ ${nReq} requirement${nReq === 1 ? '' : 's'} added for ${doc.council_name} from v${doc.version} — ${serving} now serving the checker and WMP` + rateNote +
       (unresolved ? ` · ${unresolved} with a stream to set (flagged in the list)` : '') +
@@ -13211,7 +13237,7 @@ async function crqSyncServe(councilKey, councilName) {
 // holds is left as it is and reported. Anything that does not map onto a
 // table row without guessing (no dwelling type, an unknown commercial use, a
 // unit the calculator has no formula for) is reported with the reason so it
-// can be typed in by hand. Going live stays ⬆ Publish to live, same as a
+// can be typed in by hand. Going live stays ⬆ Publish rates to calculator, same as a
 // hand-typed rate. The clause itself still serves the checker's citations
 // through the council's requirements projection.
 // crqRateToTable / crqComBasis are PURE — row + context in, table row out.
@@ -13474,7 +13500,7 @@ function crqRatesReport(rr) {
       ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + splitOverride(u), '#9FB4FF')).join('') +
     (held.length ? li('⏸ ' + held.length + ' combined figure' + (held.length === 1 ? '' : 's') + ' held. A combined rate is not a garbage rate and not a recycling rate — representing one needs a combined-rate type in the rate tables, which is a pending decision. Nothing is written for these until it lands.', 'var(--muted)') : '') +
     rest.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + (u.r.value_text ? ' <i style="color:var(--muted);">' + cgbEsc(String(u.r.value_text).slice(0, 90)) + '</i>' : '') + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + fix(u), '#FFB74D')).join('') +
-    (rr.added.length ? li('⬆ Publish to live pushes the added rates to the calculator.', 'var(--muted)') : '') +
+    (rr.added.length ? li('⬆ Publish rates to calculator pushes the added rates live.', 'var(--muted)') : '') +
     '</div>';
 }
 // A combined garbage+recycling figure, split by hand: the row becomes the
@@ -13577,7 +13603,7 @@ async function crqPullRatesForScope() {
     const rr = await crqWriteRates(rows || [], doc);
     if (rr.uses && rr.uses.length && !(RDB.uses || []).length) RDB.uses = rr.uses;
     crqRatesReport(rr);
-    rdbMsg(rr.added.length ? `✓ ${rr.added.length} rate${rr.added.length === 1 ? '' : 's'} added to the tables — ⬆ Publish to live to push them to the calculator.` : (rows || []).length ? 'Nothing new to add — see the note above for what was kept or could not be placed.' : 'The guideline has no generation-rate rows extracted yet.', !!rr.added.length || !(rows || []).length);
+    rdbMsg(rr.added.length ? `✓ ${rr.added.length} rate${rr.added.length === 1 ? '' : 's'} added to the tables — ⬆ Publish rates to calculator to push them live.` : (rows || []).length ? 'Nothing new to add — see the note above for what was kept or could not be placed.' : 'The guideline has no generation-rate rows extracted yet.', !!rr.added.length || !(rows || []).length);
     await rdbLoadRates();
   } catch (err) { rdbMsg('Pull failed: ' + (err.message || err), false); }
 }
@@ -13984,7 +14010,7 @@ async function cgRatesConfirm(st) {
     const { error } = await sb.from('res_rates').upsert(rec, { onConflict: 'state,council_value,unit_type,stream' });
     if (error) throw error;
     document.getElementById('cg-rates-dialog').innerHTML = '';
-    cgMsg(`✓ Rate saved: ${cv} · ${RDB_UNIT_LABELS[rec.unit_type]} · ${rec.stream} = ${val} L/week — remember to ⬆ Publish to live in the Rates DB tab.`);
+    cgMsg(`✓ Rate saved: ${cv} · ${RDB_UNIT_LABELS[rec.unit_type]} · ${rec.stream} = ${val} L/week — remember to ⬆ Publish rates to calculator in the Rates DB tab.`);
   } catch (err) { cgMsg('Rate save failed: ' + (err.message || err), true); }
 }
 
@@ -14595,24 +14621,69 @@ async function shpSave() {
   } catch (err) { shpMsg('Shape save failed: ' + (err.message || err), true); }
 }
 
-async function rdbPublish() {
+// Pure: what a publish-rates reply says, as HTML for #rdb-publish-result.
+// Errors are listed in full — a publish refused for "3 problems" with no
+// names sends someone hunting through every table.
+function rdbPublishReport(out) {
+  const e = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const box = (border, body) => `<div style="border:1px solid ${border};border-radius:8px;background:#141c1c;padding:8px 10px;font-size:11px;line-height:1.5;">${body}</div>`;
+  const list = items => '<ul style="margin:4px 0 0 16px;padding:0;max-height:220px;overflow:auto;">' + items.map(x => `<li>${e(x)}</li>`).join('') + '</ul>';
+  const skipped = (out && out.skipped) || [];
+  const skippedHtml = skipped.length
+    ? `<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--muted);">${skipped.length} row${skipped.length === 1 ? '' : 's'} left out of the public file</summary>${list(skipped.map(x => `${x.key} · ${x.what} — ${x.reason}`))}</details>`
+    : '';
+  if (!out) return '';
+  if (out.code === 'invalid') {
+    return box('#EF8080', `<b style="color:#EF8080;">Not published — ${out.errors.length} problem${out.errors.length === 1 ? '' : 's'} to fix first.</b> The live file is unchanged.${list(out.errors)}${skippedHtml}`);
+  }
+  if (out.code === 'removals') {
+    return box('#EFB080', `<b style="color:#EFB080;">Not published — these councils are in the live file and would be dropped from it:</b>${list(out.removed.map(c => `${c.label || ''} (${c.key})`))}Their <code>?council=</code> ad links would stop selecting them. Tick <b>Listed on the free calculator</b> to keep them, or confirm the removal.${skippedHtml}`);
+  }
+  if (!out.ok) return box('#EF8080', `<b style="color:#EF8080;">Not published:</b> ${e(out.error || 'unknown error')} The live file is unchanged.`);
+  const c = out.counts || {}, ch = out.changes || {}, f = ch.figures || {};
+  const delta = ch.first ? 'first publish — no previous file'
+    : `${f.changed || 0} figure${f.changed === 1 ? '' : 's'} changed, ${f.added || 0} added, ${f.removed || 0} removed` +
+      ((ch.addedCouncils || []).length ? ` · councils added: ${ch.addedCouncils.map(x => e(x.label || x.key)).join(', ')}` : '') +
+      ((ch.removedCouncils || []).length ? ` · councils removed: ${ch.removedCouncils.map(x => e(x.label || x.key)).join(', ')}` : '');
+  return box('var(--green)', `<b style="color:var(--green);">✓ ${out.dry_run ? 'Checked (not published)' : 'Published'} — version ${e(out.version)}</b><br>` +
+    `${c.states || 0} state profile${c.states === 1 ? '' : 's'} · ${c.councils || 0} council${c.councils === 1 ? '' : 's'} listed (${c.councilProfiles || 0} with their own rates) · ` +
+    `${c.residentialFigures || 0} residential and ${c.commercialFigures || 0} commercial figures · ${((out.bytes || 0) / 1024).toFixed(1)} KB<br>` +
+    `<span style="color:var(--muted);">${delta}${out.dry_run ? '' : ' · previous file kept as waste_rates.prev.json'}</span>${skippedHtml}`);
+}
+
+async function rdbPublish(confirmRemoved) {
   if (RDB.dirty) {
     rdbMsg('Saving your edits first…');
     if (!await rdbSaveRes()) return;
   }
   if (RDB.dirtyCom) { if (!await rdbSaveCom()) return; }
   if (RDB.dirtyMeta) { if (!await rdbSaveMeta()) return; }
-  rdbMsg('Publishing to R2…');
+  const res = document.getElementById('rdb-publish-result');
+  if (res) res.innerHTML = '';
+  rdbMsg('Checking and publishing rates to the calculator…');
+  let out;
   try {
     const { data: { session } } = await sb.auth.getSession();
     const resp = await fetch('https://sgyenudbkdxdwciqylfs.supabase.co/functions/v1/publish-rates', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+      headers: { Authorization: `Bearer ${session?.access_token || ''}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(confirmRemoved ? { confirm_removed: confirmRemoved } : {}),
     });
-    if (!resp.ok) throw new Error(await resp.text());
-    const out = await resp.json();
-    rdbMsg(`✓ Published ${(out.bytes/1024).toFixed(1)}KB at ${new Date(out.published_at).toLocaleTimeString()}`);
-  } catch(err) { rdbMsg('Publish failed: ' + (err.message || err) + ' — is the edge function deployed?', false); }
+    const text = await resp.text();
+    try { out = JSON.parse(text); } catch (e) { out = { ok: false, error: text || ('HTTP ' + resp.status) }; }
+  } catch(err) { out = { ok: false, error: (err.message || err) + ' — is the publish-rates edge function deployed?' }; }
+  if (out.code === 'removals' && !confirmRemoved) {
+    if (res) res.innerHTML = rdbPublishReport(out);
+    const names = out.removed.map(c => '  • ' + (c.label || c.key) + '  (' + c.key + ')').join('\n');
+    if (confirm('This publish would remove ' + out.removed.length + ' council' + (out.removed.length === 1 ? '' : 's') + ' from the public calculator:\n\n' + names +
+      '\n\nAd links using ?council= for ' + (out.removed.length === 1 ? 'it' : 'them') + ' would stop selecting ' + (out.removed.length === 1 ? 'it' : 'them') + '. Remove and publish?')) {
+      return rdbPublish(out.removed.map(c => c.key));
+    }
+    rdbMsg('Not published — nothing changed.', false);
+    return;
+  }
+  if (res) res.innerHTML = rdbPublishReport(out);
+  rdbMsg(out.ok ? `✓ Published version ${out.version} — reload go.wasteplanner.au to see it.` : 'Not published — see below. The live file is unchanged.', !!out.ok);
 }
 
 async function requestWMP() {

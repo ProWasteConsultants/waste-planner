@@ -178,6 +178,50 @@ server, mirrored by `wpEntitlementsResolve` (pure) in `index.html`;
   in Stripe › Settings › Billing › Customer portal. Seat members' billing is
   their org admin's.
 
+## Generation rates: one source of truth (2026-10-19)
+
+WastePlanner's `res_rates` / `com_rates` / `councils` tables are the ONLY
+place rates and council lists are edited. `waste_rates.json` on R2 is built
+from them and read by the free calculator on go.wasteplanner.au (and the
+prowaste.au embed), the in-app calculator and the WMP generator.
+
+- **⬆ Publish rates to calculator** (Admin › Council & state database,
+  `rdbPublish`) calls the `publish-rates` edge function: staff only, reads
+  run as the caller (no service key), build + validate in
+  `supabase/functions/publish-rates/rates.mjs` (pure, shared with the backup
+  script and the tests), then live file → `waste_rates.prev.json`, new file →
+  `waste_rates.json` (`application/json`, `no-cache`). Any validation error
+  → 422 listing every error, nothing written (`rdbPublishReport`).
+- **The JSON shape is fixed** — `{ version, PROFILES, COUNCIL_PROFILES,
+  COUNCILS }`, exactly the landing page's. Ask Lachy before changing it.
+- **Draft councils never go out.** `councils.published`
+  (`sql/2026-10-19-publish-rates.sql`: existing rows backfilled `true`, new
+  ones default `false`), toggled by *Listed on the free calculator* on the
+  Scope bar. Rates under a draft or unknown council are left out and listed
+  in the reply's `skipped`.
+- **Dropping a council from the live file needs a person.** The function
+  diffs against the live file and refuses (409) until the exact values are
+  confirmed (`confirm_removed`). Council `value`s are the `?council=` in ad
+  links: never rename one that is live.
+- `streams` is derived (GW, REC, plus ORG/GLS once any state figure is
+  above zero); a council whose figures add one lists the union, because
+  `deepMerge` replaces arrays. `COMM_KEYS` and `COM_UNITS` mirror the
+  calculator's `COMM` and `weeklyL` — pinned by a test. `L/Week/100m2` is
+  allowed (the built-ins use it). A `com_uses` code that differs from the
+  calculator's key gets a `USE_ALIASES` pair, never a rename.
+- **Offline backup**: `node scripts/landing-rates-backup.mjs --page <landing
+  index.html> [--rates file | --url …]` writes `landing-build/index.html`
+  for a manual Cloudflare upload. It merges the way the page does at run
+  time (published state/key replaces, councils are added, never removed),
+  refuses an export that fails validation or carries a use the page's `COMM`
+  lacks, and checks every `<script>` still parses.
+- **No auto-publish on save or extraction**: extraction writes rates
+  straight into the tables, so a publish is the review step.
+- **To go live**: run the SQL; set `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+  `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` as function secrets; `supabase
+  functions deploy publish-rates` (Verify JWT on). It replaces the deployed
+  function of the same name, whose source was never in the repo.
+
 ## Email links (invitation · sign-in link · password reset)
 
 The Supabase client runs with `detectSessionInUrl: false`, so the app reads
@@ -313,6 +357,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/delete-account.test.js` | Account deletion: own account only, refusals and subscription cancel before any change, org/engaged projects kept, only the deleted projects' files removed |
 | `tests/chute-receivers.test.js` | Chute receivers: solid bin rendering, paint order under the chute, independent rotation (`wsRecvRot`) on every consumer |
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
+| `tests/publish-rates.test.js` | Publish rates: the brief's JSON shape from the tables, draft councils excluded, every validation refusal, removal guard, R2 SigV4 against AWS vectors, COMM/unit mirrors, the landing backup script |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
