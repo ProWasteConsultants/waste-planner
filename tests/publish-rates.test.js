@@ -11,7 +11,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { SOURCE, extractBlock, decodeSrcdoc } = require('./extract.js');
+const { SOURCE, extractBlock, extractSrcdocBlock, decodeSrcdoc } = require('./extract.js');
 
 const ROOT = path.join(__dirname, '..');
 const FN_DIR = path.join(ROOT, 'supabase', 'functions', 'publish-rates');
@@ -53,14 +53,111 @@ const fixture = () => JSON.parse(JSON.stringify({
 test('build: the brief\'s exact shape, from the tables', async () => {
   const { buildRates, validateRates } = await mod();
   const { json } = buildRates(fixture());
-  assert.deepStrictEqual(Object.keys(json), ['version', 'PROFILES', 'COUNCIL_PROFILES', 'COUNCILS']);
+  assert.deepStrictEqual(Object.keys(json), ['version', 'PROFILES', 'COUNCIL_PROFILES', 'COUNCILS', 'USES']);
   assert.strictEqual(json.version, '2026-10-19T00:00:00Z');
   assert.deepStrictEqual(json.PROFILES.VIC.resRates.apt_3br, { GW: 120, REC: 120, ORG: 107, GLS: 108 });
   assert.deepStrictEqual(json.PROFILES.VIC.comRates.cafe, { GW: { rate: 240, unitValue: 100, unit: 'L/Day/100m2' } });
   assert.deepStrictEqual(json.COUNCIL_PROFILES['VIC|whittlesea'],
     { resRates: { apt_3br: { GW: 125 } }, comRates: { cafe: { GW: { rate: 210, unitValue: 100, unit: 'L/Day/100m2' } } } });
   assert.deepStrictEqual(json.COUNCILS.VIC, [{ value: 'whittlesea', label: 'City of Whittlesea' }]);
+  assert.deepStrictEqual(json.USES, {
+    cafe: { label: 'Cafe', metric: 'm² (NLA)', defaultDays: 7 },
+    childcare: { label: 'Childcare', metric: 'm² (NLA)', defaultDays: 5 } }, 'every published use is described, built-ins from COMM');
   assert.deepStrictEqual(validateRates(json), []);
+});
+
+test('build: a typed-in use publishes under USES; a council\'s own list is marked comList "own"', async () => {
+  const { buildRates, validateRates } = await mod();
+  const f = fixture();
+  f.councils = f.councils.map(c => c.value === 'city_of_sydney' ? { ...c, com_own: true } : c);
+  f.uses = [{ use_code: 'invented_use', label: 'Nail salon', metric: 'Seats (no.)', default_days: 6 },
+    { use_code: 'cafe', label: 'Café', metric: null, default_days: null }];
+  f.comRates.push({ state: 'VIC', council_value: 'whittlesea', use_code: 'nail_bar', stream: 'GW', rate: 1, unit_value: 1, unit: 'L/Week' });
+  f.uses.push({ use_code: 'nail_bar', label: 'Nail bar', metric: null, default_days: null });
+  const { json, skipped } = buildRates(f);
+  assert.deepStrictEqual(json.USES.invented_use, { label: 'Nail salon', metric: 'Seats (no.)', defaultDays: 6 });
+  assert.deepStrictEqual(json.USES.nail_bar, { label: 'Nail bar', metric: 'Units (no.)', defaultDays: 7 }, 'no measure typed → read off the unit');
+  assert.deepStrictEqual(json.USES.cafe, { label: 'Café', metric: 'm² (NLA)', defaultDays: 7 }, 'the table\'s label wins, blanks fall back to COMM');
+  assert.deepStrictEqual(json.PROFILES.NSW.comRates.invented_use, { GW: { rate: 5, unitValue: 1, unit: 'L/Week' } });
+  assert.ok(!skipped.some(x => /invented_use/.test(x.what)));
+  assert.strictEqual(json.COUNCIL_PROFILES['NSW|city_of_sydney'].comList, 'own');
+  assert.strictEqual(json.COUNCIL_PROFILES['VIC|whittlesea'].comList, undefined, 'not ticked → overrides, as before');
+  assert.deepStrictEqual(validateRates(json), []);
+  // own with no commercial rows: nothing to mark, the state list applies
+  const g = fixture(); g.councils = g.councils.map(c => ({ ...c, com_own: true }));
+  g.comRates = g.comRates.filter(r => r.council_value !== 'city_of_sydney');
+  assert.ok(!('comList' in (buildRates(g).json.COUNCIL_PROFILES['NSW|city_of_sydney'] || {})));
+});
+
+test('validate: USES entries and comList are checked; a file without USES still passes', async () => {
+  const { buildRates, validateRates } = await mod();
+  const f = fixture(); f.uses = [{ use_code: 'invented_use', label: 'Nail salon', metric: 'Seats (no.)', default_days: 6 }];
+  const json = buildRates(f).json;
+  const old = JSON.parse(JSON.stringify(json)); delete old.USES; delete old.PROFILES.NSW.comRates;
+  assert.deepStrictEqual(validateRates(old), [], 'a pre-USES file validates');
+  const bad = JSON.parse(JSON.stringify(json));
+  bad.USES.invented_use = { label: '', metric: '', defaultDays: 9 };
+  bad.USES['Bad Code'] = { label: 'x', metric: 'y', defaultDays: 7 };
+  bad.COUNCIL_PROFILES['VIC|whittlesea'].comList = 'mine';
+  const noUse = JSON.parse(JSON.stringify(json)); delete noUse.USES.invented_use;
+  const errs = validateRates(bad).concat(validateRates(noUse));
+  const has = re => assert.ok(errs.some(e => re.test(e)), 'expected ' + re + ' in\n' + errs.join('\n'));
+  has(/^USES · invented_use: label is blank/); has(/^USES · invented_use: input measure/); has(/defaultDays 9 must be a whole number 1–7/);
+  has(/^USES · Bad Code: code must be/); has(/VIC\|whittlesea: comList "mine" must be "own"/);
+  has(/^NSW · commercial invented_use: not a use the calculator knows, and USES does not describe it/);
+});
+
+test('calculator: a council\'s own list replaces the state uses; USES join COMM; a saved unknown use is kept', () => {
+  const ctx = { RATES_REMOTE: null, isObj: o => o && typeof o === 'object' && !Array.isArray(o), out: null };
+  const P = { NSW: { streams: ['GW', 'REC'], resRates: {}, comRates: { office: { GW: { rate: 10, unitValue: 100, unit: 'L/Day/100m2' } }, cafe: { GW: { rate: 1, unitValue: 100, unit: 'L/Day/100m2' } } } } };
+  const nail = { GW: { rate: 5, unitValue: 100, unit: 'L/Day/100m2' } };
+  ctx.PROFILES = P;
+  ctx.COUNCIL_PROFILES = { 'NSW|nb': { comList: 'own', comRates: { nail_salon: nail, cafe: { GW: { rate: 2, unitValue: 100, unit: 'L/Day/100m2' } } } }, 'NSW|rw': { comRates: { cafe: { GW: { rate: 3, unitValue: 100, unit: 'L/Day/100m2' } } } } };
+  ctx.COMM = { cafe: { label: 'Cafe', metric: 'm² (NLA)', defaultDays: 7 } };
+  let council = 'nb';
+  ctx.g = id => ({ value: id === 'state' ? 'NSW' : council });
+  vm.createContext(ctx);
+  const fn = name => extractSrcdocBlock('calc-iframe', new RegExp('^function ' + name + '\\(')).text;
+  vm.runInContext([/function deepMerge\(.*/.exec(CALC)[0], /function getActiveProfile\(.*/.exec(CALC)[0],
+    fn('ownComList'), fn('applyRemoteUses'), fn('comUseKeep')].join('\n'), ctx);
+  const own = vm.runInContext('getActiveProfile()', ctx);
+  assert.deepStrictEqual(Object.keys(own.comRates).sort(), ['cafe', 'nail_salon'], 'office (state only) is not offered');
+  council = 'rw';
+  const inh = vm.runInContext('getActiveProfile()', ctx);
+  assert.deepStrictEqual(Object.keys(inh.comRates).sort(), ['cafe', 'office'], 'no flag → overrides merge over the state list');
+  assert.strictEqual(inh.comRates.cafe.GW.rate, 3);
+  assert.strictEqual(P.NSW.comRates.nail_salon, undefined, 'the state profile is never mutated');
+  // a saved project's typed-in use survives before the file arrives …
+  assert.strictEqual(vm.runInContext("comUseKeep('nail_salon')", ctx), 'nail_salon');
+  assert.ok(ctx.COMM.nail_salon.pending);
+  assert.strictEqual(vm.runInContext("comUseKeep('<x>')", ctx), null, 'junk is not a use');
+  // … and the file's USES fill it in; built-ins are never replaced
+  vm.runInContext("applyRemoteUses({USES:{nail_salon:{label:'Nail salon',metric:'Seats (no.)',defaultDays:6},cafe:{label:'CHANGED',metric:'x',defaultDays:1}}})", ctx);
+  assert.deepStrictEqual({ ...ctx.COMM.nail_salon }, { label: 'Nail salon', metric: 'Seats (no.)', defaultDays: 6, remote: true });
+  assert.strictEqual(ctx.COMM.cafe.label, 'Cafe');
+  // wiring
+  assert.ok(CALC.includes('const j=await r.json();applyRemoteUses(j);return j;'), 'every load of the file applies USES');
+  assert.ok(CALC.includes('const u=(c&&comUseKeep(c.use))||first;'), 'restore keeps an unknown saved use');
+  assert.ok(CALC.includes("label=\"Rated for ${escAttr(locLabel())}\""), 'the picker puts the scope\'s rated uses first');
+});
+
+test('WMP: a council\'s own list replaces the state rates; USES name the use', () => {
+  const ctx = { WMPG_COM_ORDER: ['GW', 'REC'], WMPG_COM_USES: { cafe: { label: 'Cafe', metric: 'm² (NLA)' } } };
+  vm.createContext(ctx);
+  vm.runInContext(['wmpgCouncilOverride', 'wmpgComRatesFor', 'wpComUsesMerge'].map(n => extractBlock(new RegExp('^function ' + n + '\\(')).text).join('\n'), ctx);
+  const R = { PROFILES: { NSW: { comRates: { cafe: { GW: { rate: 10, unitValue: 100, unit: 'L/Day/100m2' }, REC: { rate: 4, unitValue: 100, unit: 'L/Day/100m2' } } } } },
+    COUNCILS: { NSW: [{ value: 'nb', label: 'Northern Beaches' }] },
+    COUNCIL_PROFILES: { 'NSW|nb': { comList: 'own', comRates: { cafe: { GW: { rate: 12, unitValue: 100, unit: 'L/Day/100m2' } } } } },
+    USES: { nail_salon: { label: 'Nail salon', metric: 'Seats (no.)', defaultDays: 6 } } };
+  ctx.R = R;
+  const r = vm.runInContext("wmpgComRatesFor(R, { state: 'NSW', council: 'Northern Beaches' }, 'cafe')", ctx);
+  assert.deepStrictEqual(Object.keys(r), ['GW'], 'REC is a state figure the council\'s own list does not give');
+  assert.strictEqual(r.GW.src, 'council');
+  delete R.COUNCIL_PROFILES['NSW|nb'].comList;
+  assert.deepStrictEqual(Object.keys(vm.runInContext("wmpgComRatesFor(R, { state: 'NSW', council: 'Northern Beaches' }, 'cafe')", ctx)), ['GW', 'REC'], 'overrides still merge');
+  assert.strictEqual(vm.runInContext('wpComUsesMerge(R)', ctx), 1);
+  assert.strictEqual(ctx.WMPG_COM_USES.nail_salon.label, 'Nail salon');
+  assert.ok(SOURCE.includes('WMPG.remote = await r.json(); wpComUsesMerge(WMPG.remote);'));
 });
 
 test('build: streams are the residential streams the state rates; a council adding one lists the union', async () => {
@@ -139,10 +236,18 @@ test('validate: the calculator\'s own built-in data passes (the allowed units co
   assert.deepStrictEqual([...new Set(errs.map(e => e.split(':')[0]))], ['NSW', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'], 'every built-in state but VIC');
 });
 
-test('mirror: COMM_KEYS is the calculator\'s COMM, key for key', async () => {
-  const { COMM_KEYS } = await mod();
+test('mirror: COMM_META is the calculator\'s COMM — keys, labels, measures and days', async () => {
+  const { COMM_KEYS, COMM_META } = await mod();
   const { evalLiteral, findLiteral } = await backup();
-  assert.deepStrictEqual([...COMM_KEYS].sort(), Object.keys(evalLiteral(findLiteral(CALC, 'COMM').text)).sort());
+  const C = evalLiteral(findLiteral(CALC, 'COMM').text);
+  assert.deepStrictEqual([...COMM_KEYS].sort(), Object.keys(C).sort());
+  Object.keys(C).forEach(k => assert.deepStrictEqual(COMM_META[k], { label: C[k].label, metric: C[k].metric, defaultDays: C[k].defaultDays }, k));
+});
+
+test('mirror: the admin table\'s unit list is COM_UNITS', async () => {
+  const { COM_UNITS } = await mod();
+  const m = /const RDB_COM_UNITS = (\[[\s\S]*?\]);/.exec(SOURCE);
+  assert.deepStrictEqual(new Function('return ' + m[1])(), COM_UNITS);
 });
 
 test('mirror: COM_UNITS covers every unit weeklyL has a branch for', async () => {
@@ -205,7 +310,9 @@ test('edge function: staff only, validate before any write, removals confirmed, 
   assert.match(FN, /const LIVE_KEY = "waste_rates\.json";/);
   assert.match(FN, /const PREV_KEY = "waste_rates\.prev\.json";/);
   ['councils', 'res_rates', 'com_rates'].forEach(t => assert.match(body, new RegExp(`readAll\\(\\(\\) => sbUser\\.from\\("${t}"\\)`), t + ' paged'));
-  assert.match(body, /select\("state,value,label,published"\)/, 'the published flag is read, not assumed');
+  assert.match(body, /select\("state,value,label,published,com_own"\)/, 'the published and own-list flags are read, not assumed');
+  assert.match(body, /readAll\(\(\) => sbUser\.from\("com_uses"\)\.select\("use_code,label,metric,default_days"\)/, 'the use list is read for USES');
+  assert.match(body, /buildRates\(\{ councils, resRates, comRates, uses \}\)/);
   assert.ok(!/R2_SECRET|R2_ACCESS/.test(SOURCE), 'no R2 credential in the frontend');
 });
 
@@ -261,7 +368,7 @@ test('backup script: rebuilds the three blocks with the page\'s own merge rule, 
   const ctx = { RATES_REMOTE: null, PROFILES: P, COUNCIL_PROFILES: CP, isObj: o => o && typeof o === 'object' && !Array.isArray(o),
     g: id => ({ value: id === 'state' ? 'VIC' : 'whittlesea' }) };
   vm.createContext(ctx);
-  vm.runInContext(/function deepMerge\(.*/.exec(CALC)[0] + '\n' + /function getActiveProfile\(.*/.exec(CALC)[0] + '\nthis.out=getActiveProfile();', ctx);
+  vm.runInContext(/function deepMerge\(.*/.exec(CALC)[0] + '\n' + /function getActiveProfile\(.*/.exec(CALC)[0] + '\n' + /function ownComList\(.*/.exec(CALC)[0] + '\nthis.out=getActiveProfile();', ctx);
   assert.strictEqual(ctx.out.resRates.apt_3br.GW, 125);
   assert.strictEqual(ctx.out.resRates.apt_3br.ORG, 107);
 });
@@ -273,6 +380,46 @@ test('backup script: refuses a bad export, an unknown use, and an ambiguous page
   const neg = JSON.parse(JSON.stringify(rates)); neg.PROFILES.VIC.resRates.apt_1br.GW = -1;
   assert.throws(() => rebuildPage(CALC, neg), /fails validation/);
   const noCafe = CALC.replace(/\n\s*cafe:\s*\{label:"Cafe"[^\n]*/, '');
-  assert.throws(() => rebuildPage(noCafe, rates), /does not list in COMM: cafe/);
+  const bare = JSON.parse(JSON.stringify(rates)); delete bare.USES.cafe;
+  assert.throws(() => rebuildPage(noCafe, bare), /does not list in COMM and USES does not describe: cafe/);
   assert.throws(() => rebuildPage(CALC + '\n<script>const PROFILES={};</script>', rates), /exactly one "const PROFILES=\{"/);
+});
+
+test('backup script: uses the export describes are added to the page\'s COMM, once, and the page reports its runtime', async () => {
+  const { rebuildPage, evalLiteral, findLiteral } = await backup();
+  const { buildRates } = await mod();
+  const f = fixture(); f.uses = [{ use_code: 'invented_use', label: 'Nail salon', metric: 'Seats (no.)', default_days: 6 }];
+  const rates = buildRates(f).json;
+  const { html, report } = rebuildPage(CALC, rates);
+  const C = evalLiteral(findLiteral(html, 'COMM').text);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(C.invented_use)), { label: 'Nail salon', metric: 'Seats (no.)', defaultDays: 6 });
+  assert.strictEqual(C.cafe.label, 'Cafe', 'built-ins untouched');
+  assert.deepStrictEqual(report.usesAdded, ['invented_use']);
+  assert.deepStrictEqual(report.runtime, { applyRemoteUses: true, ownComList: true });
+  assert.strictEqual(rebuildPage(html, rates).html, html, 'idempotent');
+  const noCafe = CALC.replace(/\n\s*cafe:\s*\{label:"Cafe"[^\n]*/, '');
+  assert.strictEqual(evalLiteral(findLiteral(rebuildPage(noCafe, rates).html, 'COMM').text).cafe.label, 'Cafe', 'a page missing a published use gets it from USES');
+  const old = CALC.replace('function applyRemoteUses(', 'function applyRemoteUsesX(');
+  assert.strictEqual(rebuildPage(old, rates).report.runtime.applyRemoteUses, false);
+  [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].forEach(m => new vm.Script(m[1]));
+});
+
+test('SQL: own-list flag defaults off for every council; use measure and days are optional', () => {
+  const sql = fs.readFileSync(path.join(ROOT, 'sql', '2026-10-19-council-commercial-lists.sql'), 'utf8');
+  const i = s => { const k = sql.indexOf(s); assert.ok(k >= 0, 'missing: ' + s); return k; };
+  assert.ok(i('add column if not exists com_own boolean') < i('set com_own = false where com_own is null'));
+  i('alter column com_own set default false'); i('alter column com_own set not null');
+  i('add column if not exists metric text'); i('add column if not exists default_days integer');
+  i('check (default_days is null or default_days between 1 and 7)');
+});
+
+test('admin: the commercial table types a use in, removes a use, copies the state list, and sets the own-list flag', () => {
+  assert.ok(SOURCE.includes('<option value="__typed">+ type a new use…</option>'));
+  assert.ok(SOURCE.includes('id="rdb-com-own" onchange="rdbSetComOwn(this.checked)"'));
+  assert.ok(SOURCE.includes("onclick=\"rdbDeleteComUse('${cgbEsc(r.use_code)}')\""));
+  assert.ok(SOURCE.includes('onclick="rdbComCopyState()"'));
+  const own = extractBlock(/^async function rdbSetComOwn\(/).text;
+  assert.ok(own.includes(".from('councils').update({ com_own: !!on })"));
+  const save = extractBlock(/^async function rdbSaveCom\(/).text;
+  assert.ok(save.indexOf('rdbComCollect()') < save.indexOf("from('com_rates').delete()"), 'edits are read off the inputs first');
 });

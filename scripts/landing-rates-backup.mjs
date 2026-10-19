@@ -19,9 +19,16 @@
 //                              built-in-only councils are KEPT — removing a
 //                              council is a decision for a person, not this
 //                              script. Built-in-only entries are reported.
+//   COMM[use]                  a use the export describes under USES (typed in
+//                              or extracted in WastePlanner) and the page lacks
+//                              is ADDED with its label / measure / days;
+//                              built-in entries are never touched
 // The export is validated with the same rules publish-rates uses, every
-// published commercial use must exist in the page's own COMM, and every
-// <script> block of the output must still parse.
+// published commercial use must exist in the page's COMM or the export's
+// USES, and every <script> block of the output must still parse. A page
+// without applyRemoteUses / ownComList (the calculator's runtime readers of
+// USES and comList) is reported: its offline copy is right, but online it
+// will not pick up new uses or a council's own list until it has them.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -77,10 +84,13 @@ export function jsLiteral(v, indent = '') {
 export function rebuildPage(page, rates) {
   const errors = validateRates(rates);
   if (errors.length) throw new Error('the export fails validation — not building a backup from it:\n  ' + errors.join('\n  '));
+  const usesAdded = [];
+  page = addUses(page, rates.USES || {}, usesAdded);
   const blocks = ['PROFILES', 'COUNCIL_PROFILES', 'COUNCILS_BY_STATE'].map(n => ({ name: n, ...findLiteral(page, n) }));
   const [P, CP, CB] = blocks.map(b => evalLiteral(b.text));
   const report = { version: rates.version, states: [], councilProfiles: { replaced: [], added: [], builtInOnly: [] },
-    councils: { added: [], relabelled: [], builtInOnly: [] }, missingUses: [] };
+    councils: { added: [], relabelled: [], builtInOnly: [] }, missingUses: [], usesAdded,
+    runtime: { applyRemoteUses: /function applyRemoteUses\(/.test(page), ownComList: /function ownComList\(/.test(page) } };
 
   // the page's own commercial uses — a published use it has no row for would be dead data
   try {
@@ -90,7 +100,7 @@ export function rebuildPage(page, rates) {
     [...Object.entries(rates.PROFILES), ...Object.entries(rates.COUNCIL_PROFILES)].forEach(([k, p]) =>
       Object.keys(p.comRates || {}).forEach(u => { if (!have.has(u) && !seen.has(u)) { seen.add(u); report.missingUses.push(`${u} (${k})`); } }));
   } catch (e) { report.missingUses.push('could not read the page\'s COMM: ' + e.message); }
-  if (report.missingUses.length) throw new Error('the export has commercial uses this page does not list in COMM: ' + report.missingUses.join(', '));
+  if (report.missingUses.length) throw new Error('the export has commercial uses this page does not list in COMM and USES does not describe: ' + report.missingUses.join(', '));
 
   const profiles = { ...P };
   Object.entries(rates.PROFILES).forEach(([st, p]) => { profiles[st] = p; report.states.push(st); });
@@ -138,6 +148,24 @@ export function rebuildPage(page, rates) {
   return { html, report };
 }
 
+// The export's USES entries the page's COMM lacks, added to COMM in the
+// page's own entry shape, straight after its opening brace — each line ends
+// in a comma, so nothing after it changes and the built-in entries keep
+// their comments and order. Idempotent: a use already in COMM (built in, or
+// added by an earlier run) is left alone.
+export function addUses(page, uses, added) {
+  const lit = findLiteral(page, 'COMM');
+  const comm = evalLiteral(lit.text);
+  const lines = Object.keys(uses).sort().filter(k => !(k in comm)).map(k => {
+    const u = uses[k];
+    added.push(k);
+    return `  ${/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)}:{label:${JSON.stringify(u.label)},metric:${JSON.stringify(u.metric)},defaultDays:${u.defaultDays}},   // from waste_rates.json USES`;
+  });
+  if (!lines.length) return page;
+  const at = lit.start + 1;
+  return page.slice(0, at) + '\n' + lines.join('\n') + page.slice(at);
+}
+
 function arg(name) { const i = process.argv.indexOf('--' + name); return i > 0 ? process.argv[i + 1] : undefined; }
 
 async function main() {
@@ -164,6 +192,10 @@ async function main() {
     (r.councilProfiles.builtInOnly.length ? `; kept from the old backup (not in the export): ${r.councilProfiles.builtInOnly.join(', ')}` : ''));
   console.log(`  councils: ${r.councils.added.length} added, ${r.councils.relabelled.length} relabelled` +
     (r.councils.builtInOnly.length ? `; kept from the old backup (not in the export): ${r.councils.builtInOnly.join(', ')}` : ''));
+  if (r.usesAdded.length) console.log(`  commercial uses added to COMM from USES: ${r.usesAdded.join(', ')}`);
+  if (!r.runtime.applyRemoteUses || !r.runtime.ownComList)
+    console.log('  ⚠ the page has no ' + ['applyRemoteUses', 'ownComList'].filter(k => !r.runtime[k]).join(' / ') +
+      ' — online it will not pick up new uses or a council\'s own list until they are added (see CLAUDE.md › Per-council commercial lists).');
   console.log('  Upload it in Cloudflare: Workers & Pages → wasteplanner-landing → New deployment.');
 }
 

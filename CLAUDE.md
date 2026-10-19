@@ -193,7 +193,10 @@ prowaste.au embed), the in-app calculator and the WMP generator.
   `waste_rates.json` (`application/json`, `no-cache`). Any validation error
   → 422 listing every error, nothing written (`rdbPublishReport`).
 - **The JSON shape is fixed** — `{ version, PROFILES, COUNCIL_PROFILES,
-  COUNCILS }`, exactly the landing page's. Ask Lachy before changing it.
+  COUNCILS, USES }`. Ask Lachy before changing it. `USES` and a council
+  profile's `comList` were added by Lachy's decision (2026-10-19) — see
+  "Per-council commercial lists" below; a reader that ignores them still
+  works, and a file without `USES` still validates.
 - **Draft councils never go out.** `councils.published`
   (`sql/2026-10-19-publish-rates.sql`: existing rows backfilled `true`, new
   ones default `false`), toggled by *Listed on the free calculator* on the
@@ -205,18 +208,80 @@ prowaste.au embed), the in-app calculator and the WMP generator.
   links: never rename one that is live.
 - `streams` is derived (GW, REC, plus ORG/GLS once any state figure is
   above zero); a council whose figures add one lists the union, because
-  `deepMerge` replaces arrays. `COMM_KEYS` and `COM_UNITS` mirror the
-  calculator's `COMM` and `weeklyL` — pinned by a test. `L/Week/100m2` is
+  `deepMerge` replaces arrays. `COMM_META` (label, measure, days; `COMM_KEYS`
+  is its keys) and `COM_UNITS` mirror the calculator's `COMM` and `weeklyL`,
+  and the admin's `RDB_COM_UNITS` mirrors `COM_UNITS` — pinned by tests. `L/Week/100m2` is
   allowed (the built-ins use it). A `com_uses` code that differs from the
   calculator's key gets a `USE_ALIASES` pair, never a rename.
 - **Offline backup**: `node scripts/landing-rates-backup.mjs --page <landing
   index.html> [--rates file | --url …]` writes `landing-build/index.html`
   for a manual Cloudflare upload. It merges the way the page does at run
   time (published state/key replaces, councils are added, never removed),
-  refuses an export that fails validation or carries a use the page's `COMM`
-  lacks, and checks every `<script>` still parses.
+  adds every `USES` entry the page's `COMM` lacks (`addUses`, built-ins
+  untouched), refuses an export that fails validation or carries a use
+  neither `COMM` nor `USES` describes, reports a page without the runtime
+  readers (`applyRemoteUses` / `ownComList`), and checks every `<script>`
+  still parses.
 - **No auto-publish on save or extraction**: extraction writes rates
   straight into the tables, so a publish is the review step.
+
+### Per-council commercial lists and typed-in uses (2026-10-19)
+
+Each state has its own commercial list (its `com_rates` rows with no
+council). A council can have its **own** list, which replaces the state's.
+The residential table is unchanged. Tested in `tests/publish-rates.test.js`
+and `tests/council-pipeline.test.js`.
+
+- **`councils.com_own`** (`sql/2026-10-19-council-commercial-lists.sql`,
+  default `false`, every existing council `false`). When it is on and the
+  council has rows, the publish marks its profile `comList: "own"`. Every
+  reader then uses the council's `comRates` **in place of** the state's: the
+  calculator's `ownComList`, the WMP's `wmpgComRatesFor`. When it is off,
+  the council's rows are overrides on the state list, as before. Randwick
+  and Whittlesea were entered that way, so the default must stay off. A
+  council with no commercial rows uses the state list in both cases.
+- **Admin › Commercial rates** shows only the selected scope's rows, with a
+  note saying which list applies. *Council's own commercial list* sets the
+  flag (`rdbSetComOwn`). *⧉ Start from the <state> list* copies the state
+  rows to edit (`rdbComCopyState`; saving marks the list as the council's
+  own). ✕ removes one rate and *✕ use* removes a whole use. The unit is a
+  select over `RDB_COM_UNITS`.
+- **Typed-in uses**: *+ type a new use…* takes a name, the measure it is
+  counted in and its usual days a week (`rdbComTypedUse` → `com_uses`, plus
+  the new `metric` / `default_days` columns). The publish describes every
+  use a rate names under `USES` (`{label, metric, defaultDays}`): a
+  `com_uses` value first, then `COMM_META`, then the rate's unit
+  (`metricForUnit`). A use in neither `COMM` nor `com_uses` is still
+  skipped and named.
+- **Readers follow the file, not their own copy.** The calculator's
+  `applyRemoteUses` adds `USES` entries to `COMM` every time the file loads
+  (built-ins are never replaced). A saved project's use the page does not
+  know yet is kept under a placeholder (`comUseKeep`), never swapped for
+  another use. The picker lists the uses the scope rates first. The WMP's
+  `wpComUsesMerge` does the same for `WMPG_COM_USES`. **The
+  go.wasteplanner.au page needs `applyRemoteUses`, `comUseKeep`,
+  `ownComList` and the one-line hooks (`loadRemoteRatesIfConfigured`,
+  `getActiveProfile`, `restoreRooms`) copied in once.** After that, new uses
+  and council lists reach it on every publish with no code change. The
+  backup script reports a page that lacks them.
+- **Extraction syncs the council's commercial list to its guideline**
+  (Lachy: "AI applies directly"). `crqExtract` calls
+  `crqWriteRates(…, { sync: true, cleanRead })`, and `crqComSyncApply`
+  applies `crqComSyncPlan` (pure):
+  - a premises the guideline names and the list lacks becomes a new use
+    (`crqNewUse`: its own name, the measure its unit implies; a variant on
+    another basis says its basis, e.g. "Hotel / motel (per m²)");
+  - a changed figure is **updated**;
+  - the list is marked the council's own;
+  - a rate the guideline no longer gives is **removed**, but only after a
+    **complete read**: no sweep error, no row the manifest saw and the
+    transcription missed, no length cap hit. A use the run read but could
+    not place (a combined figure, a contested cell) keeps its rows;
+  - a complete read that finds no commercial rate at all clears the
+    council's list, so the state list applies.
+
+  Residential stays add-only. *⇩ Pull rates from guideline* stays add-only
+  for both. Guardrail 1 (combined figures are never split) is unchanged.
 - **To go live**: run the SQL; set `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
   `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` as function secrets; `supabase
   functions deploy publish-rates` (Verify JWT on). It replaces the deployed
@@ -357,7 +422,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/delete-account.test.js` | Account deletion: own account only, refusals and subscription cancel before any change, org/engaged projects kept, only the deleted projects' files removed |
 | `tests/chute-receivers.test.js` | Chute receivers: solid bin rendering, paint order under the chute, independent rotation (`wsRecvRot`) on every consumer |
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
-| `tests/publish-rates.test.js` | Publish rates: the brief's JSON shape from the tables, draft councils excluded, every validation refusal, removal guard, R2 SigV4 against AWS vectors, COMM/unit mirrors, the landing backup script |
+| `tests/publish-rates.test.js` | Publish rates: the brief's JSON shape from the tables, draft councils excluded, every validation refusal, removal guard, R2 SigV4 against AWS vectors, COMM/unit mirrors, the landing backup script; per-council commercial lists (`comList`), typed-in uses (`USES`) in the calculator and WMP |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -1063,7 +1128,7 @@ purges those and nothing writes the status any more. Rules, all tested in
   automatically — the split is a judgement call, typed into the report's own
   GW/REC boxes (`crqPlaceSplit`), which writes the garbage half onto the row
   and a `source: 'manual'` recycling sibling under the same clause. — never an
-  upsert, so an existing rate is never overwritten. Anything that would need
+  upsert, so an existing rate is never overwritten (the extraction's commercial sync excepted — see "Per-council commercial lists"). Anything that would need
   a guess (no dwelling type, an unknown use, a unit with no formula) is
   reported with the reason and typed in by hand — or resolved in the rates
   report itself, whose picker can also CREATE a commercial use
@@ -1103,15 +1168,19 @@ records the split on the row as a human act (`source: 'manual'`, same
 clause). Inventing a split deliberately would be worse than the accidental
 80-instead-of-50 bleed that prompted these rules.
 
-**2 — The use taxonomy never grows on its own.** Exactly ONE place in the
-app inserts into `com_uses`: the rates report's "+ new use…" action inside
-`crqPlaceFixed`, reached by opening the picker, choosing it, typing the name
-and pressing Place. `crqWriteRates` only reads the uses list and `crqExtract`
-never touches the table at all. A premises the table does not carry surfaces
-as **not placed**, with the council's own use, stream and figure intact and
-the create-a-use action on the row — visible and ready, waiting on a human
-to decide what becomes an official use. Same manual-first rule as the
-requirements list.
+**2 — The use taxonomy grows only from a person or a guideline that names
+the use** (revised 2026-10-19 by Lachy's decision; it used to be "never on
+its own"). `com_uses` is written in exactly three functions, and a test
+enforces it:
+
+- `crqPlaceFixed` — the rates report's "+ new use…";
+- `rdbComTypedUse` — the commercial table's "+ type a new use…";
+- `crqComSyncApply` — the extraction's sync, and only for a `newUse` that
+  `crqRateToTable` planned for a premises the guideline **names**.
+
+A broad class ("commercial") still never becomes a use, and a premises is
+still never seated on a lookalike. What the engine cannot place surfaces as
+**not placed**, with the create-a-use action on the row.
 
 Not decided by these guardrails, and deliberately left open: how a
 combined-rate type is structured in the data model and the calculator, and
