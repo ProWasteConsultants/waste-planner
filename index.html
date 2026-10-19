@@ -1134,7 +1134,12 @@ body.wp-anon .ws-top-chip{display:none;}
           </table>
           <button class="btn" onclick="rdbSaveRes()">💾 Save residential rates</button>
 
-          <div class="dc-title" style="margin-top:22px;">Commercial rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">for the selected state / council scope</span></div>
+          <div class="dc-title" style="margin-top:22px;">Commercial rates <span style="font-weight:400;font-size:10px;color:var(--muted);text-transform:none;">for the selected state / council scope</span>
+            <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Each state has its own list of commercial uses and rates. A council can have its own list too — tick <b>Council's own commercial list</b> and only the uses listed here apply for that council (the state's are not offered). Unticked, a council's rows are overrides on the state list. A council with no rows uses the state list. A use that is not in the list can be typed in with <b>+ type a new use…</b>: give it the measure it is counted in (m², beds…) and its usual days a week, and it reaches every calculator on the next ⬆ Publish. 🧾 Extract to list on the council's guideline syncs this list to the document: uses it lists are added, rates it changed are updated, uses it no longer lists are removed.</span></span></div>
+          <div id="rdb-com-scope" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 6px;">
+            <label id="rdb-com-own-wrap" style="display:none;align-items:center;gap:5px;font-size:11px;color:var(--text);" title="The council publishes its own commercial table: only its uses apply, the state list is not inherited."><input type="checkbox" id="rdb-com-own" onchange="rdbSetComOwn(this.checked)"> Council's own commercial list</label>
+            <span id="rdb-com-note" style="font-size:11px;color:var(--muted);"></span>
+          </div>
           <table style="border-collapse:collapse;font-size:11px;width:100%;">
             <thead><tr>
               <th style="text-align:left;padding:4px 8px;color:var(--muted);font-size:10px;">USE</th>
@@ -1147,7 +1152,12 @@ body.wp-anon .ws-top-chip{display:none;}
             <tbody id="rdb-com-body"></tbody>
           </table>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;">
-            <select id="rdb-com-new-use" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;max-width:260px;"></select>
+            <select id="rdb-com-new-use" onchange="rdbComNewUseChanged()" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;max-width:260px;"></select>
+            <span id="rdb-com-typed" style="display:none;gap:6px;align-items:center;">
+              <input id="rdb-com-typed-label" type="text" placeholder="New use, as the guideline names it" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;width:220px;">
+              <select id="rdb-com-typed-metric" title="What this use is counted in" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;"></select>
+              <input id="rdb-com-typed-days" type="number" min="1" max="7" value="7" title="Usual days a week" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;width:52px;">
+            </span>
             <select id="rdb-com-new-stream" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:11px;color:var(--text);font-family:inherit;">
               <option>GW</option><option>REC</option><option>ORG</option><option>GLS</option>
             </select>
@@ -2487,7 +2497,7 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
         &lt;div id=&quot;aiExtractMsg&quot; style=&quot;font-size:.72rem;color:rgba(255,255,255,0.6);margin:0 0 6px;min-height:13px;line-height:1.4;&quot;&gt;&lt;/div&gt;
         &lt;div class=&quot;ws-row&quot;&gt;
           &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;State&lt;/span&gt;&lt;select id=&quot;state&quot; class=&quot;ws-sel&quot;&gt;&lt;option value=&quot;VIC&quot;&gt;VIC&lt;/option&gt;&lt;option value=&quot;NSW&quot;&gt;NSW&lt;/option&gt;&lt;option value=&quot;QLD&quot;&gt;QLD&lt;/option&gt;&lt;option value=&quot;SA&quot;&gt;SA&lt;/option&gt;&lt;option value=&quot;WA&quot;&gt;WA&lt;/option&gt;&lt;option value=&quot;TAS&quot;&gt;TAS&lt;/option&gt;&lt;option value=&quot;ACT&quot;&gt;ACT&lt;/option&gt;&lt;option value=&quot;NT&quot;&gt;NT&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
-          &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;Council&lt;/span&gt;&lt;select id=&quot;council&quot; class=&quot;ws-sel&quot; onchange=&quot;wsCalcTrigger()&quot;&gt;&lt;option value=&quot;&quot;&gt;—&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
+          &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;Council&lt;/span&gt;&lt;select id=&quot;council&quot; class=&quot;ws-sel&quot; onchange=&quot;renderRooms();wsCalcTrigger()&quot;&gt;&lt;option value=&quot;&quot;&gt;—&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
         &lt;/div&gt;
         &lt;div id=&quot;roomList&quot; class=&quot;ws-roomsWrap&quot;&gt;&lt;/div&gt;
         &lt;div class=&quot;ws-addrow&quot;&gt;
@@ -2534,7 +2544,7 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
 const RATES_URL=&quot;https://pub-889b5ab565ad46769be89dc35692374e.r2.dev/waste_rates.json&quot;;
 const CALC_EMAIL_FORMSPREE=&quot;https://formspree.io/f/mjgpynzl&quot;;
 let RATES_REMOTE=null;
-async function loadRemoteRatesIfConfigured(){if(!RATES_URL)return null;try{const r=await fetch(RATES_URL,{cache:&quot;no-store&quot;});if(!r.ok)throw 0;return await r.json();}catch(e){return null;}}
+async function loadRemoteRatesIfConfigured(){if(!RATES_URL)return null;try{const r=await fetch(RATES_URL,{cache:&quot;no-store&quot;});if(!r.ok)throw 0;const j=await r.json();applyRemoteUses(j);return j;}catch(e){return null;}}
 const COMPACTION_THRESHOLD_GW_L_PER_WEEK=8000,COMPACTION_THRESHOLD_GW_BINS=6;
 const STREAM_META={GW:{label:&quot;General Waste&quot;,short:&quot;Gen&quot;,color:&quot;#b91c1c&quot;,bg:&quot;rgba(185,28,28,.08)&quot;},REC:{label:&quot;Recycling&quot;,short:&quot;Rec&quot;,color:&quot;#f5b400&quot;,bg:&quot;rgba(245,180,0,.10)&quot;},ORG:{label:&quot;Organics&quot;,short:&quot;Org&quot;,color:&quot;#22c55e&quot;,bg:&quot;rgba(34,197,94,.10)&quot;},GLS:{label:&quot;Glass&quot;,short:&quot;Glass&quot;,color:&quot;#8b5cf6&quot;,bg:&quot;rgba(139,92,246,.10)&quot;},CARD:{label:&quot;Paper &amp; Cardboard&quot;,short:&quot;Card&quot;,color:&quot;#2563eb&quot;,bg:&quot;rgba(37,99,235,.10)&quot;},SOFT:{label:&quot;Soft Plastics&quot;,short:&quot;Soft&quot;,color:&quot;#06b6d4&quot;,bg:&quot;rgba(6,182,212,.10)&quot;}};
 const STREAM_TO_LAYOUT={GW:&quot;general&quot;,REC:&quot;recycling&quot;,ORG:&quot;organics&quot;,GLS:&quot;glass&quot;,CARD:&quot;paper&quot;,SOFT:&quot;soft&quot;};
@@ -2714,15 +2724,16 @@ function ratesSourceInfo(){
   const ov=co?((RATES_REMOTE?.COUNCIL_PROFILES?.[`${st}|${co}`])||COUNCIL_PROFILES[`${st}|${co}`]||null):null;
   const ovRes=!!(ov&amp;&amp;ov.resRates&amp;&amp;Object.keys(ov.resRates).length);
   const ovCom=!!(ov&amp;&amp;ov.comRates&amp;&amp;Object.keys(ov.comRates).length);
+  const ownCom=ovCom&amp;&amp;ov.comList==='own';
   const when=RATES_REMOTE&amp;&amp;(RATES_REMOTE.version||RATES_REMOTE.published_at||RATES_REMOTE.generated_at||(RATES_REMOTE.meta&amp;&amp;RATES_REMOTE.meta.published_at))||null;
-  return {remote,label,value:co,ov:!!ov,ovRes,ovCom,when};
+  return {remote,label,value:co,ov:!!ov,ovRes,ovCom,ownCom,when};
 }
 function ratesNoteHtml(){
   const i=ratesSourceInfo();
   let src;
   if(!i.remote)src='built-in state defaults — the published rates file could not be loaded';
   else if(!i.value)src=`${g('state').value} state defaults (published rates)`;
-  else if(i.ov)src=`&lt;b&gt;${escAttr(i.label)}&lt;/b&gt; override (published rates${i.ovRes?'':'; residential inherits the state defaults'}${i.ovCom?'':'; commercial inherits the state defaults'})`;
+  else if(i.ov)src=`&lt;b&gt;${escAttr(i.label)}&lt;/b&gt; override (published rates${i.ovRes?'':'; residential inherits the state defaults'}${i.ownCom?'; commercial: the council’s own list — state uses are not offered':i.ovCom?'':'; commercial inherits the state defaults'})`;
   else src=`${g('state').value} state defaults — &lt;b style=&quot;color:#EFB080&quot;&gt;no published override for ${escAttr(i.label)}&lt;/b&gt; (value ${escAttr(i.value)}). Save its rates and ⬆ Publish rates to calculator, then ↻`;
   // The residential METHOD sits above the rates: a stepped-table council does
   // not use a generation rate for residential at all, so saying only which
@@ -2744,6 +2755,7 @@ function ratesNoteHtml(){
 async function reloadRates(){
   RATES_REMOTE=await loadRemoteRatesIfConfigured();
   refreshCouncils();
+  renderRooms();
   // the bin library and the council kerbside services live in the platform —
   // ask it to re-read and push them too (it answers with ws-calc-fill)
   if(window.parent&amp;&amp;window.parent!==window)window.parent.postMessage({type:'ws-calc-refresh'},'*');
@@ -3543,7 +3555,39 @@ document.addEventListener('click',e=&gt;{
 function fmtM2(x){return(Math.round(x*10)/10).toFixed(1);}
 function isObj(x){return x&amp;&amp;typeof x===&quot;object&quot;&amp;&amp;!Array.isArray(x);}
 function deepMerge(b,o){if(!isObj(b))return o;const out={...b};if(!isObj(o))return out;for(const k of Object.keys(o)){if(Array.isArray(o[k]))out[k]=o[k].slice();else if(isObj(out[k])&amp;&amp;isObj(o[k]))out[k]=deepMerge(out[k],o[k]);else out[k]=o[k];}return out;}
-function getActiveProfile(){const st=g(&quot;state&quot;).value,co=g(&quot;council&quot;).value;const sp=(RATES_REMOTE?.PROFILES?.[st])||PROFILES[st];if(!sp)return null;if(!co)return sp;const ov=(RATES_REMOTE?.COUNCIL_PROFILES?.[`${st}|${co}`])||COUNCIL_PROFILES[`${st}|${co}`];return ov?deepMerge(sp,ov):sp;}
+function getActiveProfile(){const st=g(&quot;state&quot;).value,co=g(&quot;council&quot;).value;const sp=(RATES_REMOTE?.PROFILES?.[st])||PROFILES[st];if(!sp)return null;if(!co)return sp;const ov=(RATES_REMOTE?.COUNCIL_PROFILES?.[`${st}|${co}`])||COUNCIL_PROFILES[`${st}|${co}`];return ov?ownComList(deepMerge(sp,ov),ov):sp;}
+// A council that publishes its OWN commercial list (comList &quot;own&quot; in the
+// rates file) replaces the state's uses — merging would offer state uses the
+// council never rated. Without the flag a council's rows stay overrides.
+function ownComList(p,ov){if(ov&amp;&amp;ov.comList==='own'&amp;&amp;isObj(ov.comRates)&amp;&amp;Object.keys(ov.comRates).length)p.comRates=deepMerge({},ov.comRates);return p;}
+// Uses the published file describes (USES) and this page's COMM does not:
+// typed in or extracted in WastePlanner. They join COMM so they can be
+// picked — the use list follows the file, with no code change here. A
+// built-in entry is never replaced; a placeholder kept for a saved project's
+// use (comUseKeep) is.
+function applyRemoteUses(R){
+  const U=R&amp;&amp;R.USES;if(!isObj(U))return;
+  Object.keys(U).forEach(k=&gt;{
+    const u=U[k];if(!isObj(u)||!u.label||(COMM[k]&amp;&amp;!COMM[k].pending))return;
+    const d=Math.round(Number(u.defaultDays));
+    COMM[k]={label:String(u.label),metric:String(u.metric||'Units (no.)'),defaultDays:d&gt;=1&amp;&amp;d&lt;=7?d:7,remote:true};
+  });
+}
+// A saved use this page does not know yet (a typed-in use, before the rates
+// file has loaded) is KEPT under a placeholder, never swapped for another
+// use — applyRemoteUses fills in its label when the file arrives.
+function comUseKeep(code){
+  if(COMM[code])return code;
+  if(typeof code!=='string'||!/^[a-z0-9_]+$/.test(code))return null;
+  COMM[code]={label:code.replace(/_/g,' '),metric:'Units (no.)',defaultDays:7,pending:true};
+  return code;
+}
+// The first use the active scope has a rate for — what a new commercial row
+// starts on — else the first use in the list.
+function firstComUse(){
+  const p=getActiveProfile(),cr=(p&amp;&amp;p.comRates)||{};
+  return Object.keys(COMM).find(k=&gt;cr[k]&amp;&amp;Object.keys(cr[k]).length)||Object.keys(COMM)[0];
+}
 function streamPill(s){const m=STREAM_META[s]||{label:s};return`&lt;span class=&quot;pwPill pwPill-${s}&quot;&gt;&lt;span class=&quot;pwPill-dot&quot;&gt;&lt;/span&gt;${m.label}&lt;/span&gt;`;}
 // In the results table the stream name opens its split menu. Anything that can
 // be separated, or has been, gets a caret so it reads as a control.
@@ -3675,7 +3719,7 @@ function restoreRooms(arr){
     if(isFinite(n))_roomSeq=Math.max(_roomSeq,n);else _roomSeq=Math.max(_roomSeq,i+1);
     const a=(r&amp;&amp;r.alloc)||{};
     const alloc={apt_1br:Math.max(0,Number(a.apt_1br)||0),apt_2br:Math.max(0,Number(a.apt_2br)||0),apt_3br:Math.max(0,Number(a.apt_3br)||0),townhouse:Math.max(0,Number(a.townhouse)||0)};
-    const com=(Array.isArray(r&amp;&amp;r.com)?r.com:[]).map(c=&gt;{const u=(c&amp;&amp;COMM[c.use])?c.use:first;return{use:u,value:Math.max(0,Number(c&amp;&amp;c.value)||0),days:Math.max(1,Math.min(7,Number(c&amp;&amp;c.days)||COMM[u].defaultDays))};});
+    const com=(Array.isArray(r&amp;&amp;r.com)?r.com:[]).map(c=&gt;{const u=(c&amp;&amp;comUseKeep(c.use))||first;return{use:u,value:Math.max(0,Number(c&amp;&amp;c.value)||0),days:Math.max(1,Math.min(7,Number(c&amp;&amp;c.days)||COMM[u].defaultDays))};});
     const anyD=Object.values(alloc).some(v=&gt;v&gt;0);
     // kind is explicit in new saves; inferred for older ones
     const kind=(r&amp;&amp;r.kind==='com')?'com':((r&amp;&amp;r.kind==='res')?'res':((!anyD&amp;&amp;com.length)?'com':'res'));
@@ -3840,7 +3884,15 @@ function chuteRecv(el){
   o.recv=el.value;wsCalcTrigger();
 }
 function comRowHtml(roomId,c,ci){
-  const opts=Object.entries(COMM).map(([id,o])=&gt;`&lt;option value=&quot;${id}&quot;${id===c.use?' selected':''}&gt;${o.label}&lt;/option&gt;`).join('');
+  // uses the active state / council has a rate for come first; a council
+  // with its own list rates only its own uses, so the rest sit apart
+  const prof=getActiveProfile(),cr=(prof&amp;&amp;prof.comRates)||{};
+  const has=id=&gt;cr[id]&amp;&amp;Object.keys(cr[id]).length,ids=Object.keys(COMM);
+  const opt=id=&gt;`&lt;option value=&quot;${id}&quot;${id===c.use?' selected':''}&gt;${escAttr(COMM[id].label)}&lt;/option&gt;`;
+  const rated=ids.filter(has),rest=ids.filter(id=&gt;!has(id));
+  const opts=rated.length&amp;&amp;rest.length
+    ?`&lt;optgroup label=&quot;Rated for ${escAttr(locLabel())}&quot;&gt;${rated.map(opt).join('')}&lt;/optgroup&gt;&lt;optgroup label=&quot;No published rate here&quot;&gt;${rest.map(opt).join('')}&lt;/optgroup&gt;`
+    :ids.map(opt).join('');
   const meta=COMM[c.use]||{metric:'',defaultDays:7};
   return `&lt;div class=&quot;comRow&quot; data-room=&quot;${roomId}&quot; data-ci=&quot;${ci}&quot;&gt;`+
     `&lt;select data-room=&quot;${roomId}&quot; data-ci=&quot;${ci}&quot; onchange=&quot;roomComUse(this)&quot;&gt;${opts}&lt;/select&gt;`+
@@ -3860,7 +3912,7 @@ function roomRename(el){
 }
 function roomAdd(kind){
   const r=mkRoom(null,kind);
-  if(r.kind==='com'){const first=Object.keys(COMM)[0];r.com.push({use:first,value:0,days:COMM[first].defaultDays});}
+  if(r.kind==='com'){const first=firstComUse();r.com.push({use:first,value:0,days:COMM[first].defaultDays});}
   ROOMS.push(r);renderRooms();wsCalcTrigger();
 }
 function roomRemove(id){
@@ -3873,7 +3925,7 @@ function roomRemove(id){
 }
 function roomAddCom(id){
   const r=roomById(id);if(!r||r.kind!=='com')return;
-  const first=Object.keys(COMM)[0];
+  const first=firstComUse();
   r.com.push({use:first,value:0,days:COMM[first].defaultDays});
   renderRooms();
 }
@@ -4706,7 +4758,10 @@ g(&quot;pwEmailBtn&quot;).addEventListener(&quot;click&quot;,async function(){
 
 rebuildEquipLib();
 ROOMS=[mkRoom(null,'res')];renderRooms();
-(async function(){RATES_REMOTE=await loadRemoteRatesIfConfigured();refreshCouncils();})();
+// the use dropdowns group by what the state / council rates, so they redraw
+// when the scope changes and once the published file (and its USES) is in
+g(&quot;state&quot;).addEventListener(&quot;change&quot;,()=&gt;renderRooms());
+(async function(){RATES_REMOTE=await loadRemoteRatesIfConfigured();refreshCouncils();renderRooms();})();
 &lt;/script&gt;
 &lt;script&gt;
 // Sync visible inputs to the hidden ones the calc JS expects
@@ -4813,7 +4868,7 @@ window.addEventListener('message', function(e) {
     // commercial rooms → which room a use belongs to is the calculator's
     // call, so nothing moves and the note says where to make the change.
     if(Array.isArray(d.com)){
-      const valid=d.com.filter(c=&gt;c&amp;&amp;COMM[c.use]&amp;&amp;Number(c.value)&gt;0)
+      const valid=d.com.filter(c=&gt;c&amp;&amp;comUseKeep(c.use)&amp;&amp;Number(c.value)&gt;0)
         .map(c=&gt;({use:c.use,value:Number(c.value),days:Number(c.days)&gt;0?Math.min(7,Math.round(Number(c.days))):COMM[c.use].defaultDays}));
       const comRooms=ROOMS.filter(r=&gt;r.kind==='com');
       const key=l=&gt;l.map(c=&gt;c.use+':'+Number(c.value)+':'+Number(c.days)).sort().join('|');
@@ -10343,6 +10398,9 @@ async function loadCouncilList() {
     const r = await fetch(RATES_URL_PARENT, { cache: 'no-store' });
     if (!r.ok) return;
     const remote = await r.json();
+    // typed-in / extracted commercial uses the built-in list lacks, so the
+    // project page and plan extraction can name them (a later script block)
+    if (typeof wpComUsesMerge === 'function') wpComUsesMerge(remote);
     if (remote?.COUNCILS) {
       Object.entries(remote.COUNCILS).forEach(([st, list]) => {
         const local = COUNCILS_BY_STATE_P[st] || (COUNCILS_BY_STATE_P[st] = []);
@@ -11595,14 +11653,20 @@ async function rdbLoadRates() {
     if (!RDB.uses.length) {
       const { data: uses } = await sb.from('com_uses').select('*').order('label');
       RDB.uses = uses || [];
-      const sel = document.getElementById('rdb-com-new-use');
-      if (sel) sel.innerHTML = RDB.uses.map(u => `<option value="${u.use_code}">${u.label}</option>`).join('');
     }
+    rdbComUseOptions();
     let cq = sb.from('com_rates').select('*').eq('state', st);
     cq = cv === null ? cq.is('council_value', null) : cq.eq('council_value', cv);
     const { data: coms } = await cq.order('use_code');
     RDB.comRates = coms || [];
     RDB.comDeletes = [];
+    // the state's own list, for a council: what it falls back to, and what
+    // "Start from the state list" copies
+    RDB.stateComRates = [];
+    if (cv !== null) {
+      const { data: sc } = await sb.from('com_rates').select('*').eq('state', st).is('council_value', null).order('use_code');
+      RDB.stateComRates = sc || [];
+    }
     rdbRenderCom();
     let mq = sb.from('waste_meta').select('*').eq('state', st);
     mq = cv === null ? mq.is('council_value', null) : mq.eq('council_value', cv);
@@ -11765,60 +11829,197 @@ async function rdbDeleteCouncil(id, label) {
 
 function rdbUseLabel(code) { const u = RDB.uses.find(x => x.use_code === code); return u ? u.label : code; }
 
+// The units weeklyL() has a formula for — mirror of COM_UNITS in
+// supabase/functions/publish-rates/rates.mjs (a test pins the two), so a
+// rate typed here can never fail the publish on its unit.
+const RDB_COM_UNITS = ['L/Day/100m2', 'L/Week/100m2', 'L/Bed/Day', 'L/Bed/Week', 'L/Apartment/Week',
+  'L/Student/Week', 'L/Occupant/Week', 'L/Cat/Week', 'L/Week'];
+// What a typed-in use is counted in — the calculator's own metric strings.
+const RDB_COM_METRICS = ['m² (NLA)', 'Beds (no.)', 'Rooms (no.)', 'Seats (no.)', 'Occupants (no.)', 'Apartments (no.)',
+  'Students (no.)', 'Staff (no.)', 'Cats (no.)', 'Units (no.)'];
+// The unit a new rate starts on, from the use's measure.
+function rdbUnitForMetric(metric) {
+  const m = String(metric || '');
+  if (/^m²/.test(m)) return 'L/Day/100m2';
+  if (/^Beds/.test(m)) return 'L/Bed/Day';
+  if (/^Apartments/.test(m)) return 'L/Apartment/Week';
+  if (/^Students/.test(m)) return 'L/Student/Week';
+  if (/^Occupants/.test(m)) return 'L/Occupant/Week';
+  if (/^Cats/.test(m)) return 'L/Cat/Week';
+  return 'L/Week';
+}
+function rdbComUseOptions() {
+  const sel = document.getElementById('rdb-com-new-use');
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = RDB.uses.map(u => `<option value="${cgbEsc(u.use_code)}">${cgbEsc(u.label)}</option>`).join('') +
+      '<option value="__typed">+ type a new use…</option>';
+    if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  }
+  const met = document.getElementById('rdb-com-typed-metric');
+  if (met && !met.options.length) met.innerHTML = RDB_COM_METRICS.map(m => `<option>${cgbEsc(m)}</option>`).join('');
+  rdbComNewUseChanged();
+}
+function rdbComNewUseChanged() {
+  const sel = document.getElementById('rdb-com-new-use'), box = document.getElementById('rdb-com-typed');
+  if (!sel || !box) return;
+  const typed = sel.value === '__typed';
+  box.style.display = typed ? 'inline-flex' : 'none';
+  if (typed) document.getElementById('rdb-com-typed-label')?.focus();
+}
+function rdbComOwnOn() { const c = rdbSelectedCouncil(); return !!(c && c.com_own === true); }
+
 function rdbRenderCom() {
   const body = document.getElementById('rdb-com-body');
   if (!body) return;
+  const c = rdbSelectedCouncil();
+  const st = document.getElementById('rdb-state')?.value || 'State';
+  const ownWrap = document.getElementById('rdb-com-own-wrap'), ownBox = document.getElementById('rdb-com-own');
+  if (ownWrap) ownWrap.style.display = c ? 'inline-flex' : 'none';
+  if (ownBox) ownBox.checked = rdbComOwnOn();
+  const note = document.getElementById('rdb-com-note');
+  const nState = new Set((RDB.stateComRates || []).map(r => r.use_code)).size;
+  const nHere = new Set(RDB.comRates.map(r => r.use_code)).size;
+  if (note) {
+    const copy = c && nState ? ' <button class="btn" style="padding:2px 8px;font-size:10px;" onclick="rdbComCopyState()" title="Copy the state list into this council so it can be edited into the council\'s own list">⧉ Start from the ' + cgbEsc(st) + ' list</button>' : '';
+    note.innerHTML = !c ? `${nHere} use${nHere === 1 ? '' : 's'} in the ${cgbEsc(st)} list — every council without its own list uses it.`
+      : !RDB.comRates.length ? `No commercial rates for ${cgbEsc(c.label)} — the ${cgbEsc(st)} list applies (${nState} use${nState === 1 ? '' : 's'}).` + copy
+      : rdbComOwnOn() ? `<b style="color:var(--text);">${cgbEsc(c.label)}'s own list</b> — only these ${nHere} use${nHere === 1 ? '' : 's'} apply; the ${cgbEsc(st)} list is not offered.`
+      : `Overrides on the ${cgbEsc(st)} list — every other state use still applies. Tick <i>Council's own commercial list</i> if the guideline publishes its own table.`;
+  }
   if (!RDB.comRates.length) {
-    body.innerHTML = '<tr><td colspan="6" style="padding:8px;color:var(--muted);font-size:11px;">No commercial rates for this scope' + (document.getElementById('rdb-council').value ? ' — state defaults apply.' : '.') + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" style="padding:8px;color:var(--muted);font-size:11px;">No commercial rates for this scope' + (c ? ' — state defaults apply.' : '.') + '</td></tr>';
     return;
   }
-  const inp = 'style="background:#182121;border:1px solid var(--border);border-radius:5px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;" oninput="RDB.dirtyCom=true"';
+  const inp = 'background:#182121;border:1px solid var(--border);border-radius:5px;padding:4px 6px;font-size:11px;color:var(--text);font-family:inherit;';
+  const unitSel = (r, i) => {
+    const list = RDB_COM_UNITS.includes(r.unit) ? RDB_COM_UNITS : [r.unit].concat(RDB_COM_UNITS);
+    return `<select data-i="${i}" data-f="unit" class="rdb-com-in" onchange="RDB.dirtyCom=true" style="${inp}width:130px;">` +
+      list.map(u => `<option value="${cgbEsc(u)}" ${u === r.unit ? 'selected' : ''}>${cgbEsc(u)}${RDB_COM_UNITS.includes(u) ? '' : ' (no formula — fix)'}</option>`).join('') + '</select>';
+  };
   body.innerHTML = RDB.comRates.map((r, i) => `<tr>
-    <td style="padding:3px 8px;color:var(--text);">${rdbUseLabel(r.use_code)}</td>
-    <td style="padding:3px 8px;text-align:center;"><b>${r.stream}</b></td>
-    <td style="padding:3px 4px;"><input data-i="${i}" data-f="rate" type="number" step="0.1" value="${r.rate}" ${inp} class="rdb-com-in" style="width:70px;background:#182121;border:1px solid var(--border);border-radius:5px;padding:4px 6px;font-size:11px;color:var(--text);"></td>
-    <td style="padding:3px 4px;"><input data-i="${i}" data-f="unit_value" type="number" value="${r.unit_value}" oninput="RDB.dirtyCom=true" class="rdb-com-in" style="width:55px;background:#182121;border:1px solid var(--border);border-radius:5px;padding:4px 6px;font-size:11px;color:var(--text);"></td>
-    <td style="padding:3px 4px;"><input data-i="${i}" data-f="unit" type="text" value="${r.unit}" oninput="RDB.dirtyCom=true" class="rdb-com-in" style="width:120px;background:#182121;border:1px solid var(--border);border-radius:5px;padding:4px 6px;font-size:11px;color:var(--text);"></td>
-    <td style="padding:3px 4px;"><button class="btn" style="padding:2px 8px;font-size:10px;color:#EF8080;" onclick="rdbDeleteComRow(${i})">✕</button></td>
+    <td style="padding:3px 8px;color:var(--text);">${cgbEsc(rdbUseLabel(r.use_code))}</td>
+    <td style="padding:3px 8px;text-align:center;"><b>${cgbEsc(r.stream)}</b></td>
+    <td style="padding:3px 4px;"><input data-i="${i}" data-f="rate" type="number" step="0.1" value="${r.rate}" oninput="RDB.dirtyCom=true" class="rdb-com-in" style="${inp}width:70px;"></td>
+    <td style="padding:3px 4px;"><input data-i="${i}" data-f="unit_value" type="number" value="${r.unit_value}" oninput="RDB.dirtyCom=true" class="rdb-com-in" style="${inp}width:55px;"></td>
+    <td style="padding:3px 4px;">${unitSel(r, i)}</td>
+    <td style="padding:3px 4px;white-space:nowrap;"><button class="btn" style="padding:2px 8px;font-size:10px;color:#EF8080;" title="Remove this rate" onclick="rdbDeleteComRow(${i})">✕</button>
+      <button class="btn" style="padding:2px 8px;font-size:10px;color:#EF8080;" title="Remove this use (every stream) from the list" onclick="rdbDeleteComUse('${cgbEsc(r.use_code)}')">✕ use</button></td>
   </tr>`).join('');
 }
+// pull edited values back off the inputs before any change to the row list
+function rdbComCollect() {
+  document.querySelectorAll('.rdb-com-in').forEach(inp => {
+    const r = RDB.comRates[Number(inp.dataset.i)];
+    if (!r) return;
+    r[inp.dataset.f] = inp.dataset.f === 'unit' ? inp.value : Number(inp.value) || 0;
+  });
+}
 
-function rdbAddComRow() {
+// A use typed in by hand joins com_uses — the one use list every picker,
+// the publish and the calculators read — with its measure and usual days,
+// so it publishes under USES and needs no code change anywhere.
+async function rdbComTypedUse() {
+  const label = (document.getElementById('rdb-com-typed-label')?.value || '').trim();
+  const metric = document.getElementById('rdb-com-typed-metric')?.value || 'm² (NLA)';
+  const days = Math.max(1, Math.min(7, Math.round(Number(document.getElementById('rdb-com-typed-days')?.value) || 7)));
+  if (!label) { rdbMsg('Type the use’s name first.', false); return null; }
+  const code = crqUseCode(label);
+  if (!code) { rdbMsg('That name has no letters or digits to make a code from.', false); return null; }
+  const have = RDB.uses.find(x => x.use_code === code || crxNorm(x.label) === crxNorm(label));
+  if (have) return have;
+  const row = { use_code: code, label, metric, default_days: days };
+  const { error } = await sb.from('com_uses').insert(row);
+  if (error && !/duplicate|unique/i.test(error.message)) {
+    rdbMsg('Could not add the use: ' + error.message + (/metric|default_days/.test(error.message) ? ' — run sql/2026-10-19-council-commercial-lists.sql first.' : ''), false);
+    return null;
+  }
+  RDB.uses.push(row);
+  RDB.uses.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  rdbComUseOptions();
+  const tl = document.getElementById('rdb-com-typed-label'); if (tl) tl.value = '';
+  return row;
+}
+
+async function rdbAddComRow() {
   const st = document.getElementById('rdb-state').value;
   const cv = document.getElementById('rdb-council').value || null;
-  const use = document.getElementById('rdb-com-new-use').value;
+  const pick = document.getElementById('rdb-com-new-use').value;
   const stream = document.getElementById('rdb-com-new-stream').value;
-  if (RDB.comRates.some(r => r.use_code === use && r.stream === stream)) { rdbMsg('That use + stream already has a rate in this scope.', false); return; }
-  RDB.comRates.push({ state: st, council_value: cv, use_code: use, stream, rate: 0, unit_value: 100, unit: 'L/Day/100m2' });
+  let use = pick === '__typed' ? await rdbComTypedUse() : RDB.uses.find(u => u.use_code === pick);
+  if (!use) { if (pick !== '__typed') rdbMsg('Pick a use first.', false); return; }
+  rdbComCollect();
+  if (RDB.comRates.some(r => r.use_code === use.use_code && r.stream === stream)) { rdbMsg('That use + stream already has a rate in this scope.', false); return; }
+  const like = RDB.comRates.find(r => r.use_code === use.use_code);
+  const unit = like ? like.unit : rdbUnitForMetric(use.metric || (typeof WMPG_COM_USES !== 'undefined' && WMPG_COM_USES[use.use_code] || {}).metric || 'm² (NLA)');
+  RDB.comRates.push({ state: st, council_value: cv, use_code: use.use_code, stream, rate: 0, unit_value: like ? like.unit_value : (/100m2/.test(unit) ? 100 : 1), unit });
   RDB.dirtyCom = true;
   rdbRenderCom();
+  rdbMsg('Added ' + use.label + ' · ' + stream + ' — enter its rate, then 💾 Save commercial rates.');
 }
 
 function rdbDeleteComRow(i) {
+  rdbComCollect();
   const r = RDB.comRates[i];
   if (r.id) RDB.comDeletes.push(r.id);
   RDB.comRates.splice(i, 1);
   RDB.dirtyCom = true;
   rdbRenderCom();
 }
+function rdbDeleteComUse(code) {
+  rdbComCollect();
+  RDB.comRates.filter(r => r.use_code === code && r.id).forEach(r => RDB.comDeletes.push(r.id));
+  RDB.comRates = RDB.comRates.filter(r => r.use_code !== code);
+  RDB.dirtyCom = true;
+  rdbRenderCom();
+  rdbMsg(rdbUseLabel(code) + ' removed from this list — 💾 Save commercial rates to keep the change.');
+}
+// A council starting its own list from the state's: the rows are copied
+// unsaved (edit, add, remove, then Save) and the list is marked the
+// council's own, because that is what starting from a copy is for.
+function rdbComCopyState() {
+  const c = rdbSelectedCouncil(); if (!c) return;
+  const cv = c.value, st = document.getElementById('rdb-state').value;
+  RDB.comRates = (RDB.stateComRates || []).map(r => ({ state: st, council_value: cv, use_code: r.use_code, stream: r.stream, rate: r.rate, unit_value: r.unit_value, unit: r.unit }));
+  RDB.dirtyCom = true;
+  RDB._comOwnOnSave = true;
+  rdbRenderCom();
+  rdbMsg('Copied ' + RDB.comRates.length + ' state rates into ' + c.label + ' — edit them to the council’s table, then 💾 Save commercial rates (it is saved as the council’s own list).');
+}
+async function rdbSetComOwn(on) {
+  const c = rdbSelectedCouncil(); if (!c) return;
+  const box = document.getElementById('rdb-com-own');
+  if (on && !RDB.comRates.length && !confirm(c.label + ' has no commercial rates of its own yet, so the state list still applies until you add some. Mark its list as its own anyway?')) { if (box) box.checked = false; return; }
+  try {
+    const { error } = await sb.from('councils').update({ com_own: !!on }).eq('id', c.id);
+    if (error) throw error;
+    c.com_own = !!on;
+    rdbRenderCom();
+    rdbMsg(on ? '✓ ' + c.label + ' uses only its own commercial list — ⬆ Publish rates to calculator to push it live.'
+              : '✓ ' + c.label + '’s commercial rows are overrides on the state list again — ⬆ Publish to push it live.');
+  } catch (err) {
+    if (box) box.checked = c.com_own === true;
+    const m = err.message || String(err);
+    rdbMsg('Could not change the list: ' + m + (/com_own/.test(m) ? ' — run sql/2026-10-19-council-commercial-lists.sql first.' : ''), false);
+  }
+}
 
 async function rdbSaveCom() {
-  // pull edited values back off the inputs
-  document.querySelectorAll('.rdb-com-in').forEach(inp => {
-    const r = RDB.comRates[Number(inp.dataset.i)];
-    if (!r) return;
-    r[inp.dataset.f] = inp.dataset.f === 'unit' ? inp.value : Number(inp.value) || 0;
-  });
+  rdbComCollect();
   rdbMsg('Saving commercial rates…');
   try {
     for (const id of RDB.comDeletes) await sb.from('com_rates').delete().eq('id', id);
     RDB.comDeletes = [];
     if (RDB.comRates.length) {
       const rows = RDB.comRates.map(r => ({ state: r.state, council_value: r.council_value, use_code: r.use_code, stream: r.stream, rate: r.rate, unit_value: r.unit_value, unit: r.unit }));
-      const { error } = await sb.from('com_rates').upsert(rows, { onConflict: 'state,council_value,use_code,stream' });
+      // .select() so new rows come back with their ids — a later ✕ deletes by id
+      const { data, error } = await sb.from('com_rates').upsert(rows, { onConflict: 'state,council_value,use_code,stream' }).select();
       if (error) throw error;
+      if (data && data.length === rows.length) RDB.comRates = data.sort((a, b) => String(a.use_code).localeCompare(String(b.use_code)));
     }
     RDB.dirtyCom = false;
+    if (RDB._comOwnOnSave) { RDB._comOwnOnSave = false; if (!rdbComOwnOn()) await rdbSetComOwn(true); }
+    rdbRenderCom();
     rdbMsg('✓ Commercial rates saved. ⬆ Publish rates to calculator to push them live.');
     return true;
   } catch(err) { rdbMsg('Commercial save failed: ' + (err.message || err), false); return false; }
@@ -13156,14 +13357,25 @@ async function crqExtract(councilKey, localFile) {
     if (insErr) { crqMsg('Insert failed: ' + insErr.message + (/source/.test(insErr.message) ? ' — has sql/2026-09-15-requirements-list.sql been run?' : ' — has sql/2026-08-25-package-c3-council-requirements.sql been run?'), true); return; }
     const saved = (ins && ins.length === rows.length) ? ins : rows;
     const serving = await crqSyncServe(doc.council_key, doc.council_name);
-    // generation rates → the rate tables, in their own format, add-only
-    const rr = await crqWriteRates(saved.filter(crqIsRate), doc);
-    if (rows.some(crqIsRate)) crqRatesReport(rr);
+    // generation rates → the rate tables, in their own format. Residential
+    // add-only; the council's COMMERCIAL list is synced to this document —
+    // uses added, figures updated, and (only after a complete read) uses the
+    // document no longer gives removed. See crqWriteRates.
+    const cleanRead = !sweep.error && !sweep.missing.length && !truncated;
+    const rr = await crqWriteRates(saved.filter(crqIsRate), doc, { sync: true, cleanRead });
+    const synced = rr.updated.length || rr.removed.length || rr.newUses.length || rr.own !== null;
+    if (rows.some(crqIsRate) || synced) crqRatesReport(rr);
     const nReq = rows.length - rows.filter(crqIsRate).length;
-    const rateNote = !rows.some(crqIsRate) ? '' :
-      ` · rates → tables: ${rr.added.length} added` + (rr.kept.length ? `, ${rr.kept.length} already set (kept)` : '') +
+    const rateNote = !(rows.some(crqIsRate) || synced) ? '' :
+      ` · rates → tables: ${rr.added.length} added` + (rr.updated.length ? `, ${rr.updated.length} updated to the guideline` : '') +
+      (rr.newUses.length ? `, ${rr.newUses.length} new use${rr.newUses.length === 1 ? '' : 's'} (${rr.newUses.slice(0, 4).map(u => u.label).join(', ')}${rr.newUses.length > 4 ? ', …' : ''})` : '') +
+      (rr.removed.length ? `, ${rr.removed.length} commercial rate${rr.removed.length === 1 ? '' : 's'} removed (no longer in the guideline)` : '') +
+      (rr.kept.length ? `, ${rr.kept.length} already set (kept)` : '') +
+      (rr.cleared ? ' — the guideline publishes no commercial rates, so the council’s list was cleared and the state list applies' : '') +
+      (rr.own === true ? ' — the commercial list is now the council’s own' : '') +
+      (rr.noDelete ? ` · ⚠ ${rr.noDelete}` : '') +
       (rr.unplaced.length ? `, ${rr.unplaced.length} not placed — ` + rr.unplaced.slice(0, 4).map(u => `${u.r.clause_ref || '?'}: ${u.why}`).join('; ') + (rr.unplaced.length > 4 ? '; …' : '') : '') +
-      (rr.added.length ? ' — ⬆ Publish rates to calculator to push them live' : '');
+      (rr.added.length || rr.updated.length || rr.removed.length ? ' — ⬆ Publish rates to calculator to push them live' : '');
     if (typeof rdbLoadRates === 'function') rdbLoadRates();
     crqMsg(`✓ ${nReq} requirement${nReq === 1 ? '' : 's'} added for ${doc.council_name} from v${doc.version} — ${serving} now serving the checker and WMP` + rateNote +
       (unresolved ? ` · ${unresolved} with a stream to set (flagged in the list)` : '') +
@@ -13366,21 +13578,85 @@ function crqRateToTable(r, ctx) {
   // one premises' figure lands under another's name.
   let viaText = false;
   if (!use && broad) { use = crqUseFromText(r.value_text, uses, wantBasis); viaText = !!use; }
+  // Sync mode (2026-10-19, Lachy's decision): the council's list is made to
+  // match its guideline, so a premises the uses list does not carry becomes
+  // a NEW use under the guideline's own name — never seated on a lookalike.
+  // A broad class still names no premises, so it is still refused.
+  let newUse = null;
+  const gotBasis0 = use ? crqUseBasis(use.label) : null;
+  if (ctx.createUses && !broad && (!use || (gotBasis0 && wantBasis && gotBasis0 !== wantBasis))) {
+    newUse = crqNewUse(r.use_class, basis.unit, !!use);
+    use = uses.find(u => u.use_code === newUse.use_code) || newUse;
+    if (use !== newUse) newUse = null;   // made by an earlier run — reuse it
+  }
   if (!use) return no(broad ? `use class “${r.use_class}” is a broad class and the wording names no commercial use in the table — pick the use below`
                             : `use class “${r.use_class}” matches no commercial use in the table — pick the use below`);
-  const gotBasis = crqUseBasis(use.label);
+  const gotBasis = newUse ? null : crqUseBasis(use.label);   // a new use is made on the rate's own basis
   if (gotBasis && wantBasis && gotBasis !== wantBasis)
     return no(`“${use.label}” is measured per ${gotBasis} but the rate is per ${wantBasis} — add a per-${wantBasis} version of this use, or pick one below`);
-  return { ok: true, table: 'com_rates', key: use.use_code + '|' + streamKey, viaText,
+  return { ok: true, table: 'com_rates', key: use.use_code + '|' + streamKey, viaText, newUse,
     row: { state: ctx.state, council_value: ctx.councilValue, use_code: use.use_code, stream: streamKey,
            rate: +(+r.value_num * basis.mult).toFixed(3), unit_value: basis.unit_value, unit: basis.unit } };
 }
+// A com_uses row for a premises the guideline names and the list lacks —
+// its own name, the measure its unit implies, 7 days. `variant` = a use of
+// that name exists on another basis, so this one says its basis ("Hotel
+// (per m²)"), the shape the list's existing variants use. Pure.
+const CRQ_BASIS_METRIC = { area: 'm² (NLA)', bed: 'Beds (no.)', occupant: 'Occupants (no.)', apartment: 'Apartments (no.)', student: 'Students (no.)' };
+const CRQ_BASIS_WORD = { area: 'm²', bed: 'bed', occupant: 'occupant', apartment: 'apartment', student: 'student' };
+function crqNewUse(useClass, unit, variant) {
+  const b = CRQ_UNIT_BASIS[unit] || (/Cat/.test(unit) ? 'cat' : null);
+  const name = String(useClass || '').replace(/\s+/g, ' ').trim();
+  // a variant drops the other basis's own bracket — "Hotel (by bed count)"
+  // per m² is "Hotel (per m²)", not "Hotel (by bed count) (per m²)"
+  const stem = name.replace(/\s*\((?:per|by)\b[^)]*\)\s*$/i, '').trim() || name;
+  const label = variant && b && CRQ_BASIS_WORD[b] && crqUseBasis(name) !== b ? `${stem} (per ${CRQ_BASIS_WORD[b]})` : name;
+  return { use_code: crqUseCode(label), label,
+    metric: CRQ_BASIS_METRIC[b] || (b === 'cat' ? 'Cats (no.)' : 'Units (no.)'), default_days: 7 };
+}
+// Sync a council's commercial list to what its guideline states. Pure:
+// `placed` (rows read from the document this run) against `existing` (the
+// council's com_rates rows). A cell the guideline gives and the list lacks
+// is inserted; a different figure or unit is updated; the same is left. A
+// row the guideline no longer gives is removed ONLY when `canDelete` (the
+// read was complete) and its use is not `protect`ed — a use the run read
+// but could not place (a combined figure, a contested cell) keeps its rows,
+// because "could not place" is not "the council dropped it".
+function crqComSyncPlan(placed, existing, opts) {
+  const o = opts || {}, protect = new Set(o.protect || []);
+  const key = r => r.use_code + '|' + r.stream;
+  const have = new Map((existing || []).map(r => [key(r), r]));
+  const want = new Map();
+  (placed || []).forEach(r => { if (!want.has(key(r))) want.set(key(r), r); });
+  const out = { insert: [], update: [], same: [], remove: [] };
+  want.forEach((r, k) => {
+    const e = have.get(k);
+    if (!e) out.insert.push(r);
+    else if (+e.rate !== +r.rate || +e.unit_value !== +r.unit_value || String(e.unit) !== String(r.unit)) out.update.push({ id: e.id, row: r, from: e });
+    else out.same.push(e);
+  });
+  if (o.canDelete) have.forEach((e, k) => { if (!want.has(k) && !protect.has(e.use_code)) out.remove.push(e); });
+  return out;
+}
 // Resolve the scoped council's registry value for a document (by state +
 // normalised label), then write every mappable extracted rate that the
-// tables do not already hold. Never an upsert: existing rates are kept.
-async function crqWriteRates(rateRows, doc) {
-  const out = { added: [], kept: [], unplaced: [], clashes: [], council: doc.council_name, state: null, councilValue: null };
-  if (!rateRows.length) return out;
+// tables do not already hold — add-only: existing rates are kept.
+//
+// `opts.sync` (the extraction, 2026-10-19 — Lachy's decision: "AI applies
+// directly") makes the council's COMMERCIAL list match the guideline
+// instead: premises the uses list lacks become new uses (crqNewUse), a
+// changed figure is updated, and — when `opts.cleanRead` says the document
+// was read in full — a use the guideline no longer gives is removed
+// (crqComSyncPlan). The list is then marked the council's own
+// (councils.com_own), so the state's uses stop applying to it. A clean read
+// that finds no commercial rate at all clears the council's list, and the
+// state list applies. Residential stays add-only either way. Combined
+// figures are still held, never split (guardrail 1).
+async function crqWriteRates(rateRows, doc, opts) {
+  const o = opts || {};
+  const out = { added: [], kept: [], unplaced: [], clashes: [], updated: [], removed: [], newUses: [],
+    sync: !!o.sync, own: null, cleared: 0, noDelete: '', council: doc.council_name, state: null, councilValue: null };
+  if (!rateRows.length && !(o.sync && o.cleanRead)) return out;
   // council value: the Scope bar's selection when it IS this council,
   // otherwise the registry row whose label matches (any state — an older
   // document may carry no state at all; the registry row supplies it)
@@ -13401,19 +13677,27 @@ async function crqWriteRates(rateRows, doc) {
   out.state = state; out.councilValue = councilValue;
   let uses = RDB.uses && RDB.uses.length ? RDB.uses : [];
   if (!uses.length) { try { const { data } = await sb.from('com_uses').select('use_code,label'); uses = data || []; } catch (e) {} }
-  const ctx = { state, councilValue, uses };
+  const ctx = { state, councilValue, uses, createUses: !!o.sync };
   out.uses = uses;
   const plans = rateRows.map(r => ({ r, plan: crqRateToTable(r, ctx) }));
   plans.filter(x => !x.plan.ok).forEach(x => out.unplaced.push({ r: x.r, why: x.plan.why }));
   const want = plans.filter(x => x.plan.ok);
-  if (!want.length) return out;
+  // commercial rows the run read, placed or not — residential-looking rows aside
+  const isResRow = r => !!crxResUnit(r.use_class) || /resid|dwelling|apartment|townhouse|multi.?unit/i.test(String(r.use_class || ''));
+  const comRead = plans.filter(x => x.plan.ok ? x.plan.table === 'com_rates' : !isResRow(x.r));
+  const syncCom = !!(o.sync && councilValue && state);
+  if (!want.length && !(syncCom && o.cleanRead && !comRead.length)) return out;
   const existing = { res_rates: new Set(), com_rates: new Set() };
+  let comRows = [];
   try {
     const { data: res } = await sb.from('res_rates').select('unit_type,stream').eq('state', state).eq('council_value', councilValue);
     (res || []).forEach(x => existing.res_rates.add(x.unit_type + '|' + x.stream));
-    const { data: com } = await sb.from('com_rates').select('use_code,stream').eq('state', state).eq('council_value', councilValue);
-    (com || []).forEach(x => existing.com_rates.add(x.use_code + '|' + x.stream));
+    const { data: com } = await sb.from('com_rates').select('id,use_code,stream,rate,unit_value,unit').eq('state', state).eq('council_value', councilValue);
+    comRows = com || [];
+    comRows.forEach(x => existing.com_rates.add(x.use_code + '|' + x.stream));
   } catch (e) {}
+  // sync: the commercial cells go through crqComSyncPlan below, not add-only
+  if (syncCom) existing.com_rates = new Set();
   const batch = { res_rates: [], com_rates: [] };
   const seen = new Set(), clash = {}, first = {};
   want.forEach(({ r, plan }) => {
@@ -13426,10 +13710,18 @@ async function crqWriteRates(rateRows, doc) {
       seen.add(k); first[k] = r.use_class || '?';
       batch[plan.table].push(row); added++;
     });
+    // a synced commercial cell is reported by crqComSyncApply, once
+    if (syncCom && plan.table === 'com_rates' && added) return;
     if (added) out.added.push({ r, plan, cells: added, kept });
     else if (kept) out.kept.push({ r, plan, cells: kept });
     else out.unplaced.push({ r, why: 'this cell was already filled by another premises in the same run — check which is right' });
   });
+  if (syncCom) {
+    const comBatch = batch.com_rates;
+    batch.com_rates = [];
+    await crqComSyncApply(out, comBatch, comRows, {
+      cleanRead: !!o.cleanRead, comRead, plans: want.filter(x => x.plan.table === 'com_rates'), uses, state, councilValue });
+  }
   for (const table of ['res_rates', 'com_rates']) {
     if (!batch[table].length) continue;
     const { error } = await sb.from(table).insert(batch[table]);
@@ -13444,6 +13736,74 @@ async function crqWriteRates(rateRows, doc) {
   // both rather than keeping whichever arrived first and saying nothing.
   Object.keys(clash).forEach(k => out.clashes.push({ cell: k.split('|').slice(1).join(' · '), kept: first[k], also: [...new Set(clash[k])] }));
   return out;
+}
+// The write half of the commercial sync: new uses first (a rate row needs
+// its use to exist), then insert / update / remove per crqComSyncPlan, then
+// mark the list the council's own. Every step reports what it did, and a
+// refused write moves its rows to `unplaced` with the reason — never a
+// half-claimed sync.
+async function crqComSyncApply(out, placed, existing, x) {
+  const { comRead, plans, uses, state, councilValue } = x;
+  // uses the run read and could not place keep their rows: try to name them
+  const protect = new Set();
+  comRead.filter(c => !c.plan.ok).forEach(c => {
+    const n = crxNorm(c.r.use_class);
+    if (!n) return;
+    uses.forEach(u => { const l = crxNorm(u.label); if (l && (l === n || l.includes(n) || n.includes(l))) protect.add(u.use_code); });
+    protect.add(crqUseCode(c.r.use_class));
+  });
+  // a clean read with no commercial rate at all: the guideline publishes
+  // none, so the council's list is cleared and the state's applies
+  const clearAll = x.cleanRead && !comRead.length;
+  const canDelete = x.cleanRead && (clearAll || placed.length > 0);
+  if (!x.cleanRead) out.noDelete = 'the document was not read in full (a rate row did not come through, or the reply hit its length cap), so no use was removed — re-run to finish the sync';
+  // new uses, once each
+  const fresh = new Map();
+  plans.forEach(p => { if (p.plan.newUse && !fresh.has(p.plan.newUse.use_code)) fresh.set(p.plan.newUse.use_code, p.plan.newUse); });
+  const madeOk = new Set();
+  for (const u of fresh.values()) {
+    const { error } = await sb.from('com_uses').insert(u);
+    if (error && !/duplicate|unique/i.test(error.message)) {
+      plans.filter(p => p.plan.newUse && p.plan.newUse.use_code === u.use_code)
+        .forEach(p => out.unplaced.push({ r: p.r, why: 'could not add the use “' + u.label + '”: ' + error.message + (/metric|default_days/.test(error.message) ? ' — run sql/2026-10-19-council-commercial-lists.sql' : '') }));
+      continue;
+    }
+    madeOk.add(u.use_code); out.newUses.push(u);
+    if (typeof RDB !== 'undefined' && RDB.uses && !RDB.uses.some(y => y.use_code === u.use_code)) RDB.uses.push(u);
+  }
+  if (typeof RDB !== 'undefined' && RDB.uses) RDB.uses.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  const usable = placed.filter(r => !fresh.has(r.use_code) || madeOk.has(r.use_code));
+  const plan = crqComSyncPlan(usable, existing, { canDelete, protect: [...protect] });
+  const byKey = {};
+  plans.forEach(p => { byKey[p.plan.row.use_code + '|' + p.plan.row.stream] = p; });
+  const fail = (rows, why) => rows.forEach(r => { const p = byKey[r.use_code + '|' + r.stream]; if (p) out.unplaced.push({ r: p.r, why }); });
+  if (plan.insert.length) {
+    const { error } = await sb.from('com_rates').insert(plan.insert);
+    if (error) fail(plan.insert, 'com_rates insert refused: ' + error.message);
+    else plan.insert.forEach(r => { const p = byKey[r.use_code + '|' + r.stream]; out.added.push({ r: p ? p.r : {}, plan: { table: 'com_rates', row: r }, cells: 1 }); });
+  }
+  for (const u of plan.update) {
+    const { error } = await sb.from('com_rates').update({ rate: u.row.rate, unit_value: u.row.unit_value, unit: u.row.unit }).eq('id', u.id);
+    if (error) fail([u.row], 'com_rates update refused: ' + error.message);
+    else out.updated.push(u);
+  }
+  plan.same.forEach(e => out.kept.push({ r: (byKey[e.use_code + '|' + e.stream] || {}).r || {}, plan: { table: 'com_rates', row: e }, cells: 1 }));
+  if (plan.remove.length) {
+    const { error } = await sb.from('com_rates').delete().in('id', plan.remove.map(e => e.id));
+    if (error) out.noDelete = 'removing the uses the guideline no longer lists was refused: ' + error.message;
+    else out.removed = plan.remove;
+  }
+  // the council's own list from now on — or, cleared, back to the state's
+  const own = clearAll ? false : (out.added.length + out.updated.length + plan.same.length > 0 ? true : null);
+  if (own !== null) {
+    try {
+      const { error } = await sb.from('councils').update({ com_own: own }).eq('state', state).eq('value', councilValue);
+      if (error) throw error;
+      out.own = own;
+      if (typeof RDB !== 'undefined') (RDB.councils || []).forEach(c => { if (c.value === councilValue && c.state === state) c.com_own = own; });
+    } catch (e) { out.noDelete = (out.noDelete ? out.noDelete + '; ' : '') + 'could not mark the list as the council’s own (' + (e.message || e) + ') — run sql/2026-10-19-council-commercial-lists.sql, then tick “Council\'s own commercial list”'; }
+  }
+  if (clearAll) out.cleared = plan.remove.length;
 }
 // GUARDRAIL 1: a row the council states as ONE combined garbage+recycling
 // figure. It is neither a garbage rate nor a recycling rate, so it is never
@@ -13462,7 +13822,7 @@ function crqRatesReport(rr) {
     ? (a.plan.allTypes ? 'every dwelling type' : a.plan.rows.map(x => RDB_UNIT_LABELS[x.unit_type] || x.unit_type).join(', ')) + ' · ' + a.plan.row.stream + ' = ' + a.plan.row.l_per_week + ' L/week'
     : a.plan.row.use_code + ' · ' + a.plan.row.stream + ' = ' + a.plan.row.rate + ' ' + a.plan.row.unit;
   const li = (txt, col) => '<div style="font-size:11px;color:' + col + ';line-height:1.5;">' + txt + '</div>';
-  const total = rr.added.length + rr.kept.length + rr.unplaced.length;
+  const total = rr.added.length + rr.kept.length + rr.unplaced.length + (rr.updated || []).length + (rr.removed || []).length + (rr.cleared ? 1 : 0);
   if (!total) { el.innerHTML = li('The guideline has no generation-rate rows extracted yet — 🧾 Extract to list on its document (Council documents section) reads them.', 'var(--muted)'); return; }
   const uses = rr.uses || RDB.uses || [];
   // GUARDRAIL 1 — a combined figure is never force-fit into the GW/REC
@@ -13493,6 +13853,12 @@ function crqRatesReport(rr) {
   el.innerHTML = '<div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 12px;max-height:360px;overflow:auto;">' +
     li('<b>Generation rates from ' + cgbEsc(rr.council || 'the guideline') + '</b>' + (rr.councilValue ? '' : ' — <b style="color:#EF8080;">not in the councils list for ' + cgbEsc(rr.state || 'this state') + ' (Scope → + Add council), so nothing could be placed</b>'), 'var(--text)') +
     rr.added.map(a => li('✓ added · ' + cgbEsc(cell(a)) + ' <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', '#3DD68C')).join('') +
+    (rr.newUses || []).map(u => li('＋ new use · ' + cgbEsc(u.label) + ' <span style="color:var(--muted);">(' + cgbEsc(u.metric) + ', ' + u.default_days + ' days/wk — the guideline names it and the uses list did not have it)</span>', '#3DD68C')).join('') +
+    (rr.updated || []).map(u => li('↻ updated · ' + cgbEsc(u.row.use_code + ' · ' + u.row.stream) + ' ' + cgbEsc(u.from.rate + ' ' + u.from.unit) + ' → <b>' + cgbEsc(u.row.rate + ' ' + u.row.unit) + '</b> — to match the guideline', '#3DD68C')).join('') +
+    (rr.removed || []).map(e => li('− removed · ' + cgbEsc(e.use_code + ' · ' + e.stream + ' = ' + e.rate + ' ' + e.unit) + ' — the guideline no longer gives this rate', '#FFB74D')).join('') +
+    (rr.cleared ? li('The guideline publishes no commercial rates — the council’s list was cleared, so the ' + cgbEsc(rr.state || 'state') + ' list applies.', 'var(--text)') : '') +
+    (rr.own === true ? li('The commercial list is now <b>' + cgbEsc(rr.council || 'the council') + '’s own</b> — only its uses apply; the state list is not offered for it.', 'var(--text)') : '') +
+    (rr.noDelete ? li('⚠ ' + cgbEsc(rr.noDelete), '#FFB74D') : '') +
     rr.kept.map(a => li('· kept · ' + cgbEsc(cell(a)) + ' — the table already has a rate for this cell <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', 'var(--muted)')).join('') +
     (rr.clashes || []).map(c => li('⚠ two premises want the same cell (' + cgbEsc(c.cell) + ') — kept <b>' + cgbEsc(c.kept) + '</b>, also claimed by ' + cgbEsc(c.also.join(', ')) + '. Check which is right.', '#FFB74D')).join('') +
     held.map(u => li('⏸ held · ' + cgbEsc([u.r.use_class, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) +
@@ -13500,7 +13866,7 @@ function crqRatesReport(rr) {
       ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + splitOverride(u), '#9FB4FF')).join('') +
     (held.length ? li('⏸ ' + held.length + ' combined figure' + (held.length === 1 ? '' : 's') + ' held. A combined rate is not a garbage rate and not a recycling rate — representing one needs a combined-rate type in the rate tables, which is a pending decision. Nothing is written for these until it lands.', 'var(--muted)') : '') +
     rest.map(u => li('✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')].filter(Boolean).join(' · ')) + (u.r.value_text ? ' <i style="color:var(--muted);">' + cgbEsc(String(u.r.value_text).slice(0, 90)) + '</i>' : '') + ' — ' + cgbEsc(u.why) + ' <span style="color:var(--muted);">(' + cgbEsc(u.r.clause_ref || '') + ')</span>' + fix(u), '#FFB74D')).join('') +
-    (rr.added.length ? li('⬆ Publish rates to calculator pushes the added rates live.', 'var(--muted)') : '') +
+    (rr.added.length || (rr.updated || []).length || (rr.removed || []).length ? li('⬆ Publish rates to calculator pushes the changes live.', 'var(--muted)') : '') +
     '</div>';
 }
 // A combined garbage+recycling figure, split by hand: the row becomes the
@@ -13555,17 +13921,16 @@ async function crqPlaceFixed(rowId) {
       if (!code) { rdbMsg('That name has no letters or digits to make a code from.', false); return; }
       const dup = (RDB.uses || []).find(x => x.use_code === code);
       if (!dup) {
-        // GUARDRAIL 2: the ONLY place a commercial use is created, and it
-        // takes four deliberate acts — open the picker, choose "+ new use…",
-        // type the name, press Place. Extraction and crqWriteRates never
-        // create one: what counts as an official use is a human's call, not
-        // a taxonomy the extractor grows on its own.
+        // GUARDRAIL 2 (revised 2026-10-19): a commercial use is created by a
+        // person — here (open the picker, choose "+ new use…", type the
+        // name, press Place) or in the commercial table (rdbComTypedUse) —
+        // or by the extraction's sync for a premises the guideline NAMES
+        // (crqComSyncApply). Never for a broad class, never a lookalike.
         const { error: uErr } = await sb.from('com_uses').insert({ use_code: code, label });
         if (uErr && !/duplicate|unique/i.test(uErr.message)) { rdbMsg('Could not add the use: ' + uErr.message, false); return; }
         RDB.uses.push({ use_code: code, label });
         RDB.uses.sort((a, b) => String(a.label).localeCompare(String(b.label)));
-        const newSel = document.getElementById('rdb-com-new-use');
-        if (newSel) newSel.innerHTML = RDB.uses.map(x => `<option value="${x.use_code}">${x.label}</option>`).join('');
+        rdbComUseOptions();
       }
       patch.use_class = label;
     } else {
@@ -32249,6 +32614,22 @@ function wmpgApplySplits(ids, vols) {
 // Pure: the unit word a use's quantity is counted in ("m² (NLA)", "beds").
 function wmpgComUnitWord(metric) { const t = String(metric || 'm² (NLA)').replace(/\s*\(no\.\)\s*$/i, ''); return t.charAt(0).toLowerCase() + t.slice(1); }
 function wpComUses() { return WMPG_COM_USES; }
+// The published file's USES — uses typed in or extracted in WastePlanner,
+// which the built-in list does not carry — join the list so the WMP can
+// label them. A built-in entry is never replaced. Called wherever the
+// generator loads the rates file.
+function wpComUsesMerge(R) {
+  const U = R && R.USES;
+  if (!U || typeof U !== 'object') return 0;
+  let n = 0;
+  Object.keys(U).forEach(k => {
+    const u = U[k];
+    if (WMPG_COM_USES[k] || !u || !u.label) return;
+    WMPG_COM_USES[k] = { label: String(u.label), metric: String(u.metric || 'Units (no.)') };
+    n++;
+  });
+  return n;
+}
 function wmpgComUseMeta(use) { return WMPG_COM_USES[use] || { label: String(use || 'Commercial use').replace(/_/g, ' '), metric: 'm² (NLA)' }; }
 // Pure: one row per use — the calculator's figures, the rate per stream with
 // its source (council | state), the weekly volume per stream BEFORE the
@@ -32303,11 +32684,15 @@ function wmpgCouncilOverride(R, d) {
 }
 // Pure: the rate per stream for one use, with its source — the council's
 // override field by field over the state profile (the calculator's
-// deepMerge), 'state' wherever the council has no figure of its own.
+// deepMerge), 'state' wherever the council has no figure of its own. A
+// council that publishes its OWN list (comList 'own' — the calculator's
+// ownComList) replaces the state's: a use it does not rate has no rate.
 function wmpgComRatesFor(R, d, use) {
   const prof = R && R.PROFILES && R.PROFILES[d.state];
-  const base = (prof && prof.comRates && prof.comRates[use]) || {};
-  const over = (wmpgCouncilOverride(R, d).ov?.comRates?.[use]) || {};
+  const ov = wmpgCouncilOverride(R, d).ov;
+  const own = !!(ov && ov.comList === 'own' && ov.comRates && Object.keys(ov.comRates).length);
+  const base = own ? {} : ((prof && prof.comRates && prof.comRates[use]) || {});
+  const over = (ov?.comRates?.[use]) || {};
   const out = {};
   WMPG_COM_ORDER.forEach(s => {
     const b = base[s], o = over[s];
@@ -33559,7 +33944,7 @@ async function openWmpGenerator() {
   wmpgFlash('Loading council rates…');
 
   if (!WMPG.remote) {
-    try { const r = await fetch(RATES_URL_PARENT, { cache:'no-store' }); if (r.ok) WMPG.remote = await r.json(); } catch(e) {}
+    try { const r = await fetch(RATES_URL_PARENT, { cache:'no-store' }); if (r.ok) { WMPG.remote = await r.json(); wpComUsesMerge(WMPG.remote); } } catch(e) {}
   }
 
   if (p.wmp && p.wmp.rooms?.length) {

@@ -8,6 +8,7 @@
 // migration file carries what the brief demands.
 
 const test = require('node:test');
+const extractFn = name => { const { extractBlock } = require('./extract.js'); return extractBlock(new RegExp('^(?:async )?function ' + name + '\\(')).text; };
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -288,7 +289,8 @@ test('extracted generation rates map onto the rate tables in their exact row for
   assert.ok(SOURCE.includes('function crqRatesReport(rr)') && SOURCE.includes('id="rdb-rates-note"'), 'the outcome is reported in the rates section, where the rows land');
   assert.ok(wr.includes('.insert(batch[table])') && !wr.includes('upsert'), 'insert only — never an upsert');
   const ex = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
-  assert.ok(ex.includes('const rr = await crqWriteRates(saved.filter(crqIsRate), doc);'), 'extraction writes the rates into the tables');
+  assert.ok(ex.includes('const rr = await crqWriteRates(saved.filter(crqIsRate), doc, { sync: true, cleanRead });'), 'extraction writes the rates into the tables, syncing the commercial list');
+  assert.ok(ex.includes('const cleanRead = !sweep.error && !sweep.missing.length && !truncated;'), 'removal waits on a complete read');
   assert.ok(ex.includes(".insert(rows).select();") && ex.includes('const saved = (ins && ins.length === rows.length) ? ins : rows;'),
     'the report is built from the SAVED rows, so its pick-a-use and split buttons address real row ids');
   assert.ok(ex.includes('rates → tables:') && ex.includes('not placed — '), 'and reports added / kept / not placed with the reason');
@@ -377,23 +379,86 @@ test('guardrail: a combined garbage+recycling figure is HELD, never split by the
 });
 
 // ── GUARDRAIL 2: the taxonomy never grows on its own ──────────────────────
-test('guardrail: a commercial use is only ever created by a deliberate human act', () => {
-  const inserts = SOURCE.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => /from\('com_uses'\)\s*\.insert/.test(l));
-  assert.equal(inserts.length, 1, 'exactly one place in the whole app creates a commercial use');
+// GUARDRAIL 2, revised 2026-10-19 (Lachy: "AI applies directly"). The use
+// list grows in exactly three places: the rates report's "+ new use…", the
+// commercial table's "+ type a new use…", and the extraction's sync of a
+// council's list to its guideline — and that last one only for a premises
+// the guideline NAMES (never a broad class, never a lookalike).
+test('guardrail: a commercial use is created only by a person or by a guideline that names it', () => {
+  const lines = SOURCE.split('\n');
+  const inserts = lines.map((l, i) => [i, l]).filter(([, l]) => /from\('com_uses'\)\s*\.insert/.test(l));
+  const owner = i => { for (let k = i; k >= 0; k--) { const m = /^(?:async )?function (\w+)\(/.exec(lines[k]); if (m) return m[1]; } return null; };
+  assert.deepStrictEqual(inserts.map(([i]) => owner(i)).sort(), ['crqComSyncApply', 'crqPlaceFixed', 'rdbComTypedUse']);
   const fn = SOURCE.slice(SOURCE.indexOf('async function crqPlaceFixed('), SOURCE.indexOf('async function crqPullRatesForScope('));
-  assert.ok(fn.includes("from('com_uses').insert("), 'and it is the report\'s pick-a-use action');
-  assert.ok(fn.includes("if (useSel.value === '__new')"), 'reached only by choosing “+ new use…” explicitly');
-  assert.ok(fn.includes("if (!label) { rdbMsg('Name the new use first.', false); return; }"), 'the human names it — never derived and inserted silently');
-  // the automatic paths never create one
-  const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('function crqIsCombined('));
-  assert.ok(!/com_uses'\)\s*\.(insert|upsert|update)/.test(wr), 'crqWriteRates only READS the uses list');
+  assert.ok(fn.includes("if (useSel.value === '__new')"), 'the report: reached only by choosing “+ new use…” explicitly');
+  assert.ok(fn.includes("if (!label) { rdbMsg('Name the new use first.', false); return; }"));
+  const typed = extractFn('rdbComTypedUse');
+  assert.ok(typed.includes("if (!label) { rdbMsg('Type the use’s name first.', false); return null; }"), 'the table: the person types the name');
+  assert.ok(typed.includes('metric, default_days: days'), 'with its measure and days, so it can publish');
+  // the sync only inserts the uses crqRateToTable planned (newUse)
+  const sync = extractFn('crqComSyncApply');
+  assert.ok(sync.includes('plans.forEach(p => { if (p.plan.newUse && !fresh.has(p.plan.newUse.use_code)) fresh.set(p.plan.newUse.use_code, p.plan.newUse); });'));
+  const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('async function crqComSyncApply('));
+  assert.ok(!/com_uses'\)\s*\.(insert|upsert|update)/.test(wr), 'crqWriteRates itself only READS the uses list');
   const ex = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
-  assert.ok(!/com_uses/.test(ex), 'extraction never touches the uses table at all');
-  // a premises with no matching use is reported with its source value intact, awaiting that act
+  assert.ok(!/com_uses/.test(ex), 'extraction never touches the uses table directly');
+  const tt = SOURCE.slice(SOURCE.indexOf('function crqRateToTable('), SOURCE.indexOf('function crqNewUse('));
+  assert.ok(tt.includes('if (ctx.createUses && !broad && '), 'a broad class never becomes a use');
+  // the report still offers the human path for what the engine could not place
   const rep = SOURCE.slice(SOURCE.indexOf('function crqRatesReport('), SOURCE.indexOf('async function crqPlaceSplit('));
-  assert.ok(rep.includes("'✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')]"),
-    'the unplaced row carries the council\'s own use, stream and figure, ready to place once the use exists');
-  assert.ok(rep.includes('<option value="__new">+ new use…</option>'), 'with the create-a-use action on the row itself');
+  assert.ok(rep.includes("'✕ not placed · ' + cgbEsc([u.r.use_class, u.r.stream, (u.r.value_num != null ? u.r.value_num + ' ' + (u.r.unit || '') : '')]"));
+  assert.ok(rep.includes('<option value="__new">+ new use…</option>'));
+});
+
+test('sync: the council list follows the guideline — new uses, updates, removals only after a full read', () => {
+  const { loadEngine } = require('./extract.js');
+  const w = loadEngine({ blocks: [['crxNorm', /^function crxNorm\(/], ['crxResUnit', /^function crxResUnit\(/],
+    ['CRX_STREAM_TO_RATES', /^const CRX_STREAM_TO_RATES = /], ['CRQ_UNIT_BASIS', /^const CRQ_UNIT_BASIS = /],
+    ['crqUseBasis', /^function crqUseBasis\(/], ['crqComBasis', /^function crqComBasis\(/],
+    ['CRQ_GENERIC_WORDS', /^const CRQ_GENERIC_WORDS = /], ['crqUseFromText', /^function crqUseFromText\(/],
+    ['crqRateToTable', /^function crqRateToTable\(/], ['CRQ_BASIS_METRIC', /^const CRQ_BASIS_METRIC = /],
+    ['CRQ_BASIS_WORD', /^const CRQ_BASIS_WORD = /], ['crqNewUse', /^function crqNewUse\(/],
+    ['crqUseCode', /^function crqUseCode\(/], ['crqComSyncPlan', /^function crqComSyncPlan\(/]] });
+  const uses = [{ use_code: 'cafe', label: 'Cafe' }, { use_code: 'hotel_beds', label: 'Hotel / motel (by bed count)' }];
+  const ctx = { state: 'NSW', councilValue: 'northern_beaches', uses, createUses: true };
+  const gr = o => ({ requirement_type: 'generation_rate', ...o });
+  // a premises the list lacks becomes a use under the guideline's own name
+  const nail = w.crqRateToTable(gr({ use_class: 'Nail salon', stream: 'garbage', value_num: 5, unit: 'L/100m2/day' }), ctx);
+  assert.ok(nail.ok);
+  assert.deepStrictEqual({ ...nail.newUse }, { use_code: 'nail_salon', label: 'Nail salon', metric: 'm² (NLA)', default_days: 7 });
+  assert.strictEqual(nail.row.use_code, 'nail_salon');
+  assert.strictEqual(w.crqRateToTable(gr({ use_class: 'Cafe', stream: 'garbage', value_num: 5, unit: 'L/100m2/day' }), ctx).newUse, null, 'a known use is reused');
+  // per bed vs per m²: a variant names its basis, never lands on the other one
+  const motel = w.crqRateToTable(gr({ use_class: 'Hotel / motel (by bed count)', stream: 'garbage', value_num: 30, unit: 'L/100m2/day' }), ctx);
+  assert.ok(motel.ok && motel.newUse.label === 'Hotel / motel (per m²)' && motel.newUse.metric === 'm² (NLA)');
+  // still refused: a broad class, a combined figure, and a unit with no formula
+  assert.match(w.crqRateToTable(gr({ use_class: 'commercial', stream: 'garbage', value_num: 5, unit: 'L/100m2/day', value_text: '5 L' }), ctx).why, /broad class/);
+  assert.match(w.crqRateToTable(gr({ use_class: 'Automotive', stream: null, value_num: 3350, unit: 'L/100m2/day', value_text: 'one figure (combined)' }), ctx).why, /one figure covers/);
+  assert.match(w.crqRateToTable(gr({ use_class: 'Cinema', stream: 'garbage', value_num: 25, unit: 'L/seats/screening' }), ctx).why, /no formula/);
+  // without sync (the pull) nothing is created
+  assert.match(w.crqRateToTable(gr({ use_class: 'Nail salon', stream: 'garbage', value_num: 5, unit: 'L/100m2/day' }), { ...ctx, createUses: false }).why, /matches no commercial use/);
+  // the plan
+  const row = (u, st, rate, extra) => ({ use_code: u, stream: st, rate, unit_value: 100, unit: 'L/Day/100m2', ...extra });
+  const existing = [row('cafe', 'GW', 240, { id: 1 }), row('cafe', 'REC', 100, { id: 2 }), row('office', 'GW', 10, { id: 3 }), row('automotive', 'GW', 1, { id: 4 })];
+  const placed = [row('cafe', 'GW', 240), row('cafe', 'REC', 120), row('nail_salon', 'GW', 5)];
+  const full = w.crqComSyncPlan(placed, existing, { canDelete: true, protect: ['automotive'] });
+  assert.deepStrictEqual(full.insert.map(r => r.use_code), ['nail_salon']);
+  assert.deepStrictEqual(full.update.map(u => [u.id, u.from.rate, u.row.rate]), [[2, 100, 120]]);
+  assert.deepStrictEqual(full.same.map(e => e.id), [1]);
+  assert.deepStrictEqual(full.remove.map(e => e.id), [3], 'office is gone from the guideline; automotive was read but held, so it stays');
+  const partial = w.crqComSyncPlan(placed, existing, { canDelete: false });
+  assert.deepStrictEqual(partial.remove, [], 'an incomplete read removes nothing');
+  assert.strictEqual(partial.insert.length + partial.update.length, 2);
+  // a clean read with no commercial rate clears the list
+  assert.deepStrictEqual(w.crqComSyncPlan([], existing, { canDelete: true }).remove.map(e => e.id), [1, 2, 3, 4]);
+  // the wiring: residential stays add-only, the council list is marked its own
+  const apply = extractFn('crqComSyncApply');
+  assert.ok(apply.includes("const clearAll = x.cleanRead && !comRead.length;"));
+  assert.ok(apply.includes("const canDelete = x.cleanRead && (clearAll || placed.length > 0);"));
+  assert.ok(apply.includes(".update({ com_own: own })"), 'the synced list becomes the council\'s own');
+  const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('async function crqComSyncApply('));
+  assert.ok(wr.includes("if (existing[plan.table].has(keys[i])) { kept++; return; }   // add-only: the table's value stands"), 'residential still add-only');
+  assert.ok(wr.includes('if (syncCom) existing.com_rates = new Set();'), 'only the commercial cells are synced');
 });
 
 test('C5: warnings compare council minima to measured layout facts, citing clause + version', () => {
@@ -678,7 +743,7 @@ test('an unplaced rate can be given a NEW commercial use from the report', () =>
   assert.ok(fix.includes("if (useSel.value === '__new')"), 'the picker offers a new use');
   assert.ok(fix.includes("await sb.from('com_uses').insert({ use_code: code, label })"), 'which is created in com_uses');
   assert.ok(fix.includes("if (uErr && !/duplicate|unique/i.test(uErr.message))"), 'a name that already exists is reused, not an error');
-  assert.ok(fix.includes("RDB.uses.push({ use_code: code, label })") && fix.includes("rdb-com-new-use"),
+  assert.ok(fix.includes("RDB.uses.push({ use_code: code, label })") && fix.includes("rdbComUseOptions()"),
     'and appears at once in the commercial table’s own use picker');
   assert.ok(SOURCE.includes("<option value=\"__new\">+ new use…</option>") && SOURCE.includes('function crqFixUseChanged(rowId)'),
     'the option and its name field are wired in the report');

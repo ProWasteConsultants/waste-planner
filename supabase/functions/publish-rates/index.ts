@@ -1,6 +1,6 @@
 // ── publish-rates ───────────────────────────────────────────────────────────
 // WastePlanner is the ONE place generation rates and council lists are
-// edited. This function reads them (res_rates, com_rates, councils), builds
+// edited. This function reads them (res_rates, com_rates, com_uses, councils), builds
 // waste_rates.json — the file the free calculator on go.wasteplanner.au, the
 // prowaste.au embed, the in-app calculator and the WMP generator all read —
 // validates it, and only then writes it to R2:
@@ -101,21 +101,24 @@ Deno.serve(async (req) => {
   if (missing.length) return jsonRes({ ok: false, error: "R2 secrets not set: " + missing.join(", ") }, 500, cors);
 
   // ── Read WastePlanner's tables ───────────────────────────────────────────
-  let councils, resRates, comRates;
+  let councils, resRates, comRates, uses;
   try {
-    councils = await readAll(() => sbUser.from("councils").select("state,value,label,published").order("state").order("value"), "councils");
+    councils = await readAll(() => sbUser.from("councils").select("state,value,label,published,com_own").order("state").order("value"), "councils");
     resRates = await readAll(() => sbUser.from("res_rates").select("state,council_value,unit_type,stream,l_per_week")
       .order("state").order("council_value", { nullsFirst: true }).order("unit_type").order("stream"), "res_rates");
     comRates = await readAll(() => sbUser.from("com_rates").select("state,council_value,use_code,stream,rate,unit_value,unit")
       .order("state").order("council_value", { nullsFirst: true }).order("use_code").order("stream"), "com_rates");
+    // the use list: labels, input measure and default days for typed-in uses
+    uses = await readAll(() => sbUser.from("com_uses").select("use_code,label,metric,default_days").order("use_code"), "com_uses");
   } catch (e) {
     const msg = (e as Error).message;
-    const hint = /published/.test(msg) ? " — run sql/2026-10-19-publish-rates.sql (adds councils.published) first" : "";
+    const hint = /published/.test(msg) ? " — run sql/2026-10-19-publish-rates.sql (adds councils.published) first"
+      : /com_own|metric|default_days/.test(msg) ? " — run sql/2026-10-19-council-commercial-lists.sql (adds councils.com_own, com_uses.metric / default_days) first" : "";
     return jsonRes({ ok: false, error: msg + hint }, 500, cors);
   }
 
   // ── Build + validate: nothing is written unless the file is clean ────────
-  const { json, skipped } = buildRates({ councils, resRates, comRates });
+  const { json, skipped } = buildRates({ councils, resRates, comRates, uses });
   const errors = validateRates(json);
   const counts = ratesCounts(json);
   if (errors.length) return jsonRes({ ok: false, code: "invalid", errors, skipped, counts }, 422, cors);

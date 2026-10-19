@@ -9,7 +9,12 @@
 // the SAME code.
 //
 // The shape is fixed by the landing page and must not change without asking:
-//   { version, PROFILES{STATE}, COUNCIL_PROFILES{"STATE|value"}, COUNCILS{STATE:[{value,label}]} }
+//   { version, PROFILES{STATE}, COUNCIL_PROFILES{"STATE|value"}, COUNCILS{STATE:[{value,label}]}, USES{code} }
+// USES (2026-10-19, Lachy) carries {label, metric, defaultDays} for every
+// commercial use a published rate names, so a calculator builds its use list
+// from the file rather than from its own copy. A council profile with
+// `comList: "own"` publishes its COMPLETE commercial list: a reader uses that
+// council's comRates in place of the state's, never merged over them.
 
 export const RATE_STATES = ['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'];
 export const RATE_STREAMS = ['GW', 'REC', 'ORG', 'GLS', 'CARD', 'SOFT'];
@@ -24,17 +29,73 @@ export const RES_KEYS = ['townhouse', 'apt_1br', 'apt_2br', 'apt_3br'];
 // would block every publish that carries a childcare rate.
 export const COM_UNITS = ['L/Day/100m2', 'L/Week/100m2', 'L/Bed/Day', 'L/Bed/Week', 'L/Apartment/Week',
   'L/Student/Week', 'L/Occupant/Week', 'L/Cat/Week', 'L/Week'];
-// The calculator's COMM keys — a rate under any other key is a use the
-// calculator has no row for. Pinned to COMM in index.html by a test.
-export const COMM_KEYS = ['backpackers', 'backpackers_sydney', 'bakery', 'banks', 'bar_club_function',
-  'boarding_house', 'boarding_house_sydney', 'bulky_goods', 'butcher', 'cafe', 'cattery', 'childcare',
-  'community_library', 'convention_centre', 'convenience_store', 'delicatessen', 'education_area',
-  'education_students', 'entertainment_venue', 'factories', 'fish_shop', 'florist', 'function_room',
-  'garden_courtyards', 'general_retail_large', 'retail_nonfood', 'general_retail_small', 'greengrocer',
-  'gym', 'hairdresser', 'hotel_beds', 'hotel_area', 'independent_living', 'kitchen_dining',
-  'licensed_club', 'office', 'restaurant', 'retirement_village', 'serviced_apartments',
-  'serviced_apartments_sydney', 'show_room', 'specialised_grocery', 'student_accommodation',
-  'supermarket', 'takeaway', 'warehouse'];
+// The calculator's built-in COMM table — label, input measure and default
+// days per use. Pinned to COMM in index.html by a test. A use outside it is a
+// com_uses row typed in (or extracted) in WastePlanner: it publishes with its
+// own label / measure / days under USES, so every calculator that reads the
+// file offers it without a code change.
+export const COMM_META = {
+  backpackers: { label: "Backpackers accommodation (per bed)", metric: "Beds (no.)", defaultDays: 7 },
+  backpackers_sydney: { label: "Backpackers accommodation (per m²)", metric: "m² (NLA)", defaultDays: 7 },
+  bakery: { label: "Bakery", metric: "m² (NLA)", defaultDays: 7 },
+  banks: { label: "Banks", metric: "m² (NLA)", defaultDays: 5 },
+  bar_club_function: { label: "Bar / club / function venue", metric: "m² (NLA)", defaultDays: 7 },
+  boarding_house: { label: "Boarding house / guest house (per occupant)", metric: "Occupants (no.)", defaultDays: 7 },
+  boarding_house_sydney: { label: "Boarding house / guest house (per m²)", metric: "m² (NLA)", defaultDays: 7 },
+  bulky_goods: { label: "Bulky goods / department store", metric: "m² (NLA)", defaultDays: 7 },
+  butcher: { label: "Butcher", metric: "m² (NLA)", defaultDays: 7 },
+  cafe: { label: "Cafe", metric: "m² (NLA)", defaultDays: 7 },
+  cattery: { label: "Cattery", metric: "Cats (no.)", defaultDays: 7 },
+  childcare: { label: "Childcare", metric: "m² (NLA)", defaultDays: 5 },
+  community_library: { label: "Community / library", metric: "m² (NLA)", defaultDays: 5 },
+  convention_centre: { label: "Convention / conference centre", metric: "m² (NLA)", defaultDays: 5 },
+  convenience_store: { label: "Convenience store", metric: "m² (NLA)", defaultDays: 7 },
+  delicatessen: { label: "Delicatessen", metric: "m² (NLA)", defaultDays: 7 },
+  education_area: { label: "Education / training (per m²)", metric: "m² teaching area", defaultDays: 5 },
+  education_students: { label: "Education / training (per student)", metric: "Students (no.)", defaultDays: 5 },
+  entertainment_venue: { label: "Entertainment venue", metric: "m² (NLA)", defaultDays: 7 },
+  factories: { label: "Factories", metric: "m² (NLA)", defaultDays: 5 },
+  fish_shop: { label: "Fish shop", metric: "m² (NLA)", defaultDays: 7 },
+  florist: { label: "Florist / plant shop", metric: "m² (NLA)", defaultDays: 7 },
+  function_room: { label: "Function room", metric: "m² (NLA)", defaultDays: 7 },
+  garden_courtyards: { label: "Garden areas / courtyards", metric: "m² (NLA)", defaultDays: 7 },
+  general_retail_large: { label: "General retail (large >100m²)", metric: "m² (NLA)", defaultDays: 7 },
+  retail_nonfood: { label: "General retail (non-food)", metric: "m² (NLA)", defaultDays: 7 },
+  general_retail_small: { label: "General retail (small ≤100m²)", metric: "m² (NLA)", defaultDays: 7 },
+  greengrocer: { label: "Greengrocer", metric: "m² (NLA)", defaultDays: 7 },
+  gym: { label: "Gym", metric: "m² (NLA)", defaultDays: 7 },
+  hairdresser: { label: "Hairdresser / salon", metric: "m² (NLA)", defaultDays: 7 },
+  hotel_beds: { label: "Hotel / motel (by bed count)", metric: "Beds (no.)", defaultDays: 7 },
+  hotel_area: { label: "Hotel / motel (by floor area)", metric: "m² (NLA)", defaultDays: 7 },
+  independent_living: { label: "Independent living", metric: "Apartments (no.)", defaultDays: 7 },
+  kitchen_dining: { label: "Kitchen / dining", metric: "m² (NLA)", defaultDays: 7 },
+  licensed_club: { label: "Licensed club", metric: "m² (NLA)", defaultDays: 7 },
+  office: { label: "Office", metric: "m² (NLA)", defaultDays: 5 },
+  restaurant: { label: "Restaurant", metric: "m² (NLA)", defaultDays: 7 },
+  retirement_village: { label: "Retirement village", metric: "Apartments (no.)", defaultDays: 7 },
+  serviced_apartments: { label: "Serviced apartments (per apartment)", metric: "Apartments (no.)", defaultDays: 7 },
+  serviced_apartments_sydney: { label: "Serviced apartments (per m²)", metric: "m² (NLA)", defaultDays: 7 },
+  show_room: { label: "Showroom", metric: "m² (NLA)", defaultDays: 7 },
+  specialised_grocery: { label: "Specialised grocery", metric: "m² (NLA)", defaultDays: 7 },
+  student_accommodation: { label: "Student accommodation", metric: "Occupants (no.)", defaultDays: 7 },
+  supermarket: { label: "Supermarket", metric: "m² (NLA)", defaultDays: 7 },
+  takeaway: { label: "Takeaway", metric: "m² (NLA)", defaultDays: 7 },
+  warehouse: { label: "Warehouse", metric: "m² (NLA)", defaultDays: 5 },
+};
+export const COMM_KEYS = Object.keys(COMM_META);
+// The input measure a use is counted in, read from a rate's unit — the
+// fallback for a typed-in use whose com_uses row carries no metric.
+export function metricForUnit(unit) {
+  const u = String(unit || '');
+  if (/100m2/.test(u)) return 'm² (NLA)';
+  if (/Bed/.test(u)) return 'Beds (no.)';
+  if (/Occupant/.test(u)) return 'Occupants (no.)';
+  if (/Apartment/.test(u)) return 'Apartments (no.)';
+  if (/Student/.test(u)) return 'Students (no.)';
+  if (/Cat/.test(u)) return 'Cats (no.)';
+  return 'Units (no.)';
+}
+export const USE_CODE_RE = /^[a-z0-9_]+$/;
 // com_uses.use_code → COMM key, where WastePlanner's code differs from the
 // calculator's. Empty while they agree; add a pair here rather than renaming
 // either side (a council's published rate is keyed by it).
@@ -65,17 +126,21 @@ const sortObj = (o, order) => {
 // other council are left out and reported. Never throws on bad data: what
 // cannot be placed goes in `skipped` with the reason, and what is placed but
 // wrong is left for validateRates to name.
-export function buildRates({ councils = [], resRates = [], comRates = [], version } = {}) {
+export function buildRates({ councils = [], resRates = [], comRates = [], uses = [], version } = {}) {
   const skipped = [];
-  const PROFILES = {}, COUNCIL_PROFILES = {}, COUNCILS = {};
+  const PROFILES = {}, COUNCIL_PROFILES = {}, COUNCILS = {}, USES = {};
   const listed = new Map();   // "STATE|value" → label
   const drafts = new Map();
+  const own = new Set();      // councils whose commercial list replaces the state's
+  const useRows = new Map();
+  uses.forEach(u => { if (u && u.use_code) useRows.set(String(u.use_code), u); });
   councils.forEach(c => {
     const st = String(c.state || '').trim().toUpperCase();
     const value = String(c.value || '').trim();
     const key = st + '|' + value;
     if (c.published !== true) { drafts.set(key, c.label || value); return; }
     listed.set(key, String(c.label || '').trim());
+    if (c.com_own === true) own.add(key);
     (COUNCILS[st] || (COUNCILS[st] = [])).push({ value, label: String(c.label || '').trim() });
   });
   Object.values(COUNCILS).forEach(list => list.sort((a, b) => a.label.localeCompare(b.label)));
@@ -105,13 +170,27 @@ export function buildRates({ councils = [], resRates = [], comRates = [], versio
   comRates.forEach(r => {
     const use = USE_ALIASES[r.use_code] || r.use_code;
     const what = `commercial ${r.use_code} · ${r.stream}`;
-    if (!COMM_KEYS.includes(use)) {
-      skipped.push({ key: r.state + '|' + (r.council_value || ''), what, reason: 'use the calculator has no row for (add a USE_ALIASES pair in publish-rates/rates.mjs if it is one under another code)' });
+    const row = useRows.get(r.use_code) || useRows.get(use) || null;
+    if (!COMM_KEYS.includes(use) && !row) {
+      skipped.push({ key: r.state + '|' + (r.council_value || ''), what, reason: 'use has no row in com_uses and the calculator has no row for it (add a USE_ALIASES pair in publish-rates/rates.mjs if it is one under another code)' });
       return;
     }
     const t = target(r, what); if (!t) return;
     const cr = t.comRates || (t.comRates = {});
     (cr[use] || (cr[use] = {}))[r.stream] = { rate: fig(r.rate), unitValue: fig(r.unit_value), unit: r.unit == null ? '' : String(r.unit) };
+    if (!USES[use]) {
+      const base = COMM_META[use] || {};
+      const days = Math.round(Number(row && row.default_days));
+      USES[use] = {
+        label: String((row && row.label) || base.label || use).trim(),
+        metric: String((row && row.metric) || base.metric || metricForUnit(r.unit)).trim(),
+        defaultDays: days >= 1 && days <= 7 ? days : (base.defaultDays || 7),
+      };
+    }
+  });
+  Object.keys(COUNCIL_PROFILES).forEach(key => {
+    const p = COUNCIL_PROFILES[key];
+    if (own.has(key) && p.comRates && Object.keys(p.comRates).length) p.comList = 'own';
   });
 
   // `streams`: the residential streams the state actually rates. GW and REC
@@ -142,6 +221,7 @@ export function buildRates({ councils = [], resRates = [], comRates = [], versio
     if (p.streams) out.streams = p.streams;
     if (p.resRates) out.resRates = sortObj(Object.fromEntries(Object.entries(p.resRates).map(([k, v]) => [k, sortObj(v, RATE_STREAMS)])), RES_KEYS);
     if (p.comRates) out.comRates = sortObj(Object.fromEntries(Object.entries(p.comRates).map(([k, v]) => [k, sortObj(v, RATE_STREAMS)])));
+    if (p.comList) out.comList = p.comList;
     return out;
   };
   const json = {
@@ -149,6 +229,7 @@ export function buildRates({ councils = [], resRates = [], comRates = [], versio
     PROFILES: sortObj(Object.fromEntries(Object.entries(PROFILES).map(([k, v]) => [k, tidyProfile(v)])), RATE_STATES),
     COUNCIL_PROFILES: sortObj(Object.fromEntries(Object.entries(COUNCIL_PROFILES).map(([k, v]) => [k, tidyProfile(v)]))),
     COUNCILS: sortObj(COUNCILS, RATE_STATES),
+    USES: sortObj(USES),
   };
   return { json, skipped };
 }
@@ -158,8 +239,9 @@ export function buildRates({ councils = [], resRates = [], comRates = [], versio
 export function validateRates(json) {
   const errs = [];
   if (!json || typeof json !== 'object' || Array.isArray(json)) return ['the file is not a JSON object'];
-  const keys = Object.keys(json).sort().join(',');
-  if (keys !== 'COUNCILS,COUNCIL_PROFILES,PROFILES,version') errs.push(`top-level keys must be exactly version, PROFILES, COUNCIL_PROFILES, COUNCILS (found ${Object.keys(json).join(', ') || 'none'})`);
+  // USES is optional so a file published before it existed still validates
+  const keys = Object.keys(json).filter(k => k !== 'USES').sort().join(',');
+  if (keys !== 'COUNCILS,COUNCIL_PROFILES,PROFILES,version') errs.push(`top-level keys must be exactly version, PROFILES, COUNCIL_PROFILES, COUNCILS (+ USES) (found ${Object.keys(json).join(', ') || 'none'})`);
   if (typeof json.version !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(json.version) || isNaN(Date.parse(json.version))) errs.push('version must be an ISO timestamp');
   const isObj = o => o && typeof o === 'object' && !Array.isArray(o);
   const num = (where, v, { positive = false } = {}) => {
@@ -184,12 +266,25 @@ export function validateRates(json) {
       });
     });
   };
+  const U = json.USES;
+  if (U !== undefined) {
+    if (!isObj(U)) errs.push('USES: not an object');
+    else Object.entries(U).forEach(([code, u]) => {
+      const w = `USES · ${code}`;
+      if (!USE_CODE_RE.test(code)) errs.push(`${w}: code must be lower-case letters, digits or _`);
+      if (!isObj(u)) { errs.push(`${w}: not an object`); return; }
+      if (typeof u.label !== 'string' || !u.label.trim()) errs.push(`${w}: label is blank`);
+      if (typeof u.metric !== 'string' || !u.metric.trim()) errs.push(`${w}: input measure (metric) is blank`);
+      if (!Number.isInteger(u.defaultDays) || u.defaultDays < 1 || u.defaultDays > 7) errs.push(`${w}: defaultDays ${JSON.stringify(u.defaultDays)} must be a whole number 1–7`);
+    });
+  }
+  const knownUse = use => COMM_KEYS.includes(use) || (isObj(U) && isObj(U[use]));
   const comOk = (where, cr) => {
     if (cr === undefined) return;
     if (!isObj(cr)) { errs.push(`${where}: commercial rates not an object`); return; }
     Object.entries(cr).forEach(([use, u]) => {
       const w = `${where} · commercial ${use}`;
-      if (!COMM_KEYS.includes(use)) errs.push(`${w}: not a use the calculator knows`);
+      if (!knownUse(use)) errs.push(`${w}: not a use the calculator knows, and USES does not describe it`);
       if (!isObj(u)) { errs.push(`${w}: not an object`); return; }
       Object.entries(u).forEach(([s, ro]) => {
         if (!RATE_STREAMS.includes(s)) errs.push(`${w}: unknown stream "${s}"`);
@@ -233,6 +328,10 @@ export function validateRates(json) {
     if (p.streams !== undefined) streamsOk(key, p.streams);
     resOk(key, p.resRates, false);
     comOk(key, p.comRates);
+    if (p.comList !== undefined) {
+      if (p.comList !== 'own') errs.push(`${key}: comList ${JSON.stringify(p.comList)} must be "own"`);
+      else if (!isObj(p.comRates) || !Object.keys(p.comRates).length) errs.push(`${key}: comList "own" with no commercial rates — the council would offer no uses at all`);
+    }
   });
   return errs;
 }
