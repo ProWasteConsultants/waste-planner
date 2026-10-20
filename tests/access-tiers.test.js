@@ -253,3 +253,13 @@ test('AI: no bring-your-own-key path; the project rides to ai-user; the SQL give
   const terms = fs.readFileSync(path.join(__dirname, '..', 'legal', 'terms.md'), 'utf8');
   assert.ok(terms.includes('AI features for that project have the same daily usage limits as a paid subscription under clause 6.2.'), 'Terms 6.1A says so');
 });
+
+test('ai-user: an engaged project upgrades a free trial to the paid limits, asked with the user’s token', () => {
+  const F = fs.readFileSync(path.join(__dirname, '..', 'supabase', 'functions', 'ai-user', 'index.ts'), 'utf8');
+  assert.ok(F.includes('new URL(req.url).searchParams.get("project")'), 'reads the ?project= the app sends');
+  assert.ok(/await sbUser\.rpc\("wp_ai_tier", \{ p_project: projectId \}\)/.test(F), 'asked as the caller, never the service key');
+  assert.ok(F.includes('if (!tierErr && aiTier === "paid") plan = PAID_PLAN;'), 'only an explicit paid answer upgrades');
+  assert.ok(F.includes('plan.lifetime && !user.is_anonymous'), 'only a free trial is upgraded; the anonymous check is never');
+  assert.ok(/const PAID_PLAN: Plan = \{ limit: 10, lifetime: false \}/.test(F), 'the same limits subscribers get');
+  assert.ok(!/console\.(log|info|debug)\(/.test(F), 'nothing about prompts or documents is logged');
+});
