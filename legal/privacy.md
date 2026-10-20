@@ -65,7 +65,6 @@ We share personal information with service providers that help us run the Platfo
 | Cloudflare | DNS, security, landing page hosting | Global network |
 | GitHub Pages | Application hosting | United States |
 | Resend | Transactional email | United States |
-| Twilio | Phone and SMS | United States |
 | Google | Advertising and analytics | United States |
 | Formspree | Website and landing page form submissions | United States |
 | Microsoft 365 | Business email, including enquiries and form submissions | Australia |

@@ -54,11 +54,11 @@ Last updated: 20 October 2026 · Version 2.0
 
 ## 6. Plans, fees and payment
 
-6.1 **Free plan.** The free plan includes one project, without exports, and AI features subject to daily usage limits. The features and limits of the free plan are described on our pricing page and may change from time to time.
+6.1 **Free plan.** The free plan includes one project, without exports, and a one-time trial of each AI feature. The features and limits of the free plan are described on our pricing page and may change from time to time.
 
-6.1A **Projects with a PWC engagement.** Where you engage PWC under a separate written engagement for a project, you may use the Platform for that project with full features, including exports, at no additional charge for the duration of that engagement. Any waste management plan or other deliverable for that project is prepared by PWC under the engagement, as set out in clause 4.3.
+6.1A **Projects with a PWC engagement.** Where you engage PWC under a separate written engagement for a project, you may use the Platform for that project with full features, including exports, at no additional charge for the duration of that engagement. AI features remain subject to the usage limits of your own plan under clause 6.1 or 6.2. Any waste management plan or other deliverable for that project is prepared by PWC under the engagement, as set out in clause 4.3.
 
-6.2 **Paid subscriptions.** Paid subscriptions include unlimited projects and exports, subject to these Terms and fair use. They are billed monthly in advance through our payment provider, Stripe. All prices are in Australian dollars and include GST where applicable.
+6.2 **Paid subscriptions.** Paid subscriptions include unlimited projects and exports, and AI features subject to daily usage limits, subject to these Terms and fair use. They are billed monthly in advance through our payment provider, Stripe. All prices are in Australian dollars and include GST where applicable.
 
 6.3 **Founding member pricing.** Founding member pricing ($149 per month) is locked in for the life of the subscription, provided it remains active and is not cancelled.
 
