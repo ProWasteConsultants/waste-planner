@@ -1609,22 +1609,11 @@ body.wp-anon .ws-top-chip{display:none;}
           <div style="font-size:12px;color:var(--muted);">Upload a PDF plan set — AI extracts the address, unit mix, and commercial uses to pre-fill the Bin Calculator.</div>
         </div>
 
-        <!-- API key section -->
+        <!-- Signed-out prompt (AI runs on WastePlanner's own service, never a personal key) -->
         <div id="pu-no-key" style="display:none;background:#FFF3E0;color:#5D4037;border:1px solid #FFE0B2;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
           <div style="font-size:12px;font-weight:700;color:#E65100;margin-bottom:8px;">Try AI extraction free</div>
           <button onclick="promptFreeSignup()" style="width:100%;padding:9px 14px;border-radius:7px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:#E65100;color:#fff;margin-bottom:8px;">Create a free account — includes 1 free AI use of each tool</button>
-          <div style="font-size:11px;color:#92400E;margin-bottom:10px;">Takes 30 seconds — paid plans include 10 AI uses per tool, per day. Or enter your own Anthropic API key (stored locally in your browser, never sent to our servers):</div>
-          <div style="display:flex;gap:8px;">
-            <input type="password" id="pu-api-key-input" placeholder="sk-ant-api03-…" style="flex:1;border:1.5px solid #FFE0B2;border-radius:7px;padding:8px 10px;font-size:12px;font-family:monospace;outline:none;background:#fff;">
-            <button onclick="savePlanApiKey()" style="padding:8px 14px;border-radius:7px;font-size:12px;font-weight:700;border:none;cursor:pointer;font-family:inherit;background:#E65100;color:#fff;white-space:nowrap;">Save Key</button>
-          </div>
-          <div id="pu-key-msg" style="font-size:11px;margin-top:6px;min-height:14px;"></div>
-        </div>
-
-        <!-- Saved key indicator (shown when key exists) -->
-        <div id="pu-key-saved" style="display:none;background:#E8F5E9;border:1px solid #C8E6C9;border-radius:8px;padding:8px 14px;margin-bottom:16px;font-size:12px;color:#2E7D32;align-items:center;justify-content:space-between;">
-          <span>🔑 API key saved</span>
-          <button onclick="clearPlanApiKey()" style="background:none;border:none;font-size:11px;color:#6B7280;cursor:pointer;font-family:inherit;text-decoration:underline;">Change</button>
+          <div style="font-size:11px;color:#92400E;">Takes 30 seconds. Subscribers and Pro Waste projects include 10 AI uses per tool, per day.</div>
         </div>
 
         <!-- Drop zone -->
@@ -7381,11 +7370,6 @@ select:focus,input:focus{border-color:var(--teal);box-shadow:0 0 0 3px rgba(22,1
     &lt;button class=&quot;role-tab&quot; onclick=&quot;setRole(&#x27;council&#x27;,this)&quot;&gt;Council Officer&lt;/button&gt;
     &lt;button class=&quot;role-tab&quot; onclick=&quot;setRole(&#x27;architect&#x27;,this)&quot;&gt;Architect&lt;/button&gt;
   &lt;/div&gt;
-  &lt;div class=&quot;topbar-key&quot;&gt;
-    &lt;input type=&quot;password&quot; id=&quot;api-key-input&quot; placeholder=&quot;Anthropic API key (sk-ant-...)&quot;&gt;
-    &lt;button onclick=&quot;saveKey()&quot;&gt;Save&lt;/button&gt;
-    &lt;span class=&quot;key-status&quot; id=&quot;key-status&quot;&gt;&lt;/span&gt;
-  &lt;/div&gt;
 &lt;/div&gt;
 
 &lt;!-- SETUP PANEL --&gt;
@@ -7939,25 +7923,7 @@ function setMode(mode) {
   document.getElementById(&#x27;mode-assess&#x27;).classList.toggle(&#x27;active&#x27;, mode === &#x27;assess&#x27;);
 }
 
-// ── API KEY ───────────────────────────────────────────────────────────────
-function saveKey() {
-  const key = document.getElementById(&#x27;api-key-input&#x27;).value.trim();
-  if (!key.startsWith(&#x27;sk-ant-&#x27;)) { 
-    document.getElementById(&#x27;key-status&#x27;).textContent = &#x27;⚠ Invalid&#x27;; 
-    document.getElementById(&#x27;key-status&#x27;).style.color = &#x27;#EF4444&#x27;;
-    return; 
-  }
-  localStorage.setItem(&#x27;pw_api_key&#x27;, key);
-  document.getElementById(&#x27;api-key-input&#x27;).value = &#x27;&#x27;;
-  document.getElementById(&#x27;key-status&#x27;).textContent = &#x27;✓ Saved&#x27;;
-  document.getElementById(&#x27;key-status&#x27;).style.color = &#x27;var(--green)&#x27;;
-}
-(function(){ 
-  if (localStorage.getItem(&#x27;pw_api_key&#x27;)) { 
-    document.getElementById(&#x27;key-status&#x27;).textContent = &#x27;✓ Key saved&#x27;;
-    document.getElementById(&#x27;key-status&#x27;).style.color = &#x27;var(--green)&#x27;;
-  } 
-})();
+try { localStorage.removeItem(&#x27;pw_api_key&#x27;); } catch (e) {}
 
 // ── STRUCTURED GUIDELINES (shared Supabase library) ───────────────────────
 // Admin-extracted, clause-referenced requirements. Fetched anonymously via
@@ -8766,8 +8732,7 @@ async function startScan() {
       window.parent.postMessage({ type: &#x27;wp-paywall&#x27;, reason: &#x27;compliance_cap&#x27; }, &#x27;*&#x27;);
     return;
   }
-  const apiKey = localStorage.getItem(&#x27;pw_api_key&#x27;);
-  if (!apiKey &amp;&amp; !(state.aiIncluded &amp;&amp; state.aiToken)) { alert(&#x27;AI scanning is included with your subscription when signed in — or save your own API key in the top bar.&#x27;); return; }
+  if (!(state.aiIncluded &amp;&amp; state.aiToken &amp;&amp; state.aiUrl)) { alert(&#x27;Sign in to WastePlanner to run the AI check.&#x27;); return; }
   if (!state.pdfPages.length) { alert(&#x27;Please upload a WMP PDF first.&#x27;); return; }
   if (!state.council) { alert(&#x27;Please select a council.&#x27;); return; }
 
@@ -8951,14 +8916,11 @@ Respond ONLY with valid JSON (no markdown, no preamble):
   });
 
   try {
-    const useProxy = state.aiIncluded &amp;&amp; state.aiToken;
-    const resp = await fetch(useProxy ? state.aiUrl : &#x27;https://api.anthropic.com/v1/messages&#x27;, {
+    const resp = await fetch(state.aiUrl, {
       method:&#x27;POST&#x27;,
-      headers: useProxy
-        ? {&#x27;Content-Type&#x27;:&#x27;application/json&#x27;,&#x27;Authorization&#x27;:&#x27;Bearer &#x27;+state.aiToken}
-        : {&#x27;Content-Type&#x27;:&#x27;application/json&#x27;,&#x27;x-api-key&#x27;:apiKey,&#x27;anthropic-version&#x27;:&#x27;2023-06-01&#x27;,&#x27;anthropic-dangerous-direct-browser-access&#x27;:&#x27;true&#x27;},
+      headers: {&#x27;Content-Type&#x27;:&#x27;application/json&#x27;,&#x27;Authorization&#x27;:&#x27;Bearer &#x27;+state.aiToken},
       body:JSON.stringify({
-        ...(useProxy ? {tool:&#x27;compliance&#x27;} : {}),
+        tool:&#x27;compliance&#x27;,
         model:&#x27;claude-opus-4-5&#x27;,
         max_tokens:10000,
         messages:[{role:&#x27;user&#x27;,content:[...guidelineBlocks,...contentBlocks,{type:&#x27;text&#x27;,text:prompt}]}]
@@ -9691,11 +9653,7 @@ window.addEventListener(&#x27;message&#x27;, (e) =&gt; {
         </div>
         <div id="np-key-row" style="display:none;margin-top:8px;">
           <button class="btn" onclick="promptFreeSignup()" style="background:var(--teal);color:#fff;font-weight:700;width:100%;max-width:420px;margin-bottom:6px;">Create a free account — includes 1 free AI use of each tool</button>
-              <div style="font-size:10.5px;color:var(--muted);margin-bottom:6px;">Takes 30 seconds. Paid plans include 10 AI uses per tool, per day. Or paste your own Anthropic API key:</div>
-          <div style="display:flex;gap:6px;">
-            <input type="password" id="np-key-input" placeholder="sk-ant-api03-…" style="flex:1;border:1.5px solid var(--border);border-radius:7px;padding:7px 10px;font-size:11px;font-family:monospace;background:#182121;color:var(--text);outline:none;">
-            <button class="btn" onclick="npSaveKey()">Save</button>
-          </div>
+          <div style="font-size:10.5px;color:var(--muted);">Takes 30 seconds. Subscribers and Pro Waste projects include 10 AI uses per tool, per day.</div>
         </div>
         <div id="np-extract-msg" style="font-size:11px;color:var(--muted);margin-top:6px;min-height:14px;"></div>
       </div>
@@ -9859,11 +9817,11 @@ function showScreen(name, navEl) {
         council: isCouncil
           ? ((typeof currentOrg !== 'undefined' && currentOrg?.kind === 'council') ? currentOrg.name : (currentProfile?.company || null))
           : null,
-        dailyLimit: AI_DAILY_LIMITS[currentProfile?.tier || 'none'] || 1,
+        dailyLimit: wpAiDailyLimit(currentProjectId),
         used: getAICallsToday(),
         aiIncluded: !!aiToken,
         aiToken,
-        aiUrl: AI_PROXY_BASE + '/ai-user',
+        aiUrl: wpAiUserUrl(anonMode ? null : currentProjectId),
         // Anonymous entry: exactly ONE check, tracked per device (and enforced
         // for real by the ai-user function's lifetime allowance) — the signup
         // gate takes over from there.
@@ -9888,10 +9846,7 @@ function showScreen(name, navEl) {
     }, 500);
   }
   if (name === 'upload') {
-    const hasKey = !!localStorage.getItem('pw_api_key') || aiEntitled();
-    document.getElementById('pu-no-key').style.display = hasKey ? 'none' : 'block';
-    const savedEl = document.getElementById('pu-key-saved');
-    if (savedEl) savedEl.style.display = hasKey ? 'flex' : 'none';
+    document.getElementById('pu-no-key').style.display = aiEntitled() ? 'none' : 'block';
   }
 }
 
@@ -10304,26 +10259,17 @@ async function npPdfSelected(event) {
     document.getElementById('np-name').value = file.name.replace(/\.pdf$/i, '');
 }
 function npRemovePdf() { npReset(); }
-function npSaveKey() {
-  const key = document.getElementById('np-key-input').value.trim();
-  if (!key.startsWith('sk-ant-')) { document.getElementById('np-extract-msg').textContent = 'Key should start with sk-ant-'; return; }
-  localStorage.setItem('pw_api_key', key);
-  document.getElementById('np-key-input').value = '';
-  document.getElementById('np-key-row').style.display = 'none';
-  document.getElementById('np-extract-msg').textContent = '✓ Key saved — run extraction again.';
-}
 async function npExtract() {
   const msg = document.getElementById('np-extract-msg');
   const btn = document.getElementById('np-extract-btn');
-  const apiKey = localStorage.getItem('pw_api_key');
-  if (!apiKey && !aiEntitled()) { document.getElementById('np-key-row').style.display = ''; msg.textContent = 'Create a free account to try AI extraction (1 free use) — paid plans include 10/day. Or enter your own API key.'; return; }
+  if (!aiEntitled()) { document.getElementById('np-key-row').style.display = ''; msg.textContent = 'Create a free account to try AI extraction (1 free use) — subscribers and Pro Waste projects include 10/day.'; return; }
   if (!NP.buf) return;
   btn.disabled = true;
   msg.textContent = 'Analysing plans with AI…';
   try {
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const pdfDoc = await pdfjsLib.getDocument({ data: NP.buf.slice(0) }).promise;
-    const extracted = await aiExtractCore(pdfDoc, pdfDoc.numPages, apiKey);
+    const extracted = await aiExtractCore(pdfDoc, pdfDoc.numPages);
     NP.summary = extracted;
     if (extracted.address) document.getElementById('np-address').value = extracted.address;
     if (extracted.council) populateCouncilSelect('np-council', extracted.state || document.getElementById('np-state').value || 'NSW', extracted.council);
@@ -16172,9 +16118,13 @@ async function stampSignupSource() {
   } catch (e) {}
 }
 
+// Display only, like AI_DAILY_LIMITS: the level the entitlement rule gives
+// this project (subscriber, staff or Pro Waste project → paid).
+function wpAiDailyLimit(projectId) {
+  try { return wpEntitlements(projectId || null).aiTier === 'paid' ? 10 : 1; } catch (e) { return AI_DAILY_LIMITS[currentProfile?.tier || 'none'] || 1; }
+}
 function checkAIRateLimit() {
-  const tier = currentProfile?.tier || 'none';
-  const limit = AI_DAILY_LIMITS[tier] || 1;
+  const limit = wpAiDailyLimit(currentProjectId);
   const used = getAICallsToday();
   if (used >= limit) {
     alert(`Daily AI limit reached (${limit} scans/day on your plan).\nYour limit resets at midnight. Upgrade for higher limits.`);
@@ -16871,17 +16821,18 @@ async function aiProxy(payload) {
 }
 
 // ── SUBSCRIBER AI ─────────────────────────────────────────────────────────
-// Paid users get AI included via the ai-user Edge Function (your key, held
-// server-side, with tier + server-enforced daily limits). Everyone else can
-// still bring their own key — the old flow, untouched.
+// Every account runs AI through the ai-user Edge Function (PWC's key, held
+// server-side, with server-enforced limits per level). A personal Anthropic
+// key is not accepted anywhere (2026-10-20); a key left in this browser by
+// the old flow is cleared below.
 const AI_PROXY_BASE = 'https://sgyenudbkdxdwciqylfs.supabase.co/functions/v1';
 // Any signed-in account gets included AI — the server decides how much:
 // paid tiers 10/day per tool, free accounts a 1-per-tool lifetime trial.
-// Signed-out users get nothing on our key (nothing enforceable without an
-// account), but can still bring their own.
+// Signed-out users get nothing (nothing enforceable without an account).
 function aiEntitled() {
   return !!currentUser;
 }
+try { localStorage.removeItem('pw_api_key'); } catch (e) {}
 // Route an anonymous user to the free-signup form (the AI conversion path).
 // Signed-in users who somehow land here have burned their trial — show pricing.
 function promptFreeSignup() {
@@ -16891,10 +16842,18 @@ function promptFreeSignup() {
   const tabs = document.querySelectorAll('.auth-tab');
   if (tabs[1]) switchAuthTab('signup', tabs[1]);
 }
+// The ai-user URL for a call made from a project. The project rides the query
+// string (not the body or a header, which the deployed function and its CORS
+// preflight would not expect) so the server can ask wp_ai_tier(project): an
+// engaged project's owner and design team get the subscriber limits there.
+function wpAiUserUrl(projectId) {
+  const base = AI_PROXY_BASE + '/ai-user';
+  return projectId ? base + '?project=' + encodeURIComponent(projectId) : base;
+}
 async function aiUser(payload) {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) throw new Error('Create a free account to try the AI tools.');
-  const resp = await fetch(`${AI_PROXY_BASE}/ai-user`, {
+  const resp = await fetch(wpAiUserUrl(currentProjectId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
     body: JSON.stringify(payload),
@@ -16908,26 +16867,12 @@ async function aiUser(payload) {
 }
 // One router for every AI feature. payload.tool ('compliance' | 'extract')
 // picks which server-side allowance the call draws from; it is stripped
-// before anything reaches Anthropic. Resolution: signed in → included via
-// proxy; else own key, direct; else a clear sign-up prompt.
-async function anthropicMessages(payload, apiKey) {
+// before anything reaches Anthropic. Every account level runs on
+// WastePlanner's own key through ai-user — there is no bring-your-own-key
+// path — and the server decides how much each level gets.
+async function anthropicMessages(payload) {
   if (aiEntitled()) return aiUser(payload);
-  const key = apiKey || localStorage.getItem('pw_api_key');
-  if (key) {
-    const { tool, ...upstream } = payload; void tool; // tag is ours, not the API's
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json', 'x-api-key': key,
-        'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify(upstream),
-    });
-    const j = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(j?.error?.message || `API error ${resp.status}`);
-    return j;
-  }
-  throw new Error('Create a free Waste Planner account to try the AI tools — paid plans include daily AI use.');
+  throw new Error('Create a free Waste Planner account to try the AI tools — subscribers and Pro Waste projects include daily AI use.');
 }
 
 // ── AUTH FUNCTIONS ────────────────────────────────────────────────────────
@@ -17478,7 +17423,8 @@ function wpEntitlementsResolve(c) {
     plan,
     canCreateProject: staff || paid || (Number(c.slotsUsed) || 0) < 1,
     canExport: staff || paid || isEngaged,
-    aiTier: (staff || paid) ? 'paid' : 'free',
+    // Pro Waste projects get the subscriber AI limits (2026-10-20)
+    aiTier: (staff || paid || isEngaged) ? 'paid' : 'free',
     isEngaged,
     readOnly: ended && !staff && !paid,
     isOwner,
@@ -18970,35 +18916,6 @@ async function wsFileOldPlan(projectId, stage, meta) {
   document.head.appendChild(s);
 })();
 
-function wsSaveApiKey() {
-  const input = document.getElementById('ws-apikey-input');
-  const msg = document.getElementById('ws-apikey-msg');
-  const key = (input?.value || '').trim();
-  if (!key.startsWith('sk-ant-')) {
-    if (msg) { msg.textContent = 'Key should start with sk-ant-'; }
-    return;
-  }
-  localStorage.setItem('pw_api_key', key);
-  if (input) input.value = '';
-  wsRefreshApiKeyUI();
-}
-
-function wsClearApiKey() {
-  localStorage.removeItem('pw_api_key');
-  wsRefreshApiKeyUI();
-}
-
-function wsRefreshApiKeyUI() {
-  const hasKey = !!localStorage.getItem('pw_api_key');
-  const section = document.getElementById('ws-apikey-section');
-  const missing = document.getElementById('ws-apikey-missing');
-  const saved = document.getElementById('ws-apikey-saved');
-  if (section) section.style.display = '';
-  if (missing) missing.style.display = hasKey ? 'none' : '';
-  if (saved) saved.style.display = hasKey ? 'flex' : 'none';
-  const msg = document.getElementById('ws-apikey-msg');
-  if (msg) msg.textContent = '';
-}
 
 function wsOnScaleChanged() {
   if (typeof wsRenderSweptLayer === 'function') wsRenderSweptLayer();
@@ -19571,14 +19488,13 @@ function wsCalcExtractSay(text, busy) {
 }
 async function wsRunAiExtract() {
   if (!WS.pdfDoc) { wsCalcExtractSay('Load a plan PDF first — AI extraction reads the plan open on the Design canvas.'); return; }
-  const apiKey = localStorage.getItem('pw_api_key');
-  if (!apiKey && !(typeof aiEntitled === 'function' && aiEntitled())) {
-    wsCalcExtractSay('AI extraction needs an account (1 free use) or an API key — set one on the project page.');
+  if (!(typeof aiEntitled === 'function' && aiEntitled())) {
+    wsCalcExtractSay('AI extraction needs a free account (1 free use of each tool).');
     return;
   }
   wsCalcExtractSay('Analysing plans with AI — up to a minute…', true);
   try {
-    const extracted = await aiExtractCore(WS.pdfDoc, WS.totalPages, apiKey);
+    const extracted = await aiExtractCore(WS.pdfDoc, WS.totalPages);
     if (WS.projectId && typeof writeProjectSummary === 'function') {
       writeProjectSummary(WS.projectId, {
         ...(extracted.address && { address: extracted.address }),
@@ -19710,7 +19626,7 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden;height
 
 // ── AI EXTRACTION ──────────────────────────────────────────────
 // Shared AI extraction core — used by the Planner and the project detail screen
-async function aiExtractCore(pdfDoc, totalPages, apiKey) {
+async function aiExtractCore(pdfDoc, totalPages) {
     // Render up to 20 pages as images
     const imgLimit = Math.min(20, totalPages);
     const contentBlocks = [];
@@ -19758,7 +19674,7 @@ OUTPUT FORMAT — return ONLY this JSON:
       max_tokens: 2048,
       system: prompt,
       messages: [{ role: 'user', content: contentBlocks }]
-    }, apiKey);
+    });
 
     let raw = data.content[0].text.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
     const out = JSON.parse(raw);
@@ -31547,32 +31463,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(wsRestoreDraft, 500);
 });
 
-function savePlanApiKey() {
-  const input = document.getElementById('pu-api-key-input');
-  const msg = document.getElementById('pu-key-msg');
-  const key = input.value.trim();
-  if (!key.startsWith('sk-ant-')) {
-    msg.textContent = '⚠ Key should start with sk-ant-'; msg.style.color = '#C62828'; return;
-  }
-  localStorage.setItem('pw_api_key', key);
-  input.value = '';
-  document.getElementById('pu-no-key').style.display = 'none';
-  const savedEl = document.getElementById('pu-key-saved');
-  if (savedEl) savedEl.style.display = 'flex';
-}
-
-function clearPlanApiKey() {
-  localStorage.removeItem('pw_api_key');
-  document.getElementById('pu-no-key').style.display = 'block';
-  const savedEl = document.getElementById('pu-key-saved');
-  if (savedEl) savedEl.style.display = 'none';
-  const msg = document.getElementById('pu-key-msg');
-  if (msg) { msg.textContent = ''; }
-}
-
 async function runPlanExtraction() {
-  const apiKey = localStorage.getItem('pw_api_key');
-  if (!apiKey && !aiEntitled()) {
+  if (!aiEntitled()) {
     document.getElementById('pu-no-key').style.display = 'block';
     return;
   }
@@ -31658,7 +31550,7 @@ OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
       max_tokens: 2048,
       system: prompt,
       messages: [{role:'user', content: [...contentBlocks, {type:'text', text:'Respond with only the JSON object. Start your response with {'}]}]
-    }, apiKey);
+    });
 
     setProgress(85, 'Processing results…');
 
@@ -31685,7 +31577,7 @@ OUTPUT FORMAT — return ONLY this JSON, nothing else, no markdown:
     console.error('Plan extraction error:', err);
     let msg = err.message || 'Unknown error';
     if (msg.includes('401') || msg.toLowerCase().includes('api key') || msg.toLowerCase().includes('authentication')) {
-      msg = '⚠️ Invalid API key — click "Change" above and re-enter your key.';
+      msg = '⚠️ Your session has expired — sign in again and retry.';
     } else if (msg.includes('429')) {
       msg = '⚠️ Rate limit hit — wait a moment then try again.';
     } else if (msg.includes('529') || msg.includes('overloaded')) {

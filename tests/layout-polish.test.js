@@ -551,7 +551,7 @@ test('compliance checker setup: upload + scan at the top, toolbar-style headings
   // how the pills once shipped invisible.
   assert.ok(!panel.includes('id=&quot;mode-pre&quot;') && !panel.includes('id=&quot;mode-title&quot;'),
     'no mode UI inside the setup form cards');
-  const bar = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;role-tabs&quot;&gt;'), SOURCE.indexOf('&lt;div class=&quot;topbar-key&quot;&gt;'));
+  const bar = SOURCE.slice(SOURCE.indexOf('&lt;div class=&quot;role-tabs&quot;&gt;'), SOURCE.indexOf('&lt;!-- SETUP PANEL --&gt;'));
   assert.ok(!bar.includes('id=&quot;mode-tabs&quot;'), 'mode pills are not in the hidden topbar');
   // pills are relocated at boot into the always-visible checker toolbar
   assert.ok(SOURCE.includes('id=&quot;mode-tabs-slot&quot;'), 'the toolbar has a slot for the mode pills');

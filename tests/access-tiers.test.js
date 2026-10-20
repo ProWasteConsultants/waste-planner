@@ -26,7 +26,7 @@ test('wpEntitlementsResolve: subscriber → engaged project → free', () => {
   const eng = R({ tier: 'none', uid: 'u1', slotsUsed: 1, project: { ...own, pwcEngaged: true } });
   assert.equal(eng.plan, 'engaged');
   assert.equal(eng.canExport, true, 'exports unlock on the engaged project');
-  assert.equal(eng.aiTier, 'free', 'existing free AI limits on an engaged project (open decision: unchanged by default)');
+  assert.equal(eng.aiTier, 'paid', 'an engaged project gets the subscriber AI limits (decided 2026-10-20)');
   assert.equal(eng.isOwner, true);
   assert.equal(R({ tier: 'none', uid: 'u1', slotsUsed: 1, project: own }).canExport, false, 'but only on that project');
 
@@ -221,4 +221,35 @@ test('fee proposal: the prowaste.au form with project id + UTM once its URL is s
   assert.equal(u.searchParams.get('project_id'), 'p1');
   assert.equal(u.searchParams.get('utm_source'), 'wasteplanner');
   assert.equal(u.searchParams.get('utm_campaign'), 'paywall_project_cap');
+});
+
+// ── §7 AI: one service for every level, engaged projects at the paid limits ──
+test('AI: no bring-your-own-key path; the project rides to ai-user; the SQL gives engaged projects the paid tier', () => {
+  // the parent and the compliance iframe both: no key box, no direct call
+  assert.ok(!SOURCE.includes('api.anthropic.com'), 'nothing calls Anthropic directly from the browser');
+  assert.ok(!/localStorage\.(get|set)Item\((?:'|&#x27;)pw_api_key/.test(SOURCE), 'no personal key is read or stored');
+  assert.ok(!/sk-ant-/.test(SOURCE), 'no key input remains');
+  assert.ok(/async function anthropicMessages\(payload\) \{\n  if \(aiEntitled\(\)\) return aiUser\(payload\);\n  throw /.test(SOURCE),
+    'signed in → ai-user; otherwise the sign-up prompt');
+
+  const { wpAiUserUrl } = fn(/^function wpAiUserUrl\(/, 'wpAiUserUrl');
+  global.AI_PROXY_BASE = 'https://x.supabase.co/functions/v1';
+  assert.equal(wpAiUserUrl(null), 'https://x.supabase.co/functions/v1/ai-user');
+  assert.equal(new URL(wpAiUserUrl('p 1')).searchParams.get('project'), 'p 1', 'query string, not body or header');
+  delete global.AI_PROXY_BASE;
+  assert.ok(SOURCE.includes('fetch(wpAiUserUrl(currentProjectId), {'), 'aiUser sends the open project');
+  assert.ok(SOURCE.includes("aiUrl: wpAiUserUrl(anonMode ? null : currentProjectId),"), 'the checker iframe is given the same URL');
+
+  const NEW = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-10-20-engaged-ai.sql'), 'utf8');
+  assert.ok(NEW.includes("'aiTier', case when v_staff or v_paid or v_engaged then 'paid' else 'free' end,"));
+  assert.ok(/v_engaged := r\.pwc_engaged and v_view;/.test(NEW), 'only for a caller who can see the project');
+  assert.ok(/create or replace function public\.wp_ai_tier\(p_project text default null\)/.test(NEW));
+  assert.ok(/grant execute on function public\.wp_ai_tier\(text\) to authenticated;/.test(NEW));
+  // the redefinition is the old function with only the aiTier line changed
+  const body = s => { const i = s.indexOf('create or replace function public.wp_entitlements'); return s.slice(i, s.indexOf('$$;', i)); };
+  const strip = s => body(s).split('\n').filter(l => !/'aiTier'|-- 2026-10-20/.test(l)).join('\n');
+  assert.equal(strip(NEW), strip(SQL), 'nothing else in wp_entitlements changed');
+
+  const terms = fs.readFileSync(path.join(__dirname, '..', 'legal', 'terms.md'), 'utf8');
+  assert.ok(terms.includes('AI features for that project have the same daily usage limits as a paid subscription under clause 6.2.'), 'Terms 6.1A says so');
 });
