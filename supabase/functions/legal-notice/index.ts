@@ -16,8 +16,9 @@
 // versions being announced (new sign-ups accept at sign-up). Logs counts only —
 // never addresses, never content.
 //
-// After sending: set WP_LEGAL.reacceptFrom in legal.js to the same
+// After sending: set reacceptFrom in legal/versions.json to the same
 // effective_date, so the app asks existing users to accept from that day.
+// Admin › Users › Terms & Privacy update notice is the front end for this.
 //
 // Secrets: RESEND_API_KEY, LEGAL_NOTICE_FROM (e.g. "WastePlanner <hello@wasteplanner.au>"),
 // optional LEGAL_NOTICE_REPLY_TO; plus SUPABASE_URL, SUPABASE_ANON_KEY,
@@ -137,5 +138,5 @@ Deno.serve(async (req) => {
   await sbAdmin.from("legal_notice_log").insert({ terms_version: termsVersion, privacy_version: privacyVersion,
     effective_date: effective, recipients: sent, sent_by: user.id });
   return jsonRes({ ok: failed.length === 0, sent, failed,
-    next: `Set WP_LEGAL.reacceptFrom = '${effective}' in legal.js and deploy, so existing users are asked to accept from that day.` }, failed.length ? 207 : 200, cors);
+    next: `Set reacceptFrom to "${effective}" in legal/versions.json and deploy, so existing users are asked to accept from that day.` }, failed.length ? 207 : 200, cors);
 });

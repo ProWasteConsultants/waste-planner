@@ -1206,6 +1206,17 @@ body.wp-anon .ws-top-chip{display:none;}
 
         <!-- USERS TAB -->
         <div class="admin-screen-panel" id="stab-users" style="padding:20px;display:none;">
+          <!-- Terms / Privacy update notice (legal-notice function). Preview is
+               a dry run; a send needs the typed phrase the preview returns. -->
+          <div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:18px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Terms &amp; Privacy update notice</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px;">Emails every account that has not accepted the published Terms and Privacy Policy. <b>Preview</b> sends nothing: it shows the count and the exact email. The date must be at least 30 days away; from that day those accounts are asked to accept when they sign in.</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <label style="font-size:12px;color:var(--muted);">Takes effect on <input type="date" id="lgn-date" style="background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:12px;color:var(--text);font-family:inherit;"></label>
+              <button class="btn" onclick="lgnPreview()">Preview — nothing is sent</button>
+            </div>
+            <div id="lgn-out" style="margin-top:12px;font-size:12px;color:var(--text);"></div>
+          </div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
             <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Registered Users</div>
             <button onclick="loadAdminUsers()" style="font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-family:inherit;background:var(--white);">↻ Refresh</button>
@@ -15342,9 +15353,69 @@ function switchAdminTab(btn, panelId) {
   const panel = document.getElementById(panelId);
   if (panel) panel.style.display = 'block';
   if (panelId === 'stab-analytics') loadAdminAnalytics();
-  if (panelId === 'stab-users') loadAdminUsers();
+  if (panelId === 'stab-users') { loadAdminUsers(); lgnInit(); }
   if (panelId === 'stab-rates') { rdbLoad(); cgLoad(); if (typeof crqLoad === 'function') crqLoad(); }
   if (panelId === 'stab-equipment') { eqlLoad(); ctlLoad(); if (typeof eqpLoad === 'function') eqpLoad(); }
+}
+
+// ── ADMIN: TERMS / PRIVACY UPDATE NOTICE ──────────────────────────────────
+// Front end for the legal-notice function: preview (a dry run) → the exact
+// email, recipient count and the phrase to type → send. The function holds
+// every rule (staff only, ≥ 30 days, one send per version); this only asks.
+// 'YYYY-MM-DD' that many days after `today` (also 'YYYY-MM-DD').
+function lgnDateAfter(today, days) {
+  const t = Date.parse(today + 'T00:00:00Z');
+  return isNaN(t) ? '' : new Date(t + days * 86400000).toISOString().slice(0, 10);
+}
+function lgnInit() {
+  const el = document.getElementById('lgn-date');
+  if (el && !el.value) el.value = lgnDateAfter(new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne' }).format(new Date()), 31);
+}
+async function lgnCall(body) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) throw new Error('Sign in again.');
+  const r = await fetch(`${AI_PROXY_BASE}/legal-notice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({ error: `legal-notice returned ${r.status} — is the function deployed?` }));
+  return { status: r.status, ...j };
+}
+async function lgnPreview() {
+  const out = document.getElementById('lgn-out');
+  const date = document.getElementById('lgn-date').value;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  out.textContent = 'Reading recipients…';
+  let j; try { j = await lgnCall({ effective_date: date }); } catch (e) { out.textContent = '⚠ ' + e.message; return; }
+  if (!j.ok) { out.innerHTML = '<span style="color:#EF8080;">⚠ ' + esc(j.error || 'Preview failed') + '</span>'; return; }
+  const phrase = /"confirm": "([^"]+)"/.exec(j.to_send || '');
+  out.innerHTML = `
+    <div style="margin-bottom:6px;"><b>${j.recipients}</b> account${j.recipients === 1 ? '' : 's'} would be emailed · takes effect ${esc(j.effective_date)} (${j.days_notice} days' notice)${j.sample && j.sample.length ? ' · e.g. ' + j.sample.map(esc).join(', ') : ''}</div>
+    ${j.already_sent ? `<div style="color:#F5B963;margin-bottom:6px;">⚠ This version was already announced on ${esc(j.already_sent.sent_at)} to ${esc(j.already_sent.recipients)} accounts. Sending again is refused.</div>` : ''}
+    <div style="margin-bottom:6px;"><b>Subject:</b> ${esc(j.subject)}</div>
+    <iframe id="lgn-preview" sandbox="" style="width:100%;height:440px;border:1px solid var(--border);border-radius:8px;background:#fff;"></iframe>
+    ${j.recipients && phrase && !j.already_sent ? `
+    <div style="margin-top:10px;font-size:12px;color:var(--muted);">To send, type <code style="color:var(--text);">${esc(phrase[1])}</code></div>
+    <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
+      <input id="lgn-confirm" type="text" autocomplete="off" style="flex:1;min-width:200px;background:#182121;border:1px solid var(--border);border-radius:7px;padding:6px 9px;font-size:12px;color:var(--text);font-family:monospace;">
+      <button class="btn" style="background:#C62828;color:#fff;" onclick="lgnSend()">Send the notice</button>
+    </div>` : (j.recipients ? '' : '<div style="margin-top:8px;color:var(--muted);">Every account has already accepted these versions — nothing to send.</div>')}
+    <div id="lgn-sent" style="margin-top:8px;"></div>`;
+  document.getElementById('lgn-preview').srcdoc = j.html || '';
+  out.dataset.date = j.effective_date;
+}
+async function lgnSend() {
+  const out = document.getElementById('lgn-sent');
+  const confirmText = (document.getElementById('lgn-confirm').value || '').trim();
+  const date = document.getElementById('lgn-out').dataset.date;
+  if (!confirm('Send the Terms & Privacy notice now? This emails real accounts and cannot be undone.')) return;
+  out.textContent = 'Sending…';
+  let j; try { j = await lgnCall({ effective_date: date, send: true, confirm: confirmText }); } catch (e) { out.textContent = '⚠ ' + e.message; return; }
+  if (!j.sent && !j.ok) { out.innerHTML = '<span style="color:#EF8080;">⚠ ' + String(j.error || 'Not sent').replace(/[<>&]/g, '') + '</span>'; return; }
+  out.innerHTML = `<div style="color:#7FD8A8;">✓ Sent to ${j.sent} account${j.sent === 1 ? '' : 's'}${j.failed && j.failed.length ? ' — failed: ' + j.failed.join('; ') : ''}.</div>
+    <div style="color:#F5B963;margin-top:4px;">Next: set <code>reacceptFrom</code> to <b>${date}</b> in <code>legal/versions.json</code> and deploy, so these accounts are asked to accept from that day.</div>`;
+  if (typeof logEvent === 'function') logEvent('legal_notice_sent', { effective_date: date, sent: j.sent });
 }
 
 // ── ADMIN: PLATFORM ANALYTICS ─────────────────────────────────────────────
@@ -16679,9 +16750,32 @@ async function wpLegalCheck() {
   try { if (sessionStorage.getItem('wp_legal_ok_' + currentUser.id)) return; } catch (e) {}
   wpLegalModal(r.why);
 }
-// Blocking: no close button, no click-away. Accept, or sign out.
+// Has this account accepted the published versions? (profile record, or the
+// sign-up box's versions still waiting in the auth metadata.)
+function wpLegalAccepted(profile, user, L) {
+  if (!L || !L.terms || !L.privacy) return false;
+  const ok = (t, p) => wpLegalVersionCmp(t, L.terms.version) >= 0 && wpLegalVersionCmp(p, L.privacy.version) >= 0;
+  const meta = (user && user.user_metadata) || {};
+  return !!((profile && ok(profile.terms_version, profile.privacy_version)) || ok(meta.terms_version, meta.privacy_version));
+}
+// Before an existing account subscribes: the Terms it pays under are the
+// current ones. Resolves true when accepted (or already accepted).
+async function wpLegalBeforeSubscribe() {
+  if (typeof currentUser === 'undefined' || !currentUser) return true;   // new sign-up: the sign-up box covers it
+  if (!(await wpLegalLoad())) return false;
+  try { if (sessionStorage.getItem('wp_legal_ok_' + currentUser.id)) return true; } catch (e) {}
+  if (wpLegalAccepted(typeof currentProfile !== 'undefined' ? currentProfile : null, currentUser, wpLegal())) return true;
+  return wpLegalModal('subscribe');
+}
+// Blocking: no close button, no click-away. Accept, or sign out — except
+// before a subscription ('subscribe'), where the way out is Cancel.
+// Resolves true once accepted, false when left.
 function wpLegalModal(why) {
-  const L = wpLegal(); if (!L) return;
+  return new Promise(resolve => wpLegalModalOpen(why, resolve));
+}
+function wpLegalModalOpen(why, done) {
+  const L = wpLegal(); if (!L) { done(false); return; }
+  const sub = why === 'subscribe';
   let m = document.getElementById('wp-legal-modal');
   if (m) m.remove();
   m = document.createElement('div');
@@ -16691,10 +16785,10 @@ function wpLegalModal(why) {
   const link = d => `<a href="${L[d].path}" target="_blank" rel="noopener" style="color:#0E7C7B;font-weight:600;">${L[d].title}</a> (Version ${L[d].version}${wpLegalLongDate(L[d].effective) ? ', effective ' + wpLegalLongDate(L[d].effective) : ''})`;
   m.innerHTML = `
     <div style="background:var(--white);border-radius:16px;width:460px;max-width:100%;max-height:92vh;overflow:auto;padding:26px 30px;">
-      <div id="wp-legal-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:8px;">${why === 'new' ? 'Before you continue' : 'We’ve updated our Terms and Privacy Policy'}</div>
+      <div id="wp-legal-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:8px;">${why === 'new' ? 'Before you continue' : sub ? 'Before you subscribe' : 'We’ve updated our Terms and Privacy Policy'}</div>
       <div style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:14px;">
-        ${why === 'new' ? 'To use WastePlanner, please read and accept the' : 'To keep using WastePlanner, please read and accept the updated'}
-        ${link('terms')} and ${link('privacy')}. Each opens in a new tab.
+        ${why === 'new' ? 'To use WastePlanner, please read and accept the' : sub ? 'Your subscription is under the current' : 'To keep using WastePlanner, please read and accept the updated'}
+        ${link('terms')} and ${link('privacy')}${sub ? ' — please read and accept them first' : ''}. Each opens in a new tab.
       </div>
       <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:#374151;cursor:pointer;margin-bottom:14px;">
         <input type="checkbox" id="wp-legal-agree" style="margin-top:3px;accent-color:#0E7C7B;flex-shrink:0;">
@@ -16702,7 +16796,7 @@ function wpLegalModal(why) {
       </label>
       <div id="wp-legal-msg" style="font-size:12px;color:#C62828;min-height:16px;margin-bottom:8px;"></div>
       <button id="wp-legal-accept" disabled style="width:100%;padding:11px;border-radius:9px;font-size:14px;font-weight:700;border:none;cursor:not-allowed;font-family:inherit;background:#9CC9C8;color:#fff;">Accept and continue</button>
-      <div style="text-align:center;margin-top:10px;"><button id="wp-legal-out" style="background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;text-decoration:underline;">Sign out instead</button></div>
+      <div style="text-align:center;margin-top:10px;"><button id="wp-legal-out" style="background:none;border:none;color:#6B7280;font-size:12px;cursor:pointer;font-family:inherit;text-decoration:underline;">${sub ? 'Cancel' : 'Sign out instead'}</button></div>
     </div>`;
   document.body.appendChild(m);
   const box = m.querySelector('#wp-legal-agree'), btn = m.querySelector('#wp-legal-accept'), msg = m.querySelector('#wp-legal-msg');
@@ -16710,7 +16804,7 @@ function wpLegalModal(why) {
   btn.onclick = async () => {
     if (!box.checked) return;
     btn.disabled = true; btn.textContent = 'Saving…'; msg.textContent = '';
-    const r = await wpLegalRecord(why === 'new' ? 'signup' : 'reaccept');
+    const r = await wpLegalRecord(why === 'new' ? 'signup' : sub ? 'subscribe' : 'reaccept');
     if (!r.ok && !/wp_accept_terms|schema cache|does not exist|function/i.test(r.error || '')) {
       msg.textContent = 'Could not save your acceptance (' + r.error + '). Please try again.';
       btn.disabled = false; btn.textContent = 'Accept and continue'; return;
@@ -16720,8 +16814,12 @@ function wpLegalModal(why) {
     if (!r.ok) { console.warn('Terms acceptance not recorded:', r.error); try { sessionStorage.setItem('wp_legal_ok_' + currentUser.id, '1'); } catch (e) {} }
     if (typeof logEvent === 'function') logEvent('terms_accepted', { terms_version: wpLegal().terms.version, privacy_version: wpLegal().privacy.version, why, recorded: !!r.ok });
     m.remove();
+    done(true);
   };
-  m.querySelector('#wp-legal-out').onclick = () => { m.remove(); if (typeof handleLogout === 'function') handleLogout(); };
+  m.querySelector('#wp-legal-out').onclick = () => {
+    m.remove(); done(false);
+    if (!sub && typeof handleLogout === 'function') handleLogout();
+  };
 }
 
 // After a password-reset link: set a new password. After an invitation: set
@@ -18465,6 +18563,8 @@ function backToPricing() {
 async function handlePayment() {
   // currentUser may be null during new signup - that's fine, account created after payment
   if (!currentUser && !pendingSignup) { alert('Please sign in or create an account first.'); return; }
+  // An existing account pays under the current Terms: accepted first, or nothing is charged.
+  if (!pendingSignup && !(await wpLegalBeforeSubscribe())) return;
   const btn = document.getElementById('stripe-submit-btn');
   btn.disabled = true; btn.textContent = 'Processing…';
   document.getElementById('card-errors').textContent = '';

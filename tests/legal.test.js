@@ -129,11 +129,12 @@ test('wpLegalNeeds: who must accept, and when', () => {
 test('the check runs on every way into the app, and the modal is blocking', () => {
   const show = fn('showApp');
   assert.ok(show.includes('wpLegalCheck()'), 'showApp runs the check');
-  const modal = fn('wpLegalModal');
+  assert.ok(fn('wpLegalModal').includes('new Promise(resolve => wpLegalModalOpen(why, resolve))'), 'the modal resolves when accepted or left');
+  const modal = fn('wpLegalModalOpen');
   assert.ok(!/onclick=.*close|addEventListener\('click'/.test(modal.replace(/wp-legal-out|wp-legal-accept/g, '')), 'no click-away');
   assert.ok(modal.includes('btn.disabled = !box.checked'), 'accept is disabled until the box is ticked');
-  assert.ok(modal.includes("handleLogout()"), 'the only other way out is signing out');
-  assert.ok(modal.includes("wpLegalRecord(why === 'new' ? 'signup' : 'reaccept')"));
+  assert.ok(modal.includes("if (!sub && typeof handleLogout === 'function') handleLogout();"), 'the only other way out is signing out (Cancel only before a subscription)');
+  assert.ok(modal.includes("wpLegalRecord(why === 'new' ? 'signup' : sub ? 'subscribe' : 'reaccept')"));
   assert.ok(fn('wpLegalRecord').includes("sb.rpc('wp_accept_terms'"), 'recorded through the RPC');
 });
 
@@ -230,6 +231,37 @@ test('the documents are the final text, and their own version line agrees with v
     assert.equal(line[1], MD.longDate(L[k].effective), k + ': the document\'s date is versions.json\'s effective date');
     assert.equal(line[2], L[k].version, k + ': the document\'s version is versions.json\'s');
   }
-  assert.equal(L.publishedAt, null, 'acceptance modal held until the lawyer\'s review');
-  assert.equal(L.reacceptFrom, null, 're-acceptance held');
+  assert.equal(L.publishedAt, '2026-10-20', 'accounts created from the publish day without the sign-up box (invitations, seats) are asked at once');
+  assert.equal(L.reacceptFrom, null, 'existing accounts are asked only from the date the notice email gave');
+});
+
+// ── subscribing and the admin notice screen ──
+test('an existing account accepts the current Terms before it subscribes; a new sign-up is covered by the box', () => {
+  const w = {};
+  new Function('w', fn('wpLegalVersionCmp') + '\n' + fn('wpLegalAccepted') + '\n;w.acc = wpLegalAccepted;')(w);
+  const L = { terms: { version: '2.0' }, privacy: { version: '2.0' } };
+  assert.equal(w.acc({ terms_version: '2.0', privacy_version: '2.0' }, {}, L), true);
+  assert.equal(w.acc({ terms_version: '1.0', privacy_version: '2.0' }, {}, L), false, 'both documents must be current');
+  assert.equal(w.acc(null, { user_metadata: { terms_version: '2.0', privacy_version: '2.0' } }, L), true, 'the sign-up box, not yet recorded');
+  assert.equal(w.acc({}, {}, null), false, 'versions not loaded → not accepted');
+  const pay = fn('handlePayment');
+  assert.ok(pay.includes("if (!pendingSignup && !(await wpLegalBeforeSubscribe())) return;"), 'before anything is charged');
+  assert.ok(pay.indexOf('wpLegalBeforeSubscribe') < pay.indexOf('createPaymentMethod'), 'asked before the card is touched');
+  const before = fn('wpLegalBeforeSubscribe');
+  assert.ok(before.includes("return wpLegalModal('subscribe');") && before.includes('if (!(await wpLegalLoad())) return false;'), 'cannot load the versions → no subscription');
+});
+
+test('admin notice screen: preview is a dry run, a send carries the typed phrase, the next step is named', () => {
+  assert.ok(SOURCE.includes('id="lgn-date"') && SOURCE.includes('onclick="lgnPreview()"'), 'Admin › Users carries the screen');
+  const prev = fn('lgnPreview');
+  assert.ok(prev.includes('lgnCall({ effective_date: date })') && !/send: true/.test(prev), 'preview never sends');
+  assert.ok(prev.includes('sandbox=""'), 'the email is previewed in a sandboxed frame');
+  const send = fn('lgnSend');
+  assert.ok(send.includes('lgnCall({ effective_date: date, send: true, confirm: confirmText })'), 'the typed phrase goes to the function, which checks it');
+  assert.ok(send.includes('confirm(') && send.includes('reacceptFrom'), 'asked twice, and the next step named');
+  const w = {};
+  new Function('w', fn('lgnDateAfter') + '\n;w.f = lgnDateAfter;')(w);
+  assert.equal(w.f('2026-10-20', 31), '2026-11-20');
+  const n = read('supabase/functions/legal-notice/index.ts');
+  assert.ok(!n.includes('legal.js'), 'the function names versions.json, not the old config');
 });
