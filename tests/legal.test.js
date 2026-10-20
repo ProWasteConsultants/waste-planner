@@ -232,7 +232,7 @@ test('the documents are the final text, and their own version line agrees with v
     assert.equal(line[2], L[k].version, k + ': the document\'s version is versions.json\'s');
   }
   assert.equal(L.publishedAt, '2026-10-20', 'accounts created from the publish day without the sign-up box (invitations, seats) are asked at once');
-  assert.equal(L.reacceptFrom, null, 'existing accounts are asked only from the date the notice email gave');
+  assert.equal(L.reacceptFrom, '2026-11-20', 'existing accounts are asked from the date the notice email gave (sent 2026-10-20, 31 days’ notice)');
 });
 
 // ── subscribing and the admin notice screen ──
