@@ -16,7 +16,7 @@ const { SOURCE, extractBlock } = require('./extract.js');
 
 function load() {
   const code = [
-    /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_FREQ = /, /^function wmpgFreqLabel\(/,
+    /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_RES_ORDER = /, /^const WMPG_FREQ = /, /^function wmpgFreqLabel\(/,
     /^function wmpgEsc\(/, /^function wmpgTitleDefault\(/, /^function wmpgPickGuideline\(/, /^function wmpgGuidelineLabel\(/,
     /^function glBridgeNorm\(/, /^function wmpgShape\(/, /^function wmpgShapeWords\(/,
     /^const WMPG_METHOD_LABEL = /, /^function wmpgStreamWord\(/, /^function wmpgList\(/, /^function wmpgCycleWords\(/,
@@ -690,7 +690,7 @@ function loadBins() {
     /^function wpCollectMethods\(/, /^function wpCollectMethod\(/, /^function wpBinLib\(/, /^function wpBinSizesRaw\(/, /^function wpBinSizesFor\(/,
     /^function wpBinDefaultMethod\(/, /^function wpCycleCw\(/, /^function wpBinDefSize\(/, /^function wpBinDefCw\(/, /^function wpBinCycleFor\(/,
     /^function wpCouncilScheduleFor\(/,
-    /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_COM_ORDER = /, /^const WMPG_UNITS = /, /^const WMPG_FREQ = /, /^function wmpgFreqLabel\(/, /^function wmpgEsc\(/,
+    /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_RES_ORDER = /, /^const WMPG_COM_ORDER = /, /^const WMPG_UNITS = /, /^const WMPG_FREQ = /, /^function wmpgFreqLabel\(/, /^function wmpgEsc\(/,
     /^const WMPG_METHOD_LABEL = /, /^function wmpgStreamWord\(/, /^function wmpgRoomQty\(/, /^function wmpgRoomVols\(/,
     /^function wmpgRoomKind\(/, /^function wmpgRoomSec\(/,
     /^function wmpgBinCtx\(/, /^function wmpgBinMethod\(/, /^function wmpgBinOffer\(/, /^function wmpgBinCalcQty\(/, /^function wmpgBinResnap\(/,

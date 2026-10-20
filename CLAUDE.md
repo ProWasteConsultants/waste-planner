@@ -643,11 +643,13 @@ own key> }`. Rules, all tested in `tests/residential-method.test.js`:
   how a figure lands under a council's name that the council never wrote.
 - **The table is gated where it is physically wrong**, and both gates are
   physical rather than cosmetic: **residential** sections only (commercial keeps
-  its use-based rates), and **shared** collection only. Under kerbside
-  *individual* every dwelling wheels out its own bin — a fact about the
-  development, not a figure a council can table — so `perDwellingUnits` keeps
-  that case. A bulk collection point is not the council's kerbside service at
-  all.
+  its use-based rates), and **shared council** collection only — kerbside
+  shared, or a bulk collection point (a council collecting on site: Northern
+  Beaches Ch 4.7, over 80 dwellings, same Appendix A bins; 2026-10-20). Under
+  kerbside *individual* every dwelling wheels out its own bin — a fact about
+  the development, not a figure a council can table — so `perDwellingUnits`
+  keeps that case. A private shared bin collection (`self_haul`) is a
+  contractor's service sized from volume, so the table stands aside.
 - **Departing from the table's size carries the council's CAPACITY over**, not
   the bare count (`resTableCount`): 4 × 660L re-sized to 240L is 11 bins, not 4.
   Keeping the count would quietly under-provide against the council's own
@@ -673,8 +675,10 @@ own key> }`. Rules, all tested in `tests/residential-method.test.js`:
   this computer* reads a picked file once (not stored; its name becomes the
   source) through the same `rdbResRead`. The calculator adds a live table's
   streams as rows (`runCalc`) and keeps them visible (`visibleStreams`).
-  **Not yet:** the WMP generator's residential tables read `WMPG_ORDER`, so a
-  residential `CARD` row is still dropped there.
+  The WMP carries a residential `CARD` bin (`WMPG_RES_ORDER`; volumes and
+  rates stay on `WMPG_ORDER`). **Not yet:** the go.wasteplanner.au calculator
+  reads only `waste_rates.json`, which has no residential method — it sizes
+  a table council from rates.
 - **The fallback is stated wherever the number appears.** `scope` is `council`,
   `state` or `none`; a state row standing in for a council reads *"state
   fallback used — no council-specific method found"* on the calculator's rates
@@ -1027,9 +1031,11 @@ bin calculator is **unchanged**. Rules, tested in
   a Total row. Per-use volumes are pre-separation, so each one can be checked
   as rate × qty (× days). A room that separates a stream shows the
   separation as its own rows, and the total is the post-separation one.
-  **Separated streams (CARD, SOFT) are carried for commercial rooms only.**
-  Residential still reads `WMPG_ORDER`, so a residential export is
-  unchanged. A residential CARD row remains dropped, as before.
+  **Separated streams (CARD, SOFT) are carried for commercial rooms.**
+  Residential volumes and rates read `WMPG_ORDER`; residential **bins** read
+  `WMPG_RES_ORDER`, which adds `CARD` (2026-10-20) — a council table's paper
+  bin, or a residential paper split. It prints only where a room has CARD
+  bins, so other residential exports are unchanged.
 - **Residential sections read residential rooms; commercial sections read
   commercial rooms.** A residential-only project fills byte-identically
   (verified by replaying saved drafts through the old and new code). The
