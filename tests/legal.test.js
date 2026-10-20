@@ -206,7 +206,7 @@ test('design-aid notice: wired into every export path', () => {
   assert.ok(swept.includes('DESIGN AID ONLY - VERIFY BEFORE SUBMISSION'), 'swept-path DXF');
 });
 test('design-aid notice: beside every AI extraction result', () => {
-  ['npExtract', 'wsRunAiExtract', 'rdbResExtract', 'crqExtract', 'crqRatesReport', 'eqpRender', 'ssxRender', 'wmpgGenerateSiteContext', 'wmpgPolishNarrative']
+  ['npExtract', 'wsRunAiExtract', 'rdbResRead', 'crqExtract', 'crqRatesReport', 'eqpRender', 'ssxRender', 'wmpgGenerateSiteContext', 'wmpgPolishNarrative']
     .forEach(n => { let src; try { src = fn(n); } catch (e) { src = ''; } assert.ok(src.includes('wpDesignAid()'), n); });
   assert.ok(SOURCE.includes(`<div class="wp-aid" style="padding:7px 18px;`), 'plan upload results card');
 });
