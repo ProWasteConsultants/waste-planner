@@ -15,6 +15,12 @@
 // from the file rather than from its own copy. A council profile with
 // `comList: "own"` publishes its COMPLETE commercial list: a reader uses that
 // council's comRates in place of the state's, never merged over them.
+// A council profile's `resMethod` (2026-10-20, Lachy) says the council sizes
+// residential bins from its own stepped table, not a rate — { type: "table",
+// source, min, max } from its LIVE waste_meta residential_method. The free
+// calculator then shows a note for that council's dwellings instead of
+// rate-based bins; commercial is unaffected. A reader that ignores it still
+// works.
 
 export const RATE_STATES = ['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'];
 export const RATE_STREAMS = ['GW', 'REC', 'ORG', 'GLS', 'CARD', 'SOFT'];
@@ -126,7 +132,24 @@ const sortObj = (o, order) => {
 // other council are left out and reported. Never throws on bad data: what
 // cannot be placed goes in `skipped` with the reason, and what is placed but
 // wrong is left for validateRates to name.
-export function buildRates({ councils = [], resRates = [], comRates = [], uses = [], version } = {}) {
+// Pure: one waste_meta residential_method value in, what the file says
+// about it out — or null. Only a LIVE table with at least one band is
+// published: a draft has not been checked against the council's document.
+export function resMethodSummary(raw) {
+  let o = raw;
+  if (typeof raw === 'string') { try { o = JSON.parse(raw); } catch { return null; } }
+  if (!o || typeof o !== 'object' || o.type !== 'table' || o.status !== 'live') return null;
+  const steps = (o.table && Array.isArray(o.table.steps) ? o.table.steps : [])
+    .filter(s => s && Number(s.min) > 0 && s.bins && Object.keys(s.bins).length);
+  if (!steps.length) return null;
+  const mins = steps.map(s => Math.round(Number(s.min)));
+  const open = steps.some(s => s.max == null || !(Number(s.max) > 0));
+  const max = open ? null : Math.max(...steps.map(s => Math.round(Number(s.max))));
+  const src = String(o.source || '').trim();
+  return { type: 'table', source: src || null, min: Math.min(...mins), max };
+}
+
+export function buildRates({ councils = [], resRates = [], comRates = [], uses = [], resMethods = [], version } = {}) {
   const skipped = [];
   const PROFILES = {}, COUNCIL_PROFILES = {}, COUNCILS = {}, USES = {};
   const listed = new Map();   // "STATE|value" → label
@@ -192,6 +215,19 @@ export function buildRates({ councils = [], resRates = [], comRates = [], uses =
     const p = COUNCIL_PROFILES[key];
     if (own.has(key) && p.comRates && Object.keys(p.comRates).length) p.comList = 'own';
   });
+  // A council's live stepped table. A state-level table has no reader on the
+  // landing page, so it is reported rather than published.
+  resMethods.forEach(r => {
+    const m = resMethodSummary(r && r.value);
+    if (!m) return;
+    const what = 'residential method (stepped table)';
+    if (r.council_value == null || r.council_value === '') {
+      skipped.push({ key: String(r.state || ''), what, reason: 'a state-level table is not published — the free calculator reads council tables only' });
+      return;
+    }
+    const t = target(r, what); if (!t) return;
+    t.resMethod = m;
+  });
 
   // `streams`: the residential streams the state actually rates. GW and REC
   // always; ORG / GLS once any state figure for them is above zero. A council
@@ -222,6 +258,7 @@ export function buildRates({ councils = [], resRates = [], comRates = [], uses =
     if (p.resRates) out.resRates = sortObj(Object.fromEntries(Object.entries(p.resRates).map(([k, v]) => [k, sortObj(v, RATE_STREAMS)])), RES_KEYS);
     if (p.comRates) out.comRates = sortObj(Object.fromEntries(Object.entries(p.comRates).map(([k, v]) => [k, sortObj(v, RATE_STREAMS)])));
     if (p.comList) out.comList = p.comList;
+    if (p.resMethod) out.resMethod = p.resMethod;
     return out;
   };
   const json = {
@@ -328,6 +365,16 @@ export function validateRates(json) {
     if (p.streams !== undefined) streamsOk(key, p.streams);
     resOk(key, p.resRates, false);
     comOk(key, p.comRates);
+    if (p.resMethod !== undefined) {
+      const m = p.resMethod, w = `${key}: resMethod`;
+      if (!isObj(m)) errs.push(`${w} is not an object`);
+      else {
+        if (m.type !== 'table') errs.push(`${w} type ${JSON.stringify(m.type)} must be "table"`);
+        if (!Number.isInteger(m.min) || m.min < 1) errs.push(`${w} min ${JSON.stringify(m.min)} must be a whole number of dwellings`);
+        if (m.max !== null && (!Number.isInteger(m.max) || m.max < m.min)) errs.push(`${w} max ${JSON.stringify(m.max)} must be null (open-ended) or a whole number ≥ min`);
+        if (m.source !== null && typeof m.source !== 'string') errs.push(`${w} source must be text or null`);
+      }
+    }
     if (p.comList !== undefined) {
       if (p.comList !== 'own') errs.push(`${key}: comList ${JSON.stringify(p.comList)} must be "own"`);
       else if (!isObj(p.comRates) || !Object.keys(p.comRates).length) errs.push(`${key}: comList "own" with no commercial rates — the council would offer no uses at all`);

@@ -50,6 +50,31 @@ const fixture = () => JSON.parse(JSON.stringify({
   version: '2026-10-19T00:00:00Z',
 }));
 
+test('resMethod: a council\'s LIVE stepped table is flagged for the free calculator; drafts and state tables are not', async () => {
+  const { buildRates, validateRates, resMethodSummary } = await mod();
+  const table = (status, steps) => JSON.stringify({ type: 'table', status, source: 'Appendix A', table: { basis: 'dwellings', steps } });
+  const nb = [{ min: 3, max: 3, bins: { GW: { n: 1, sizeL: 240, cycle: 'W' } } }, { min: 100, max: 100, bins: { GW: { n: 34, sizeL: 240, cycle: 'W' } } }];
+  assert.deepStrictEqual(resMethodSummary(table('live', nb)), { type: 'table', source: 'Appendix A', min: 3, max: 100 });
+  assert.equal(resMethodSummary(table('draft', nb)), null, 'a draft has not been checked against the document');
+  assert.equal(resMethodSummary(JSON.stringify({ type: 'rate', status: 'live' })), null);
+  assert.equal(resMethodSummary(table('live', [{ min: 3, max: null, bins: { GW: { n: 1, sizeL: 240 } } }])).max, null, 'open-ended top band');
+  const f = fixture();
+  f.resMethods = [
+    { state: 'NSW', council_value: 'city_of_sydney', value: table('live', nb) },
+    { state: 'VIC', council_value: 'whittlesea', value: table('draft', nb) },
+    { state: 'NSW', council_value: null, value: table('live', nb) },
+  ];
+  const { json, skipped } = buildRates(f);
+  assert.deepStrictEqual(json.COUNCIL_PROFILES['NSW|city_of_sydney'].resMethod, { type: 'table', source: 'Appendix A', min: 3, max: 100 });
+  assert.ok(!('resMethod' in json.COUNCIL_PROFILES['VIC|whittlesea']));
+  assert.ok(skipped.some(x => /state-level table/.test(x.reason)), 'a state table is reported, not published');
+  assert.deepStrictEqual(validateRates(json), []);
+  json.COUNCIL_PROFILES['NSW|city_of_sydney'].resMethod = { type: 'hybrid', min: 0, max: 'x', source: 3 };
+  assert.equal(validateRates(json).filter(e => /resMethod/.test(e)).length, 4, 'every bad field is named');
+  assert.ok(/"waste_meta"/.test(FN) && /residential_method/.test(FN), 'the function reads the methods');
+  assert.ok(/could not be read/.test(FN), 'and reports, rather than hides, a failed read');
+});
+
 test('build: the brief\'s exact shape, from the tables', async () => {
   const { buildRates, validateRates } = await mod();
   const { json } = buildRates(fixture());
@@ -312,7 +337,7 @@ test('edge function: staff only, validate before any write, removals confirmed, 
   ['councils', 'res_rates', 'com_rates'].forEach(t => assert.match(body, new RegExp(`readAll\\(\\(\\) => sbUser\\.from\\("${t}"\\)`), t + ' paged'));
   assert.match(body, /select\("state,value,label,published,com_own"\)/, 'the published and own-list flags are read, not assumed');
   assert.match(body, /readAll\(\(\) => sbUser\.from\("com_uses"\)\.select\("use_code,label,metric,default_days"\)/, 'the use list is read for USES');
-  assert.match(body, /buildRates\(\{ councils, resRates, comRates, uses \}\)/);
+  assert.match(body, /buildRates\(\{ councils, resRates, comRates, uses, resMethods: resMethods as never\[\] \}\)/);
   assert.ok(!/R2_SECRET|R2_ACCESS/.test(SOURCE), 'no R2 credential in the frontend');
 });
 
@@ -395,7 +420,9 @@ test('backup script: uses the export describes are added to the page\'s COMM, on
   assert.deepStrictEqual(JSON.parse(JSON.stringify(C.invented_use)), { label: 'Nail salon', metric: 'Seats (no.)', defaultDays: 6 });
   assert.strictEqual(C.cafe.label, 'Cafe', 'built-ins untouched');
   assert.deepStrictEqual(report.usesAdded, ['invented_use']);
-  assert.deepStrictEqual(report.runtime, { applyRemoteUses: true, ownComList: true });
+  // resTableOf is the landing page's reader of resMethod; the in-app
+  // calculator standing in here gets its tables from the platform instead.
+  assert.deepStrictEqual(report.runtime, { applyRemoteUses: true, ownComList: true, resTableOf: false });
   assert.strictEqual(rebuildPage(html, rates).html, html, 'idempotent');
   const noCafe = CALC.replace(/\n\s*cafe:\s*\{label:"Cafe"[^\n]*/, '');
   assert.strictEqual(evalLiteral(findLiteral(rebuildPage(noCafe, rates).html, 'COMM').text).cafe.label, 'Cafe', 'a page missing a published use gets it from USES');
