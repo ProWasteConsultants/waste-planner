@@ -60,7 +60,7 @@ test('the gate is wired into every way in', () => {
   const showApp = extractBlock(/^function showApp\(/).text;
   assert.match(showApp.split('\n').slice(0, 5).join('\n'), /wpLaunchGateAllows\(currentUser, currentProfile, wpLaunchGateTeamCheck\.ok === true\)/, 'showApp checks before loading anything');
   assert.ok(showApp.indexOf('wpLaunchGateTeamCheck().then(ok => ok ? showApp() : wpLaunchGateBounce())') < showApp.indexOf("getElementById('app-content').style.display = 'flex'"), 'the team check runs before the app opens, and a non-member is bounced');
-  for (const fn of [/^function handleSignupToPay\(/, /^async function handleFreeSignup\(/, /^async function handleSignup\(/, /^async function wpAnonStart\(/, /^function wpAnonEnter\(/])
+  for (const fn of [/^async function handleSignupToPay\(/, /^async function handleFreeSignup\(/, /^async function handleSignup\(/, /^async function wpAnonStart\(/, /^function wpAnonEnter\(/])
     assert.match(extractBlock(fn).text, /wpComingSoon\(\)/, `${fn} is closed while gated`);
   assert.match(SOURCE, /\.auth-screen\.wp-cs #auth-value-line,\.auth-screen\.wp-cs \.auth-tabs,\.auth-screen\.wp-cs #auth-signup\{display:none !important;\}/, 'sign-up form hidden even in team mode');
 });
@@ -93,7 +93,7 @@ test('waitlist wiring: spam trap writes nothing, duplicate reads as already regi
 
 test('coming-soon page: no Privacy/Terms footer; the form states its own collection notice', () => {
   assert.match(SOURCE, /\.auth-screen\.wp-cs \.auth-legal\{display:none;\}/, 'footer hidden while gated');
-  assert.match(SOURCE, /<div class="auth-legal"[^>]*>\s*<a href="privacy\.html"/, 'the hidden footer is the Privacy · Terms one');
+  assert.match(SOURCE, /<div class="auth-legal"[^>]*>\s*<a href="privacy"/, 'the hidden footer is the Privacy · Terms one');
   const i = SOURCE.indexOf('id="wl-form"'), j = SOURCE.indexOf('id="wl-notice"');
   assert.ok(i > 0 && j > i && j < SOURCE.indexOf('id="wl-msg"'), 'notice sits inside the form');
   const notice = SOURCE.slice(j, SOURCE.indexOf('</details>', j));

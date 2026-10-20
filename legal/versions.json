@@ -1,0 +1,7 @@
+{
+  "about": "WastePlanner's legal documents: the ONE place their versions and effective dates live. The text is legal/terms.md and legal/privacy.md (file names are relative to this file); terms.html / privacy.html render it and the app reads the versions from here for sign-up and acceptance. Change a document = edit its .md and its version/effective here, in one commit. publishedAt: accounts created on or after this day that never ticked the sign-up box are asked to accept at once (null = held: nobody is asked, decided 2026-10-20 until the lawyer has reviewed v2.0). reacceptFrom: the day existing users must accept the current versions (set to 30 days after the notice email; null = not yet). Dates are YYYY-MM-DD, Australia/Melbourne.",
+  "terms":   { "title": "Terms of Service", "version": "2.0", "effective": "2026-10-20", "file": "terms.md",   "path": "terms",   "url": "https://wasteplanner.au/terms" },
+  "privacy": { "title": "Privacy Policy",   "version": "2.0", "effective": "2026-10-20", "file": "privacy.md", "path": "privacy", "url": "https://wasteplanner.au/privacy" },
+  "publishedAt": null,
+  "reacceptFrom": null
+}
