@@ -218,7 +218,16 @@ prowaste.au embed), the in-app calculator and the WMP generator.
   COUNCILS, USES }`. Ask Lachy before changing it. `USES` and a council
   profile's `comList` were added by Lachy's decision (2026-10-19) — see
   "Per-council commercial lists" below; a reader that ignores them still
-  works, and a file without `USES` still validates.
+  works, and a file without `USES` still validates. A council profile's
+  **`resMethod`** (2026-10-20, Lachy) is `{ type: "table", source, min,
+  max }` from that council's **live** `waste_meta` residential method
+  (`resMethodSummary`, pure; drafts and state-level tables are not
+  published, the latter reported in `skipped`; a failed `waste_meta` read
+  is reported and does not block the publish). The landing page's
+  `resTableOf` / `resTableNote` then shows a note for that council's
+  dwellings — the table, its bands, talk to council past the top band,
+  ask Pro Waste — instead of rate-based residential bins; commercial is
+  unchanged. The backup script reports a page without `resTableOf`.
 - **Draft councils never go out.** `councils.published`
   (`sql/2026-10-19-publish-rates.sql`: existing rows backfilled `true`, new
   ones default `false`), toggled by *Listed on the free calculator* on the
@@ -676,9 +685,9 @@ own key> }`. Rules, all tested in `tests/residential-method.test.js`:
   source) through the same `rdbResRead`. The calculator adds a live table's
   streams as rows (`runCalc`) and keeps them visible (`visibleStreams`).
   The WMP carries a residential `CARD` bin (`WMPG_RES_ORDER`; volumes and
-  rates stay on `WMPG_ORDER`). **Not yet:** the go.wasteplanner.au calculator
-  reads only `waste_rates.json`, which has no residential method — it sizes
-  a table council from rates.
+  rates stay on `WMPG_ORDER`). The go.wasteplanner.au calculator does not
+  run the bands: a live table council gets a note there instead
+  (`resMethod`, see "Generation rates").
 - **The fallback is stated wherever the number appears.** `scope` is `council`,
   `state` or `none`; a state row standing in for a council reads *"state
   fallback used — no council-specific method found"* on the calculator's rates
