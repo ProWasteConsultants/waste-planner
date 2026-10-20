@@ -23,7 +23,7 @@ function loadCalc() {
   return new Function(code + ';return { COMM, weeklyL, SPLIT_DEFS, applySplits };')();
 }
 const CORE = [
-  /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_COM_ORDER = /, /^const WMPG_UNITS = /, /^const WMPG_FREQ = /,
+  /^const WMPG_STREAMS = /, /^const WMPG_ORDER = /, /^const WMPG_RES_ORDER = /, /^const WMPG_COM_ORDER = /, /^const WMPG_UNITS = /, /^const WMPG_FREQ = /,
   /^function wmpgFreqLabel\(/, /^function wmpgEsc\(/, /^function wmpgNum\(/, /^function wmpgUid\(/, /^const WMPG_BIN_DIMS = /,
   /^function wmpgNewRoom\(/, /^function wmpgRoomQty\(/, /^function wmpgRoomVols\(/, /^function wmpgTotalVols\(/, /^function wmpgRoomStreams\(/,
   /^function wmpgRoomKind\(/, /^function wmpgRoomSec\(/, /^function wmpgResRooms\(/, /^function wmpgComRooms\(/, /^function wmpgDwLabel\(/,
@@ -218,11 +218,14 @@ test('§3 hydration keeps both kinds: commercial rooms, their uses, splits and s
   assert.ok(P.wmpgShape(d).commercial && P.wmpgShape(d).residential && P.wmpgShape(d).mixed);
   com.component = 'Café';
   assert.ok(P.wmpgShape(d).commercial, 'a renamed commercial component is still commercial (kind, not the label)');
-  // residential-only schedules keep the four base streams exactly as before
+  // residential schedules: the base streams, plus a paper bin when one exists
   const d2 = Object.assign({ unitTypes: [{ key: 'apt_1br', label: '1br' }], rates: {}, defaults: { vehicle: '', point: '' } }, D);
   P.wmpgHydrateRooms(d2, { schedule: [{ room: 'R1', roomName: 'A', sec: 'r', stream: 'CARD', sizeL: 240, qty: 1, colWk: 1 }, { room: 'R1', roomName: 'A', sec: 'r', stream: 'GW', sizeL: 240, qty: 1, colWk: 1 }] },
     { bin_rooms: [{ id: 'R1', name: 'A', kind: 'res', alloc: { apt_1br: 4 } }] });
-  assert.deepStrictEqual(d2.rooms[0].bins.map(b => b.stream), ['GW'], 'a residential export is unchanged by the new streams');
+  // A residential CARD row is a real paper bin (a council's stepped table
+  // or a residential paper split put it there), so it is carried too.
+  assert.deepStrictEqual(d2.rooms[0].bins.map(b => b.stream), ['CARD', 'GW'], 'a residential paper bin reaches the WMP');
+  assert.deepStrictEqual(P.wmpgRoomStreams ? P.wmpgRoomStreams(d2, d2.rooms[0]).filter(x => x === 'CARD') : ['CARD'], ['CARD']);
 });
 
 test('§3 commercial narrative says tenants, never residents; private contractor wording when not council', () => {

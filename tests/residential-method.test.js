@@ -239,9 +239,13 @@ test('the table is gated where it is physically wrong: commercial, bulk, and per
   assert.equal(C.perDwellingUnits('r1', 'r'), 6);
   assert.equal(C.resTableFor('r1', 'r'), null, 'the table stands aside for the per-dwelling rule');
   assert.equal(C.getBinCount('r1', 'r', 'GW', 500, 240, 1), 6, 'and every dwelling still gets its own bin');
-  // A bulk collection point is not the council's kerbside service at all.
+  // A bulk collection point is the council collecting ON SITE (Northern
+  // Beaches Ch 4.7, over 80 dwellings) — same table, same bins.
   r.method.r = 'bulk';
-  assert.equal(C.resTableFor('r1', 'r'), null);
+  assert.ok(C.resTableFor('r1', 'r'), 'on-site council collection: the table applies');
+  // A private shared bin collection is a contractor's service, sized from volume.
+  r.method.r = 'self_haul';
+  assert.equal(C.resTableFor('r1', 'r'), null, 'a private contractor is not the council’s table');
 });
 
 test('departing from the table’s size carries the council’s CAPACITY over, not the bare count', () => {

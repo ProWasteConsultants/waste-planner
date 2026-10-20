@@ -2695,9 +2695,14 @@ function activeResMethodEntry(){
 //     fact about the development, not a figure the council can table; letting
 //     a band of 4 bins answer for 12 townhouses with 12 bins would be wrong
 //     on the drawing. perDwellingUnits keeps that case.
+//   • COUNCIL collection only — kerbside shared, or a bulk collection point,
+//     which is how a council collects on site (Northern Beaches Ch 4.7: over
+//     80 dwellings, the same Appendix A bins, emptied off-street). A private
+//     shared bin collection is a contractor's service sized from volume, so
+//     the council's table has nothing to say about it.
 function resTableFor(room,sec){
   if(sec!=='r')return null;
-  if(!COLLECT_METHODS[methodOf(room,sec)]?.kerb)return null;
+  if(['kerbside_shared','bulk'].indexOf(methodOf(room,sec))&lt;0)return null;
   if(perDwellingUnits(room,sec)!=null)return null;
   const a=activeResMethodEntry();
   if(!a.entry||a.entry.method.type!=='table')return null;
@@ -2750,7 +2755,7 @@ function ratesNoteHtml(){
     const who=rm.scope==='state'?`the ${g('state').value} state fallback`:`&lt;b&gt;${escAttr(rm.entry.name||i.label)}&lt;/b&gt;`;
     rmLine=`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Residential method&lt;/span&gt; stepped table from ${who}`+
       (rm.entry.method.source?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· ${escAttr(rm.entry.method.source)}&lt;/span&gt;`:'')+
-      ` — shared kerbside bin numbers come from the table, not from a generation rate&lt;/div&gt;`;
+      ` — shared bin numbers (kerbside or on-site council collection) come from the table, not from a generation rate&lt;/div&gt;`;
   }else if(rm.scope==='state'){
     rmLine=`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Residential method&lt;/span&gt; &lt;b style=&quot;color:#EFB080&quot;&gt;state fallback used&lt;/b&gt; — no council-specific method found for ${escAttr(i.label||'this council')}&lt;/div&gt;`;
   }
@@ -32635,6 +32640,12 @@ const WMPG_STREAMS = {
   SOFT:{ doc:'Soft plastics',        colour:'as specified by the collection contractor', recept:'25 litres', notes:'Clean, dry soft plastics only (film, wrap, bags).' },
 };
 const WMPG_ORDER = ['GW','ORG','REC','GLS'];
+// Residential BINS may also carry CARD: a council that bins paper apart from
+// containers (Northern Beaches' stepped table) puts a real paper bin in the
+// schedule. Volumes and rates stay on WMPG_ORDER — there is no residential
+// paper rate — and CARD prints only where a room holds CARD bins, so every
+// other residential export is unchanged.
+const WMPG_RES_ORDER = ['GW','ORG','REC','CARD','GLS'];
 // Commercial tables also print the calculator's split targets (CARD, SOFT).
 const WMPG_COM_ORDER = ['GW','ORG','REC','GLS','CARD','SOFT'];
 // Unit keys match the calculator's alloc keys exactly — do not rename.
@@ -32698,7 +32709,7 @@ function wmpgTotalVols(d, rooms) {
 }
 function wmpgRoomStreams(d, room) {
   const v = wmpgRoomVols(d, room);
-  return (wmpgRoomKind(room) === 'com' ? WMPG_COM_ORDER : WMPG_ORDER).filter(s => v[s] > 0 || room.bins.some(b => b.stream === s && b.qty > 0));
+  return (wmpgRoomKind(room) === 'com' ? WMPG_COM_ORDER : WMPG_RES_ORDER).filter(s => v[s] > 0 || room.bins.some(b => b.stream === s && b.qty > 0));
 }
 
 // ── COMMERCIAL ROOMS (2026-09-22) ──────────────────────────────────────────
@@ -33841,9 +33852,9 @@ function wmpgHydrateRooms(d, p, s) {
   if (sched.length) {
     d.rooms.forEach(room => {
       const sec = wmpgRoomSec(room);
-      // residential rows keep the four base streams exactly as before; a
-      // commercial room keeps its separated streams (cardboard, soft plastics)
-      const okStream = x => WMPG_STREAMS[x.stream] && (sec === 'c' || WMPG_ORDER.includes(x.stream));
+      // residential rows keep the base streams plus a council-tabled paper
+      // bin; a commercial room keeps its separated streams (cardboard, soft plastics)
+      const okStream = x => WMPG_STREAMS[x.stream] && (sec === 'c' || WMPG_RES_ORDER.includes(x.stream));
       const rows = sched.filter(x => (x.sec || 'r') === sec && ((room.srcId && x.room === room.srcId) || (x.roomName || '') === room.name));
       room.bins = rows.filter(okStream).map(x => {
         const prov = (x.method === 'self_haul') ? 'private contractor' : 'council';
@@ -33863,7 +33874,7 @@ function wmpgHydrateRooms(d, p, s) {
     // Schedule rows that matched nothing (rooms renamed since the calculator
     // ran) fall back onto the single room, rather than silently vanishing.
     if (!d.rooms.some(r => r.bins.length) && d.rooms.length === 1) {
-      d.rooms[0].bins = sched.filter(x => x.sec === 'r' && WMPG_STREAMS[x.stream] && WMPG_ORDER.includes(x.stream)).map(x => {
+      d.rooms[0].bins = sched.filter(x => x.sec === 'r' && WMPG_STREAMS[x.stream] && WMPG_RES_ORDER.includes(x.stream)).map(x => {
         const b = { stream:x.stream, sizeL:+x.sizeL || 1100, qty:+x.qty || 0,
           colWk:(x.colWk == null ? 1 : +x.colWk), provider:'council', method:x.method || null, cycle:x.cycle || null, src:'calc' };
         b.design = { sizeL:b.sizeL, qty:b.qty, colWk:b.colWk, provider:b.provider, method:b.method };
@@ -35770,7 +35781,7 @@ function wmpgDocModel() {
   M.push({ k:'h2', t:'3.1. Residential waste stream sorting' });
   M.push({ k:'p', t:'The residential waste streams, including bin colours, internal receptacle requirements, disposal methods, and key restrictions are outlined below.' });
   cap('Residential waste stream sorting and responsibilities');
-  const allStreams = WMPG_ORDER.filter(s => resRooms.some(r => wmpgRoomStreams(d,r).includes(s)));
+  const allStreams = WMPG_RES_ORDER.filter(s => resRooms.some(r => wmpgRoomStreams(d,r).includes(s)));
   // Disposal wording depends on whether the rooms serving that stream have chutes.
   const disposalFor = s => {
     const serving = resRooms.filter(r => wmpgRoomStreams(d,r).includes(s));
@@ -36678,7 +36689,7 @@ function wmpgTplPayload(d) {
   }
 
   // 3. Sorting
-  const allStreams = WMPG_ORDER.filter(s => resRooms.some(r => wmpgRoomStreams(d,r).includes(s)));
+  const allStreams = WMPG_RES_ORDER.filter(s => resRooms.some(r => wmpgRoomStreams(d,r).includes(s)));
   const disposalFor = s => {
     const serving = resRooms.filter(r => wmpgRoomStreams(d,r).includes(s));
     const chuted = serving.filter(r => r.chutesOn);

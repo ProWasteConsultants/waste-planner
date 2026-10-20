@@ -90,7 +90,7 @@ export function rebuildPage(page, rates) {
   const [P, CP, CB] = blocks.map(b => evalLiteral(b.text));
   const report = { version: rates.version, states: [], councilProfiles: { replaced: [], added: [], builtInOnly: [] },
     councils: { added: [], relabelled: [], builtInOnly: [] }, missingUses: [], usesAdded,
-    runtime: { applyRemoteUses: /function applyRemoteUses\(/.test(page), ownComList: /function ownComList\(/.test(page) } };
+    runtime: { applyRemoteUses: /function applyRemoteUses\(/.test(page), ownComList: /function ownComList\(/.test(page), resTableOf: /function resTableOf\(/.test(page) } };
 
   // the page's own commercial uses — a published use it has no row for would be dead data
   try {
@@ -196,6 +196,8 @@ async function main() {
   if (!r.runtime.applyRemoteUses || !r.runtime.ownComList)
     console.log('  ⚠ the page has no ' + ['applyRemoteUses', 'ownComList'].filter(k => !r.runtime[k]).join(' / ') +
       ' — online it will not pick up new uses or a council\'s own list until they are added (see CLAUDE.md › Per-council commercial lists).');
+  if (!r.runtime.resTableOf)
+    console.log('  ⚠ the page has no resTableOf — a council with a stepped table (resMethod) will show rate-based residential bins instead of its note.');
   console.log('  Upload it in Cloudflare: Workers & Pages → wasteplanner-landing → New deployment.');
 }
 

@@ -117,8 +117,19 @@ Deno.serve(async (req) => {
     return jsonRes({ ok: false, error: msg + hint }, 500, cors);
   }
 
+  // Residential methods (a council's stepped table). Read apart: a failure
+  // here must not stop a rates publish, but it is REPORTED — a missing
+  // table flag puts rate-based bins back on that council's free calculator.
+  let resMethods: unknown[] = [];
+  let resMethodErr: string | null = null;
+  try {
+    resMethods = await readAll(() => sbUser.from("waste_meta").select("state,council_value,value")
+      .eq("field_key", "residential_method").order("state").order("council_value", { nullsFirst: true }), "waste_meta");
+  } catch (e) { resMethodErr = (e as Error).message; }
+
   // ── Build + validate: nothing is written unless the file is clean ────────
-  const { json, skipped } = buildRates({ councils, resRates, comRates, uses });
+  const { json, skipped } = buildRates({ councils, resRates, comRates, uses, resMethods: resMethods as never[] });
+  if (resMethodErr) skipped.push({ key: "waste_meta", what: "residential methods (stepped tables)", reason: "could not be read — " + resMethodErr + "; councils with a stepped table publish without their note" });
   const errors = validateRates(json);
   const counts = ratesCounts(json);
   if (errors.length) return jsonRes({ ok: false, code: "invalid", errors, skipped, counts }, 422, cors);
