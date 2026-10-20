@@ -29,10 +29,17 @@
       // without one gets the title from versions.json
       let h1 = el.querySelector('h1');
       if (!h1) { h1 = document.createElement('h1'); h1.textContent = d.title; el.insertBefore(h1, el.firstChild); }
-      const meta = document.createElement('div');
-      meta.className = 'updated';
-      meta.textContent = 'Version ' + d.version + ' · Effective ' + window.wpLegalMd.longDate(d.effective);
-      h1.insertAdjacentElement('afterend', meta);
+      // A document that states its own version under the heading ("Last
+      // updated: … · Version 2.0") keeps that line, styled as the meta line —
+      // a test pins it to versions.json. Otherwise the line comes from there.
+      const next = h1.nextElementSibling;
+      if (next && next.tagName === 'P' && next.textContent.indexOf('Version ' + d.version) >= 0) next.className = 'updated';
+      else {
+        const meta = document.createElement('div');
+        meta.className = 'updated';
+        meta.textContent = 'Version ' + d.version + ' · Effective ' + window.wpLegalMd.longDate(d.effective);
+        h1.insertAdjacentElement('afterend', meta);
+      }
       document.title = d.title + ' — WastePlanner';
       if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView(); }
     })

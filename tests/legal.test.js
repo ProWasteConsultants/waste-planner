@@ -219,3 +219,17 @@ test('links: app rail, account, auth screen, and the payment step', () => {
   for (const f of ['supabase/functions/delete-account/index.ts', 'supabase/functions/create-subscription/index.ts', 'legal/terms.md', 'legal/privacy.md'])
     assert.ok(!read(f).includes('lachy@prowaste.au'), f);
 });
+
+test('the documents are the final text, and their own version line agrees with versions.json', () => {
+  const L = legalConfig();
+  for (const k of ['terms', 'privacy']) {
+    const md = read('legal/' + L[k].file);
+    assert.ok(!/PLACEHOLDER:/.test(md), k + ' is the real document, not the placeholder');
+    const line = /^Last updated: (.+?) · Version (\S+)\s*$/m.exec(md);
+    assert.ok(line, k + ' states its date and version under the heading');
+    assert.equal(line[1], MD.longDate(L[k].effective), k + ': the document\'s date is versions.json\'s effective date');
+    assert.equal(line[2], L[k].version, k + ': the document\'s version is versions.json\'s');
+  }
+  assert.equal(L.publishedAt, null, 'acceptance modal held until the lawyer\'s review');
+  assert.equal(L.reacceptFrom, null, 're-acceptance held');
+});
