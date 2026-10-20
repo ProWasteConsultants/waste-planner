@@ -4259,7 +4259,7 @@ function visibleStreams(rr,sec,streams){
   const on=splitsOf(roomById(rr.id),sec);
   const kept={};
   on.forEach(id=&gt;{const d=SPLIT_DEFS[id];if(d){kept[d.to]=1;kept[d.from]=1;}});
-  const out=streams.filter(s=&gt;(vols[s]||0)&gt;0||_binOv[ovKey(rr.id,sec,s)]&gt;0||kept[s]);
+  const out=streams.filter(s=&gt;(vols[s]||0)&gt;0||_binOv[ovKey(rr.id,sec,s)]&gt;0||kept[s]||resTableBin(rr.id,sec,s));
   return out.length?out:streams;
 }
 let _showAll={},_splitDefaults=[];
@@ -4600,6 +4600,11 @@ function runCalc(){
       if(d&amp;&amp;streams.indexOf(d.to)&lt;0)streams.push(d.to);
     }));
   });
+  // a council's stepped table can name a stream the rates do not (Northern
+  // Beaches tables paper in its own bin) — its count needs a row to land on
+  const _rmT=activeResMethodEntry();
+  if(_rmT.entry&amp;&amp;_rmT.entry.method.type==='table')(_rmT.entry.method.table.steps||[]).forEach(st=&gt;
+    Object.keys(st.bins||{}).forEach(k=&gt;{if(STREAM_META[k]&amp;&amp;streams.indexOf(k)&lt;0)streams.push(k);}));
   if(!ROOMS.length){ROOMS=[mkRoom(null,'res')];renderRooms();}
   const notes=[];
   const devRes=Object.fromEntries(streams.map(s=&gt;[s,0])),devCom=Object.fromEntries(streams.map(s=&gt;[s,0]));
@@ -11649,6 +11654,7 @@ async function rdbLoadRates() {
     RDB.meta = {};
     (metas || []).forEach(r => RDB.meta[r.field_key] = r.value);
     RDB.resMethod = null;   // re-read per scope: a council's table must never follow the picker to the next council
+    RDB.resX = null;        // and neither may an extracted transcript
     if (!RDB.binSizes) await rdbLoadBinSizes();
     rdbRenderMeta(!!metaErr);
     // header
@@ -12024,6 +12030,8 @@ function rdbRenderMeta(loadFailed) {
 // frequency lines further down stay for the WMP's wording; this grid is the
 // data. Stored as one JSON string under waste_meta 'kerbside_schedule'.
 const RDB_KERB_LABELS = { GW: 'General waste', REC: 'Recycling', ORG: 'Organics / FOGO', GLS: 'Glass' };
+// The stepped table's columns. REC reads as containers once paper has its own bin.
+const RDB_RES_LABELS = { GW: 'General waste', REC: 'Recycling / containers', ORG: 'Organics / garden', GLS: 'Glass', CARD: 'Paper & card' };
 const RDB_KERB_CYCLES = [['', '— not set —'], ['W', 'Weekly'], ['A', 'Fortnightly — week A'], ['B', 'Fortnightly — week B'],
   ['F', 'Fortnightly (week not stated)'], ['M', 'Monthly'], ['OFF', 'Not collected at the kerb']];
 // The library's bin sizes, for the grid's selects — a council can only be
@@ -12157,22 +12165,30 @@ function rdbResMethodHtml(inp) {
         <select data-f="${st}.cycle" style="${inp}width:64px;" onchange="RDB.dirtyMeta=true">${RDB_RES_CYCLES.map(([v, l]) => `<option value="${v}" ${(e.cycle || 'W') === v ? 'selected' : ''} title="${l}">${v}</option>`).join('')}</select>
       </div>`;
     }).join('');
-    return `<div data-band="${i}" style="display:grid;grid-template-columns:70px 70px repeat(4,1fr) 26px;gap:4px 8px;align-items:center;margin-bottom:4px;">
+    return `<div data-band="${i}" style="display:grid;grid-template-columns:70px 70px repeat(${wpResStreams().length},1fr) 26px;gap:4px 8px;align-items:center;margin-bottom:4px;">
       ${num(i, 'min', s.min, 'from')}${num(i, 'max', s.max, 'and above')}${cells}
       <button onclick="rdbResBandDel(${i})" title="Remove this band" style="background:none;border:1px solid var(--border);border-radius:5px;color:#EF8080;cursor:pointer;font-size:12px;padding:3px 0;">×</button>
     </div>`;
   }).join('');
   const tableUI = m.type !== 'table' ? '' : `
-    <div style="display:grid;grid-template-columns:70px 70px repeat(4,1fr) 26px;gap:4px 8px;margin-bottom:3px;">
+    <div style="display:grid;grid-template-columns:70px 70px repeat(${wpResStreams().length},1fr) 26px;gap:4px 8px;margin-bottom:3px;">
       <span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">Dwellings</span>
       <span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">to</span>
-      ${wpResStreams().map(s => `<span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">${RDB_KERB_LABELS[s]}</span>`).join('')}<span></span>
+      ${wpResStreams().map(s => `<span style="font-size:9.5px;color:var(--muted);text-transform:uppercase;">${RDB_RES_LABELS[s] || s}</span>`).join('')}<span></span>
     </div>
     ${bands || '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">No bands yet — add one per row of the council’s table, or extract them from the document.</div>'}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
       <button onclick="rdbResBandAdd()" style="background:#182121;border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:11px;padding:5px 10px;">+ band</button>
       <button onclick="rdbResExtract()" style="background:#182121;border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:11px;padding:5px 10px;" title="Read the bands out of this council’s stored guideline PDF. Writes a DRAFT for you to check — it never goes live on its own.">⤓ Extract from the guideline PDF</button>
+      <button onclick="rdbResExtractFile()" style="background:#182121;border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:11px;padding:5px 10px;" title="Read the table from a PDF you pick — e.g. an appendix published apart from the main guideline. The file is read once and not stored; its name is recorded as the source. Writes a DRAFT.">⤓ Extract from a PDF on this computer…</button>
     </div>
+    ${(m.table.steps || []).length || (RDB.resX && Object.keys(RDB.resX.needSize).length) ? `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;padding:6px 8px;border:1px dashed var(--border);border-radius:6px;">
+      <span style="font-size:10px;color:var(--muted);">Fill every band:</span>
+      <select id="rdb-res-fill-st" style="${inp}width:auto;">${wpResStreams().map(s => `<option value="${s}">${RDB_RES_LABELS[s] || s}${RDB.resX && RDB.resX.needSize[s] ? ` — ${RDB.resX.needSize[s]} bands need a size` : ''}</option>`).join('')}</select>
+      <input id="rdb-res-fill-size" type="text" inputmode="numeric" placeholder="size L" style="${inp}width:70px;">
+      <select id="rdb-res-fill-cyc" style="${inp}width:auto;"><option value="">frequency unchanged</option>${RDB_RES_CYCLES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+      <button onclick="rdbResFillStream()" style="background:#182121;border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;font-size:11px;padding:4px 10px;" title="Write this size and/or frequency on every band that has this stream. Where the extracted table gave counts with no size, those bands come in with the size you type.">Apply</button>
+    </div>` : ''}
     <div style="font-size:10px;color:var(--muted);margin-top:6px;">Leave a stream blank in a band where the council’s table gives no bin for it. A band with no <i>to</i> is open-ended (“and above”); a project outside every band is reported in the calculator and typed in by hand, never rounded into the nearest band.</div>`;
   const badge = live
     ? '<span style="background:#1d3320;border:1px solid #2f5c35;color:#7FD8A0;border-radius:99px;font-size:9.5px;padding:2px 8px;">LIVE — in use by the calculator</span>'
@@ -12208,59 +12224,122 @@ dwellings_from | dwellings_to | stream | bin_count | bin_size_litres | frequency
 
 Rules:
 - dwellings_to: leave EMPTY for an open-ended band ("20 or more", "20+").
-- stream: copy the council's own word (garbage, recycling, FOGO, glass...).
+- stream: copy the council's own column word (garbage, recycling, paper, bottles, vegetation, FOGO, glass...). Keep separate columns separate — never merge two columns into one stream.
 - bin_count and bin_size_litres: digits only, exactly as printed. If the table gives a count but no size (or the reverse), still emit the line with the missing cell EMPTY — do not infer it.
 - frequency: weekly / fortnightly / monthly as printed; leave EMPTY if the table does not state one.
+- Skip a "Total bins" column — it is a sum, not a stream.
 - Emit NOTHING for a stream a band does not list.
-- If the document has no such table, reply with exactly: NO TABLE
+- The table may run over several pages: continue to its last row.
+
+If the table prints counts only and the bin SIZE or collection FREQUENCY for a stream is stated ELSEWHERE in the document (a note under the table, a heading, the waste section text), put one line per such stream FIRST, before the table lines:
+
+DEFAULT | stream | bin_size_litres | frequency | where it is stated (page / clause / heading)
+
+Only what the document actually states — leave a cell EMPTY rather than assume a common size. No DEFAULT line at all when nothing is stated.
+
+If the document has no such table, reply with exactly: NO TABLE
 
 Output only the pipe-delimited lines (or NO TABLE).`;
 async function rdbResExtract() {
-  const m = rdbResCollect();
   const label = document.getElementById('rdb-council')?.selectedOptions?.[0]?.textContent || '';
   const cv = document.getElementById('rdb-council')?.value || '';
   if (!cv) { rdbMsg('Pick a council first — a state row has no document to read.', true); return; }
   rdbMsg('Finding this council’s guideline document…');
   let doc = null;
   try { doc = await glBridgeServingRow(label); } catch (e) { doc = null; }
-  if (!doc) { rdbMsg(`No guideline document on file for ${label}. Upload it in the Guidelines library first — extraction reads the stored PDF, never the open web.`, true); return; }
+  if (!doc) { rdbMsg(`No guideline document on file for ${label}. Upload it in the Guidelines library first, or use “Extract from a PDF on this computer”.`, true); return; }
   if (!doc.source_file || doc.source_file.indexOf('guidelines/') !== 0) {
-    rdbMsg(`${doc.council_name} v${doc.version} predates stored PDFs, so there is nothing to read. Re-upload the PDF in the Guidelines library, or type the bands in by hand.`, true); return;
+    rdbMsg(`${doc.council_name} v${doc.version} predates stored PDFs, so there is nothing to read. Re-upload the PDF in the Guidelines library, use a PDF on this computer, or type the bands in by hand.`, true); return;
   }
-  rdbMsg(`Reading ${doc.council_name} v${doc.version} — this can take a minute…`);
+  const docName = `${doc.council_name} v${doc.version}`;
+  rdbMsg(`Reading ${docName} — this can take a minute…`);
   try {
     const { data: sig, error: sErr } = await sb.storage.from(PLANS_BUCKET).createSignedUrl(doc.source_file, 600);
     if (sErr || !sig?.signedUrl) throw new Error(sErr?.message || 'could not fetch the stored PDF');
-    const buf = await (await fetch(sig.signedUrl)).arrayBuffer();
-    let bin = ''; const bytes = new Uint8Array(buf);
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    const doc64 = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(bin) } };
-    const resp = await aiProxy({ max_tokens: 16000, system: WP_RES_TRANSCRIBE,
-      messages: [{ role: 'user', content: [doc64, { type: 'text', text: 'Transcribe the residential bin-provision table now, pipe-delimited, one line per stream per band.' }] }] });
-    const text = (resp.content?.[0]?.text || '').trim();
-    if (/^NO TABLE/i.test(text) || !text) {
-      rdbMsg(`No residential bin table found in ${doc.council_name} v${doc.version}. If this council publishes a generation rate instead, leave the method on “Generation rate” and fill in the Residential rates table.`, true); return;
-    }
-    const parsed = wpResTableLines(text);
-    if (!parsed.steps.length) {
-      rdbMsg(`Nothing usable came back from ${doc.council_name} v${doc.version} — type the bands in by hand.`, true); return;
-    }
-    // A draft, always. What was read goes on screen for checking; what could
-    // not be read is REPORTED BY NAME rather than quietly dropped, the same
-    // rule the rate sweep keeps.
-    m.type = 'table';
-    m.status = 'draft';
-    m.table = { basis: 'dwellings', steps: parsed.steps };
-    if (!m.source) m.source = `${doc.council_name} v${doc.version}`;
-    rdbResRerender();
-    RDB.dirtyMeta = true;
-    const skipped = parsed.skipped.length
-      ? ` ${parsed.skipped.length} line${parsed.skipped.length === 1 ? '' : 's'} could not be read and were left out — ${parsed.skipped.slice(0, 3).map(x => `“${x.line}” (${x.why})`).join('; ')}${parsed.skipped.length > 3 ? '; …' : ''}. Add those bands by hand.`
-      : '';
-    rdbMsg(`Read ${parsed.steps.length} band${parsed.steps.length === 1 ? '' : 's'} from ${doc.council_name} v${doc.version} — saved as a DRAFT.${skipped} ${wpDesignAid()}. Check every band against the document, then Save and Mark live.`);
+    await rdbResRead(await (await fetch(sig.signedUrl)).arrayBuffer(), docName);
   } catch (e) {
     rdbMsg('Extraction failed: ' + (e.message || e) + ' — the bands can still be typed in by hand.', true);
   }
+}
+// The table is often its own PDF (an appendix published apart from the DCP),
+// and the library serves ONE document per council. This reads a PDF the
+// admin picks, once — it is not stored — and records its file name as the
+// source. Same draft-only rule: a person checks every band and marks it live.
+function rdbResExtractFile() {
+  if (!document.getElementById('rdb-council')?.value) { rdbMsg('Pick a council first — the table belongs to a council.', true); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'application/pdf,.pdf';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { rdbMsg('That is not a PDF.', true); return; }
+    if (f.size > 30 * 1024 * 1024) { rdbMsg('That PDF is over 30 MB — split out the pages with the table and try again.', true); return; }
+    rdbMsg(`Reading ${f.name} — this can take a minute…`);
+    try { await rdbResRead(await f.arrayBuffer(), f.name); }
+    catch (e) { rdbMsg('Extraction failed: ' + (e.message || e) + ' — the bands can still be typed in by hand.', true); }
+  };
+  inp.click();
+}
+async function rdbResRead(buf, docName) {
+  const m = rdbResCollect();
+  let bin = ''; const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  const doc64 = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(bin) } };
+  const resp = await aiProxy({ max_tokens: 16000, system: WP_RES_TRANSCRIBE,
+    messages: [{ role: 'user', content: [doc64, { type: 'text', text: 'Transcribe the residential bin-provision table now, pipe-delimited, one line per stream per band.' }] }] });
+  const text = (resp.content?.[0]?.text || '').trim();
+  if (/^NO TABLE/i.test(text) || !text) {
+    rdbMsg(`No residential bin table found in ${docName}. If this council publishes a generation rate instead, leave the method on “Generation rate” and fill in the Residential rates table.`, true); return;
+  }
+  const parsed = wpResTableLines(text);
+  const pending = Object.keys(parsed.needSize);
+  if (!parsed.steps.length && !pending.length) {
+    rdbMsg(`Nothing usable came back from ${docName} — type the bands in by hand.`, true); return;
+  }
+  // Kept in memory so "Fill every band" can add the count-only lines once a
+  // size is typed — never stored, and dropped when the scope changes.
+  RDB.resX = { text, doc: docName, needSize: parsed.needSize, words: parsed.words };
+  // A draft, always. What was read goes on screen for checking; what could
+  // not be read is REPORTED BY NAME rather than quietly dropped, the same
+  // rule the rate sweep keeps.
+  m.type = 'table';
+  m.status = 'draft';
+  m.table = { basis: 'dwellings', steps: parsed.steps };
+  if (!m.source) m.source = docName;
+  rdbResRerender();
+  RDB.dirtyMeta = true;
+  const nm = st => (RDB_RES_LABELS[st] || st) + (parsed.words[st] ? ` (“${parsed.words[st]}”)` : '');
+  const parts = [];
+  const read = Object.keys(parsed.words).filter(st => !pending.includes(st));
+  if (read.length) parts.push(`Streams read: ${read.map(nm).join(', ')}.`);
+  const dflt = Object.entries(parsed.defaults).filter(([, d]) => d.sizeL || d.cycle);
+  if (dflt.length) parts.push(`From the document's own text: ${dflt.map(([st, d]) => `${RDB_RES_LABELS[st] || st} ${d.sizeL ? d.sizeL + 'L' : ''}${d.cycle ? ' ' + d.cycle : ''}${d.where ? ' — ' + d.where : ''}`).join('; ')}.`);
+  if (pending.length) parts.push(`⚠ The table gives counts but no bin size for ${pending.map(st => `${nm(st)} (${parsed.needSize[st]} bands)`).join(', ')} — set the size under “Fill every band” to bring them in.`);
+  if (parsed.cycleAssumed.length) parts.push(`⚠ No collection frequency stated for ${parsed.cycleAssumed.map(st => RDB_RES_LABELS[st] || st).join(', ')} — set to weekly; correct it under “Fill every band”.`);
+  if (parsed.skipped.length) parts.push(`${parsed.skipped.length} line${parsed.skipped.length === 1 ? '' : 's'} could not be read and were left out — ${parsed.skipped.slice(0, 3).map(x => `“${x.line}” (${x.why})`).join('; ')}${parsed.skipped.length > 3 ? '; …' : ''}. Add those by hand.`);
+  rdbMsg(`Read ${parsed.steps.length} band${parsed.steps.length === 1 ? '' : 's'} from ${docName} — saved as a DRAFT. ${parts.join(' ')} ${wpDesignAid()}. Check every band against the document, then Save and Mark live.`, !!pending.length);
+}
+// Fill every band: one stream's size and/or frequency across the whole table.
+// With a transcript in memory, the count-only lines for that stream come in
+// first with the typed size.
+function rdbResFillStream() {
+  const m = rdbResCollect();
+  const st = document.getElementById('rdb-res-fill-st')?.value;
+  const sizeL = Number(document.getElementById('rdb-res-fill-size')?.value) || null;
+  const cycle = document.getElementById('rdb-res-fill-cyc')?.value || null;
+  if (!st) return;
+  if (!sizeL && !cycle) { rdbMsg('Type a size or pick a frequency to fill.', true); return; }
+  let extra = null;
+  if (RDB.resX && RDB.resX.needSize[st] && sizeL) {
+    extra = wpResTableLines(RDB.resX.text, { fill: { [st]: { sizeL, cycle } } }).steps;
+  }
+  const r = wpResTableFill(m.table.steps, st, { sizeL, cycle }, extra);
+  m.table.steps = r.steps;
+  if (extra && RDB.resX) delete RDB.resX.needSize[st];
+  RDB.dirtyMeta = true;
+  rdbResRerender();
+  const lbl = RDB_RES_LABELS[st] || st;
+  rdbMsg(`${lbl}: ${r.added ? `${r.added} band${r.added === 1 ? '' : 's'} added from the table's counts, ` : ''}${r.set} band${r.set === 1 ? '' : 's'} set to ${[sizeL ? sizeL + 'L' : '', cycle || ''].filter(Boolean).join(' ')}. Still a DRAFT — check it against the document, then Save.`);
 }
 function rdbKerbGridCollect() {
   const o = { bulk: {} };
@@ -20646,7 +20725,10 @@ function wpKerbScheduleParse(raw) {
 // nothing serves a calculation until a person has read it against the PDF
 // and marked it live. This is the same manual-first rule the rate tables
 // keep with ⬆ Publish — an AI-read table never reaches a WMP unseen.
-const WP_RES_STREAMS = ['GW', 'REC', 'ORG', 'GLS'];
+// CARD is here for councils that collect paper in its own bin beside a
+// containers bin (Northern Beaches: Paper · Bottles). It is the calculator's
+// own paper & cardboard stream, so a table naming it lands on a real row.
+const WP_RES_STREAMS = ['GW', 'REC', 'ORG', 'GLS', 'CARD'];
 const WP_RES_METHOD_TYPES = {
   // The default. The council publishes a generation rate; res_rates holds it
   // and the calculator multiplies it by the unit mix. No payload of its own.
@@ -20717,39 +20799,104 @@ function wpResTableParse(raw) {
 // returned in `skipped` and reported, because half a figure is not a figure.
 const WP_RES_FREQ = { w: 'W', week: 'W', weekly: 'W', f: 'F', fortnight: 'F', fortnightly: 'F',
                       a: 'A', b: 'B', m: 'M', month: 'M', monthly: 'M', off: 'OFF' };
+// Council words differ from ours. A council that splits recycling into a
+// paper bin and a containers bin ("Paper" / "Bottles") maps onto CARD + REC —
+// the calculator's REC_CARD split, which is exactly that separation — and a
+// garden-only bin ("Vegetation") is the organics stream.
 function wpResStreamId(v) {
   const s = String(v || '').toLowerCase().replace(/[^a-z]+/g, '');
   if (!s) return null;
-  if (/^(gw|garbage|general|generalwaste|residual|waste|rubbish)$/.test(s)) return 'GW';
-  if (/^(rec|recycling|commingled|comingled|commingledrecycling|recycle|dryrecycling)$/.test(s)) return 'REC';
-  if (/^(org|organics|fogo|food|foodwaste|greenwaste|garden|fo|go)$/.test(s)) return 'ORG';
+  if (/^(gw|garbage|general|generalwaste|residual|residualwaste|waste|rubbish|landfill)$/.test(s)) return 'GW';
+  if (/^(rec|recycling|commingled|comingled|commingledrecycling|recycle|dryrecycling|mixedrecycling|bottles|bottle|containers|container|containerrecycling|bottlesandcans|bottlescans|cans|bottlesandcontainers)$/.test(s)) return 'REC';
+  if (/^(org|organics|fogo|food|foodwaste|greenwaste|garden|gardenwaste|gardenorganics|fo|go|vegetation|veg|gardenvegetation|vegetationwaste|green|greens|yardwaste)$/.test(s)) return 'ORG';
   if (/^(gls|glass)$/.test(s)) return 'GLS';
+  if (/^(card|paper|cardboard|papercardboard|paperandcardboard|paperandcard|papercard|paperrecycling)$/.test(s)) return 'CARD';
   return null;
 }
-function wpResTableLines(text) {
-  const out = { steps: [], skipped: [] };
+// opts.fill = { stream: { sizeL, cycle } } — what a person typed for a stream
+// whose table prints counts only. Precedence for a MISSING cell: the person's
+// fill, then a size/frequency the document states elsewhere (a DEFAULT line,
+// with where it is stated), and only then nothing. A count with no size from
+// any source is not half-stored: it is counted under `needSize` by stream, so
+// the panel asks once per stream instead of listing 98 lines. A frequency no
+// source states stays weekly, as before, and the stream is named in
+// `cycleAssumed` so the message says so.
+function wpResTableLines(text, opts) {
+  const fill = (opts && opts.fill) || {};
+  const out = { steps: [], skipped: [], needSize: {}, cycleAssumed: [], defaults: {}, words: {} };
   const bands = new Map();
-  String(text || '').split(/\r?\n/).forEach(raw => {
-    const line = raw.trim();
-    if (!line || line.indexOf('|') < 0) return;
+  const int = v => { const n = Number(String(v).replace(/[^0-9.]/g, '')); return Number.isFinite(n) && n > 0 ? Math.round(n) : null; };
+  const cyc = v => WP_RES_FREQ[String(v || '').toLowerCase().replace(/[^a-z]+/g, '')] || null;
+  const lines = String(text || '').split(/\r?\n/).map(r => r.trim()).filter(l => l && l.indexOf('|') >= 0);
+  // DEFAULT | stream | size L | frequency | where stated — read first, wherever it sits
+  lines.forEach(line => {
     const c = line.split('|').map(x => x.trim());
-    if (c.length < 6) return;
-    const int = v => { const n = Number(String(v).replace(/[^0-9.]/g, '')); return Number.isFinite(n) && n > 0 ? Math.round(n) : null; };
+    if (!/^default$/i.test(c[0])) return;
+    const st = wpResStreamId(c[1]);
+    if (!st) { out.skipped.push({ line, why: 'stream not recognised' }); return; }
+    out.defaults[st] = { sizeL: int(c[2] || ''), cycle: cyc(c[3]), where: String(c[4] || '').trim() || null };
+  });
+  const assumed = new Set();
+  lines.forEach(line => {
+    const c = line.split('|').map(x => x.trim());
+    if (c.length < 6 || /^default$/i.test(c[0])) return;
     const from = int(c[0]);
     if (from == null) return;                                  // header rows and prose fall out here
     const toRaw = String(c[1] || '').toLowerCase();
     const to = /^(\+|above|over|more|and above|onwards|\-)?$/.test(toRaw.trim()) ? null : int(c[1]);
     const stream = wpResStreamId(c[2]);
-    const n = int(c[3]), sizeL = int(c[4]);
-    const freq = String(c[5] || '').toLowerCase().replace(/[^a-z]+/g, '');
-    const cycle = WP_RES_FREQ[freq] || null;
-    if (!stream || n == null || sizeL == null) { out.skipped.push({ line, why: !stream ? 'stream not recognised' : 'count or size missing' }); return; }
+    if (!stream) { out.skipped.push({ line, why: 'stream not recognised' }); return; }
+    const n = int(c[3]);
+    if (n == null) { out.skipped.push({ line, why: 'count missing' }); return; }
+    const f = fill[stream] || {}, dflt = out.defaults[stream] || {};
+    const sizeL = int(c[4]) || int(f.sizeL || '') || dflt.sizeL || null;
+    if (sizeL == null) { out.needSize[stream] = (out.needSize[stream] || 0) + 1; return; }
+    let cycle = cyc(c[5]) || (WP_RES_FREQ[String(f.cycle || '').toLowerCase()] || null) || dflt.cycle || null;
+    if (!cycle) { cycle = 'W'; assumed.add(stream); }
+    const word = c[2].trim();
     const key = from + '|' + (to == null ? '' : to);
     if (!bands.has(key)) bands.set(key, { min: from, max: to, bins: {} });
-    bands.get(key).bins[stream] = { n, sizeL, cycle: cycle || 'W' };
+    const band = bands.get(key);
+    // Two council columns reading as one stream would overwrite each other —
+    // refuse the second and name both, never keep whichever came last.
+    if (band.bins[stream] && out.words[stream] && out.words[stream].toLowerCase() !== word.toLowerCase()) {
+      out.skipped.push({ line, why: `“${word}” and “${out.words[stream]}” both read as ${stream}` }); return;
+    }
+    out.words[stream] = out.words[stream] || word;
+    band.bins[stream] = { n, sizeL, cycle };
   });
   out.steps = [...bands.values()].sort((a, b) => a.min - b.min);
+  out.cycleAssumed = [...assumed];
   return out;
+}
+
+// Pure: set one stream across every band — the bulk edit a 98-band table
+// needs. `extra` is the transcript re-read with the person's fill, and adds
+// that stream's entries to bands that lack it (the count-only lines); then
+// a given size / cycle is written on every band carrying the stream. Other
+// streams and every other band field are left exactly as they were.
+function wpResTableFill(steps, stream, fill, extra) {
+  const out = (steps || []).map(s => ({ min: s.min, max: s.max, bins: Object.assign({}, s.bins) }));
+  const key = s => s.min + '|' + (s.max == null ? '' : s.max);
+  const at = new Map(out.map(s => [key(s), s]));
+  let added = 0, set = 0;
+  (extra || []).forEach(x => {
+    const e = x.bins && x.bins[stream];
+    if (!e) return;
+    let b = at.get(key(x));
+    if (!b) { b = { min: x.min, max: x.max, bins: {} }; out.push(b); at.set(key(b), b); }
+    if (!b.bins[stream]) { b.bins[stream] = Object.assign({}, e); added++; }
+  });
+  const sizeL = Number(fill && fill.sizeL) > 0 ? Math.round(Number(fill.sizeL)) : null;
+  const cycle = fill && fill.cycle ? fill.cycle : null;
+  out.forEach(b => {
+    const e = b.bins[stream];
+    if (!e || (sizeL == null && !cycle)) return;
+    b.bins[stream] = Object.assign({}, e, sizeL != null ? { sizeL } : {}, cycle ? { cycle } : {});
+    set++;
+  });
+  out.sort((a, b) => a.min - b.min);
+  return { steps: out, added, set };
 }
 
 // Pure: the whole stored method in, normalised out, null when unusable.

@@ -658,6 +658,23 @@ own key> }`. Rules, all tested in `tests/residential-method.test.js`:
   line missing a count, a size or a recognisable stream is **reported by name**
   in the panel, never half-stored and never inferred. It writes a draft and
   cannot mark itself live.
+- **Council words and counts-only tables (2026-10-20).** `wpResStreamId`
+  reads a council's own column words: *Paper* → `CARD` (in
+  `WP_RES_STREAMS`, the calculator's paper & cardboard stream), *Bottles* /
+  *Containers* → `REC`, *Vegetation* → `ORG`; two columns reading as one
+  stream refuse the second and name both. A table that prints counts only
+  (Northern Beaches) takes its size from a `DEFAULT | stream | L | freq |
+  where` line the transcription copies from the document's own text, or from
+  what a person types under **Fill every band** (`wpResTableFill`, pure:
+  one stream's size/frequency across every band, adding the count-only lines
+  from the in-memory transcript `RDB.resX`). A count with no size from either
+  is counted per stream in `needSize`, never stored; a frequency nobody
+  stated stays weekly and is named in `cycleAssumed`. *Extract from a PDF on
+  this computer* reads a picked file once (not stored; its name becomes the
+  source) through the same `rdbResRead`. The calculator adds a live table's
+  streams as rows (`runCalc`) and keeps them visible (`visibleStreams`).
+  **Not yet:** the WMP generator's residential tables read `WMPG_ORDER`, so a
+  residential `CARD` row is still dropped there.
 - **The fallback is stated wherever the number appears.** `scope` is `council`,
   `state` or `none`; a state row standing in for a council reads *"state
   fallback used — no council-specific method found"* on the calculator's rates

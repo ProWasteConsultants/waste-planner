@@ -18,12 +18,12 @@ function loadPlatform() {
   const code = [
     /^const WP_KERB_CYCLES = /, /^const WP_RES_STREAMS = /, /^const WP_RES_METHOD_TYPES = /,
     /^function wpResMethodTypeIds\(/, /^function wpResTableParse\(/,
-    /^const WP_RES_FREQ = /, /^function wpResStreamId\(/, /^function wpResTableLines\(/,
+    /^const WP_RES_FREQ = /, /^function wpResStreamId\(/, /^function wpResTableLines\(/, /^function wpResTableFill\(/,
     /^function wpResMethodParse\(/, /^function wpResTableLookup\(/, /^function wpResMethodPick\(/,
     /^function glBridgeNorm\(/,
   ].map(p => extractBlock(p).text).join('\n\n');
   return new Function(code + `
-    ;return { WP_RES_METHOD_TYPES, wpResMethodTypeIds, wpResTableParse, wpResTableLines, wpResStreamId,
+    ;return { WP_RES_METHOD_TYPES, wpResMethodTypeIds, wpResTableParse, wpResTableLines, wpResStreamId, wpResTableFill,
               wpResMethodParse, wpResTableLookup, wpResMethodPick, glBridgeNorm };`)();
 }
 
@@ -184,6 +184,23 @@ test('a stepped-table council sizes, counts and paces the bins — the 140L case
   assert.equal(C.getBinCount('r1', 'r', 'GW', 0, 240, 1), 2);
 });
 
+test('a table that bins paper separately gives the paper row its own count and size', () => {
+  const r = room({ alloc: { apt_1br: 3, apt_2br: 0, apt_3br: 0, townhouse: 0 } });
+  const C = loadCalc({ rooms: [r], councilValue: 'northern_beaches', councilLabel: 'Northern Beaches Council' });
+  C.setLib(LIB);
+  C.setResMethods(tableRow([{ min: 3, max: 3, bins: { GW: { n: 1, sizeL: 240, cycle: 'W' },
+    CARD: { n: 1, sizeL: 240, cycle: 'A' }, REC: { n: 1, sizeL: 240, cycle: 'B' }, ORG: { n: 2, sizeL: 240, cycle: 'F' } } }]));
+  assert.equal(C.getBinCount('r1', 'r', 'CARD', 0, 240, 0.5), 1, 'paper is counted from the table, with no split or rate behind it');
+  assert.equal(C.cycleFor('r1', 'r', 'CARD', 0.5), 'A');
+  assert.equal(C.getBinCount('r1', 'r', 'ORG', 0, 240, 0.5), 2);
+  // runCalc adds a table's streams as rows and visibleStreams keeps them —
+  // without both, the paper count would have no row to land on.
+  const src = extractSrcdocBlock('calc-iframe', /^function runCalc\(/).text;
+  assert.ok(/_rmT\.entry\.method\.table\.steps/.test(src), 'runCalc adds the streams the live table names');
+  assert.ok(/resTableBin\(rr\.id,sec,s\)/.test(extractSrcdocBlock('calc-iframe', /^function visibleStreams\(/).text),
+    'a stream the table bins stays visible with no volume behind it');
+});
+
 test('a table council with no generation rate still answers — volume is not the basis', () => {
   const r = room({ alloc: { apt_1br: 20, apt_2br: 0, apt_3br: 0, townhouse: 0 } });
   const C = loadCalc({ rooms: [r], councilValue: 'northern_beaches', councilLabel: 'Northern Beaches Council' });
@@ -285,11 +302,74 @@ test('wpResTableLines: a line it cannot read is REPORTED BY NAME, never half-sto
 3 | 10 | Sharps | 1 | 120 | weekly
 This table is indicative only and subject to change.`);
   assert.equal(out.steps.length, 1, 'only the complete line became a band');
-  assert.equal(out.skipped.length, 2);
-  assert.ok(out.skipped.some(x => /count or size missing/.test(x.why)), 'a missing size is named, never inferred');
+  assert.equal(out.skipped.length, 1);
+  assert.deepStrictEqual(out.needSize, { GW: 1 }, 'a missing size is counted by stream, never inferred');
+  assert.equal(out.steps[0].bins.GW.n, 1, 'and the count-only line did not overwrite or join a band');
   assert.ok(out.skipped.some(x => /stream not recognised/.test(x.why)), 'an unknown stream is named, never guessed onto the nearest one');
   assert.ok(out.skipped.every(x => x.line), 'each skipped line is quoted back so it can be typed in by hand');
   assert.equal(P.wpResTableLines('NO TABLE').steps.length, 0);
+});
+
+// Northern Beaches Appendix A: Garbage · Paper · Bottles · Vegetation, counts
+// only — the bin size is not printed in the table.
+const NB = `dwellings_from | dwellings_to | stream | bin_count | bin_size_litres | frequency
+3 | 3 | Garbage | 1 |  |
+3 | 3 | Paper | 1 |  |
+3 | 3 | Bottles | 1 |  |
+3 | 3 | Vegetation | 2 |  |
+4 | 4 | Garbage | 2 |  |
+4 | 4 | Paper | 1 |  |
+4 | 4 | Bottles | 1 |  |
+4 | 4 | Vegetation | 2 |  |`;
+
+test('council words that are not ours: paper and bottles are two bins, vegetation is organics', () => {
+  const P = loadPlatform();
+  assert.equal(P.wpResStreamId('Paper'), 'CARD');
+  assert.equal(P.wpResStreamId('Paper & cardboard'), 'CARD');
+  assert.equal(P.wpResStreamId('Bottles'), 'REC', 'the containers bin is the recycling stream once paper has its own');
+  assert.equal(P.wpResStreamId('Containers'), 'REC');
+  assert.equal(P.wpResStreamId('Vegetation'), 'ORG');
+  assert.equal(P.wpResStreamId('Total bins'), null, 'a total column is never read as a stream');
+  // CARD survives the parse, so it reaches the calculator.
+  const t = P.wpResTableParse({ steps: [{ min: 3, max: 3, bins: { CARD: { n: 1, sizeL: 240, cycle: 'A' } } }] });
+  assert.deepStrictEqual(t.steps[0].bins.CARD, { n: 1, sizeL: 240, cycle: 'A' });
+});
+
+test('a counts-only table: the size comes from the document or a person, never a guess', () => {
+  const P = loadPlatform();
+  const bare = P.wpResTableLines(NB);
+  assert.equal(bare.steps.length, 0, 'no size from anywhere — nothing is stored');
+  assert.deepStrictEqual(bare.needSize, { GW: 2, CARD: 2, REC: 2, ORG: 2 }, 'asked once per stream, not once per line');
+  assert.equal(bare.skipped.length, 0, '98 bands with no size are not 392 skipped lines');
+  // A size the document states elsewhere arrives as a DEFAULT line, with where.
+  const doc = P.wpResTableLines('DEFAULT | Garbage | 240 | weekly | Appendix A note 1\nDEFAULT | Paper | 240 |  | Appendix A note 1\n' + NB);
+  assert.deepStrictEqual(doc.steps[1].bins.GW, { n: 2, sizeL: 240, cycle: 'W' });
+  assert.equal(doc.defaults.GW.where, 'Appendix A note 1');
+  assert.deepStrictEqual(doc.needSize, { REC: 2, ORG: 2 }, 'only the streams the document gives a size for come in');
+  assert.deepStrictEqual(doc.cycleAssumed, ['CARD'], 'a frequency nobody stated is weekly AND named as assumed');
+  // What a person types wins over the document for a cell the table left blank.
+  const typed = P.wpResTableLines(NB, { fill: { ORG: { sizeL: 240, cycle: 'F' } } });
+  assert.deepStrictEqual(typed.steps[0].bins.ORG, { n: 2, sizeL: 240, cycle: 'F' });
+  assert.equal(typed.words.CARD, undefined, 'streams still waiting for a size are not reported as read');
+  // Two council columns reading as one stream: the second is refused and named.
+  const clash = P.wpResTableLines('3 | 3 | Bottles | 1 | 240 | weekly\n3 | 3 | Cans | 1 | 240 | weekly');
+  assert.equal(clash.steps[0].bins.REC.n, 1);
+  assert.ok(/“Cans” and “Bottles” both read as REC/.test(clash.skipped[0].why));
+});
+
+test('wpResTableFill: one stream across every band, nothing else touched', () => {
+  const P = loadPlatform();
+  const doc = P.wpResTableLines('DEFAULT | Garbage | 240 | weekly | note\n' + NB);
+  const extra = P.wpResTableLines(NB, { fill: { CARD: { sizeL: 240 } } }).steps;
+  const r = P.wpResTableFill(doc.steps, 'CARD', { sizeL: 240, cycle: 'A' }, extra);
+  assert.equal(r.added, 2, 'the count-only paper lines come in with the typed size');
+  assert.deepStrictEqual(r.steps[1].bins.CARD, { n: 1, sizeL: 240, cycle: 'A' });
+  assert.deepStrictEqual(r.steps[1].bins.GW, doc.steps[1].bins.GW, 'other streams are untouched');
+  assert.equal(r.steps[0].bins.REC, undefined, 'a stream not filled stays absent');
+  const c = P.wpResTableFill(r.steps, 'GW', { cycle: 'B' }, null);
+  assert.equal(c.set, 2);
+  assert.deepStrictEqual(c.steps[0].bins.GW, { n: 1, sizeL: 240, cycle: 'B' }, 'a cycle-only fill keeps the size and count');
+  assert.equal(doc.steps[0].bins.GW.cycle, 'W', 'the input is not mutated');
 });
 
 // ── §4: pins on the wiring ──
@@ -322,7 +402,9 @@ test('the methods reach the calculator, and the calculator reports which one ans
 });
 
 test('extraction writes a DRAFT and only a human opens the gate', () => {
-  const ex = extractBlock(/^async function rdbResExtract\(/).text;
+  const ex = extractBlock(/^async function rdbResRead\(/).text;
+  assert.ok(/rdbResRead\(/.test(extractBlock(/^async function rdbResExtract\(/).text) &&
+    /rdbResRead\(/.test(extractBlock(/^function rdbResExtractFile\(/).text), 'both ways in go through the one reader');
   assert.ok(/m\.status = 'draft'/.test(ex), 'an extracted table is always a draft');
   assert.ok(!/status = 'live'/.test(ex), 'extraction can never mark itself live');
   assert.ok(/skipped/.test(ex), 'and what it could not read is reported rather than dropped');
