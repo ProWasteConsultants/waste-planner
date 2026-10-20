@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
     .maybeSingle();
 
   if (profile?.stripe_subscription_id) {
-    return jsonRes({ error: "You already have a subscription. Contact lachy@prowaste.au to change plans." }, 409, cors);
+    return jsonRes({ error: "You already have a subscription. Contact info@prowaste.au to change plans." }, 409, cors);
   }
 
   try {
@@ -146,7 +146,7 @@ Deno.serve(async (req) => {
       const pi = inv && typeof inv !== "string" ? inv.payment_intent : null;
       const piId = typeof pi === "string" ? pi : pi?.id;
       if (piId) await stripe.refunds.create({ payment_intent: piId }).catch(() => {});
-      return jsonRes({ error: "Account update failed: " + updErr.message + ". The subscription was cancelled and the charge refunded — contact lachy@prowaste.au if the refund does not appear." }, 500, cors);
+      return jsonRes({ error: "Account update failed: " + updErr.message + ". The subscription was cancelled and the charge refunded — contact info@prowaste.au if the refund does not appear." }, 500, cors);
     }
 
     return jsonRes({ tier, subscription_id: sub.id }, 200, cors);

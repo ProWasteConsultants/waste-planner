@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
   const sbAdmin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const uid = user.id;
   const fail = (step: string, e: { message?: string } | null) =>
-    jsonRes({ error: step + (e?.message ? ": " + e.message : "") + ". Deletion stopped here; nothing after this step was changed. Contact lachy@prowaste.au." }, 500, cors);
+    jsonRes({ error: step + (e?.message ? ": " + e.message : "") + ". Deletion stopped here; nothing after this step was changed. Contact info@prowaste.au." }, 500, cors);
 
   // ── 2. Sole admin of an org with other members? Refuse. ──────────────────
   const { data: myMemberships, error: memErr } = await sbAdmin
@@ -121,7 +121,7 @@ Deno.serve(async (req) => {
   let cancelled = false;
   if (profile?.stripe_subscription_id) {
     const key = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!key) return jsonRes({ error: "Billing isn't configured, so the subscription can't be cancelled. Contact lachy@prowaste.au." }, 500, cors);
+    if (!key) return jsonRes({ error: "Billing isn't configured, so the subscription can't be cancelled. Contact info@prowaste.au." }, 500, cors);
     try {
       const stripe = new Stripe(key, { httpClient: Stripe.createFetchHttpClient() });
       await stripe.subscriptions.cancel(profile.stripe_subscription_id);
@@ -130,7 +130,7 @@ Deno.serve(async (req) => {
       const msg = e instanceof Stripe.errors.StripeError ? e.message : "cancel failed";
       // Already gone in Stripe is fine; anything else stops the deletion.
       if (!/No such subscription|canceled/i.test(msg)) {
-        return jsonRes({ error: "Couldn't cancel your subscription (" + msg + "), so nothing was deleted. Contact lachy@prowaste.au." }, 502, cors);
+        return jsonRes({ error: "Couldn't cancel your subscription (" + msg + "), so nothing was deleted. Contact info@prowaste.au." }, 502, cors);
       }
     }
   }

@@ -11,21 +11,69 @@ const { SOURCE, extractBlock, loadEngine, decodeSrcdoc } = require('./extract.js
 const ROOT = path.join(__dirname, '..');
 const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const AID = 'Design aid only — verify before submission';
-const legalConfig = () => { const ctx = { window: {} }; vm.runInNewContext(read('legal.js'), ctx); return ctx.window.WP_LEGAL; };
-const fn = name => extractBlock(new RegExp('^(?:async )?function ' + name + '\\(')).text;
+const legalConfig = () => JSON.parse(read('legal/versions.json'));
+const fn = name => extractBlock(new RegExp('^(?:async )?function ' + name + '\\('))
+  .text;
+const MD = require('../legal/md.js');
 
-// ── 1. one config, fixed dates ──
-test('legal.js is the one place the versions live; no date is computed', () => {
+// ── 1. one source of truth ──
+test('legal/versions.json is the one place versions and effective dates live', () => {
   const L = legalConfig();
-  assert.equal(L.terms.version, '2.0');
-  assert.equal(L.privacy.version, '2.0');
-  assert.equal(L.terms.path, 'terms'); assert.equal(L.privacy.path, 'privacy');
-  assert.ok(!/new Date|Date\.now/.test(read('legal.js')), 'versions and dates are fixed text');
-  assert.ok(SOURCE.includes('<script src="legal.js"></script>'), 'the app loads it');
-  const legalDocs = SOURCE.slice(SOURCE.indexOf('const LEGAL_DOCS = {'), SOURCE.indexOf('function showLegal('));
-  assert.ok(!/\bterms:\s*\{|\bprivacy:\s*\{/.test(legalDocs.slice(0, legalDocs.indexOf('ai: {'))), 'the old Terms / Privacy modal text is gone');
-  assert.ok(!SOURCE.includes("Last updated: ${new Date()"), 'no run-time "Last updated" date anywhere');
-  assert.ok(fn('showLegal').includes("window.open(page.path, '_blank', 'noopener')"), 'Terms / Privacy open the pages');
+  for (const k of ['terms', 'privacy']) {
+    assert.match(L[k].version, /^\d+(\.\d+)*$/, k + ' version');
+    assert.match(L[k].effective, /^\d{4}-\d{2}-\d{2}$/, k + ' effective date is a fixed date');
+    assert.ok(fs.existsSync(path.join(ROOT, 'legal', L[k].file)), k + ' document file exists');
+  }
+  assert.equal(L.terms.version, '2.0'); assert.equal(L.privacy.version, '2.0');
+  assert.equal(L.terms.effective, '2026-10-20'); assert.equal(L.privacy.effective, '2026-10-20');
+  assert.ok(!fs.existsSync(path.join(ROOT, 'legal.js')), 'the old config is gone');
+  assert.ok(fn('wpLegalLoad').includes("fetch('legal/versions.json'"), 'the app reads it');
+  assert.ok(!/Last updated: \$\{new Date/.test(SOURCE), 'no run-time date anywhere');
+  // no version hard-coded in the sign-up / acceptance paths
+  ['wpLegalSignupMeta', 'wpLegalRecord', 'wpLegalCheck', 'wpLegalModal', 'handleSignup'].forEach(n =>
+    assert.ok(!/['"]\d+\.\d+['"]/.test(fn(n)), n + ' carries no literal version'));
+  assert.ok(!/['"]2\.0['"]/.test(read('supabase/functions/legal-notice/index.ts')), 'the notice reads the published versions');
+});
+test('no copy of the legal text anywhere but legal/*.md', () => {
+  assert.ok(!SOURCE.includes('const LEGAL_DOCS'), 'the modal text is gone');
+  assert.ok(!SOURCE.includes('id="legal-modal"'), 'and its modal');
+  for (const f of ['terms.html', 'privacy.html', 'terms/index.html', 'privacy/index.html']) {
+    const page = read(f);
+    assert.ok(!/Draft for review/i.test(page), f + ': no draft notice');
+    const text = page.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    assert.ok(text.length < 260, f + ' holds no prose of its own: ' + text.slice(0, 120));
+  }
+  for (const marker of ['Privacy Act 1988', 'Australian Privacy Principles', 'governed by the laws', 'Limitation of Liability'])
+    assert.ok(!SOURCE.includes(marker), 'index.html carries no legal text: ' + marker);
+  assert.ok(fn('showLegal').includes("window.open(doc === 'privacy' ? 'privacy' : 'terms', '_blank', 'noopener')"), 'links open the pages');
+});
+test('the pages render legal/<doc>.md with the version line, at both URLs', () => {
+  for (const k of ['terms', 'privacy']) {
+    const page = read(k + '.html');
+    assert.ok(page.includes(`<article id="doc" data-doc="${k}">`));
+    assert.ok(page.includes('<script src="legal/md.js"></script>') && page.includes('<script src="legal/page.js"></script>'));
+    const alias = read(k + '/index.html');
+    assert.ok(alias.includes(`url=../${k}.html`) && alias.includes(`location.replace('../${k}.html'`), k + '/ forwards to ' + k + '.html');
+  }
+  assert.ok(fs.existsSync(path.join(ROOT, '.nojekyll')), 'Jekyll off, so legal/*.md is served raw, not converted');
+  const pj = read('legal/page.js');
+  assert.ok(pj.includes("fetch(at('versions.json')") && pj.includes('fetch(at(d.file)'), 'reads the config, then the document');
+  assert.ok(pj.includes("'Version ' + d.version + ' · Effective ' + window.wpLegalMd.longDate(d.effective)"));
+});
+test('md.js: the Markdown legal documents use, and nothing executable', () => {
+  const h = MD.render('# Terms\n\nIntro **bold** and *it*.\n\n## 1. Scope\n1. one\n2. two\n   - a\n   - b\n\n| A | B |\n|---|:-:|\n| x | y |\n\n> note\n\n---\nEmail info@prowaste.au or https://wasteplanner.au.\n\n<!-- hidden -->');
+  assert.match(h, /<h1 id="terms">Terms<\/h1>/);
+  assert.match(h, /<h2 id="1-scope">1\. Scope<\/h2>/);
+  assert.match(h, /<strong>bold<\/strong> and <em>it<\/em>/);
+  assert.match(h, /<ol><li>one<\/li><li>two<ul><li>a<\/li><li>b<\/li><\/ul><\/li><\/ol>/);
+  assert.match(h, /<th>A<\/th><th style="text-align:center">B<\/th>/);
+  assert.match(h, /<blockquote><p>note<\/p><\/blockquote>/);
+  assert.match(h, /<a href="mailto:info@prowaste.au">info@prowaste.au<\/a>/);
+  assert.match(h, /<a href="https:\/\/wasteplanner.au" target="_blank" rel="noopener">https:\/\/wasteplanner.au<\/a>\./);
+  assert.ok(!h.includes('hidden'), 'editor comments are not shown');
+  const bad = MD.render('<script>alert(1)</script>\n\n[x](javascript:alert(1)) <img src=x onerror=alert(1)>');
+  assert.ok(!/<script|<img|href="javascript/i.test(bad), 'raw HTML and javascript: links never come through');
+  assert.equal(MD.longDate('2026-10-20'), '20 October 2026');
 });
 
 // ── 2. sign-up ──
@@ -38,6 +86,8 @@ test('sign-up: an unticked box linking both pages in a new tab, and both paths r
     assert.ok(/if \(termsCheck && !termsCheck\.checked\)/.test(src), n + ' blocks an unticked box');
     assert.ok(src.indexOf('termsCheck.checked') < (src.indexOf('handleSignup()') >= 0 ? src.indexOf('handleSignup()') : Infinity), n + ' checks before creating anything');
   });
+  assert.ok(fn('handleSignupToPay').includes('if (!(await wpLegalLoad()))'), 'no payment before the versions are known');
+  assert.ok(fn('handleFreeSignup').includes('if (!(await wpLegalLoad()))'));
   const su = fn('handleSignup');
   assert.ok(su.includes('...wpLegalSignupMeta()'), 'the agreed versions ride the auth metadata');
   assert.ok(su.indexOf("await wpLegalRecord('signup')") > su.indexOf("from('profiles').upsert("), 'recorded once the profile row exists');
@@ -165,4 +215,7 @@ test('links: app rail, account, auth screen, and the payment step', () => {
   assert.ok(SOURCE.includes('<div class="rail-legal"><a href="terms" target="_blank" rel="noopener">Terms</a><a href="privacy" target="_blank" rel="noopener">Privacy</a></div>'));
   assert.ok(SOURCE.includes('By subscribing you agree to the <a href="terms" target="_blank" rel="noopener"'), 'beside Subscribe');
   assert.ok(!/href="(terms|privacy)\.html"/.test(SOURCE), 'one URL form: /terms and /privacy');
+  assert.ok(!/lachy@prowaste\.au/.test(SOURCE.replace("const ADMIN_EMAIL = 'lachy@prowaste.au'", '')), 'users are shown info@prowaste.au, never a personal address');
+  for (const f of ['supabase/functions/delete-account/index.ts', 'supabase/functions/create-subscription/index.ts', 'legal/terms.md', 'legal/privacy.md'])
+    assert.ok(!read(f).includes('lachy@prowaste.au'), f);
 });

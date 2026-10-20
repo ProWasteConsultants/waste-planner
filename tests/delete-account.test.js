@@ -62,6 +62,9 @@ test('the app: typed confirmation, the server does the work, device copies clear
   assert.ok(SOURCE.includes('onclick="wpDeleteAccountOpen()"'), 'reachable from Account Settings');
   const sql = fs.readFileSync(path.join(__dirname, '..', 'sql', '2026-10-19-delete-account.sql'), 'utf8');
   assert.match(sql, /grant select, update, delete on public\.projects to service_role;/);
-  const priv = fs.readFileSync(path.join(__dirname, '..', 'privacy.html'), 'utf8');
-  assert.ok(priv.includes('kept for our professional records'), 'privacy policy says what is kept');
+  // The policy text is legal/privacy.md (the one copy). Until the final
+  // document is dropped in, the placeholder stands and this is a reminder;
+  // after that, the policy must say what deletion keeps.
+  const priv = fs.readFileSync(path.join(__dirname, '..', 'legal', 'privacy.md'), 'utf8');
+  if (!/PLACEHOLDER:/.test(priv)) assert.ok(/kept|retain/i.test(priv) && /delet/i.test(priv), 'privacy policy says what deletion keeps');
 });

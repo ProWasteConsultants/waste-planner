@@ -1,8 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Terms / Privacy versions and dates: the one config (WP_LEGAL) -->
-<script src="legal.js"></script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waste Planner — Pro Waste Consultants</title>
@@ -15286,7 +15284,7 @@ async function wpEngageSubmit() {
   } catch (err) {
     console.error('engage error:', err);
     go.disabled = false; go.textContent = 'Send to Pro Waste →';
-    msg.textContent = 'Something went wrong — please try again, or email lachy@prowaste.au.';
+    msg.textContent = 'Something went wrong — please try again, or email info@prowaste.au.';
   }
 }
 
@@ -15840,10 +15838,10 @@ async function openBillingPortal() {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
     });
     const j = await resp.json().catch(() => ({}));
-    if (!resp.ok) { alert(j?.error || 'Could not open billing management. Please try again or contact lachy@prowaste.au.'); return; }
+    if (!resp.ok) { alert(j?.error || 'Could not open billing management. Please try again or contact info@prowaste.au.'); return; }
     window.location.href = j.url;
   } catch (e) {
-    alert('Could not open billing management. Please try again or contact lachy@prowaste.au.');
+    alert('Could not open billing management. Please try again or contact info@prowaste.au.');
   }
 }
 
@@ -16644,11 +16642,36 @@ async function wpEnsureProfile() {
 }
 
 // ── TERMS OF SERVICE / PRIVACY POLICY ACCEPTANCE ────────────────────────────
-// Versions and dates live in legal.js (window.WP_LEGAL). Acceptance is
-// recorded server-side by wp_accept_terms (sql/2026-10-20-legal-acceptance.sql),
+// Versions and effective dates live in legal/versions.json — the one config,
+// also read by terms.html / privacy.html. Loaded once (wpLegalLoad) and held
+// in window.WP_LEGAL; nothing in this file hard-codes a version. Acceptance
+// is recorded server-side by wp_accept_terms (sql/2026-10-20-legal-acceptance.sql),
 // which stamps the server's clock — the browser cannot write the columns.
 function wpLegal() { return (typeof window !== 'undefined' && window.WP_LEGAL) || null; }
 function wpLegalDoc(doc) { const L = wpLegal(); return L && (doc === 'terms' || doc === 'privacy') ? L[doc] : null; }
+// Pure: is this a usable versions.json? Both documents need a dotted version.
+function wpLegalValid(L) {
+  const ok = d => d && typeof d.version === 'string' && /^\d+(\.\d+)*$/.test(d.version);
+  return !!(L && ok(L.terms) && ok(L.privacy));
+}
+// Fetch legal/versions.json once; resolves to the config or null. Callers
+// that record an acceptance refuse to proceed on null rather than guess.
+function wpLegalLoad() {
+  if (wpLegalValid(wpLegal())) return Promise.resolve(wpLegal());
+  if (wpLegalLoad.p) return wpLegalLoad.p;
+  wpLegalLoad.p = fetch('legal/versions.json', { cache: 'no-cache' })
+    .then(r => r.ok ? r.json() : null)
+    .then(L => { if (!wpLegalValid(L)) throw new Error('legal/versions.json is not usable'); window.WP_LEGAL = L; return L; })
+    .catch(e => { console.warn('Terms versions:', e.message || e); wpLegalLoad.p = null; return null; });
+  return wpLegalLoad.p;
+}
+// 'YYYY-MM-DD' → '20 October 2026'
+function wpLegalLongDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  const M = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return m && M[+m[2] - 1] ? `${+m[3]} ${M[+m[2] - 1]} ${m[1]}` : '';
+}
+if (typeof window !== 'undefined' && typeof fetch === 'function') wpLegalLoad();
 // Dotted version compare: '2.0' vs '1.10'. Blank / missing sorts lowest.
 function wpLegalVersionCmp(a, b) {
   const blank = v => v == null || String(v).trim() === '';
@@ -16699,6 +16722,7 @@ async function wpLegalRecord(source) {
 }
 async function wpLegalCheck() {
   if (typeof currentUser === 'undefined' || !currentUser) return;
+  await wpLegalLoad();
   const r = wpLegalNeeds(typeof currentProfile !== 'undefined' ? currentProfile : null, currentUser, wpLegal(), Date.now());
   if (r.record) { await wpLegalRecord('signup'); return; }
   if (!r.need) return;
@@ -16714,7 +16738,7 @@ function wpLegalModal(why) {
   m.id = 'wp-legal-modal';
   m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true'); m.setAttribute('aria-labelledby', 'wp-legal-title');
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:11800;display:flex;align-items:center;justify-content:center;padding:16px;';
-  const link = d => `<a href="${L[d].path}" target="_blank" rel="noopener" style="color:#0E7C7B;font-weight:600;">${L[d].title}</a> (Version ${L[d].version}${L[d].date && L[d].date !== 'TBC' ? ', ' + L[d].date : ''})`;
+  const link = d => `<a href="${L[d].path}" target="_blank" rel="noopener" style="color:#0E7C7B;font-weight:600;">${L[d].title}</a> (Version ${L[d].version}${wpLegalLongDate(L[d].effective) ? ', effective ' + wpLegalLongDate(L[d].effective) : ''})`;
   m.innerHTML = `
     <div style="background:var(--white);border-radius:16px;width:460px;max-width:100%;max-height:92vh;overflow:auto;padding:26px 30px;">
       <div id="wp-legal-title" style="font-size:17px;font-weight:700;color:#0A3D38;margin-bottom:8px;">${why === 'new' ? 'Before you continue' : 'We’ve updated our Terms and Privacy Policy'}</div>
@@ -17022,7 +17046,7 @@ async function handleLogin() {
 // Store pending signup details before payment
 let pendingSignup = null;
 
-function handleSignupToPay() {
+async function handleSignupToPay() {
   if (wpComingSoon()) return; // launch gate: sign-up is closed
   const name = document.getElementById('signup-name').value.trim();
   const company = document.getElementById('signup-company').value.trim();
@@ -17045,6 +17069,12 @@ function handleSignupToPay() {
     msg.className = 'auth-msg error'; return;
   }
 
+  // The versions this box agrees to come from legal/versions.json; without
+  // them nothing can be recorded, so stop here — before any payment.
+  if (!(await wpLegalLoad())) {
+    msg.textContent = 'Could not load the Terms of Service — check your connection and try again.';
+    msg.className = 'auth-msg error'; return;
+  }
   msg.textContent = ''; msg.className = 'auth-msg';
 
   // Store details — NO account created yet, only after payment
@@ -17069,6 +17099,7 @@ async function handleSignup() {
   if (wpComingSoon()) { lastSignupError = 'Sign-up is not open yet.'; return null; }
   lastSignupError = null;
   const { name, company, role, email, password } = pendingSignup;
+  if (!(await wpLegalLoad())) { lastSignupError = 'Could not load the Terms of Service — check your connection and try again.'; return null; }
 
   const { data, error } = await sb.auth.signUp({
     email, password,
@@ -17122,6 +17153,7 @@ async function handleFreeSignup() {
   if (password.length < 8) { msg.textContent = 'Password must be at least 8 characters.'; msg.className = 'auth-msg error'; return; }
   const termsCheck = document.getElementById('signup-terms');
   if (termsCheck && !termsCheck.checked) { msg.textContent = 'Please agree to the Terms of Service and Privacy Policy.'; msg.className = 'auth-msg error'; return; }
+  if (!(await wpLegalLoad())) { msg.textContent = 'Could not load the Terms of Service — check your connection and try again.'; msg.className = 'auth-msg error'; return; }
 
   msg.textContent = 'Creating your account…'; msg.className = 'auth-msg';
   try {
@@ -18602,52 +18634,13 @@ window.applyRoleAccess = function() {
 </script>
 
 
-<!-- LEGAL MODAL -->
-<div id="legal-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:11000;align-items:center;justify-content:center;">
-  <div style="background:var(--white);border-radius:16px;width:680px;max-width:96vw;max-height:88vh;display:flex;flex-direction:column;">
-    <div style="padding:20px 24px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;">
-      <div style="font-size:16px;font-weight:700;color:#0A3D38;" id="legal-modal-title">Terms of Service</div>
-      <button onclick="closeLegal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#6B7280;padding:4px;">✕</button>
-    </div>
-    <div id="legal-modal-content" style="padding:24px;overflow-y:auto;font-size:13px;line-height:1.7;color:var(--text);flex:1;"></div>
-    <div style="padding:16px 24px;border-top:1px solid #eee;text-align:right;">
-      <button onclick="closeLegal()" style="background:#0A3D38;color:#fff;border:none;border-radius:8px;padding:10px 24px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">Close</button>
-    </div>
-  </div>
-</div>
 
 
 <script>
-// ── LEGAL DOCUMENTS ───────────────────────────────────────────────────────
-// Terms of Service and Privacy Policy are the standalone pages
-// (wasteplanner.au/terms, /privacy — versions and dates in legal.js, never
-// computed). Only the AI policy is still an in-app modal; it has no page yet.
-const LEGAL_DOCS = {
-  ai: {
-    title: 'AI Usage & Disclaimer',
-    content: `
-      <h2 style="font-size:15px;font-weight:700;color:#0A3D38;margin-bottom:4px;">AI Usage Policy & Disclaimer</h2>
-      <p style="color:#6B7280;font-size:12px;margin-bottom:20px;">How Waste Planner uses artificial intelligence</p>
-
-      <div style="background:#FFF3E0;color:#5D4037;border:1px solid #FFE0B2;border-radius:8px;padding:14px;margin-bottom:20px;">
-        <strong style="color:#E65100;">Important:</strong> AI-generated outputs are indicative only. They do not constitute professional advice and must be verified before use in any planning application or development approval submission.
-      </div>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">What AI Does in Waste Planner</h3>
-      <p><strong>Plan Upload:</strong> Extracts development data (addresses, unit mix, uses) from uploaded PDF plans using AI vision models.</p>
-      <p style="margin-top:8px;"><strong>Compliance Checker:</strong> Analyses WMP documents against council guidelines using large language models. Identifies potential compliance gaps and generates indicative RFI comments.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">What AI Cannot Do</h3>
-      <p>AI cannot: exercise professional judgment; account for site-specific conditions not described in documents; interpret ambiguous council requirements with certainty; replace a qualified waste management consultant's assessment.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">How Your Data Is Processed</h3>
-      <p>Documents are processed locally in your browser — the raw PDF file is never uploaded to our servers. Extracted text and page images are sent to Anthropic's Claude API for analysis. Anthropic operates a zero data retention policy on API calls — your data is not stored or used for model training.</p>
-
-      <h3 style="font-weight:700;color:#0A3D38;margin:16px 0 6px;">Your Responsibility</h3>
-      <p>By using AI features you confirm: you are authorised to submit the relevant documents for third-party AI processing; you understand outputs are indicative only; you will verify outputs with appropriate professional judgment before use in formal submissions.</p>
-    `
-  }
-};
+// ── LEGAL DOCUMENTS ──
+// No legal text lives in this file. The Terms of Service and Privacy Policy
+// are legal/terms.md and legal/privacy.md, rendered by terms.html /
+// privacy.html; their versions are legal/versions.json.
 
 
 // ── AI PLAN UPLOAD ────────────────────────────────────────────────────────
@@ -31820,18 +31813,9 @@ function applyPlanPrefill() {
 }
 
 
+// Terms / Privacy open their pages (the one rendering of legal/*.md).
 function showLegal(doc) {
-  const page = wpLegalDoc(doc);
-  if (page) { window.open(page.path, '_blank', 'noopener'); return; }
-  const content = LEGAL_DOCS[doc];
-  if (!content) return;
-  document.getElementById('legal-modal-title').textContent = content.title;
-  document.getElementById('legal-modal-content').innerHTML = content.content;
-  const modal = document.getElementById('legal-modal');
-  modal.style.display = 'flex';
-}
-function closeLegal() {
-  document.getElementById('legal-modal').style.display = 'none';
+  window.open(doc === 'privacy' ? 'privacy' : 'terms', '_blank', 'noopener');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -32461,12 +32445,10 @@ async function submitToCouncil() {
 document.addEventListener('DOMContentLoaded', () => {
   const legal = document.getElementById('account-legal');
   if (legal) {
-    // Terms + Privacy are the standalone pages (same repo, linkable from
-    // anywhere); the AI policy stays an in-app modal — it has no page yet.
+    // Terms + Privacy are the standalone pages, rendered from legal/*.md
     legal.innerHTML = [
       `<a href="terms" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Terms</a>`,
-      `<a href="privacy" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Privacy</a>`,
-      `<a href="#" onclick="showLegal('ai');return false;" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">AI Policy</a>`
+      `<a href="privacy" target="_blank" rel="noopener" style="color:var(--teal);font-size:11px;font-weight:600;text-decoration:none;">Privacy</a>`
     ].join('<span style="color:var(--border);font-size:10px;margin:0 8px;">·</span>');
   }
 });

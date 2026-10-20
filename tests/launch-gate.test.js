@@ -60,7 +60,7 @@ test('the gate is wired into every way in', () => {
   const showApp = extractBlock(/^function showApp\(/).text;
   assert.match(showApp.split('\n').slice(0, 5).join('\n'), /wpLaunchGateAllows\(currentUser, currentProfile, wpLaunchGateTeamCheck\.ok === true\)/, 'showApp checks before loading anything');
   assert.ok(showApp.indexOf('wpLaunchGateTeamCheck().then(ok => ok ? showApp() : wpLaunchGateBounce())') < showApp.indexOf("getElementById('app-content').style.display = 'flex'"), 'the team check runs before the app opens, and a non-member is bounced');
-  for (const fn of [/^function handleSignupToPay\(/, /^async function handleFreeSignup\(/, /^async function handleSignup\(/, /^async function wpAnonStart\(/, /^function wpAnonEnter\(/])
+  for (const fn of [/^async function handleSignupToPay\(/, /^async function handleFreeSignup\(/, /^async function handleSignup\(/, /^async function wpAnonStart\(/, /^function wpAnonEnter\(/])
     assert.match(extractBlock(fn).text, /wpComingSoon\(\)/, `${fn} is closed while gated`);
   assert.match(SOURCE, /\.auth-screen\.wp-cs #auth-value-line,\.auth-screen\.wp-cs \.auth-tabs,\.auth-screen\.wp-cs #auth-signup\{display:none !important;\}/, 'sign-up form hidden even in team mode');
 });

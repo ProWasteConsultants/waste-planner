@@ -25,8 +25,10 @@
 // role — RLS shows a staff member only what the staff policies allow).
 // Requires sql/2026-10-20-legal-acceptance.sql (legal_notice_log).
 //
-// Body: { effective_date: "YYYY-MM-DD", terms_version?: "2.0", privacy_version?: "2.0",
-//         send?: boolean, confirm?: string, resend?: boolean }
+// The versions announced are the PUBLISHED ones — legal/versions.json on the
+// live site (LEGAL_VERSIONS_URL to override) — never a value typed here.
+//
+// Body: { effective_date: "YYYY-MM-DD", send?: boolean, confirm?: string, resend?: boolean }
 // Deploy with Verify JWT on: supabase functions deploy legal-notice
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -69,10 +71,19 @@ Deno.serve(async (req) => {
   const { data: me } = await sbUser.from("profiles").select("is_staff").eq("uuid", user.id).maybeSingle();
   if (!me?.is_staff) return jsonRes({ error: "Staff only" }, 403, cors);
 
-  let body: { effective_date?: string; terms_version?: string; privacy_version?: string; send?: boolean; confirm?: string; resend?: boolean } = {};
+  let body: { effective_date?: string; send?: boolean; confirm?: string; resend?: boolean } = {};
   try { const t = await req.text(); if (t.trim()) body = JSON.parse(t); }
   catch { return jsonRes({ error: "Body must be JSON" }, 400, cors); }
-  const termsVersion = String(body.terms_version || "2.0"), privacyVersion = String(body.privacy_version || "2.0");
+  // the published versions — the same file the app and the pages read
+  const versionsUrl = Deno.env.get("LEGAL_VERSIONS_URL") || "https://wasteplanner.au/legal/versions.json";
+  let termsVersion = "", privacyVersion = "";
+  try {
+    const vr = await fetch(versionsUrl, { headers: { "cache-control": "no-cache" } });
+    const v = vr.ok ? await vr.json() : null;
+    termsVersion = String(v?.terms?.version || ""); privacyVersion = String(v?.privacy?.version || "");
+  } catch { /* reported below */ }
+  if (!/^\d+(\.\d+)*$/.test(termsVersion) || !/^\d+(\.\d+)*$/.test(privacyVersion))
+    return jsonRes({ ok: false, error: `Could not read the published versions from ${versionsUrl} — nothing was sent.` }, 502, cors);
   const effective = String(body.effective_date || "");
   const today = melbourneToday();
   const date = checkEffectiveDate(effective, today);

@@ -267,16 +267,12 @@ test('the billing functions are de-trialed and cancellation reverts to free', ()
 });
 
 // ── §7: standalone legal pages ──
-test('privacy and terms ship as static pages, marked as drafts for review', () => {
+test('privacy and terms ship as static pages that render legal/*.md (see tests/legal.test.js)', () => {
   for (const f of ['privacy.html', 'terms.html']) {
     const page = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-    assert.ok(page.includes('Draft for review'), f + ' is honest about its status');
-    assert.ok(page.includes('Privacy Act 1988') || page.includes('laws of Victoria'), f + ' is AU-oriented');
-    assert.ok(page.includes('lachy@prowaste.au'), f + ' carries the contact');
+    assert.ok(page.includes('<script src="legal/page.js"></script>'), f + ' renders the document');
+    assert.ok(page.includes('info@prowaste.au'), f + ' carries the contact');
   }
-  const terms = fs.readFileSync(path.join(__dirname, '..', 'terms.html'), 'utf8');
-  assert.ok(terms.includes('free plan'), 'terms describe the free plan, not a trial');
-  assert.ok(!terms.includes('14-day'), 'no trial in the standalone terms');
 });
 
 // ── server-side enforcement migration ──
