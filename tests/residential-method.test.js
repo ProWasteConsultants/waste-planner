@@ -225,6 +225,24 @@ test('the ON-SCREEN count follows the table too — provision() and getBinCount(
   assert.equal(run(rr, 'r', 'GW', Object.keys(want)).n, 6);
 });
 
+test('the frequency follows the table, not whatever the box showed last time', () => {
+  // A room rendered at weekly before the council's fortnightly table applied
+  // kept reading "1" back from its own input — Northern Beaches organics
+  // stayed weekly until typed by hand.
+  const r = room({ alloc: { apt_1br: 12, apt_2br: 0, apt_3br: 0, townhouse: 0 } });
+  const C = loadCalc({ rooms: [r], councilValue: 'northern_beaches', councilLabel: 'Northern Beaches Council' });
+  C.setLib(LIB);
+  C.setResMethods(tableRow([{ min: 12, max: 12, bins: { ORG: { n: 2, sizeL: 240, cycle: 'F' } } }]));
+  const curCw = new Function('document', 'defCw', 'normCw',
+    extractSrcdocBlock('calc-iframe', /^function curCw\(/).text + ';return curCw;')(
+      { querySelector: () => ({ value: '1' }) }, C.defCw, () => 1);
+  assert.equal(curCw('r1', 'r', 'ORG'), 0.5, 'a stale "1" in the box does not beat the table');
+  assert.equal(C.defCw('r1', 'r', 'ORG'), 0.5);
+  // a person's edit still wins: the input handler records it in _cwOv
+  assert.ok(/_cwOv\[ovKey\(el\.dataset\.room,el\.dataset\.sec,el\.dataset\.stream\)\]=normCw\(el\.value,1\)/.test(
+    require('./extract.js').decodeSrcdoc('calc-iframe').html), 'typed frequencies are kept as overrides');
+});
+
 test('a table council with no generation rate still answers — volume is not the basis', () => {
   const r = room({ alloc: { apt_1br: 20, apt_2br: 0, apt_3br: 0, townhouse: 0 } });
   const C = loadCalc({ rooms: [r], councilValue: 'northern_beaches', councilLabel: 'Northern Beaches Council' });

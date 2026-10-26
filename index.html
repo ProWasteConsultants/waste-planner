@@ -4038,7 +4038,13 @@ function curSize(room,sec,stream){
   const n=Number(v.charAt(0)==='B'?v.slice(1):v);
   return n&gt;0?n:defSize(room,sec,stream);
 }
-function curCw(room,sec,stream){const el=document.querySelector(`.pwStreamCw[data-room=&quot;${room}&quot;][data-sec=&quot;${sec}&quot;][data-stream=&quot;${stream}&quot;]`);return el?normCw(el.value,defCw(room,sec,stream)):defCw(room,sec,stream);}
+// The frequency in use: a person's edit (_cwOv, set on every input), else
+// the default chain in defCw (the council's table, its kerbside service,
+// the generic default). It never reads the box back: the box only holds what
+// the LAST render showed, so reading it made a stale default sticky — a room
+// rendered at weekly before its council's fortnightly table applied stayed
+// weekly for good.
+function curCw(room,sec,stream){return defCw(room,sec,stream);}
 // collections per week: whole numbers, 0.5 for fortnightly, 0.25 for monthly
 function normCw(v,fallback){const n=Number(v);if(!(n&gt;0))return fallback||1;return n&lt;0.375?0.25:n&lt;1?0.5:Math.round(n);}
 function getCurSizes(room,sec,streams){const sz={};streams.forEach(s=&gt;{sz[s]=curSize(room,sec,s);});return sz;}
