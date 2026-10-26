@@ -351,3 +351,25 @@ test('§7 wiring: the preview and the .docx read the same builders; commercial b
   // rates: the commercial uses are priced in the same pass as the residential rates
   assert.ok(/u\.rates = wmpgComRatesFor\(R, d, u\.use\)/.test(extractBlock(/^function wmpgApplyRates\(/).text));
 });
+
+test('rates label: a council with commercial rates only does not claim the state’s residential figures', () => {
+  // Northern Beaches publishes commercial rates and a stepped table, no
+  // residential rate — the WMP's residential L/week are the state's, and the
+  // pill must say so rather than "<council> council rates".
+  const code = CORE.concat([/^function wmpgResMethodNote\(/, /^function wmpgApplyRates\(/]).map(p => extractBlock(p).text).join('\n\n');
+  const run = (R, d) => new Function('WMPG', 'wmpgChuteText', 'wmpgTitleDefault', 'wmpgGuidelinesSync', 'wmpgCoverCreditParse', 'wmpgVehList', 'tbGet',
+    code + ';return wmpgApplyRates;')({ remote: R }, () => '', () => 'T', () => {}, () => ({}), () => [], () => null)(d);
+  const mk = () => ({ state: 'NSW', council: 'Northern Beaches Council', rooms: [], rates: {},
+    unitTypes: [{ key: 'apt_1br' }], residentialMethod: { type: 'table', scope: 'council', council: 'Northern Beaches Council', source: 'Appendix A' } });
+  const R = { PROFILES: { NSW: { resRates: { apt_1br: { GW: 80, REC: 80 } } } },
+    COUNCILS: { NSW: [{ value: 'northern_beaches_council', label: 'Northern Beaches Council' }] },
+    COUNCIL_PROFILES: { 'NSW|northern_beaches_council': { comRates: { cafe: { GW: { rate: 300, unitValue: 100, unit: 'L/Day/100m2' } } } } } };
+  const d = mk(); run(R, d);
+  assert.equal(d.rates.apt_1br.GW, 80, 'the state figure is used');
+  assert.match(d.ratesSource, /^NSW state default residential rates \(Northern Beaches Council publishes none\)/);
+  assert.match(d.ratesSource, /stepped table \(Appendix A\)/, 'and the table is still named as the source of the bin numbers');
+  // A council WITH residential rates keeps its own label.
+  R.COUNCIL_PROFILES['NSW|northern_beaches_council'].resRates = { apt_1br: { GW: 120 } };
+  const d2 = mk(); run(R, d2);
+  assert.match(d2.ratesSource, /^Northern Beaches Council council rates/);
+});

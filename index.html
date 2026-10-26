@@ -33938,7 +33938,13 @@ function wmpgApplyRates(d) {
       d.rates[u.key][s] = +(v || 0);
     });
   });
-  d.ratesSource = (ovName ? `${ovName} council rates` : `${d.state} state default rates`)
+  // A council profile with only commercial rates (Northern Beaches: its
+  // residential answer is a stepped table, not a rate) must not label the
+  // state's residential figures as the council's.
+  const ovRes = !!(ov && ov.resRates && Object.keys(ov.resRates).length);
+  d.ratesSource = (ovName && ovRes ? `${ovName} council rates`
+      : ovName ? `${d.state} state default residential rates (${ovName} publishes none)`
+      : `${d.state} state default rates`)
     + wmpgResMethodNote(d.residentialMethod);
   // Commercial use rows: the rate per stream and where each came from.
   wmpgComRooms(d).forEach(room => (room.uses || []).forEach(u => { u.rates = wmpgComRatesFor(R, d, u.use); }));
