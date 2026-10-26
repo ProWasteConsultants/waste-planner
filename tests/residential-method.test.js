@@ -506,3 +506,52 @@ test('the WMP says which method produced the numbers, with the calculator closed
   assert.ok(/p\.residential_method = e\.data\.residential/.test(src), 'the project keeps it beside the schedule it explains');
   assert.ok(/d\.residentialMethod = p\.residential_method/.test(src), 'and the WMP reads it back');
 });
+
+test('a council the platform names before the rates file has loaded is applied when it arrives, not dropped to None', () => {
+  // ws-calc-fill can land before the published rates file; a council only
+  // that file lists (Northern Beaches) had no option yet, so the pick fell
+  // to "None / use state" and the stepped table never applied.
+  const code = [/^let PENDING_COUNCIL=/, /^function councilMatch\(/, /^function refreshCouncils\(/]
+    .map(p => extractSrcdocBlock('calc-iframe', p).text).join('\n');
+  const mkSel = () => {
+    const sel = { options: [], value: '', changes: 0, dispatchEvent() { this.changes++; },
+      appendChild(o) { this.options.push(o); } };
+    Object.defineProperty(sel, 'innerHTML', { set() { sel.options = [{ value: '', textContent: '— None / use state defaults —' }]; } });
+    return sel;
+  };
+  const sel = mkSel(), state = { value: 'NSW' };
+  const doc = { createElement: () => ({ value: '', textContent: '' }) };
+  const env = { RATES_REMOTE: null, COUNCILS_BY_STATE: { NSW: [{ value: 'city_of_sydney', label: 'City of Sydney' }] } };
+  const C = new Function('g', 'document', 'env', 'Event', `let RATES_REMOTE=null;const COUNCILS_BY_STATE=env.COUNCILS_BY_STATE;` + code +
+    `;return { refreshCouncils, councilMatch, setRemote: r => { RATES_REMOTE = r; }, setPending: v => { PENDING_COUNCIL = v; }, pending: () => PENDING_COUNCIL };`)(
+    id => id === 'council' ? sel : state, doc, env, function () {});
+  C.refreshCouncils();
+  // the fill arrives first: no option for Northern Beaches yet
+  assert.equal(C.councilMatch(sel, 'Northern Beaches Council'), '');
+  C.setPending('Northern Beaches Council');
+  // then the rates file lands and the list is rebuilt
+  C.setRemote({ COUNCILS: { NSW: [{ value: 'northern_beaches_council', label: 'Northern Beaches Council' }] } });
+  C.refreshCouncils();
+  assert.equal(sel.value, 'northern_beaches_council', 'the pending council is selected once it exists');
+  assert.equal(sel.changes, 1, 'and the calculator is told, so the table applies');
+  assert.equal(C.pending(), '', 'applied once, then forgotten');
+  // the fill path records a miss instead of settling for None
+  const fill = require('./extract.js').decodeSrcdoc('calc-iframe').html;
+  assert.ok(/PENDING_COUNCIL = \(!hit && \(d\.council \|\| ''\)\.trim\(\)\) \? d\.council : '';/.test(fill));
+});
+
+test('the calculator gets the library, services and stepped tables even when it is the first tab opened', () => {
+  // They loaded only with the Layout / Collection Point tabs, so a bin
+  // calculator opened first after a reload ran with "0 councils loaded" and
+  // no stepped table.
+  const src = SOURCE_ALL();
+  const i = src.indexOf("e.data.type === 'ws-calc-ready'");
+  assert.ok(i > 0);
+  const block = src.slice(i, i + 300);
+  assert.ok(/WS_EQUIP_DB === null && typeof wsLoadEquipmentDB === 'function'\) wsLoadEquipmentDB\(\); else wsPushEquipToCalc\(\);/.test(block),
+    'the ready handshake loads the library (which pushes) when nothing has loaded it yet');
+  const load = extractBlock(/^async function wsLoadEquipmentDB\(/).text;
+  assert.ok(load.indexOf('wpLoadCouncilSchedules()') >= 0 && load.indexOf('wsPushEquipToCalc()') > load.indexOf('wpLoadCouncilSchedules()'),
+    'and the load reads the council data before it pushes');
+});
+function SOURCE_ALL() { return require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8'); }

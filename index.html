@@ -3970,7 +3970,22 @@ setAcc(rBtn,rPan,false);setAcc(cBtn2,cPan2,false);
 function fillSel(el,sizes,def){el.innerHTML=&quot;&quot;;sizes.forEach(s=&gt;{const o=document.createElement(&quot;option&quot;);o.value=String(s);o.textContent=String(s);el.appendChild(o);});el.value=sizes.includes(def)?String(def):String(sizes[0]);}
 
 
-function refreshCouncils(){const st=g(&quot;state&quot;).value,sel=g(&quot;council&quot;),cur=sel.value;sel.innerHTML='&lt;option value=&quot;&quot;&gt;— None / use state defaults —&lt;/option&gt;';const list=(RATES_REMOTE?.COUNCILS?.[st])||COUNCILS_BY_STATE[st]||[];list.forEach(c=&gt;{const o=document.createElement(&quot;option&quot;);o.value=c.value;o.textContent=c.label;sel.appendChild(o);});sel.value=[...sel.options].some(o=&gt;o.value===cur)?cur:&quot;&quot;;}
+// The council the platform asked for that was not in the list yet. The
+// platform's ws-calc-fill can land before the published rates file has
+// loaded, and a council only that file lists (Northern Beaches) then has no
+// option to match: the pick fell to None and stayed there. It is kept here
+// and applied the moment refreshCouncils has the option.
+let PENDING_COUNCIL='';
+function councilMatch(sel,want){
+  want=String(want||'').trim().toLowerCase();if(!want)return '';
+  for(const o of sel.options){
+    if(!o.value)continue;
+    if(o.value.toLowerCase()===want||o.textContent.trim().toLowerCase()===want||o.textContent.toLowerCase().includes(want))return o.value;
+  }
+  return '';
+}
+function refreshCouncils(){const st=g(&quot;state&quot;).value,sel=g(&quot;council&quot;),cur=sel.value;sel.innerHTML='&lt;option value=&quot;&quot;&gt;— None / use state defaults —&lt;/option&gt;';const list=(RATES_REMOTE?.COUNCILS?.[st])||COUNCILS_BY_STATE[st]||[];list.forEach(c=&gt;{const o=document.createElement(&quot;option&quot;);o.value=c.value;o.textContent=c.label;sel.appendChild(o);});sel.value=[...sel.options].some(o=&gt;o.value===cur)?cur:&quot;&quot;;
+  if(PENDING_COUNCIL){const hit=councilMatch(sel,PENDING_COUNCIL);if(hit){PENDING_COUNCIL='';if(sel.value!==hit){sel.value=hit;sel.dispatchEvent(new Event('change',{bubbles:true}));}}}}
 g(&quot;state&quot;).addEventListener(&quot;change&quot;,refreshCouncils);refreshCouncils();
 
 // Commercial uses now live per bin room — see roomAddCom / comRowHtml.
@@ -4857,15 +4872,10 @@ window.addEventListener('message', function(e) {
       if (d.council === undefined) return;
       const sel = document.getElementById('council');
       if (!sel) return;
-      const want = (d.council || '').trim().toLowerCase();
-      let hit = '';
-      if (want) {
-        for (const o of sel.options) {
-          if (!o.value) continue;
-          if (o.value.toLowerCase() === want || o.textContent.trim().toLowerCase() === want ||
-              o.textContent.toLowerCase().includes(want)) { hit = o.value; break; }
-        }
-      }
+      const hit = councilMatch(sel, d.council);
+      // not listed YET (the rates file is still loading) — refreshCouncils
+      // applies it when the option arrives, instead of leaving None
+      PENDING_COUNCIL = (!hit &amp;&amp; (d.council || '').trim()) ? d.council : '';
       sel.value = hit;
       sel.dispatchEvent(new Event('change', { bubbles: true }));
     }, 250);
@@ -19661,7 +19671,15 @@ window.addEventListener('message', (e) => {
 
 // Handshake: calculator announces readiness, we reply with the project dev summary
 window.addEventListener('message', (e) => {
-  if (e.data && e.data.type === 'ws-calc-ready') { wsPushSummaryToCalc(); wsPushEquipToCalc(); }
+  // The library, the council kerbside services and the residential methods
+  // (a council's stepped table) used to load only when the Layout or
+  // Collection Point tab opened — a calculator opened first after a reload
+  // never got them, and a table council fell back to volume. Load them here;
+  // wsLoadEquipmentDB pushes them when it lands.
+  if (e.data && e.data.type === 'ws-calc-ready') {
+    wsPushSummaryToCalc();
+    if (WS_EQUIP_DB === null && typeof wsLoadEquipmentDB === 'function') wsLoadEquipmentDB(); else wsPushEquipToCalc();
+  }
   // the calculator's ↻: the library and the council schedules come from the
   // platform, so a refresh has to come through here
   if (e.data && e.data.type === 'ws-calc-refresh' && typeof wsLoadEquipmentDB === 'function') wsLoadEquipmentDB();
