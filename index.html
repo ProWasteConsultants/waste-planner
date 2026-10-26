@@ -4094,7 +4094,11 @@ function provision(rr,sec,stream,streams){
   // the bin exists because the dwelling does, and the capacity check below
   // then says whether that one bin actually holds its share
   const pd=perDwellingUnits(rr.id,sec);
-  const nCalc=pd!=null?(vol&gt;0?pd:0):(per&gt;0?Math.max(minBins,Math.max(0,Math.ceil(vol/per))):0);
+  // a council's stepped table has already sized these bins: its count (its
+  // CAPACITY, at a departed size) is the answer, volume or no volume — the
+  // same rule getBinCount applies to the schedule, so screen and WMP agree
+  const tb=resTableBin(rr.id,sec,stream);
+  const nCalc=tb?resTableCount(tb,sz):pd!=null?(vol&gt;0?pd:0):(per&gt;0?Math.max(minBins,Math.max(0,Math.ceil(vol/per))):0);
   const ov=_binOv[ovKey(rr.id,sec,stream)];
   const n=ov!=null?ov:nCalc;
   const cap=n*per;
