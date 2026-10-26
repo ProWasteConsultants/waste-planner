@@ -201,6 +201,30 @@ test('a table that bins paper separately gives the paper row its own count and s
     'a stream the table bins stays visible with no volume behind it');
 });
 
+test('the ON-SCREEN count follows the table too — provision() and getBinCount() agree', () => {
+  // getBinCount feeds the schedule (and so the WMP); provision() is what the
+  // results table draws. Only the first read the table once, so the screen
+  // showed volume-based bins while the WMP got the table's — Northern
+  // Beaches, 12 dwellings, read 6/6/3/0 instead of 4/3/2/3.
+  const r = room({ alloc: { apt_1br: 2, apt_2br: 2, apt_3br: 8, townhouse: 0 } });
+  const C = loadCalc({ rooms: [r], councilValue: 'northern_beaches', councilLabel: 'Northern Beaches Council' });
+  C.setLib(LIB);
+  C.setResMethods(tableRow([{ min: 12, max: 12, bins: { GW: { n: 4, sizeL: 240, cycle: 'W' }, REC: { n: 3, sizeL: 240, cycle: 'W' },
+    CARD: { n: 3, sizeL: 240, cycle: 'W' }, ORG: { n: 2, sizeL: 240, cycle: 'F' } } }]));
+  const prov = extractSrcdocBlock('calc-iframe', /^function provision\(/).text;
+  const run = new Function('resTableBin', 'resTableCount', 'perDwellingUnits', 'curCw', 'eqOf', 'plantOf', 'chuteServed', 'recvOf', 'curSize', 'binFP', '_binOv', 'ovKey', 'EQUIP_LIB',
+    prov + ';return provision;')(C.resTableBin, C.resTableCount, C.perDwellingUnits, () => 1, () => null, () => null, () => ({}), () => null,
+    () => 240, () => 0.5, {}, (a, b, c) => a + '|' + b + '|' + c, {});
+  const rr = { id: 'r1', res: { vols: { GW: 1320, REC: 1320, ORG: 500, CARD: 0 } }, com: { vols: {} } };
+  const want = { GW: 4, REC: 3, CARD: 3, ORG: 2 };
+  Object.entries(want).forEach(([s, n]) => {
+    assert.equal(run(rr, 'r', s, Object.keys(want)).n, n, s + ' on screen');
+    assert.equal(C.getBinCount('r1', 'r', s, rr.res.vols[s], 240, 1), n, s + ' in the schedule');
+  });
+  r.method.r = 'self_haul';   // a private contractor: back to volume
+  assert.equal(run(rr, 'r', 'GW', Object.keys(want)).n, 6);
+});
+
 test('a table council with no generation rate still answers — volume is not the basis', () => {
   const r = room({ alloc: { apt_1br: 20, apt_2br: 0, apt_3br: 0, townhouse: 0 } });
   const C = loadCalc({ rooms: [r], councilValue: 'northern_beaches', councilLabel: 'Northern Beaches Council' });
