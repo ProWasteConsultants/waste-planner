@@ -866,7 +866,7 @@ body.wp-anon .ws-top-chip{display:none;}
       <div class="stat-card stat-filter active" data-status="all" onclick="filterProjects('all',this)">
         <div class="stat-num" id="stat-active">0</div>
         <div class="stat-lbl">All Projects</div>
-        <div class="stat-sub">Saved locally</div>
+        <div class="stat-sub">Saved to your account</div>
       </div>
       <div class="stat-card stat-filter" data-status="Design" onclick="filterProjects('Design',this)">
         <div class="stat-num" id="stat-design">0</div>
@@ -888,6 +888,7 @@ body.wp-anon .ws-top-chip{display:none;}
     <div class="section-header">
       <div class="section-title">Recent Projects</div>
       <div class="filter-tabs" style="align-items:center;gap:6px;">
+        <select class="proj-state-sel" id="proj-workspace" style="display:none;" onchange="setOrgContext(this.value)" title="Workspace — your personal projects or an organisation's. Follows your account to every device."></select>
         <input type="search" class="proj-search" id="proj-search" placeholder="Search name, address, council, job no…" oninput="projSearchInput(this.value)">
         <select class="proj-state-sel" id="proj-state" onchange="projStateInput(this.value)"><option value="all">All states</option></select>
       </div>
@@ -32019,32 +32020,61 @@ async function loadOrgs() {
     myOrgs = (data || []).filter(r => r.orgs).map(r => ({ ...r.orgs, role: r.role }));
   } catch (e) { console.warn('loadOrgs:', e); return; }
 
-  // Restore saved context if still valid
-  const savedId = localStorage.getItem(ORG_CTX_KEY());
-  const saved = myOrgs.find(o => o.id === savedId) || null;
-  currentOrg = saved;
+  // Restore the workspace. It is the ACCOUNT's choice (auth user metadata),
+  // so every device opens on the same one; this device's own key is only the
+  // fallback for an account that has never stored one — and is then written
+  // to the account, so the next device follows.
+  const metaId = currentUser?.user_metadata?.wp_org_ctx;
+  const localId = localStorage.getItem(ORG_CTX_KEY());
+  const pick = wpOrgCtxPick(metaId, localId, myOrgs.map(o => o.id));
+  currentOrg = myOrgs.find(o => o.id === pick) || null;
+  if (metaId === undefined && pick) wpOrgCtxSaveToAccount(pick);
   renderOrgSwitcher();
   renderOrgCard();
   updateOrgNav();
   if (currentOrg) { loadProjectsFromDB(); loadOrgQueueBadge(); getOrgMembers(currentOrg.id).then(() => renderProjects()); }
 }
 
+// Pure: which workspace to open. The account's stored choice wins ('' is a
+// real choice: Personal); a choice for an org the user has left falls back
+// to Personal. With nothing stored on the account, this device's own key.
+function wpOrgCtxPick(metaId, localId, orgIds) {
+  const ok = id => !!id && (orgIds || []).indexOf(id) >= 0;
+  if (typeof metaId === 'string') return ok(metaId) ? metaId : '';
+  return ok(localId) ? localId : '';
+}
+function wpOrgCtxSaveToAccount(id) {
+  if (typeof sb === 'undefined' || !sb || !currentUser) return;
+  try {
+    sb.auth.updateUser({ data: { wp_org_ctx: id || '' } })
+      .then(({ error }) => { if (error) console.warn('workspace choice not saved to the account:', error.message); })
+      .catch(() => {});
+    currentUser.user_metadata = { ...(currentUser.user_metadata || {}), wp_org_ctx: id || '' };
+  } catch (e) {}
+}
+// Two switchers, one choice: the account chip's (desktop, on hover) and the
+// Projects header's (every device — a phone has no hover).
 function renderOrgSwitcher() {
-  const sel = document.getElementById('org-switcher');
-  if (!sel) return;
-  if (!myOrgs.length) { sel.style.display = 'none'; return; }
-  sel.innerHTML = '<option value="">Personal</option>' +
-    myOrgs.map(o => `<option value="${o.id}">${escOrg(o.name)}${o.kind === 'council' ? ' 🏛' : ''}</option>`).join('');
-  sel.value = currentOrg?.id || '';
-  sel.style.display = 'block';
+  ['org-switcher', 'proj-workspace'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    if (!myOrgs.length) { sel.style.display = 'none'; return; }
+    sel.innerHTML = '<option value="">Personal</option>' +
+      myOrgs.map(o => `<option value="${o.id}">${escOrg(o.name)}${o.kind === 'council' ? ' 🏛' : ''}</option>`).join('');
+    sel.value = currentOrg?.id || '';
+    sel.style.display = id === 'proj-workspace' ? '' : 'block';
+  });
 }
 
 function setOrgContext(orgId) {
   currentOrg = myOrgs.find(o => o.id === orgId) || null;
   if (currentOrg) localStorage.setItem(ORG_CTX_KEY(), currentOrg.id);
   else localStorage.removeItem(ORG_CTX_KEY());
-  const sw = document.getElementById('org-switcher');
-  if (sw && sw.value !== (currentOrg?.id || '')) sw.value = currentOrg?.id || '';
+  wpOrgCtxSaveToAccount(currentOrg?.id || '');
+  ['org-switcher', 'proj-workspace'].forEach(id => {
+    const sw = document.getElementById(id);
+    if (sw && sw.value !== (currentOrg?.id || '')) sw.value = currentOrg?.id || '';
+  });
   if (typeof PROJ_SERVICE !== 'undefined') { PROJ_SERVICE.fetchedAt = 0; PROJ_SERVICE.map = {}; }
   updateOrgNav();
   // Re-evaluate the council-shaped UI: switching into a council org hides the
@@ -32073,8 +32103,10 @@ function updateOrgNav() {
 
 function resetOrgState() {
   myOrgs = []; currentOrg = null;
-  const sel = document.getElementById('org-switcher');
-  if (sel) { sel.style.display = 'none'; sel.value = ''; }
+  ['org-switcher', 'proj-workspace'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel) { sel.style.display = 'none'; sel.value = ''; }
+  });
   updateOrgNav();
   updateOrgQueueBadge(0);
 }
