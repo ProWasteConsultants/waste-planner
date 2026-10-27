@@ -79,8 +79,12 @@ Consequences to keep in mind:
 ## Where state lives (standing rule)
 
 **localStorage is only for trivial per-device UI state** — a remembered tab, a
-collapsed panel, an unsent draft, viewport/zoom position, the chosen org
-context. **Anything that is user-created content, shared configuration, a team
+collapsed panel, an unsent draft, viewport/zoom position. (The chosen org
+workspace used to be listed here; since 2026-10-27 it is the **account's**
+choice — auth user metadata `wp_org_ctx`, `wpOrgCtxPick` pure — so a phone
+and a laptop open on the same project list. The Projects header carries a
+switcher (`#proj-workspace`) beside the account chip's hover one, because a
+phone has no hover. Tested in `tests/workspace-sync.test.js`.) **Anything that is user-created content, shared configuration, a team
 standard, or billing/audit-relevant lives in Supabase**, scoped to the
 organisation (`org_id`) or to the user where genuinely personal
 (`org_id null` + `user_id`, the split the `projects` table uses). When in
@@ -545,6 +549,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
 | `tests/publish-rates.test.js` | Publish rates: the brief's JSON shape from the tables, draft councils excluded, every validation refusal, removal guard, R2 SigV4 against AWS vectors, COMM/unit mirrors, the landing backup script; per-council commercial lists (`comList`), typed-in uses (`USES`) in the calculator and WMP |
 | `tests/legal.test.js` | Terms / Privacy: one config, sign-up consent, server-side record, re-acceptance rule + modal, the notice email's guards, the design-aid notice on results and every export |
+| `tests/workspace-sync.test.js` | The Personal / organisation workspace follows the account (user metadata), and every device can switch |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
