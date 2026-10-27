@@ -93,6 +93,24 @@ acceptable reason to ship content in localStorage first — it manufactures a
 migration instead of avoiding one, and it is how WMP text presets briefly
 ended up per-device (fixed 2026-09-16: `wmp_text_presets`).
 
+**What follows a project to another device (2026-10-27).** `saveProjectToDB`
+sends, in `app_data`: the summary, docs, plans, stages, the Design canvas
+(`ws`), and now the WMP draft (`wmp`), the bin schedule with its room figures,
+presentation and residential method (`schedule` / `scheduleTs` /
+`calc_rooms` / `presentation` / `residential_method`) and the title block
+settings (`sheet`). Each carries its own stamp and loading keeps the newer
+copy (`wpCloudNewer`, pure; `ws` and `sheet` by `ts`). The WMP cover photo and
+site figure go to the plans bucket at `<owner>/<project>/wmp/cover|sitefig`
+(`wmpgImgCloudPut` / `Get` / `Del`; IndexedDB stays the local copy). The
+calculator's schedule is saved at once; the canvas and WMP draft are also
+sent when the page is hidden or closed (`wsFlushOnLeave`). On load,
+`wpLocalReconcile` (pure) drops cached projects seen in the cloud before and
+now missing (deleted elsewhere, access ended) and uploads ones this account
+created that never reached it — never a project with no recorded owner, and
+only inside the workspace the load covered. `renderProjects` never lists
+another account's cached project (`pw_projects` is per browser, not per
+account). Still device-only: compliance checker results.
+
 Confirmed 2026-09-16: **projects are server-authoritative.** `loadProjectsFromDB`
 merges cloud rows over the `pw_projects` cache (a cache, not a store), and
 the free-project cap reads `profiles.projects_created`, a monotonic counter
@@ -549,7 +567,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/launch-gate.test.js` | Coming-soon launch gate: who gets in, the wiring on every way into the app, the register-interest waitlist |
 | `tests/publish-rates.test.js` | Publish rates: the brief's JSON shape from the tables, draft councils excluded, every validation refusal, removal guard, R2 SigV4 against AWS vectors, COMM/unit mirrors, the landing backup script; per-council commercial lists (`comList`), typed-in uses (`USES`) in the calculator and WMP |
 | `tests/legal.test.js` | Terms / Privacy: one config, sign-up consent, server-side record, re-acceptance rule + modal, the notice email's guards, the design-aid notice on results and every export |
-| `tests/workspace-sync.test.js` | The Personal / organisation workspace follows the account (user metadata), and every device can switch |
+| `tests/workspace-sync.test.js` | The Personal / organisation workspace follows the account; what follows a project to another device (WMP draft, schedule, title block, cover / site figure), newer-copy-wins, local-only upload and deleted-elsewhere drop, flush on leave |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`

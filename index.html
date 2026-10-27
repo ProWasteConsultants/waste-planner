@@ -286,6 +286,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 }
 .side-nav .nav-item.active{background:#167E7E;color:#fff;border-right:2px solid #167E7E;}
 .side-nav .nav-item .ni{display:none;}
+/* A short screen (a phone on its side) cannot fit every label at its full
+   length in an equal share of the rail — they drew over each other. Below
+   that height each item keeps its own length and the rail scrolls. */
+@media (max-height:700px){
+  .side-nav{overflow-y:auto;overflow-x:hidden;scrollbar-width:none;}
+  .side-nav::-webkit-scrollbar{display:none;}
+  .side-nav .nav-item{flex:0 0 auto;padding:10px 0;font-size:12px;}
+}
 /* badges flow with the vertical label — horizontal text overflows a 36px rail */
 .side-nav .nav-badge{writing-mode:vertical-rl;font-size:8px;padding:4px 1px;}
 /* account chip pinned at the rail's foot — initials always, name + role on hover */
@@ -10017,8 +10025,13 @@ function renderProjects(filter) {
   if (filter !== undefined) PROJ_FILTER.status = filter;
   // Context filter: personal shows un-org'd projects; an org context shows only
   // that org's projects. Local cache holds both, tagged with orgId.
+  // A browser can hold another account's cached projects (pw_projects is not
+  // per account); one with a recorded owner that is not this account is
+  // never listed in the personal workspace.
+  const me = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null;
   const projects = getProjects().filter(p =>
-    (typeof currentOrg !== 'undefined' && currentOrg) ? p.orgId === currentOrg.id : (!p.orgId || p.shared));
+    (typeof currentOrg !== 'undefined' && currentOrg) ? p.orgId === currentOrg.id
+      : ((!p.orgId || p.shared) && (p.shared || !p.ownerId || !me || p.ownerId === me)));
 
   // state dropdown reflects the states that actually exist
   const sel = document.getElementById('proj-state');
@@ -16162,6 +16175,7 @@ async function applyCalcPrefill(pre) {
       apt_1br: pre.mix.apt_1br, apt_2br: pre.mix.apt_2br, apt_3br: pre.mix.apt_3br, townhouses: pre.mix.townhouse,
       com: pre.com.filter(c => wpComUseList()[c.use]).map(c => ({ use: c.use, value: c.value, days: c.days || 0 })) },
     complianceRuns: 0,
+    ownerId: currentUser?.id || null,
     created: new Date().toLocaleDateString('en-AU'),
     ts: Date.now(),
   };
@@ -18031,7 +18045,18 @@ async function loadProjectsFromDB() {
         engagementEndedAt: p.engagement_ended_at || null,
         // not this account's own row: a design-team or staff view of a client project
         shared: sharedIds.has(p.id),
+        // seen in the cloud at least once: if it is later missing from a
+        // clean load, it was deleted (or access ended) — not a local draft
+        cloudSeen: true,
+        ...wpCloudNewer(prev, ad),
       };
+      if (ad.sheet) {
+        try {
+          const localSheet = JSON.parse(localStorage.getItem('ws_sheet_' + p.id) || 'null');
+          if (!localSheet || (ad.sheet.ts || 0) > (localSheet.ts || 0))
+            localStorage.setItem('ws_sheet_' + p.id, JSON.stringify(ad.sheet));
+        } catch(e) {}
+      }
       if (ad.ws) {
         try {
           const localWs = JSON.parse(localStorage.getItem('ws_state_' + p.id) || 'null');
@@ -18040,9 +18065,51 @@ async function loadProjectsFromDB() {
         } catch(e) {}
       }
     });
+    // Local projects this load did not return, judged only inside the scope
+    // it covered (the other workspace's projects were not asked for).
+    const scope = { org: (typeof currentOrg !== 'undefined' && currentOrg) ? currentOrg.id : null, uid: currentUser.id };
+    const plan = wpLocalReconcile(local, new Set(data.map(p => p.id)), scope);
+    plan.drop.forEach(id => { delete byId[id]; });
     localStorage.setItem('pw_projects', JSON.stringify(Object.values(byId)));
     renderProjects();
+    if (plan.upload.length) {
+      console.info('uploading', plan.upload.length, 'project(s) that were only on this device');
+      plan.upload.forEach(id => { if (byId[id]) saveProjectToDB(byId[id]); });
+    }
   }
+}
+// Pure: of the device's cached projects missing from a clean cloud load,
+// which to DROP (seen in the cloud before → deleted elsewhere, or access
+// ended) and which to UPLOAD (never seen, and this account created them →
+// a save that never reached the cloud). Only projects inside the scope the
+// load covered are judged; a project with no recorded owner is never
+// uploaded — on a shared browser it could be another account's.
+function wpLocalReconcile(local, cloudIds, scope) {
+  const out = { drop: [], upload: [] };
+  (local || []).forEach(p => {
+    if (!p || cloudIds.has(p.id)) return;
+    const inScope = scope.org ? p.orgId === scope.org : (!p.orgId || p.shared);
+    if (!inScope) return;
+    if (p.cloudSeen) out.drop.push(p.id);
+    else if (p.ownerId && p.ownerId === scope.uid && !p.shared) out.upload.push(p.id);
+  });
+  return out;
+}
+// Pure: the cloud's copy of the stamped per-device fields, where it is newer
+// than this device's. The WMP draft by its savedAt; the bin schedule (with
+// the room figures, presentation and residential method computed beside it)
+// by scheduleTs.
+function wpCloudNewer(prev, ad) {
+  const out = {};
+  prev = prev || {}; ad = ad || {};
+  if (ad.wmp && (+ad.wmp.savedAt || 0) > (+(prev.wmp && prev.wmp.savedAt) || 0)) out.wmp = ad.wmp;
+  if (ad.schedule && (+ad.scheduleTs || 0) > (+prev.scheduleTs || 0)) {
+    out.schedule = ad.schedule; out.scheduleTs = ad.scheduleTs;
+    if (ad.calc_rooms) out.calc_rooms = ad.calc_rooms;
+    if (ad.presentation) out.presentation = ad.presentation;
+    if (ad.residential_method) out.residential_method = ad.residential_method;
+  }
+  return out;
 }
 
 // Projects shared with this account: accept any pending design-team invites
@@ -18108,6 +18175,16 @@ async function saveProjectToDB(project) {
       stages: project.stages || null, // C&D stage records (site_prep / construction) — server-authoritative
       projId: project.projId || null, // PWC job number: WMP / Advice Memo file names, swept title block
       ws: (() => { try { return JSON.parse(localStorage.getItem('ws_state_' + project.id) || 'null'); } catch(e) { return null; } })(),
+      // Device-only until 2026-10-27, so a second device opened a project
+      // with no WMP draft and no bin schedule. Each carries its own stamp
+      // (wmp.savedAt, scheduleTs, sheet.ts) and loading keeps the newer copy.
+      wmp: project.wmp || null,
+      schedule: project.schedule || null,
+      scheduleTs: project.scheduleTs || null,
+      calc_rooms: project.calc_rooms || null,
+      presentation: project.presentation || null,
+      residential_method: project.residential_method || null,
+      sheet: (() => { try { return JSON.parse(localStorage.getItem('ws_sheet_' + project.id) || 'null'); } catch(e) { return null; } })(),
     },
     updated_at: new Date().toISOString(),
   };
@@ -19665,6 +19742,8 @@ window.addEventListener('message', (e) => {
         // fallback that is not carried here is a fallback nobody is told about.
         if (e.data.residential) p.residential_method = e.data.residential;
         saveProjects(projects);
+        // the schedule is what the WMP generator reads on any device
+        if (e.data.schedule && typeof saveProjectToDB === 'function' && currentUser) saveProjectToDB(p);
       }
     }
   }
@@ -30747,7 +30826,8 @@ function wsSheetLoad() {
   return d;
 }
 function wsSheetSave(s) {
-  try { localStorage.setItem(wsSheetKey(), JSON.stringify(s)); } catch (e) {}
+  // stamped so the newer copy wins when another device loads (app_data.sheet)
+  try { localStorage.setItem(wsSheetKey(), JSON.stringify({ ...s, ts: Date.now() })); } catch (e) {}
 }
 
 // ── LEGEND ───────────────────────────────────────────────────────────────────
@@ -31697,6 +31777,7 @@ function wsBuildDraft() {
 }
 function wsFlushState() {
   clearTimeout(_wsDraftTimer);
+  wsScheduleAutosave.pending = false;
   const draft = wsBuildDraft();
   try {
     localStorage.setItem('ws_draft', JSON.stringify(draft));                       // crash recovery
@@ -31710,7 +31791,19 @@ function wsFlushState() {
 function wsScheduleAutosave() {
   clearTimeout(_wsDraftTimer);
   _wsDraftTimer = setTimeout(wsFlushState, 30000); // 30 second debounce
+  wsScheduleAutosave.pending = true;
 }
+// Leaving the tab, switching app on a phone, or closing the page: send what
+// is waiting instead of losing up to 30 s of edits to the other devices.
+// 'hidden' fires first and reliably on mobile; pagehide covers a close.
+function wsFlushOnLeave() {
+  try {
+    if (wsScheduleAutosave.pending && WS.projectId) { wsScheduleAutosave.pending = false; wsFlushState(); }
+    if (typeof WMPG !== 'undefined' && WMPG && WMPG.saveTimer && typeof wmpgPersistNow === 'function') wmpgPersistNow();
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') wsFlushOnLeave(); });
+window.addEventListener('pagehide', wsFlushOnLeave);
 
 function wsRestoreDraft() {
   try {
@@ -34193,18 +34286,20 @@ function wmpgSavePreset() {
 }
 
 // ── PERSISTENCE (resume a part-finished WMP) ───────────────────────────────
+function wmpgPersistNow() { clearTimeout(WMPG.saveTimer); WMPG.saveTimer = null; wmpgPersistWrite(); }
 function wmpgPersist() {
   clearTimeout(WMPG.saveTimer);
-  WMPG.saveTimer = setTimeout(() => {
-    try {
-      const projects = getProjects();
-      const p = projects.find(x => x.id === WMPG.projectId);
-      if (!p) return;
-      p.wmp = { ...WMPG.data, savedAt: Date.now() };
-      saveProjects(projects);
-      if (typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(p);
-    } catch(e) {}
-  }, 900);
+  WMPG.saveTimer = setTimeout(() => { WMPG.saveTimer = null; wmpgPersistWrite(); }, 900);
+}
+function wmpgPersistWrite() {
+  try {
+    const projects = getProjects();
+    const p = projects.find(x => x.id === WMPG.projectId);
+    if (!p) return;
+    p.wmp = { ...WMPG.data, savedAt: Date.now() };
+    saveProjects(projects);
+    if (typeof saveProjectToDB === 'function' && typeof currentUser !== 'undefined' && currentUser) saveProjectToDB(p);
+  } catch(e) {}
 }
 
 // ── OPEN / CLOSE ───────────────────────────────────────────────────────────
@@ -37109,6 +37204,36 @@ const WMPG_COVER_MAX_BYTES = 4 * 1024 * 1024;
 const WMPG_COVER_OUT_W = 1800;                          // px across the band — plenty at A4, keeps the .docx small
 const EMU_PER_TWIP = 635;
 function wmpgCoverKey(projectId) { return 'wmp:cover:' + projectId; }
+// The cover photo and the site figure follow the project to other devices:
+// IndexedDB stays the fast local copy, the plans bucket holds the shared one
+// at a fixed path in the project owner's folder (the storage policies the
+// plans and documents already use). A failed upload is stated in the
+// console and the local copy still works; another device simply finds none.
+function wmpgImgCloudPath(kind, projectId) {
+  const uid = typeof wpProjectStorageUid === 'function' ? wpProjectStorageUid(projectId) : (currentUser && currentUser.id);
+  return uid ? `${uid}/${projectId}/wmp/${kind}` : null;
+}
+async function wmpgImgCloudPut(kind, projectId, buf, type) {
+  const path = wmpgImgCloudPath(kind, projectId);
+  if (!path || typeof sb === 'undefined' || !sb || !currentUser) return;
+  try {
+    const { error } = await sb.storage.from(PLANS_BUCKET).upload(path, new Blob([buf], { type: type || 'application/octet-stream' }), { upsert: true });
+    if (error) console.warn('WMP ' + kind + ' not saved to the cloud:', error.message);
+  } catch (e) { console.warn('WMP ' + kind + ' upload failed:', e); }
+}
+async function wmpgImgCloudGet(kind, projectId) {
+  const path = wmpgImgCloudPath(kind, projectId);
+  if (!path || typeof sb === 'undefined' || !sb || !currentUser) return null;
+  try {
+    const { data, error } = await sb.storage.from(PLANS_BUCKET).download(path);
+    return (error || !data) ? null : await data.arrayBuffer();
+  } catch (e) { return null; }
+}
+async function wmpgImgCloudDel(kind, projectId) {
+  const path = wmpgImgCloudPath(kind, projectId);
+  if (!path || typeof sb === 'undefined' || !sb || !currentUser) return;
+  try { await sb.storage.from(PLANS_BUCKET).remove([path]); } catch (e) {}
+}
 // ── SITE FIGURE (§1.2, "Figure 1 – Site location and surrounding context") ──
 // Generated from PUBLIC state services, no key and no Google: the address is
 // geocoded, the lot polygon comes from the state cadastre, the aerial (or
@@ -37559,7 +37684,11 @@ async function wmpgCoverLoad() {
   WMPG.coverImg = null;
   if (!WMPG.projectId) return null;
   try {
-    const rec = await idbGetPdf(wmpgCoverKey(WMPG.projectId));
+    let rec = await idbGetPdf(wmpgCoverKey(WMPG.projectId));
+    if (!(rec && rec.buf) && WMPG.data && WMPG.data.cover && WMPG.data.cover.image) {
+      const buf = await wmpgImgCloudGet('cover', WMPG.projectId);   // set on another device
+      if (buf) { await idbPutPdf(wmpgCoverKey(WMPG.projectId), buf, WMPG.data.cover.image.name || 'cover'); rec = { buf }; }
+    }
     if (rec && rec.buf) {
       const d = WMPG.data;
       const type = (d && d.cover && d.cover.image && d.cover.image.type) || 'image/jpeg';
@@ -37601,6 +37730,7 @@ async function wmpgCoverAccept(f, how) {
     const buf = await f.arrayBuffer();
     const probe = await wmpgCoverRender(buf, f.type, 3, 2, false);   // decode check + dimensions
     await idbPutPdf(wmpgCoverKey(WMPG.projectId), buf, f.name);
+    wmpgImgCloudPut('cover', WMPG.projectId, buf, f.type);
     d.cover.image = { name: f.name, type: f.type, size: f.size, w: probe.w, h: probe.h, ts: Date.now() };
     await wmpgCoverLoad();
     wmpgRenderForm(); wmpgQueuePreview();
@@ -37614,7 +37744,11 @@ async function wmpgSiteFigLoad() {
   WMPG.siteFigImg = null;
   if (!WMPG.projectId) return null;
   try {
-    const rec = await idbGetPdf(wmpgSiteFigKey(WMPG.projectId));
+    let rec = await idbGetPdf(wmpgSiteFigKey(WMPG.projectId));
+    if (!(rec && rec.buf) && WMPG.data && WMPG.data.siteFigure) {
+      const buf = await wmpgImgCloudGet('sitefig', WMPG.projectId);   // made on another device
+      if (buf) { await idbPutPdf(wmpgSiteFigKey(WMPG.projectId), buf, 'site_figure'); rec = { buf }; }
+    }
     if (rec && rec.buf) { const type = (WMPG.data && WMPG.data.siteFigure && WMPG.data.siteFigure.type) || 'image/png'; WMPG.siteFigImg = { buf: rec.buf, type, dataUrl: 'data:' + type + ';base64,' + wmpgB64(rec.buf) }; }
   } catch (e) { WMPG.siteFigImg = null; }
   return WMPG.siteFigImg;
@@ -37713,7 +37847,9 @@ async function wmpgSiteFigGenerate(opts) {
     const img = await wmpgSiteFigImage(wpSiteFigImageUrl(p, f.mapType, frame, WMPG_SITEFIG_W, WMPG_SITEFIG_H));
     const canvas = wmpgSiteFigCompose(img, chosen, frame, WMPG_SITEFIG_W, WMPG_SITEFIG_H, { boundary: f.boundary, attribution: p.attribution + (usedGeocoder ? ' · geocoding © OpenStreetMap contributors' : '') });
     const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
-    await idbPutPdf(wmpgSiteFigKey(WMPG.projectId), await blob.arrayBuffer(), 'site_figure.png');
+    const figBuf = await blob.arrayBuffer();
+    await idbPutPdf(wmpgSiteFigKey(WMPG.projectId), figBuf, 'site_figure.png');
+    wmpgImgCloudPut('sitefig', WMPG.projectId, figBuf, 'image/png');
     Object.assign(f, { kind: 'generated', type: 'image/png', provider: p.name, lots: chosen.map(l => l.label), accessed: new Date().toISOString().slice(0, 10), w: WMPG_SITEFIG_W, h: WMPG_SITEFIG_H, noLot: !chosen.length });
     await wmpgSiteFigLoad();
     wmpgFollow('siteFigure');
@@ -37750,6 +37886,7 @@ async function wmpgSiteFigUpload(ev) {
     const buf = await f.arrayBuffer();
     const probe = await wmpgCoverRender(buf, f.type, 3, 2, false);
     await idbPutPdf(wmpgSiteFigKey(WMPG.projectId), buf, f.name);
+    wmpgImgCloudPut('sitefig', WMPG.projectId, buf, f.type);
     d.siteFigure = { kind: 'upload', name: f.name, type: f.type, w: probe.w, h: probe.h, source: (d.siteFigure && d.siteFigure.source) || '', accessed: new Date().toISOString().slice(0, 10) };
     await wmpgSiteFigLoad();
     wmpgFollow('siteFigure'); wmpgRenderForm(); wmpgQueuePreview();
@@ -37759,12 +37896,14 @@ async function wmpgSiteFigUpload(ev) {
 async function wmpgSiteFigRemove() {
   const d = WMPG.data; if (!d) return;
   try { await idbDeletePdf(wmpgSiteFigKey(WMPG.projectId)); } catch (e) {}
+  wmpgImgCloudDel('sitefig', WMPG.projectId);
   d.siteFigure = null; WMPG.siteFigImg = null;
   wmpgRenderForm(); wmpgQueuePreview();
 }
 async function wmpgCoverRemove() {
   const d = WMPG.data; if (!d || !d.cover) return;
   try { const db = await idbOpen(); await new Promise((res, rej) => { const tx = db.transaction('pdfs', 'readwrite'); tx.objectStore('pdfs').delete(wmpgCoverKey(WMPG.projectId)); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {}
+  wmpgImgCloudDel('cover', WMPG.projectId);
   d.cover.image = null; WMPG.coverImg = null;
   wmpgRenderForm(); wmpgQueuePreview();
 }

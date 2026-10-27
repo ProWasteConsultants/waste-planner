@@ -154,7 +154,7 @@ test('design team on an organisation project: any org member manages it; a team 
   assert.match(sql2, /and user_id is null and accepted_at is null and notified_at is null/, 'invite policy keeps its row guards');
   // shared = loaded because of a team membership / staff, not "someone else created it"
   assert.ok(SOURCE.includes('shared: sharedIds.has(p.id),'));
-  assert.ok(SOURCE.includes("? p.orgId === currentOrg.id : (!p.orgId || p.shared));"), 'a shared org project shows in the personal list');
+  assert.ok(SOURCE.includes(": ((!p.orgId || p.shared) && (p.shared || !p.ownerId || !me || p.ownerId === me)));"), 'a shared org project shows in the personal list');
 });
 
 // ── §5 ──
