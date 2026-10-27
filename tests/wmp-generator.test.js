@@ -1036,3 +1036,19 @@ test('§13 geocoding after the first real run: the address is parsed, asked thre
   assert.ok(/onchange="wmpgSiteFigLotRef\(this\.value\)"/.test(extractBlock(/^function wmpgSiteFigCard\(/).text));
   assert.ok(/noLot: !chosen\.length/.test(gen), 'a ticked lot counts as the boundary');
 });
+
+test('a resumed WMP says when the bin calculator has newer bins than the draft', () => {
+  // Reported 2026-10-27 (13 Old Barrenjoey Rd): a draft filled before the
+  // stepped-table fixes kept 3 × GW twice weekly, tagged "Design tab",
+  // while the calculator now said 4 weekly. Nothing pointed at Re-pull.
+  const { extractBlock } = require('./extract.js');
+  const newer = new Function(extractBlock(/^function wmpgScheduleNewer\(/).text + ';return wmpgScheduleNewer;')();
+  assert.equal(newer(5000, 1000), true, 'the calculator ran after the draft was filled');
+  assert.equal(newer(1500, 1000), false, 'the same run, a moment apart, is not newer');
+  assert.equal(newer(null, 1000), false, 'no schedule, nothing to pull');
+  assert.equal(newer(5000, null), true, 'a draft with no capture stamp is behind any schedule');
+  const open = extractBlock(/^async function openWmpGenerator\(/).text;
+  assert.ok(open.includes('wmpgScheduleNewer(p.scheduleTs, WMPG.data.capturedAt)'), 'said when the draft is resumed');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(src.includes('The bin calculator has been run since these bins were pulled'), 'and held in the pre-flight QA as an error');
+});

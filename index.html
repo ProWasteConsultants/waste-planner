@@ -34259,6 +34259,14 @@ function wmpgQA(d) {
     err(`${CREQ.pack?.council_name || 'Council'}${x.cite ? ' ' + x.cite : ''}: ${x.text}` +
         (x.got !== undefined ? ` (requires ${x.op} ${x.need}${x.unit ? ' ' + x.unit : ''}; this WMP has ${x.got}${x.unit ? ' ' + x.unit : ''})` : ''));
   });
+  // A resumed draft keeps the bins it was first filled with. If the bin
+  // calculator has run since, those rows still read "Design tab" against
+  // their own old snapshot — so say plainly that newer bins are waiting.
+  {
+    const proj = getProjects().find(x => x.id === WMPG.projectId);
+    if (wmpgScheduleNewer(proj && proj.scheduleTs, d.capturedAt))
+      err(`The bin calculator has been run since these bins were pulled (${new Date(proj.scheduleTs).toLocaleString('en-AU')}) — press “↻ Re-pull from calculator” or the bins here will not match the Design tab.`);
+  }
   if (d.capturedAt) {
     const age = (Date.now() - d.capturedAt) / 86400000;
     if (age > 14) wrn(`Bin schedule was captured ${Math.round(age)} days ago — re-run the calculator if the design has moved.`);
@@ -34317,6 +34325,12 @@ function wmpgIsStaff() {
   } catch(e) { return false; }
 }
 
+// Pure: has the bin calculator produced a schedule after the one this WMP
+// draft was filled from? A second's slack absorbs the same run's timestamps.
+function wmpgScheduleNewer(scheduleTs, capturedAt) {
+  const s = +scheduleTs || 0;
+  return s > 0 && s > (+capturedAt || 0) + 1000;
+}
 async function openWmpGenerator() {
   // Non-staff route: the Engage Pro Waste modal (scope + note), which files
   // into the same queue the old confirm-dialog requestWMP did. The generator
@@ -34338,7 +34352,9 @@ async function openWmpGenerator() {
   if (p.wmp && p.wmp.rooms?.length) {
     WMPG.data = wmpgUpgradeDraft(p.wmp, p);  // resume where the author left off
     WMPG.data.date = WMPG.data.date || wmpgToday();
-    wmpgFlash(`Resumed the saved draft (${new Date(p.wmp.savedAt || Date.now()).toLocaleString('en-AU')}). Use “Re-pull from calculator” to refresh bins.`);
+    wmpgFlash(wmpgScheduleNewer(p.scheduleTs, WMPG.data.capturedAt)
+      ? `⚠ The bin calculator has newer bins than this saved draft (run ${new Date(p.scheduleTs).toLocaleString('en-AU')}). Press “↻ Re-pull from calculator” to bring them in — narrative text, suppliers and document control are kept.`
+      : `Resumed the saved draft (${new Date(p.wmp.savedAt || Date.now()).toLocaleString('en-AU')}). Use “Re-pull from calculator” to refresh bins.`, wmpgScheduleNewer(p.scheduleTs, WMPG.data.capturedAt));
   } else {
     WMPG.data = wmpgDefaultData(p);
     const ok = wmpgApplyRates(WMPG.data);
