@@ -10412,6 +10412,17 @@ const RATES_URL_PARENT = 'https://pub-889b5ab565ad46769be89dc35692374e.r2.dev/wa
 function getCouncilsForState(st) {
   return COUNCILS_BY_STATE_P[st] || [];
 }
+// Pure: a council's NAME from a list of {value,label}. The bin calculator
+// writes its select's registry value (northern_beaches_council) back as the
+// project's council; the project page's list is by name, so the code showed
+// as "northern_beaches_council (custom)" and travelled on to the WMP. A known
+// value becomes its label; a name, or a council not listed, is kept.
+function wpCouncilName(list, council) {
+  const c = String(council || '').trim();
+  if (!c) return c;
+  const hit = (list || []).find(x => x && String(x.value || '').toLowerCase() === c.toLowerCase());
+  return hit && hit.label ? String(hit.label).trim() : c;
+}
 async function loadCouncilList() {
   try {
     const r = await fetch(RATES_URL_PARENT, { cache: 'no-store' });
@@ -10433,7 +10444,7 @@ async function loadCouncilList() {
 function populateCouncilSelect(selectId, state, current) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
-  const cur = current !== undefined ? current : sel.value;
+  const cur = wpCouncilName(getCouncilsForState(state), current !== undefined ? current : sel.value);
   sel.innerHTML = '<option value="">— None / state defaults —</option>';
   getCouncilsForState(state).forEach(c => {
     const o = document.createElement('option');
@@ -10696,6 +10707,22 @@ function docMidTrunc(name, max) {
   return name.slice(0, head) + '…' + name.slice(name.length - tail);
 }
 function docEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+// Pure: which documents are the plan currently in Design, by slot. Matched
+// by file name against the plan the slot holds (p.pdf_name, and each stage's
+// stage_plans entry); when several documents share that name, only the
+// newest is the one in use.
+function wpDocsInDesign(p) {
+  const out = {};
+  const docs = (p && p.docs) || [];
+  const slots = [['occupancy', p && p.pdf_name]];
+  Object.entries((p && p.stage_plans) || {}).forEach(([st, m]) => { if (st !== 'occupancy' && m && m.pdf_name) slots.push([st, m.pdf_name]); });
+  slots.forEach(([st, name]) => {
+    if (!name) return;
+    const hit = docs.filter(d => d && d.name === name).sort((a, b) => (+b.ts || 0) - (+a.ts || 0))[0];
+    if (hit) (out[hit.id] = out[hit.id] || []).push(st);
+  });
+  return out;
+}
 function docCardHtml(p, d) {
   const kind = docEffKind(d);
   const isPdf = /\.pdf$/i.test(d.name), isDxf = /\.dxf$/i.test(d.name), isDocx = /\.docx?$/i.test(d.name);
@@ -10754,7 +10781,13 @@ function docCardHtml(p, d) {
     `<div class="doc-menu-item" style="color:#EF8080;" onclick="if(confirm('Delete ${docEsc(d.name).replace(/'/g, '')}?'))docDelete(currentProjectId,'${d.id}')">✕ Delete</div>` +
     `</div>`;
   return `<div class="doc-card">
-    <div class="doc-face" onclick="${primary.fn}" title="${docEsc(d.name)}">${face}<span class="doc-tag">${kind === 'Plans' ? 'Plan' : kind}</span></div>${menu}
+    <div class="doc-face" onclick="${primary.fn}" title="${docEsc(d.name)}">${face}<span class="doc-tag">${kind === 'Plans' ? 'Plan' : kind}</span>${(() => {
+      // the plan the Design tab (and so the layout the WMP reads) is drawn on
+      const slots = wpDocsInDesign(p)[d.id];
+      if (!slots) return '';
+      const lbl = slots.map(st => st === 'occupancy' ? 'In Design' : 'In Design · ' + (typeof wpPlanStageLabel === 'function' ? wpPlanStageLabel(st) : st)).join(' · ');
+      return `<span class="doc-tag" style="left:auto;right:8px;top:auto;bottom:8px;background:#167E7E;color:#fff;" title="This is the plan open in the Design tab — the bin rooms and bins drawn there (which the WMP reads) are on this sheet">✓ ${docEsc(lbl)}</span>`;
+    })()}</div>${menu}
     <div class="doc-name" title="${docEsc(d.name)}">${docEsc(docMidTrunc(d.name, 30))}</div>
     <button class="doc-primary" onclick="${primary.fn}">${primary.label}</button>
   </div>`;
@@ -11202,6 +11235,8 @@ function writeProjectSummary(projectId, summary) {
   // Only stamp when a field that drives downstream numbers actually changed —
   // stamping on every no-op write would make everything look permanently stale.
   const watched = ['apt_1br','apt_2br','apt_3br','townhouses','com','bin_rooms','council','state','address'];
+  if (summary.council !== undefined)
+    summary = { ...summary, council: wpCouncilName(getCouncilsForState(summary.state || p.state || (p.summary || {}).state), summary.council) };
   const changed = watched.some(k => summary[k] !== undefined &&
     JSON.stringify(summary[k]) !== JSON.stringify((p.summary || {})[k]));
   p.summary = { ...(p.summary || {}), ...summary };
