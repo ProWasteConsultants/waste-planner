@@ -111,3 +111,19 @@ test('the cover photo and site figure go to the plans bucket and come back on an
   assert.ok(extractBlock(/^async function wmpgCoverRemove\(/).text.includes("wmpgImgCloudDel('cover'"));
   assert.ok(extractBlock(/^async function wmpgSiteFigRemove\(/).text.includes("wmpgImgCloudDel('sitefig'"));
 });
+
+test('the project stores its council by name, and the Documents grid marks the plan in Design', () => {
+  const name = new Function(extractBlock(/^function wpCouncilName\(/).text + ';return wpCouncilName;')();
+  const NSW = [{ value: 'northern_beaches_council', label: 'Northern Beaches Council' }];
+  assert.equal(name(NSW, 'northern_beaches_council'), 'Northern Beaches Council', 'the calculator’s code becomes the name');
+  assert.equal(name(NSW, 'Northern Beaches Council'), 'Northern Beaches Council');
+  assert.equal(name(NSW, 'Somewhere Shire'), 'Somewhere Shire', 'an unlisted council is kept as typed');
+  assert.ok(extractBlock(/^function writeProjectSummary\(/).text.includes('wpCouncilName(getCouncilsForState('), 'every summary write names it');
+  assert.ok(extractBlock(/^function populateCouncilSelect\(/).text.includes('wpCouncilName(getCouncilsForState(state)'), 'and the picker shows the name, not "(custom)"');
+  const inDesign = new Function(extractBlock(/^function wpDocsInDesign\(/).text + ';return wpDocsInDesign;')();
+  const p = { pdf_name: 'plan_B.pdf', stage_plans: { construction: { pdf_name: 'cons.pdf' } },
+    docs: [{ id: 'a', name: 'plan_A.pdf', ts: 1 }, { id: 'b', name: 'plan_B.pdf', ts: 2 }, { id: 'b0', name: 'plan_B.pdf', ts: 1 }, { id: 'c', name: 'cons.pdf', ts: 3 }, { id: 'l', name: 'letter.pdf', ts: 4 }] };
+  assert.deepStrictEqual(inDesign(p), { b: ['occupancy'], c: ['construction'] }, 'the newest copy of the plan in each slot; nothing else');
+  assert.deepStrictEqual(inDesign({ docs: [{ id: 'x', name: 'x.pdf' }] }), {}, 'no plan in Design, no badge');
+  assert.ok(extractBlock(/^function docCardHtml\(/).text.includes('wpDocsInDesign(p)[d.id]'), 'the card shows it');
+});
