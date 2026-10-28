@@ -1052,3 +1052,27 @@ test('a resumed WMP says when the bin calculator has newer bins than the draft',
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
   assert.ok(src.includes('The bin calculator has been run since these bins were pulled'), 'and held in the pre-flight QA as an error');
 });
+
+test('the council is a NAME, offered from a list, and a reopened WMP finds a guideline added since', () => {
+  // Reported 2026-10-28: the rates pill read "northern_beaches_council" (the
+  // calculator's registry value), the Council field was free text only, and
+  // a resumed draft never looked in the guidelines library again.
+  const { extractBlock } = require('./extract.js');
+  const label = new Function(extractBlock(/^function wmpgCouncilLabel\(/).text + ';return wmpgCouncilLabel;')();
+  const R = { COUNCILS: { NSW: [{ value: 'northern_beaches_council', label: 'Northern Beaches Council' }], VIC: [{ value: 'yarra', label: 'Yarra City Council' }] } };
+  assert.equal(label(R, 'NSW', 'northern_beaches_council'), 'Northern Beaches Council');
+  assert.equal(label(R, 'NSW', 'Northern Beaches Council'), 'Northern Beaches Council', 'a name stays a name');
+  assert.equal(label(R, 'NSW', 'Some Other Council'), 'Some Other Council', 'a council not in the list is kept as typed');
+  assert.equal(label(R, null, 'yarra'), 'Yarra City Council', 'no state: any state’s list');
+  assert.equal(label(null, 'NSW', 'x_y'), 'x_y');
+  const choices = new Function(extractBlock(/^function wmpgCouncilChoices\(/).text + ';return wmpgCouncilChoices;')();
+  assert.deepStrictEqual(choices(R, [{ council_name: 'Central Coast Council', state: 'NSW' }, { council_name: 'Yarra City Council', state: 'VIC' }, { council_name: 'Northern Beaches Council', state: null }], 'NSW'),
+    ['Central Coast Council', 'Northern Beaches Council'], 'published councils and library councils for the state, once each');
+  const open = extractBlock(/^async function openWmpGenerator\(/).text;
+  assert.ok(open.includes('WMPG.guidelineRows = null;'), 'the library is re-read per open');
+  const resume = open.slice(open.indexOf('wmpgUpgradeDraft(p.wmp, p)'), open.indexOf('} else {'));
+  assert.ok(resume.includes('wmpgCouncilLabel(') && resume.includes('await wmpgLoadGuideline(WMPG.data)'), 'a resumed draft is named and re-checked');
+  assert.ok(extractBlock(/^async function wmpgCouncilChanged\(/).text.includes('wmpgCouncilLabel('), 'a picked value becomes the name');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(/<input type="text" list="wmpg-council-list"/.test(src) && src.includes('<datalist id="wmpg-council-list">'), 'the Council field offers the list');
+});

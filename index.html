@@ -33278,6 +33278,7 @@ async function wmpgLoadGuideline(d) {
 async function wmpgCouncilChanged() {
   const d = WMPG.data; if (!d) return;
   if (d.complianceSrc && d.complianceSrc.kind !== 'manual' && d.complianceSrc.council !== d.council) d.complianceSrc = null;
+  d.council = wmpgCouncilLabel(WMPG.remote, d.state, d.council);
   await wmpgLoadGuideline(d);
   wmpgGuidelinesSync(d);   // §1.5 follows the council
   try { CREQ.loadedFor = null; await creqLoad(d); creqRun(); } catch (e) {}
@@ -34325,6 +34326,33 @@ function wmpgIsStaff() {
   } catch(e) { return false; }
 }
 
+// Pure: the council's NAME. The bin calculator stores its select's registry
+// value (northern_beaches_council) as the project's council, and the WMP
+// printed that code — on the rates pill, and in every sentence that names
+// the council. A value the published list knows becomes its label; anything
+// else (a name already, or a council not in the list) is kept as typed.
+function wmpgCouncilLabel(remote, state, council) {
+  const c = String(council || '').trim();
+  if (!c) return '';
+  const want = c.toLowerCase();
+  const lists = state && remote && remote.COUNCILS && remote.COUNCILS[state] ? [remote.COUNCILS[state]]
+    : Object.values((remote && remote.COUNCILS) || {});
+  for (const list of lists) {
+    const hit = (list || []).find(x => x && String(x.value || '').toLowerCase() === want);
+    if (hit && hit.label) return String(hit.label).trim();
+  }
+  return c;
+}
+// Pure: the councils the Council field offers, by name — the published
+// list for the state plus every council with a document in the guidelines
+// library (same state, or none recorded). A name typed that is in neither is
+// still accepted: the list helps, it never refuses.
+function wmpgCouncilChoices(remote, guidelineRows, state) {
+  const out = new Set();
+  ((remote && remote.COUNCILS && remote.COUNCILS[state]) || []).forEach(c => { if (c && c.label) out.add(String(c.label).trim()); });
+  (guidelineRows || []).forEach(r => { if (r && r.council_name && (!r.state || !state || r.state === state)) out.add(String(r.council_name).trim()); });
+  return [...out].sort((a, b) => a.localeCompare(b));
+}
 // Pure: has the bin calculator produced a schedule after the one this WMP
 // draft was filled from? A second's slack absorbs the same run's timestamps.
 function wmpgScheduleNewer(scheduleTs, capturedAt) {
@@ -34349,14 +34377,20 @@ async function openWmpGenerator() {
     try { const r = await fetch(RATES_URL_PARENT, { cache:'no-store' }); if (r.ok) { WMPG.remote = await r.json(); wpComUsesMerge(WMPG.remote); } } catch(e) {}
   }
 
+  WMPG.guidelineRows = null;   // re-read per open: a guideline uploaded since must be found
   if (p.wmp && p.wmp.rooms?.length) {
     WMPG.data = wmpgUpgradeDraft(p.wmp, p);  // resume where the author left off
     WMPG.data.date = WMPG.data.date || wmpgToday();
+    WMPG.data.council = wmpgCouncilLabel(WMPG.remote, WMPG.data.state, WMPG.data.council);
+    // a library match found since the draft was saved fills the field; an
+    // entry the author typed stays (wmpgLoadGuideline never touches 'manual')
+    try { await wmpgLoadGuideline(WMPG.data); wmpgGuidelinesSync(WMPG.data); } catch (e) {}
     wmpgFlash(wmpgScheduleNewer(p.scheduleTs, WMPG.data.capturedAt)
       ? `⚠ The bin calculator has newer bins than this saved draft (run ${new Date(p.scheduleTs).toLocaleString('en-AU')}). Press “↻ Re-pull from calculator” to bring them in — narrative text, suppliers and document control are kept.`
       : `Resumed the saved draft (${new Date(p.wmp.savedAt || Date.now()).toLocaleString('en-AU')}). Use “Re-pull from calculator” to refresh bins.`, wmpgScheduleNewer(p.scheduleTs, WMPG.data.capturedAt));
   } else {
     WMPG.data = wmpgDefaultData(p);
+    WMPG.data.council = wmpgCouncilLabel(WMPG.remote, WMPG.data.state, WMPG.data.council);
     const ok = wmpgApplyRates(WMPG.data);
     await wmpgLoadMeta(WMPG.data);
     // the compliance document fills itself from the guidelines library —
@@ -35246,7 +35280,7 @@ function wmpgRenderForm() {
     <summary>Site &amp; development</summary><div class="wmpg-sec-in">
     ${wmpgIn('Site address','address',d.address)}
     <div class="wmpg-grid2">
-      <div class="wmpg-f"><label>Council</label><input type="text" value="${wmpgEsc(d.council)}" oninput="wmpgSet('council', this.value)" onchange="wmpgCouncilChanged()"></div>
+      <div class="wmpg-f"><label>Council</label><input type="text" list="wmpg-council-list" value="${wmpgEsc(d.council)}" placeholder="pick from the list, or type a name" oninput="wmpgSet('council', this.value)" onchange="wmpgCouncilChanged()" title="Councils with published rates for ${wmpgEsc(d.state || 'this state')}, and every council with a document in the guidelines library"><datalist id="wmpg-council-list">${wmpgCouncilChoices(WMPG.remote, WMPG.guidelineRows, d.state).map(c => `<option value="${wmpgEsc(c)}"></option>`).join('')}</datalist></div>
       ${wmpgIn('DA / planning reference','daRef',d.daRef,{ph:'optional'})}
     </div>
     ${wmpgIn('Development type (one line)','devTypeText',d.devTypeText,{ph:'8-level multi-unit development with basement parking'})}
