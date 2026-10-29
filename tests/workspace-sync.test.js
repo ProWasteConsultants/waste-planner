@@ -127,3 +127,20 @@ test('the project stores its council by name, and the Documents grid marks the p
   assert.deepStrictEqual(inDesign({ docs: [{ id: 'x', name: 'x.pdf' }] }), {}, 'no plan in Design, no badge');
   assert.ok(extractBlock(/^function docCardHtml\(/).text.includes('wpDocsInDesign(p)[d.id]'), 'the card shows it');
 });
+
+test('one current plan: older plan PDFs are superseded, kept on file, and brought back on purpose', () => {
+  const state = new Function(extractBlock(/^function wpDocPlanState\(/).text + ';return wpDocPlanState;')();
+  const p = { pdf_name: 'B.pdf' };
+  const inD = { b: ['occupancy'], c: ['construction'] };
+  assert.equal(state(p, { id: 'b', name: 'B.pdf' }, 'Plans', inD), 'current');
+  assert.equal(state(p, { id: 'c', name: 'cons.pdf' }, 'Plans', inD), 'current', 'a stage’s plan is current too');
+  assert.equal(state(p, { id: 'a', name: 'A.pdf' }, 'Plans', inD), 'superseded');
+  assert.equal(state(p, { id: 'l', name: 'letter.pdf' }, 'Other', inD), null, 'letters and reports are never touched');
+  assert.equal(state(p, { id: 'x', name: 'sheet.pdf' }, 'Export', inD), null, 'an export is output, not a base plan');
+  assert.equal(state(p, { id: 'd', name: 'site.dxf' }, 'Plans', inD), null, 'DXF underlays keep their own action');
+  assert.equal(state({}, { id: 'a', name: 'A.pdf' }, 'Plans', {}), null, 'no plan in Design yet: every plan can still be opened');
+  const card = extractBlock(/^function docCardHtml\(/).text;
+  assert.ok(/planState === 'superseded'\) \{\s*\/\/[^\n]*\n\s*primary = \{ label: 'Download'/.test(card), 'a superseded plan’s main button is Download, not Open in Design');
+  assert.ok(card.includes("docMakeCurrentPlan('${d.id}')"), 'the ⋯ menu offers Make this the current plan');
+  assert.ok(extractBlock(/^function docMakeCurrentPlan\(/).text.includes('confirm(') , 'and it asks first');
+});

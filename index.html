@@ -475,6 +475,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .tools-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
 /* documents grid cards */
 .doc-card{position:relative;display:flex;flex-direction:column;gap:6px;min-width:0;}
+/* an older plan: kept on file, not the sheet the Design tab draws on */
+.doc-card.doc-superseded .doc-face{opacity:.55;filter:grayscale(.6);}
+.doc-card.doc-superseded .doc-name{color:#8CA3A3;}
 .doc-face{position:relative;aspect-ratio:4/3;background:#182121;border:1px solid var(--border);border-radius:9px;overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;}
 .doc-face:hover{border-color:var(--teal);}
 .doc-face-glyph{font-size:30px;opacity:.55;}
@@ -10723,8 +10726,28 @@ function wpDocsInDesign(p) {
   });
   return out;
 }
+// Pure: a plan document's standing. 'current' = in Design (occupancy or a
+// stage); 'superseded' = an older plan PDF while another one is in Design;
+// null = not a plan PDF, or no plan is in Design yet (then every plan still
+// offers Open in Design, as before). Exports and DXF underlays are left
+// alone: an export is output, not a base plan.
+function wpDocPlanState(p, d, kind, inDesign) {
+  if (!d || kind !== 'Plans' || !/\.pdf$/i.test(d.name || '')) return null;
+  if (inDesign && inDesign[d.id]) return 'current';
+  return (p && p.pdf_name) ? 'superseded' : null;
+}
+// Bringing an older plan back is deliberate: the one drawing stays where it
+// is, so the user is told to check it against the sheet before anything moves.
+function docMakeCurrentPlan(docId) {
+  const p = getProjects().find(x => x.id === currentProjectId);
+  const d = p && (p.docs || []).find(x => x.id === docId);
+  if (!d) return;
+  if (!confirm(`Make “${d.name}” the current plan in Design?\n\nYour layout, swept paths and markups stay exactly where they are — check the scale and page positions against this sheet afterwards. The plan in Design now is kept on file.`)) return;
+  docOpenInDesign(docId);
+}
 function docCardHtml(p, d) {
   const kind = docEffKind(d);
+  const planState = wpDocPlanState(p, d, kind, wpDocsInDesign(p));
   const isPdf = /\.pdf$/i.test(d.name), isDxf = /\.dxf$/i.test(d.name), isDocx = /\.docx?$/i.test(d.name);
   const isPlan = kind === 'Plans' || kind === 'Export' || isDxf;
   const isWmp = kind === 'WMP';
@@ -10743,6 +10766,9 @@ function docCardHtml(p, d) {
     // silently replace the project plan, and the next export would screen the
     // burned-in layout at 60% under a crisp live copy. Deliberate override:
     // "Treat as → Plan" reclassifies it, and then Open in Design returns.
+    primary = { label: 'Download', fn: `docDownload('${d.id}')` };
+  } else if (planState === 'superseded') {
+    // kept on file; reopening it in Design is the ⋯ menu's deliberate step
     primary = { label: 'Download', fn: `docDownload('${d.id}')` };
   } else if (isPlan && isPdf) primary = { label: 'Open in Design', fn: `docOpenInDesign('${d.id}')` };
   else if (isDxf) primary = { label: 'Open in Design', fn: `docOpenInDesignDxf('${d.id}')` };
@@ -10766,6 +10792,7 @@ function docCardHtml(p, d) {
     `<div class="doc-menu" id="docmenu_${d.id}">` +
     `<div class="doc-menu-item" onclick="docDownload('${d.id}')">⬇ Download</div>` +
     `<div class="doc-menu-item" onclick="docShare('${d.id}')">🔗 Share link</div>` +
+    (planState === 'superseded' ? `<div class="doc-menu-item" onclick="docMakeCurrentPlan('${d.id}')">⇄ Make this the current plan…</div>` : '') +
     (isPdf && !isWmp ? `<div class="doc-menu-item" onclick="docOpenInCompliance('${d.id}')">✓ Open in Compliance Checker</div>` : '') +
     (isWmp ? `<div class="doc-menu-item" onclick="openCouncilSubmit()">📮 Submit WMP</div>` : '') +
     // Stage plan slots (PWC staff): a demolition or construction plan becomes
@@ -10780,8 +10807,8 @@ function docCardHtml(p, d) {
       `<div class="doc-menu-item${kind === k ? ' on' : ''}" onclick="docSetKind('${d.id}','${k}')">${kind === k ? '✓ ' : ''}${k === 'Plans' ? 'Plan' : k}</div>`).join('') +
     `<div class="doc-menu-item" style="color:#EF8080;" onclick="if(confirm('Delete ${docEsc(d.name).replace(/'/g, '')}?'))docDelete(currentProjectId,'${d.id}')">✕ Delete</div>` +
     `</div>`;
-  return `<div class="doc-card">
-    <div class="doc-face" onclick="${primary.fn}" title="${docEsc(d.name)}">${face}<span class="doc-tag">${kind === 'Plans' ? 'Plan' : kind}</span>${(() => {
+  return `<div class="doc-card${planState === 'superseded' ? ' doc-superseded' : ''}">
+    <div class="doc-face" onclick="${primary.fn}" title="${docEsc(d.name)}${planState === 'superseded' ? ' — superseded: kept on file. ⋯ › Make this the current plan to use it in Design' : ''}">${face}<span class="doc-tag">${kind === 'Plans' ? (planState === 'superseded' ? 'Plan · Superseded' : 'Plan') : kind}</span>${(() => {
       // the plan the Design tab (and so the layout the WMP reads) is drawn on
       const slots = wpDocsInDesign(p)[d.id];
       if (!slots) return '';
