@@ -1428,8 +1428,15 @@ one plan and one layer state per C&D stage. Rules, tested in
   through `storeProjectPdf` (which stamps `pdf_name` + `pdf_rev` on the
   record for the stage), and **keeps the plan being replaced**: if it has no
   card in the Documents grid (`wsFileOldPlan`), its bytes are filed first.
-  Replacing a plan never discards one — *Open in Design* on the old card
-  brings it back. The identical file (same revision) is a stated no-op.
+  Replacing a plan never discards one. The identical file (same revision)
+  is a stated no-op. **One current plan (2026-10-29):** the Documents grid
+  tags the plan in Design "✓ In Design" (`wpDocsInDesign`, pure; by file
+  name, newest copy, per stage), and every other plan PDF is
+  **Superseded** (`wpDocPlanState`, pure): greyed, main button Download,
+  and *⋯ › Make this the current plan…* (`docMakeCurrentPlan`, asks first
+  — the one drawing stays put, check scale and pages) is the deliberate way
+  back. Letters, reports, exports and DXF underlays are untouched; with no
+  plan in Design yet every plan still offers Open in Design.
 - **Placed work stays where it was, and the status line says so.** Layout,
   swept paths and markups are keyed by page number in canvas pixels; a
   replacement keeps them at their page and position and keeps the current
