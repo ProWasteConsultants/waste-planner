@@ -421,6 +421,24 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .pc-created{font-size:10.5px;color:var(--muted);white-space:nowrap;flex-shrink:0;}
 .pc-jobno{flex:0 0 auto;background:#182121;border:1px solid var(--border);border-radius:6px;padding:2px 7px;font-size:11px;font-family:inherit;color:var(--text);width:96px;outline:none;}
 .pc-jobno:focus{border-color:var(--teal);}
+/* Projects list readability (2026-11-02): larger row text, brighter grey,
+   one line per project (name · address · council line), and a capped width
+   so a wide monitor does not spread a row edge to edge. Scoped to this
+   screen — the tools keep their own sizes. */
+#screen-projects{--muted:#AFC3C3;}
+#screen-projects .topbar-actions,#screen-projects .stats-row,#screen-projects .section-header,#screen-projects .projects-grid{max-width:1480px;}
+#screen-projects .project-card{padding:12px 18px;gap:14px;}
+#screen-projects .pc-main{display:flex;align-items:baseline;gap:10px;flex:0 1 auto;min-width:0;}
+#screen-projects .pc-name{font-size:14.5px;flex:0 1 auto;min-width:0;}
+#screen-projects .pc-address{font-size:12.5px;margin-top:0;flex:0 1 auto;min-width:0;}
+#screen-projects .pc-address:empty{display:none;}
+#screen-projects .pc-line{font-size:12.5px;}
+#screen-projects .pc-created{font-size:12px;}
+#screen-projects .pc-jobno{font-size:12px;padding:3px 8px;}
+#screen-projects .status-pill{font-size:11px;padding:3px 9px;}
+#screen-projects .stat-lbl,#screen-projects .stat-sub{font-size:12px;}
+#screen-projects .proj-search,#screen-projects .proj-state-sel{font-size:12.5px;}
+@media (max-width:760px){ #screen-projects .pc-address{display:none;} }
 .proj-search{background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 10px;font-size:11.5px;font-family:inherit;color:var(--text);outline:none;width:210px;}
 .proj-search:focus{border-color:var(--teal);}
 .proj-state-sel{background:#182121;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:11px;font-family:inherit;color:var(--text);outline:none;}
@@ -10024,6 +10042,16 @@ async function loadProjectServices(force) {
 }
 function projSearchInput(v) { PROJ_FILTER.q = (v || '').trim().toLowerCase(); renderProjects(); }
 function projStateInput(v) { PROJ_FILTER.state = v || 'all'; renderProjects(); }
+// Pure: the address shown beside a project's name — nothing when the name IS
+// the address (no name given, or the same street before the first comma:
+// "13 Old Barrenjoey Road, Avalon Beach" over "13 Old Barrenjoey Road,
+// Avalon, NSW…" said the same thing twice).
+function wpProjectSubAddress(p) {
+  const name = String((p && p.name) || '').trim(), addr = String((p && p.address) || '').trim();
+  if (!name || !addr) return '';
+  const street = t => t.split(',')[0].toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return street(name) === street(addr) ? '' : addr;
+}
 function renderProjects(filter) {
   if (filter !== undefined) PROJ_FILTER.status = filter;
   // Context filter: personal shows un-org'd projects; an org context shows only
@@ -10073,11 +10101,13 @@ function renderProjects(filter) {
     card.className = 'project-card fade';
     card.onclick = () => openProjectDetail(p.id);
     const statusCls = statusClass[p.status] || 'sp-design';
-    const line = [p.council, p.state, p.devType, p.levels ? p.levels + ' levels' : ''].filter(Boolean).join('  ·  ');
+    // the council by name — the bin calculator used to store its code
+    const councilTxt = (typeof wpCouncilName === 'function' && typeof getCouncilsForState === 'function') ? wpCouncilName(getCouncilsForState(p.state), p.council) : p.council;
+    const line = [councilTxt, p.state, p.devType, p.levels ? p.levels + ' levels' : ''].filter(Boolean).join('  ·  ');
     card.innerHTML = `
       <div class="pc-main">
         <div class="pc-name">${wpEscHtml(wpProjectTitle(p))}</div>
-        <div class="pc-address">${p.name && String(p.name).trim() ? wpEscHtml(p.address || '—') : ''}</div>
+        <div class="pc-address">${wpEscHtml(wpProjectSubAddress(p))}</div>
       </div>
       <div class="pc-line">${line}</div>
       <span class="status-pill ${statusCls}">${p.status}</span>
