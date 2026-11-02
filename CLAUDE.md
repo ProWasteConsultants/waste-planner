@@ -577,6 +577,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/legal.test.js` | Terms / Privacy: one config, sign-up consent, server-side record, re-acceptance rule + modal, the notice email's guards, the design-aid notice on results and every export |
 | `tests/workspace-sync.test.js` | The Personal / organisation workspace follows the account; what follows a project to another device (WMP draft, schedule, title block, cover / site figure), newer-copy-wins, local-only upload and deleted-elsewhere drop, flush on leave |
 | `tests/state-guidelines.test.js` | State-level guideline documents: the `state:<ST>` key, the council-first fallback, state rates into state rows only, every council reader refusing a state document, the fallback stated in the checker / WMP / layout |
+| `tests/guideline-docs.test.js` | Several documents per council or state: per-document versions, primary row + serving rule (checker mirror pinned), state fallback per development type, checklists never read for rates, rates tagged and only a document's own removed, the WMP's documents and §1.5 lines, the migration |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -1375,6 +1376,76 @@ rates. Tested in `tests/state-guidelines.test.js`.
 
   The built-in `STATE_GUIDELINES` names remain the last resort when a state
   has no document.
+
+### Several documents per council or state (2026-11-02, Lachy)
+
+A council can publish a DCP chapter and a waste guide, separate residential
+and commercial documents, an appendix, a checklist. Each is a **document**
+with its own versions. Tested in `tests/guideline-docs.test.js`. Needs
+`sql/2026-11-02-guideline-documents.sql`; until it runs, the app behaves as
+before (one document per council, every upload the next version of it), and
+the library says so (`cgDocsSchema` / `crqRateProvenance` probe the columns).
+
+- **Data.** `council_guidelines` adds:
+  - `doc_slot`: which document a row is a version of. Every existing row is
+    `'main'`.
+  - `doc_title`.
+  - `doc_kind`: guideline · dcp · appendix · checklist · reference.
+  - `applies_to`: all · residential · commercial.
+
+  Versions number and supersede **per document** (`cgInsertVersion`, unique
+  `(council_key, doc_slot, version)`), so a new version of one document
+  leaves the council's other documents current. `com_rates.source_doc` /
+  `res_rates.source_doc` (`<council_key>#<doc_slot>`, `crqDocSource`) record
+  which document an extracted rate came from.
+- **Upload** (`cgStoreDocument` → `cgDocFieldsPlan`, pure): *a new document*
+  (the scope's first document is `'main'`, later ones get a fresh slot) or
+  *new version of: X*, which keeps X's slot, name and tags. The library shows
+  **one card per document** (`cgScopeDocs`, `wpGuideDocs` pure), each with its
+  own Extract / Edit / Retire, and inline name / kind / applies-to editors
+  (`cgDocMetaSave`, which re-tags every version and re-projects the list).
+- **One requirements list per council or state.** Every document's rows are
+  projected onto the council's **primary** row (`wpGuidePrimary`: the live
+  `'main'` document, else the newest live one), and every reader finds it
+  with `wpGuidePickServing` (pure; the checker iframe's mirror is
+  `cgPickServing`, pinned by a test). `crqToLegacy(rows, docs)` gives a row
+  its document's applies-to when the document is residential- or
+  commercial-only. When the council has several documents, it also prefixes
+  the clause with the document's name ("DCP Part B3 · cl 4.2"). The admin list
+  filters by document (*From: …*) and names the document in its From column.
+- **Checklists** are extracted into the requirements list (rows carry
+  `checklist: true`) and are **never read for rates**: no sweep, no write to
+  the rate tables.
+- **Rates follow the document** (`crqWriteRates`):
+  - a residential-only document never writes commercial rates, and never
+    syncs the commercial list; a commercial-only one never writes residential
+    rates (`crqDocAppliesBlock`, pure);
+  - every written or updated rate is tagged with its document;
+  - with other documents on record, a re-read removes only rates **its own
+    document** wrote, and never clears the list (`crqComSyncMayDelete`
+    `owned`). Rates from another document, or typed by hand, are kept and
+    reported. Without the provenance column, the earlier guard holds:
+    nothing is removed.
+  - "other documents" means other `doc_slot`s once the schema has them, so a
+    new version of the same document can remove its dropped rates again.
+- **State fallback per development type** (`wpGuideMergeState`, pure;
+  checker mirror `cgMergeState`):
+  - a council with no requirements at all is served the state's (scope
+    `'state'`);
+  - a council covering only one type keeps its own and takes the state's
+    items for the type it lacks, plus the state's general ones. Each is
+    marked `stateFallback`, with its clause prefixed "NSW state ·".
+
+  The checker card, the WMP requirements panel and the bridge reply
+  (`stateFilled`) say so.
+- **The WMP** names every current document that applies
+  (`wmpgPickGuidelines`, pure): checklists are left out, a document for the
+  other development type is left out when something still applies, and
+  nothing is filtered to an empty list. `d.compliance` joins them with "; ",
+  `complianceSrc.docs` lists them, and **§1.5 gets one line per document**
+  (`wmpgCouncilGuidelineLines`; `guidelinesCouncil` holds one string or an
+  array). `creqEvaluate` checks commercial requirements on a project with a
+  commercial component (`wmpgShape`).
 
 ### Two guardrails on rate extraction (2026-09-14)
 

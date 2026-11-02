@@ -23,7 +23,7 @@ function load() {
     /^function wmpgBinWords\(/, /^function wmpgRoomMethod\(/, /^function wmpgNarrative\(/, /^function wmpgNarrativeText\(/,
     /^function wmpgPolishGuard\(/, /^const WMPG_BIN_FIELDS = /, /^function wmpgBinDiff\(/, /^function wmpgBinEdited\(/,
     /^function wmpgBinDiffWords\(/, /^function wmpgBinSource\(/, /^function wmpgVehicleSource\(/, /^function wmpgUpgradeDraft\(/,
-    /^function wmpgCouncilGuidelineLine\(/, /^function wmpgGuidelineListed\(/, /^function wmpgGuidelinesSync\(/,
+    /^function wmpgCouncilGuidelineLine\(/, /^function wmpgCouncilGuidelineLines\(/, /^function wmpgGuidelinesMark\(/, /^function wmpgGuidelineListed\(/, /^function wmpgGuidelinesSync\(/,
     /^function wmpgScopeFlags\(/, /^function wmpgPhaseWords\(/, /^function tbDefaultOn\(/,
     /^const TB_COND_ALIASES = /, /^const TB_CONDS = /, /^function tbCondMet\(/,
     /^const WMPG_TEXT_PRESETS_BUILTIN = /, /^function tbPresetApply\(/,
@@ -32,7 +32,7 @@ function load() {
     ;return { wmpgTitleDefault, wmpgPickGuideline, wmpgGuidelineLabel, wmpgShape, wmpgShapeWords, wmpgCycleWords, wmpgBinWords,
               wmpgRoomMethod, wmpgNarrative, wmpgNarrativeText, wmpgPolishGuard, wmpgBinDiff, wmpgBinEdited, wmpgBinDiffWords,
               wmpgBinSource, wmpgVehicleSource, wmpgUpgradeDraft, tbCondMet, TB_CONDS, WMPG_TEXT_PRESETS_BUILTIN, tbPresetApply, WMPG_METHOD_LABEL,
-              wmpgCouncilGuidelineLine, wmpgGuidelineListed, wmpgGuidelinesSync, wmpgScopeFlags, wmpgPhaseWords };`)({ data: null });
+              wmpgCouncilGuidelineLine, wmpgCouncilGuidelineLines, wmpgGuidelineListed, wmpgGuidelinesSync, wmpgScopeFlags, wmpgPhaseWords };`)({ data: null });
 }
 const room = (over) => Object.assign({ name: 'Bin room', component: 'Residential', alloc: { apt_1br: 4 }, bins: [],
   extras: { bulky: { on: false }, textiles: { on: false }, tug: { on: false }, wash: { on: true } }, chutesOn: false,
@@ -901,9 +901,9 @@ test('the council’s own guideline is always in §1.5 — appended after the li
   G.wmpgUpgradeDraft(old, {});
   assert.ok(old.guidelines.includes('Camden Council — waste management guidelines, v3'), 'a resumed draft gets the council document');
   const model = extractBlock(/^function wmpgDocModel\(/).text;
-  assert.ok(/const bank15 = tbNodesOr\('1\.5 Relevant guidelines and standards', d, null, null\);/.test(model) && /if \(councilLine && !wmpgGuidelineListed\(bank15\.flatMap/.test(model), 'the preview appends the council line after the library’s bullets unless one already names it');
+  assert.ok(/const bank15 = tbNodesOr\('1\.5 Relevant guidelines and standards', d, null, null\);/.test(model) && model.includes('const add15 = councilLines.filter(l => !wmpgGuidelineListed(listed15, l));'), 'the preview appends each council document line after the library’s bullets unless one already names it');
   const tpl = extractBlock(/^function wmpgTplPayload\(/).text;
-  assert.ok(/add\('BM_Sec_GUIDELINES', tplBullets\(\[councilLine\]\)\)/.test(tpl), 'and so does the .docx');
+  assert.ok(tpl.includes("if (add15.length) add('BM_Sec_GUIDELINES', tplBullets(add15));"), 'and so does the .docx');
   assert.ok(/wmpgGuidelinesSync\(d\);\s*\/\/ §1\.5 follows the council/.test(extractBlock(/^async function wmpgCouncilChanged\(/).text));
 });
 
@@ -1100,7 +1100,7 @@ test('the guidelines library query asks only for columns the table has, and a fa
   const { extractBlock } = require('./extract.js');
   const load = extractBlock(/^async function wmpgLoadGuideline\(/).text;
   assert.ok(!/select\([^)]*uploaded_at/.test(load), 'no uploaded_at in the select');
-  assert.ok(load.includes("'id,council_key,council_name,state,version,version_label,effective_date,superseded_at,created_at,updated_at'"));
+  assert.ok(load.includes("const cols = '*';"), 'every column, so the per-document columns come when they exist');
   assert.ok(load.includes(".select('*')"), 'a refused column list retries with every column');
   assert.ok(load.includes("kind: 'unread'"), 'and a library that cannot be read says so');
   assert.ok(extractBlock(/^function wmpgComplianceNote\(/).text.includes("s.kind === 'unread'"));
