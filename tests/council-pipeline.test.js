@@ -453,8 +453,7 @@ test('sync: the council list follows the guideline — new uses, updates, remova
   assert.deepStrictEqual(w.crqComSyncPlan([], existing, { canDelete: true }).remove.map(e => e.id), [1, 2, 3, 4]);
   // the wiring: residential stays add-only, the council list is marked its own
   const apply = extractFn('crqComSyncApply');
-  assert.ok(apply.includes("const clearAll = !x.stateScope && x.cleanRead && !comRead.length;"));
-  assert.ok(apply.includes("const canDelete = !x.stateScope && x.cleanRead && (clearAll || placed.length > 0);"),
+  assert.ok(apply.includes("const { clearAll, canDelete } = crqComSyncMayDelete({ stateScope: x.stateScope, otherDocs: x.otherDocs, cleanRead: x.cleanRead, read: comRead.length, placed: placed.length });"),
     'a state document never trims or clears the state list');
   assert.ok(apply.includes(".update({ com_own: own })"), 'the synced list becomes the council\'s own');
   const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('async function crqComSyncApply('));
