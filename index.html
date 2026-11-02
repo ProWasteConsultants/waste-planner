@@ -33335,7 +33335,8 @@ function wmpgPickGuideline(rows, council) {
 function wmpgGuidelineLabel(row) {
   if (!row) return '';
   const ver = row.version != null ? 'v' + row.version + (row.version_label ? ' ' + row.version_label : '') : (row.version_label || '');
-  const when = row.effective_date ? 'effective ' + row.effective_date : (row.uploaded_at ? 'uploaded ' + String(row.uploaded_at).slice(0, 10) : '');
+  const up = row.created_at || row.updated_at || row.uploaded_at;
+  const when = row.effective_date ? 'effective ' + row.effective_date : (up ? 'uploaded ' + String(up).slice(0, 10) : '');
   return [(row.council_name || 'Council') + ' — waste management guidelines', ver, when].filter(Boolean).join(', ');
 }
 async function wmpgLoadGuideline(d) {
@@ -33343,13 +33344,27 @@ async function wmpgLoadGuideline(d) {
   if (d.complianceSrc && d.complianceSrc.kind === 'manual') return null;   // the author's entry stands
   let rows = WMPG.guidelineRows || null;
   if (!rows) {
+    // The columns the admin library itself reads. This used to ask for an
+    // uploaded_at column the table does not have: the whole query failed,
+    // the catch read it as an empty library, and EVERY council showed "no
+    // guideline on file". A refused query now retries with every column,
+    // and a library that still cannot be read says so instead of "none".
+    const cols = 'id,council_key,council_name,state,version,version_label,effective_date,superseded_at,created_at,updated_at';
     try {
       if (typeof sb === 'undefined' || !sb) throw new Error('offline');
-      const { data, error } = await sb.from('council_guidelines')
-        .select('id,council_key,council_name,state,version,version_label,effective_date,uploaded_at,superseded_at');
+      let { data, error } = await sb.from('council_guidelines').select(cols);
+      if (error) {
+        console.warn('guidelines library: column list refused (' + error.message + ') — retrying with every column');
+        ({ data, error } = await sb.from('council_guidelines').select('*'));
+      }
       if (error) throw error;
       rows = WMPG.guidelineRows = data || [];
-    } catch (e) { rows = []; }
+    } catch (e) {
+      console.warn('guidelines library could not be read:', e && e.message || e);
+      if (!d.compliance || (d.complianceSrc && d.complianceSrc.kind !== 'manual')) d.compliance = '';
+      d.complianceSrc = { kind: 'unread', council: d.council, error: String((e && e.message) || e) };
+      return null;   // not cached: the next open tries again
+    }
   }
   const hit = wmpgPickGuideline(rows, d.council);
   if (hit) {
@@ -33379,6 +33394,7 @@ async function wmpgCouncilChanged() {
 function wmpgComplianceNote(d) {
   const s = d.complianceSrc || {};
   if (s.kind === 'library') return `<span class="wmpg-pill">from guidelines library</span> ${s.versionLabel || s.version != null ? 'v' + (s.version ?? '') + (s.versionLabel ? ' ' + wmpgEsc(s.versionLabel) : '') + ' — ' : ''}the version the compliance checker uses. Type over it to cite something else.`;
+  if (s.kind === 'unread') return `<span class="wmpg-pill bad">guidelines library could not be read</span> ${wmpgEsc(s.error || '')} — reopen the WMP to try again, or name the document here.`;
   if (s.kind === 'council_db') return `<span class="wmpg-pill warn">council database text</span> no document in the guidelines library for ${wmpgEsc(d.council)} — this wording comes from the council card.`;
   if (s.kind === 'manual') return `<span class="wmpg-pill warn">entered by hand</span> replaces the library document. <a href="#" onclick="WMPG.data.complianceSrc=null;wmpgCouncilChanged();return false;" style="color:#4FC3C3;">↺ use the library document</a>`;
   if (d.council) return `<span class="wmpg-pill bad">no guideline on file for ${wmpgEsc(d.council)}</span> upload it in the Guidelines library, or name the document here.`;

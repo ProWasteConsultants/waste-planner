@@ -1076,3 +1076,19 @@ test('the council is a NAME, offered from a list, and a reopened WMP finds a gui
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
   assert.ok(/<input type="text" list="wmpg-council-list"/.test(src) && src.includes('<datalist id="wmpg-council-list">'), 'the Council field offers the list');
 });
+
+test('the guidelines library query asks only for columns the table has, and a failure is not "no guideline"', () => {
+  // Reported 2026-11-02: Northern Beaches had v1 and v2 in the library, yet
+  // the WMP said "no guideline on file". The query named uploaded_at, which
+  // the table does not have; the refused query read as an empty library.
+  const { extractBlock } = require('./extract.js');
+  const load = extractBlock(/^async function wmpgLoadGuideline\(/).text;
+  assert.ok(!/select\([^)]*uploaded_at/.test(load), 'no uploaded_at in the select');
+  assert.ok(load.includes("'id,council_key,council_name,state,version,version_label,effective_date,superseded_at,created_at,updated_at'"));
+  assert.ok(load.includes(".select('*')"), 'a refused column list retries with every column');
+  assert.ok(load.includes("kind: 'unread'"), 'and a library that cannot be read says so');
+  assert.ok(extractBlock(/^function wmpgComplianceNote\(/).text.includes("s.kind === 'unread'"));
+  const label = new Function(extractBlock(/^function wmpgGuidelineLabel\(/).text + ';return wmpgGuidelineLabel;')();
+  assert.match(label({ council_name: 'Northern Beaches Council', version: 2, created_at: '2026-09-14T00:00:00Z' }), /v2, uploaded 2026-09-14/,
+    'the label reads the admin library’s own date column');
+});
