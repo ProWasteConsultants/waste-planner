@@ -67,7 +67,7 @@ test('the compliance document is the council’s CURRENT guideline from the libr
   assert.equal(G.wmpgGuidelineLabel(hit), 'Northern Beaches Council — waste management guidelines, v2 2025 update, effective 2025-07-01');
   // the generator: manual entry replaces and is never overwritten
   const lg = extractBlock(/^async function wmpgLoadGuideline\(/).text;
-  assert.ok(lg.includes("d.complianceSrc.kind === 'manual') return null"), 'a hand-typed document is never overwritten by the auto-load');
+  assert.ok(lg.includes("const manual = !!(d.complianceSrc && d.complianceSrc.kind === 'manual');") && lg.includes('if (manual) return null;'), 'a hand-typed document is never overwritten by the auto-load (the state documents for §1.5 are still read)');
   assert.ok(/kind: 'none'/.test(lg), 'and no document on file is recorded as such');
   assert.ok(/no guideline on file for/.test(SOURCE), 'which the field says in words');
 });
@@ -158,9 +158,11 @@ test('a bin row keeps its Design-tab value, and an edit is visible as one wherev
   // the write-back is explicit and one row at a time
   const ap = extractBlock(/^function wmpgApplyToDesign\(/).text;
   assert.ok(/confirm\(/.test(ap), 'apply-to-design asks first');
-  assert.ok(/manualWhy = 'Set in the WMP generator'/.test(ap), 'and lands on the schedule as a named manual override, like a calculator override does');
-  assert.ok(/The bin calculator does not keep this override/.test(ap), 'and says the calculator will recalculate');
-  assert.ok(/wsLayoutSetTargets\(p\.schedule/.test(ap), 'the open layout is re-fed, so the Design tab shows it at once');
+  const row = extractBlock(/^function wmpgApplyRowToProject\(/).text;
+  assert.ok(row.includes("'Set in the WMP generator'") && row.includes('x.manual = true; x.manualWhy = why;'), 'and lands as a named manual override, like a calculator override does');
+  assert.ok(row.includes('wmpgOvWrite(s.bin_rooms, roomId, sec, b.stream, b, why)'), '2026-11-02: written into the calculator\'s saved choices, which it keeps');
+  const fin = extractBlock(/^function wmpgApplyFinish\(/).text;
+  assert.ok(fin.includes('wsPushSummaryToCalc()') && fin.includes('wsLayoutSetTargets(p.schedule'), 'an open Design tab is re-fed, so the calculator and layout show it at once');
   const form = extractBlock(/^function wmpgRoomBlock\(/).text;
   assert.ok(form.includes('edited in WMP — differs from Design tab'), 'the form says so in those words');
 });
@@ -219,7 +221,14 @@ test('conditions hide what does not apply — no chute, no chute text — and a 
   assert.equal(G.tbCondMet('', noChute), true);
   assert.ok(G.TB_CONDS.some(c => c[0] === 'compaction') && G.TB_CONDS.some(c => c[0] === '!chutes'), 'the library editor offers the new conditions');
   const panel = extractBlock(/^function tbRenderPanel\(/).text;
-  assert.ok(/const shown = groups\.filter/.test(panel) && /hidden because the project has no use for them/.test(panel), 'the panel hides empty groups and says how many');
+  assert.ok(/const shown = printed\.filter/.test(panel) && /hidden because the project has no use for them/.test(panel), 'the panel hides empty groups and says how many');
+  // 2026-11-02: only the groups this document prints are listed — the
+  // collection process has one source, the room's Collection text
+  assert.ok(panel.includes('const printed = groups.filter(tbGroupPrinted);') && panel.includes('not printed in a WMP'));
+  const pr = new Function(extractBlock(/^const WMPG_TB_PRINTED = /).text + '\n' + extractBlock(/^function tbGroupPrinted\(/).text + ';return tbGroupPrinted;')();
+  assert.equal(pr('1.2 Site context'), true); assert.equal(pr('Waste collection times'), true);
+  assert.equal(pr('5.1 Residential waste collection'), false, 'a library collection-process group is not a second source');
+  assert.equal(pr('3.2 Commercial waste stream sorting table'), false, 'the stream table is the sorting editor’s');
 });
 
 test('presets: built-ins are project shapes, saved presets are exact selections; both reset the exceptions', () => {
@@ -828,8 +837,8 @@ test('auto rows (no calculator schedule) and added rows start from the calculato
 // ── §12 five fixes (2026-09-17): open groups · follow tags · council guideline · scope-driven intro · AI site context ──
 function loadScope(TB) {
   const code = [/^function wmpgScopeFlags\(/, /^function wmpgPhaseWords\(/, /^function tbDefaultOn\(/, /^function tbSrcTag\(/,
-    /^function wmpgSrcMatch\(/, /^function wmpgFollowPick\(/, /^function wmpgContextGuard\(/, /^function wmpgSiteContextFacts\(/].map(p => extractBlock(p).text).join('\n\n');
-  return new Function('TB', 'WMPG', code + ';return { wmpgScopeFlags, wmpgPhaseWords, tbSrcTag, wmpgSrcMatch, wmpgFollowPick, wmpgContextGuard, wmpgSiteContextFacts };')(TB, { data: null });
+    /^function wmpgSrcMatch\(/, /^function wmpgFollowPick\(/, /^function wmpgSiteContextFacts\(/].map(p => extractBlock(p).text).join('\n\n');
+  return new Function('TB', 'WMPG', code + ';return { wmpgScopeFlags, wmpgPhaseWords, tbSrcTag, wmpgSrcMatch, wmpgFollowPick, wmpgSiteContextFacts };')(TB, { data: null });
 }
 const SCOPE_ROWS = [
   { t: 'SCOPE_INTRO', g: '1.1 Scope', b: 'The scope of this WMP includes:', on: 1, s: 'p' },
@@ -910,20 +919,30 @@ test('the council’s own guideline is always in §1.5 — appended after the li
 test('§1.2 site context can be generated: written from the WMP’s facts, guarded like the polish, marked AI until edited; the .docx follows the preview’s rule', () => {
   const S = loadScope({ byGroup: {}, scope: {} });
   const facts = { address: '117 Flinders St, Surry Hills', council: 'City of Sydney', state: 'NSW', development: '8-level mixed-use', previous_use: '', collection_street: 'Flinders St', collection_point: '', site_constraints: '' };
-  assert.ok(S.wmpgContextGuard(facts, 'The subject site is located at 117 Flinders St, Surry Hills within the City of Sydney area. The surrounding land uses are established terraces with shops along the main road. Collection is from Flinders St.').ok);
-  assert.equal(S.wmpgContextGuard(facts, '').why, 'it returned nothing');
-  assert.equal(S.wmpgContextGuard(facts, 'The site at 119 Flinders St is in Surry Hills.').why, 'it changed or dropped the address');
-  assert.equal(S.wmpgContextGuard(facts, 'The subject site is located at 117 Flinders St, Surry Hills, about 400 m from Central Station.').why, 'it introduced 400', 'a distance the facts do not contain');
-  assert.equal(S.wmpgContextGuard(facts, '- 117 Flinders St, Surry Hills').why, 'it used headings or bullets');
   assert.deepStrictEqual(S.wmpgSiteContextFacts({ address: 'A', council: 'C', state: 'NSW', devTypeText: 'D', tokens: { previous_use: 'warehouse' }, rooms: [{ collection: { street: 'S', point: 'P' } }] }),
     { address: 'A', council: 'C', state: 'NSW', development: 'D', previous_use: 'warehouse', collection_street: 'S', collection_point: 'P', site_constraints: '' });
-  const gen = extractBlock(/^async function wmpgGenerateSiteContext\(/).text;
-  assert.ok(/aiProxy\(\{ max_tokens: 800, system: WMPG_CONTEXT_SYSTEM/.test(gen) && /wmpgContextGuard\(facts, text\)/.test(gen) && /siteContextSrc = \{ kind: 'ai'/.test(gen), 'generated through the proxy, guarded, marked');
-  assert.ok(/never invent street names, distances, dates, numbers/.test(extractBlock(/^const WMPG_CONTEXT_SYSTEM = /).text) && /\[bracketed placeholder\]/.test(extractBlock(/^const WMPG_CONTEXT_SYSTEM = /).text), 'no guessing — a missing fact is a placeholder');
-  assert.ok(/siteContextSrc\.kind === 'ai'\) WMPG\.data\.siteContextSrc = \{ kind: 'edited'/.test(extractBlock(/^function wmpgSet\(/).text), 'provenance follows an edit');
-  assert.ok(/onclick="wmpgGenerateSiteContext\(\)"/.test(extractBlock(/^function wmpgRenderForm\(/).text) && /AI-generated — check the surrounding land uses/.test(extractBlock(/^function wmpgRenderForm\(/).text));
+  // 2026-11-02: ✨ writes ONE sentence on the surrounding land uses, placed into the library's wording
+  const gen = extractBlock(/^async function wmpgGenerateLandUse\(/).text;
+  assert.ok(/aiProxy\(\{ max_tokens: 200, system: WMPG_LANDUSE_SYSTEM/.test(gen) && /wmpgLandUseGuard\(facts, text\)/.test(gen) && /siteLandUseSrc = \{ kind: 'ai'/.test(gen), 'generated through the proxy, guarded, marked');
+  const sys = extractBlock(/^const WMPG_LANDUSE_SYSTEM = /).text;
+  assert.ok(/ONE sentence/.test(sys) && /Never invent street names, distances, dates, numbers/.test(sys) && /\[describe the surrounding land uses\]/.test(sys), 'one sentence, no guessing — an unknown area is a placeholder');
+  const G2 = new Function(extractBlock(/^function wmpgLandUseGuard\(/).text + '\n' + extractBlock(/^function wmpgLandUseInto\(/).text + ';return { wmpgLandUseGuard, wmpgLandUseInto };')();
+  assert.ok(G2.wmpgLandUseGuard(facts, 'The surrounding land uses include terraces and a shopping strip along Crown St.').ok);
+  assert.equal(G2.wmpgLandUseGuard(facts, 'The surrounding land uses include terraces. There is a park.').why, 'it wrote more than one sentence');
+  assert.equal(G2.wmpgLandUseGuard(facts, 'The surrounding land uses include a park 200 m away.').why, 'it introduced 200');
+  const sen = 'The surrounding land uses include terraces and shops.';
+  assert.deepStrictEqual(G2.wmpgLandUseInto(['The site is at 1 A St. The surrounding land uses include xxx. Collection is from A St.'], sen),
+    ['The site is at 1 A St. The surrounding land uses include terraces and shops. Collection is from A St.'], 'it takes the library’s own surroundings sentence');
+  assert.deepStrictEqual(G2.wmpgLandUseInto(['The site is at 1 A St.'], sen), ['The site is at 1 A St. The surrounding land uses include terraces and shops.'], 'no such sentence → added after');
+  assert.deepStrictEqual(G2.wmpgLandUseInto(['Keep me.'], ''), ['Keep me.'], 'nothing written → the library’s text as it is');
+  assert.ok(/siteLandUseSrc\.kind === 'ai'\) WMPG\.data\.siteLandUseSrc = \{ kind: 'edited'/.test(extractBlock(/^function wmpgSet\(/).text), 'provenance follows an edit');
+  const form = extractBlock(/^function wmpgRenderForm\(/).text;
+  assert.ok(/onclick="wmpgGenerateLandUse\(\)"/.test(form) && /AI-generated — check it against what you know of the site/.test(form));
+  const site = form.slice(form.indexOf('id="s-site"'), form.indexOf('id="s-rates"'));
+  assert.ok(site.includes("'Previous site use','tokens.previous_use'") && site.includes('${wmpgSiteFigCard(d)}'), 'previous use, land uses and the site figure sit in Site & development');
   const tpl = extractBlock(/^function wmpgTplPayload\(/).text;
-  assert.ok(/if \(!d\.siteContext && tbHas\('1\.2 Site context'\)\)/.test(tpl) && /if \(!d\.background && tbHas\('1\.3 Background'\)\)/.test(tpl), 'an author’s (or generated) text beats the library skeleton in the .docx, as in the preview');
+  assert.ok(/if \(!d\.siteContext && tbHas\('1\.2 Site context'\)/.test(tpl) && /if \(!d\.background && tbHas\('1\.3 Background'\)\)/.test(tpl), 'an author’s text beats the library skeleton in the .docx, as in the preview');
+  assert.ok(tpl.includes('wmpgLandUseInto(ps.map(x => x.text), d.siteLandUse)') && extractBlock(/^function wmpgDocModel\(/).text.includes('wmpgLandUseInto(ps.map(n => n.t), d.siteLandUse)'), 'the land-use sentence is placed the same way in the .docx and the preview');
 });
 
 
@@ -1116,4 +1135,47 @@ test('the council card no longer carries free-text guidelines, and the WMP reads
   assert.ok(!/\['guidelines',/.test(fields) && !/\['other_guidelines',/.test(fields), 'both fields are off the council card');
   assert.ok(!/meta\.guidelines|m\.guidelines/.test(extractBlock(/^async function wmpgLoadGuideline\(/).text + extractBlock(/^async function wmpgLoadMeta\(/).text),
     'and nothing in the WMP reads them');
+});
+
+// ── bin counts: three sources, live; apply writes into the calculator (2026-11-02) ──
+test('a bin row’s count follows its source — calculator, calculated from volume, or typed', () => {
+  const { extractBlock } = require('./extract.js');
+  const F = new Function('wmpgRoomVols', 'wmpgBinOffer', ['^const WMPG_QTY_MODES = ', '^function wmpgBinQtyMode\\(', '^function wmpgBinCalcQty\\(', '^function wmpgBinQtyFor\\(', '^function wmpgBinsRecalc\\(', '^function wmpgBinVolCap\\(']
+    .map(a => extractBlock(new RegExp(a)).text).join('\n') + ';return { wmpgBinQtyMode, wmpgBinQtyFor, wmpgBinsRecalc, wmpgBinVolCap };');
+  let vol = 2000;
+  const M = F(() => ({ GW: vol }), () => ({ perDwelling: null }));
+  const room = { bins: [
+    { stream: 'GW', sizeL: 240, colWk: 2, qty: 3, src: 'calc', design: { sizeL: 240, colWk: 2, qty: 3 } },         // calculator row
+    { stream: 'GW', sizeL: 240, colWk: 1, qty: 12, src: 'auto', design: null },                                    // an estimate someone typed over (calc would be 9)
+  ] };
+  const d = { rooms: [room] };
+  M.wmpgBinsRecalc(d);
+  assert.equal(room.bins[0].qtyMode, 'design', 'an untouched calculator row follows the calculator');
+  assert.equal(room.bins[1].qtyMode, 'typed', 'an estimate someone changed is kept as typed — never recalculated away');
+  room.bins[0].qtyMode = 'here';
+  vol = 4000; M.wmpgBinsRecalc(d);
+  assert.equal(room.bins[0].qty, 9, 'calculated from volume: 4000 L ÷ (240 L × 2) → 9, and it follows a change');
+  assert.equal(room.bins[1].qty, 12, 'typed stays');
+  room.bins[0].qtyMode = 'design'; room.bins[0].sizeL = 1100;
+  assert.equal(M.wmpgBinQtyFor(d, room, room.bins[0], { perDwelling: null }), 2, 'a calculator row resized here no longer matches the calculator — calculated instead');
+  const vc = M.wmpgBinVolCap({}, { bins: [{ stream: 'GW', sizeL: 240, qty: 2, colWk: 1 }] }, { stream: 'GW' });
+  assert.deepStrictEqual(vc, { vol: 4000, cap: 480, short: true }, 'capacity against volume, short flagged');
+  const set = extractBlock(/^function wmpgBinSet\(/).text;
+  assert.ok(set.includes("if (field === 'qty') b.qtyMode = 'typed';") && set.includes('wmpgBinsRecalc(WMPG.data);'), 'typing a count makes it typed; every edit recalculates');
+  assert.ok(extractBlock(/^function wmpgLiveNotes\(/).text.includes('wmpgBinsRecalc(d).forEach'), 'dwelling and rate edits recalculate live');
+  const form = extractBlock(/^function wmpgRoomBlock\(/).text;
+  assert.ok(form.includes('onchange="wmpgBinQtySource(${i},${j},this.value)"') && form.includes('id="wmpg-bvc-${i}-${j}"'), 'the source picker and the capacity / volume cell');
+});
+
+test('apply to bin calculator writes the calculator’s own saved choices for that room', () => {
+  const { extractBlock } = require('./extract.js');
+  const w = new Function(extractBlock(/^function wmpgOvWrite\(/).text + ';return wmpgOvWrite;')();
+  const rooms = [{ id: 'R1', name: 'Res', method: { r: 'bulk' }, ov: { sz: { 'r|REC': 660 } } }, { id: 'R2', name: 'Retail' }];
+  const out = w(rooms, 'R2', 'c', 'GW', { sizeL: 1100, colWk: 3, qty: 2, method: 'self_haul' });
+  assert.deepStrictEqual(out[1].ov, { sz: { 'c|GW': 1100 }, cw: { 'c|GW': 3 }, n: { 'c|GW': 2 }, why: { 'c|GW': 'Set in the WMP generator' } });
+  assert.deepStrictEqual(out[1].method, { c: 'self_haul' });
+  assert.equal(out[0], rooms[0], 'other rooms untouched');
+  assert.ok(!rooms[1].ov, 'the input is not mutated');
+  assert.equal(w(rooms, 'R9', 'r', 'GW', {}), null, 'no such room → null, said so');
+  assert.ok(extractBlock(/^function wmpgApplyAllToDesign\(/).text.includes('wmpgApplyRowToProject(p, t.room, t.b)'), 'a whole room (or every room) in one confirmation');
 });

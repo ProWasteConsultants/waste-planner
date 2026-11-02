@@ -162,3 +162,17 @@ test('the library shows one card per document, and the upload row picks new or r
   assert.ok(lib.includes("cgDocMetaSave('${k}','${slot}','applies_to',this.value)"), 'and its own tags');
   assert.ok(extractBlock(/^async function cgDocMetaSave\(/).text.includes(".eq('council_key', key).eq('doc_slot', slot)"), 'a rename re-tags every version of that document');
 });
+
+test('§1.5 lists the state’s library documents too, each once; the built-in state line only when there are none', () => {
+  const W = new Function(['wmpgCouncilGuidelineLine', 'wmpgCouncilGuidelineLines', 'wmpgGuidelineListed']
+    .map(n => extractBlock(new RegExp('^function ' + n + '\\(')).text).join('\n') + ';return { wmpgCouncilGuidelineLines };')();
+  const d = { council: 'Camden Council', compliance: 'Camden — Waste guide, v1', complianceSrc: { kind: 'library', docs: ['Camden — Waste guide, v1'] },
+    stateDocs: ['NSW — state guidelines — EPA Better Practice Guide, v2'] };
+  assert.deepStrictEqual(W.wmpgCouncilGuidelineLines(d), ['Camden — Waste guide, v1', 'NSW — state guidelines — EPA Better Practice Guide, v2']);
+  // the state fallback IS the compliance document: listed once, not twice
+  const f = { council: 'Bayside Council', compliance: 'NSW — state guidelines — EPA, v2', complianceSrc: { kind: 'state', docs: ['NSW — state guidelines — EPA, v2'] }, stateDocs: ['NSW — state guidelines — EPA, v2'] };
+  assert.deepStrictEqual(W.wmpgCouncilGuidelineLines(f), ['NSW — state guidelines — EPA, v2']);
+  const def = extractBlock(/^function wmpgDefaultGuidelines\(/).text;
+  assert.ok(def.includes('if (!(d.stateDocs && d.stateDocs.length)) (byState[d.state] || []).forEach'), 'the built-in state reference yields to the library');
+  assert.ok(extractBlock(/^async function wmpgLoadGuideline\(/).text.includes('d.stateDocs = wmpgPickGuidelines(rows, null, kinds, d.state).map(wmpgGuidelineLabel);'));
+});

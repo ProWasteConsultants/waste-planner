@@ -37,7 +37,8 @@ const CORE = [
   // report tables (the doc-model block)
   /^function wmpgCompName\(/, /^function wmpgUniq\(/, /^function wmpgResDevSummary\(/, /^function wmpgComQtyText\(/,
   /^function wmpgComDevSummary\(/, /^function wmpgComGenTable\(/, /^function wmpgComTextDefaults\(/,
-  /^const WMPG_COM_SORT_TAG = /, /^const WMPG_COM_COLOURS = /, /^function wmpgComSortRows\(/,
+  /^const WMPG_COM_SORT_TAG = /, /^const WMPG_COM_COLOURS = /, /^function wmpgSortStreams\(/, /^function wmpgSortDefaults\(/,
+  /^function wmpgSortRow\(/, /^function wmpgSortRows\(/, /^function wmpgComSortRows\(/,
   /^function wmpgStorageRows\(/, /^const WMPG_STORAGE_HDR = /, /^const WMPG_COLLECT_HDR = /, /^function wmpgCollectRows\(/,
   /^function wmpgCollectionSentence\(/, /^const WMPG_TPL_REHOME = /, /^function wmpgTplRehome\(/,
 ];
@@ -49,7 +50,7 @@ function load() {
     ;return { WMPG_STREAMS, WMPG_COM_USES, WMPG_SPLIT_DEFS, wmpgComWeeklyL, wmpgApplySplits, wmpgSplitList, wmpgComUseRows,
       wmpgComRoomVols, wmpgComRoomMoves, wmpgComRatesFor, wmpgComRateScope, wmpgComVolDiff, wmpgRoomVols, wmpgTotalVols,
       wmpgRoomStreams, wmpgRoomKind, wmpgDwLabel, wmpgNewRoom, wmpgHydrateRooms, wmpgUpgradeDraft, wmpgShape, wmpgNarrative,
-      wmpgCompName, wmpgResDevSummary, wmpgComDevSummary, wmpgComGenTable, wmpgComTextDefaults, wmpgComSortRows,
+      wmpgCompName, wmpgResDevSummary, wmpgComDevSummary, wmpgComGenTable, wmpgComTextDefaults, wmpgComSortRows, wmpgSortRow, wmpgSortRows,
       wmpgStorageRows, wmpgCollectRows, wmpgCollectionSentence, wmpgTplRehome, wmpgComUnitWord };`)(
     () => '', () => 'Title', () => {}, () => ({ source: '', received: '' }), () => [], () => null);
 }
@@ -372,4 +373,36 @@ test('rates label: a council with commercial rates only does not claim the state
   R.COUNCIL_PROFILES['NSW|northern_beaches_council'].resRates = { apt_1br: { GW: 120 } };
   const d2 = mk(); run(R, d2);
   assert.match(d2.ratesSource, /^Northern Beaches Council council rates/);
+});
+
+test('§3.1 / §3.2 sorting rows: colours from council → state → standard; commercial AS 4123.7 unless council collects; every field editable', () => {
+  const P = load(), d = hydrated(P);
+  // residential: the council card, else the state's, else the standard
+  const col = new Function('WMPG_STREAMS', extractBlock(/^const WMPG_META_COLOUR = /).text + '\n' + extractBlock(/^function wmpgApplyMetaColours\(/).text + ';return wmpgApplyMetaColours;')(P.WMPG_STREAMS);
+  const dd = { colours: {} };
+  col(dd, { bin_colour_gw: 'red lid (council)' }, { bin_colour_gw: 'red lid (state)', bin_colour_rec: 'yellow lid (state)' });
+  assert.deepStrictEqual([dd.colours.GW, dd.colourSrc.GW, dd.colours.REC, dd.colourSrc.REC, dd.colourSrc.ORG], ['red lid (council)', 'council', 'yellow lid (state)', 'state', undefined]);
+  col(dd, {}, {});
+  assert.equal(dd.colours.GW, P.WMPG_STREAMS.GW.colour, 'a new council with nothing recorded does not keep the last council’s colour');
+  // commercial: AS 4123.7 (the master's black-body wording) for a private collection…
+  const com = d.rooms.find(r => P.wmpgRoomKind(r) === 'com');
+  com.bins.forEach(b => { b.provider = 'private contractor'; });
+  assert.equal(P.wmpgSortRow(d, 'c', 'GW').colour, 'black body with red lid');
+  assert.equal(P.wmpgSortRow(d, 'c', 'GW').colourSrc, 'AS 4123.7');
+  // …but the council's colours when council collects it
+  d.colours = Object.assign({}, d.colours, { GW: 'dark green body with red lid (council)' }); d.colourSrc = { GW: 'council' };
+  com.bins.filter(b => b.stream === 'GW').forEach(b => { b.provider = 'council'; });
+  assert.equal(P.wmpgSortRow(d, 'c', 'GW').colour, 'dark green body with red lid (council)', 'a council collection uses the council’s colours');
+  // edits override field by field; the defaults stay underneath
+  d.sort = { c: { GW: { recept: '120L bin', notes: 'Tenants bag waste.' } } };
+  const r = P.wmpgSortRow(d, 'c', 'GW');
+  assert.deepStrictEqual([r.recept, r.notes, r.disposal, r.edited], ['120L bin', 'Tenants bag waste.', 'direct to the commercial waste storage area', { recept: true, notes: true }]);
+  assert.deepStrictEqual(P.wmpgComSortRows(d)[0].slice(1, 3), ['dark green body with red lid (council)', '120L bin'], 'the printed row carries the edit');
+  // preview and .docx read the same rows; the form has the editor
+  const tpl = extractBlock(/^function wmpgTplPayload\(/).text, model = extractBlock(/^function wmpgDocModel\(/).text;
+  assert.ok(tpl.includes("const sortRows = wmpgSortRows(d, 'r');") && model.includes("const sortRows = wmpgSortRows(d, 'r');"));
+  assert.ok(extractBlock(/^function wmpgRenderForm\(/).text.includes('${wmpgSortSectionHtml(d)}'));
+  const sec = extractBlock(/^function wmpgSortSectionHtml\(/).text;
+  assert.ok(sec.includes("opts(WMPG_RECEPT_OPTS, r.recept)") && sec.includes("opts(WMPG_DISPOSAL_OPTS, r.disposal)"), 'receptacle and disposal are drop-downs');
+  assert.ok(extractBlock(/^async function wmpgCouncilChanged\(/).text.includes('await wmpgLoadMeta(d)'), 'colours follow a council change');
 });
