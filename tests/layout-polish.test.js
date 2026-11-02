@@ -760,7 +760,7 @@ test('council registry is one list: uploader, checker and rates DB all read it',
   assert.ok(SOURCE.includes('async function rdbGuidelineCard()') && SOURCE.includes('id="rdb-guideline-card"'),
     'selecting a council shows what guideline it has on file');
   assert.ok(SOURCE.includes('rdbGuidelineCard();'), 'and it refreshes with the rates');
-  assert.ok(SOURCE.includes('row = await glBridgeServingRow(label)'),
+  assert.ok(SOURCE.includes('row = stCode ? await glBridgeStateRow(stCode) : await glBridgeServingRow(label);'),
     'the card resolves the same serving row the checker uses — one source of truth');
   assert.ok(SOURCE.includes('_glBridgeAll = null;   // re-read guidelines'),
     'a Load re-reads, so a just-uploaded guideline shows');
@@ -859,7 +859,7 @@ test('storing a guideline document does not depend on AI extraction', () => {
   // the storing itself is the ONE upload path (cgbUploadOne): PDF to storage, then a version
   const one = SOURCE.slice(SOURCE.indexOf('async function cgbUploadOne(r)'), SOURCE.indexOf('async function cgbUploadAll()'));
   assert.ok(fn.includes('if (await cgbUploadOne(r)) ok++;') &&
-            one.includes("const path = `guidelines/${key}/${Date.now()}_${safe}`;") &&
+            one.includes("const path = `guidelines/${folder}/${Date.now()}_${safe}`;") &&
             one.includes('await cgInsertVersion({'), 'it stores the PDF and creates the version through the shared path');
   assert.ok(one.includes('requirements: [],     // structured rows come from extraction + review (C3)'),
     'with no clauses — approval still gates what a scan may cite');
@@ -894,7 +894,7 @@ test('admin guidelines section is scoped to one council', () => {
   // rows are approved against a specific document; showing another council's
   // library and queue while you type a different name invites approving
   // against the wrong one
-  assert.ok(SOURCE.includes("const CG_SCOPE = { name: '' };") && SOURCE.includes('function cgScopeChanged(v)'),
+  assert.ok(SOURCE.includes("const CG_SCOPE = { name: '', state: '' };") && SOURCE.includes('function cgScopeChanged(v)'),
     'the guidelines scope state still exists');
   // the scope is now set by the ONE shared Scope bar (admScopeSync is its
   // single writer); cg-name survives only as a hidden field for the readers
@@ -904,18 +904,16 @@ test('admin guidelines section is scoped to one council', () => {
     'the old council field is hidden, not duplicated');
   assert.ok(SOURCE.includes('function cgScopeMatches(name)') && SOURCE.includes('function cgRenderLibrary()'),
     'the library renders through the scope');
-  assert.ok(SOURCE.includes('.filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name))'),
-    'library entries are filtered by the selected council');
-  assert.ok(SOURCE.includes('const rows = listed.filter(r => cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));'),
-    'the requirements list is filtered by the selected council');
-  // with nothing selected, no council-specific content and no prompt copy
-  assert.ok(SOURCE.includes("if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing council-specific, no prompt"),
-    'unselected library renders nothing, never another council');
-  assert.ok(SOURCE.includes("if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing, no prompt"),
-    'unselected list renders nothing, never another council');
+  assert.ok(SOURCE.includes('.filter(k => cgScopeMatchesRow(byKey[k].live || byKey[k].any))'),
+    'library entries are filtered by the selected scope (a council, or a state\'s own documents)');
+  assert.ok(SOURCE.includes('const rows = listed.filter(r => cgScopeMatchesRow(CRQ_L.docs[r.council_guideline_id]));'),
+    'the requirements list is filtered by the selected scope');
+  // with nothing selected, no content and no prompt copy
+  assert.ok(SOURCE.includes("if (!cgScopeActive()) { wrap.innerHTML = ''; return; }   // nothing scoped → nothing, no prompt"),
+    'unselected library / list renders nothing, never another council');
   assert.ok(!SOURCE.includes('id="cg-scope-echo"') && !SOURCE.includes('Each saved PDF becomes a NEW version'), 'the scope chip and the versioning note are gone');
   // the selected council's document card is the same renderer the rates panel uses
-  assert.ok(SOURCE.includes('async function glCouncilCard(label, mountId, emptyHint)'), 'one card renderer');
+  assert.ok(SOURCE.includes('async function glCouncilCard(label, mountId, emptyHint, opts)'), 'one card renderer');
   assert.ok(SOURCE.includes("glCouncilCard(CG_SCOPE.name, 'cg-council-card'") &&
             SOURCE.includes("glCouncilCard(label, 'rdb-guideline-card'"),
     'both panels mount it, so they cannot describe the same document differently');
