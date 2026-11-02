@@ -144,3 +144,14 @@ test('one current plan: older plan PDFs are superseded, kept on file, and brough
   assert.ok(card.includes("docMakeCurrentPlan('${d.id}')"), 'the ⋯ menu offers Make this the current plan');
   assert.ok(extractBlock(/^function docMakeCurrentPlan\(/).text.includes('confirm(') , 'and it asks first');
 });
+
+test('projects list: one line per project, the address once, the council by name', () => {
+  const sub = new Function(extractBlock(/^function wpProjectSubAddress\(/).text + ';return wpProjectSubAddress;')();
+  assert.equal(sub({ name: '13 Old Barrenjoey Road, Avalon Beach', address: '13 Old Barrenjoey Road, Avalon, NSW, DP 1091820' }), '',
+    'the same street twice is shown once');
+  assert.equal(sub({ name: 'Coral Cove Village Centre', address: '2 Pebble Beach, Coral Cove' }), '2 Pebble Beach, Coral Cove');
+  assert.equal(sub({ name: '', address: '50 Harnett Ave' }), '', 'no name: the address is already the title');
+  const r = extractBlock(/^function renderProjects\(/).text;
+  assert.ok(r.includes('wpProjectSubAddress(p)') && r.includes('wpCouncilName(getCouncilsForState(p.state), p.council)'));
+  assert.ok(/#screen-projects \.pc-main\{display:flex;align-items:baseline/.test(SOURCE), 'name and address share the line');
+});
