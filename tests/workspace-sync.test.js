@@ -201,3 +201,14 @@ test('calculator readability: every stream pill has its colour, nothing tiny', (
   assert.ok(html.includes('READABILITY PASS (2026-11-02)'));
   assert.ok(html.includes('<div class="wsr-srcbox">') && html.includes('class="wsr-info" title='), 'the source lines are short, details in a tooltip');
 });
+
+test('calculator stream table fits the panel: fixed columns, full-height stream blocks, short headers when narrow', () => {
+  const { decodeSrcdoc } = require('./extract.js');
+  const html = decodeSrcdoc('calc-iframe').html;
+  assert.ok(html.includes('.wsr-table{table-layout:fixed;width:100%;') && html.includes('<colgroup><col class="wc-stream">'), 'fixed column widths — never a sideways scroll');
+  assert.ok(html.includes('#ws-right{container-type:inline-size;container-name:wsr;overflow-x:hidden;}') && html.includes('@container wsr (max-width:560px)'), 'a narrow panel tightens, it does not overflow');
+  assert.ok(html.includes('<span class="hl">Capacity</span><span class="hs">Cap</span>'), 'headers shorten instead of being cut off');
+  assert.ok(html.includes('<tr class="wsr-eqrow ${b.cls}" data-stream="${s}">') && html.includes('<tr class="wsr-eqrow wsr-splitrow" data-stream="${s}">'),
+    'sub-rows carry their stream, so its block runs down them');
+  for (const s of ['GW', 'REC', 'ORG', 'GLS', 'CARD', 'SOFT']) assert.ok(html.includes('.wsr-table tr[data-stream=' + s + ']>td:first-child{background:'), s + ' block');
+});
