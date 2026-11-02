@@ -155,3 +155,49 @@ test('projects list: one line per project, the address once, the council by name
   assert.ok(r.includes('wpProjectSubAddress(p)') && r.includes('wpCouncilName(getCouncilsForState(p.state), p.council)'));
   assert.ok(/#screen-projects \.pc-main\{display:flex;align-items:baseline/.test(SOURCE), 'name and address share the line');
 });
+
+// ── the Design-tab calculator keeps its choices (2026-11-02) ────────────────
+test('the calculator saves each room’s results-table choices with the room, and restores them', () => {
+  const { extractSrcdocBlock, decodeSrcdoc } = require('./extract.js');
+  const code = [/^const OV_MAPS=/, /^function roomOvPack\(/, /^function roomOvApply\(/].map(p => extractSrcdocBlock('calc-iframe', p).text).join('\n');
+  const M = new Function(`let _szOv={},_cwOv={},_binOv={},_binOvWhy={},_eqSel={},_plantSel={};` + code +
+    `;return { roomOvPack, roomOvApply, maps: () => ({ _szOv, _cwOv, _binOv, _binOvWhy, _eqSel, _plantSel }) };`)();
+  const m = M.maps();
+  Object.assign(m._szOv, { 'R1|r|GW': 240, 'R2|c|REC': 1100 });
+  Object.assign(m._cwOv, { 'R1|r|ORG': 0.5 });
+  Object.assign(m._binOv, { 'R1|r|GW': 4 });
+  Object.assign(m._binOvWhy, { 'R1|r|GW': 'council table' });
+  m._eqSel['R1|r|GW'] = 'COMP_1';
+  const pack = M.roomOvPack('R1');
+  assert.deepStrictEqual(pack, { sz: { 'r|GW': 240 }, cw: { 'r|ORG': 0.5 }, n: { 'r|GW': 4 }, why: { 'r|GW': 'council table' }, eq: { 'r|GW': 'COMP_1' } },
+    'size, collections a week, the typed count and its reason, the container — that room’s only');
+  // a fresh calculator gets them back
+  Object.values(m).forEach(o => Object.keys(o).forEach(k => delete o[k]));
+  M.roomOvApply('R1', pack);
+  assert.equal(m._szOv['R1|r|GW'], 240); assert.equal(m._cwOv['R1|r|ORG'], 0.5); assert.equal(m._binOv['R1|r|GW'], 4);
+  assert.equal(m._binOvWhy['R1|r|GW'], 'council table'); assert.equal(m._eqSel['R1|r|GW'], 'COMP_1');
+  M.roomOvApply('R1', { sz: { 'r|GW': 'x', 'bad key': 240 }, cw: { 'r|REC': 0 } });
+  assert.ok(!('R1|bad key' in m._szOv) && m._szOv['R1|r|GW'] === 240 && !('R1|r|REC' in m._cwOv), 'junk is ignored, never stored');
+  const html = decodeSrcdoc('calc-iframe').html;
+  assert.ok(html.includes('ov:roomOvPack(r.id)}));}'), 'serialised with every room (bin_rooms → the project)');
+  assert.ok(html.includes("if(arr.some(r=>r&&r.ov)){"), 'restored from the saved rooms');
+  // the collection method was already saved with the room
+  assert.ok(html.includes('method:normMethod(r.method),equip:'));
+});
+
+test('the calculator never writes a blank council back over the project’s', () => {
+  const { decodeSrcdoc } = require('./extract.js');
+  const html = decodeSrcdoc('calc-iframe').html;
+  assert.ok(html.includes("council: document.getElementById('council')?.value || PENDING_COUNCIL || '',"),
+    'a council still waiting for its option is reported as itself, not as None');
+  assert.ok(html.includes("onchange=\"if(event.isTrusted)PENDING_COUNCIL='';renderRooms();wsCalcTrigger()\""),
+    'only a person choosing a council (None included) clears the pending one');
+});
+
+test('calculator readability: every stream pill has its colour, nothing tiny', () => {
+  const { decodeSrcdoc } = require('./extract.js');
+  const html = decodeSrcdoc('calc-iframe').html;
+  for (const s of ['GW', 'REC', 'ORG', 'GLS', 'CARD', 'SOFT']) assert.ok(new RegExp('\\.pwPill-' + s + '\\{background:[^}]+;color:#').test(html), s + ' pill has its own colour');
+  assert.ok(html.includes('READABILITY PASS (2026-11-02)'));
+  assert.ok(html.includes('<div class="wsr-srcbox">') && html.includes('class="wsr-info" title='), 'the source lines are short, details in a tooltip');
+});

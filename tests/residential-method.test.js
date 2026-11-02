@@ -511,7 +511,7 @@ test('a council the platform names before the rates file has loaded is applied w
   // ws-calc-fill can land before the published rates file; a council only
   // that file lists (Northern Beaches) had no option yet, so the pick fell
   // to "None / use state" and the stepped table never applied.
-  const code = [/^let PENDING_COUNCIL=/, /^function councilMatch\(/, /^function refreshCouncils\(/]
+  const code = [/^function councilKey\(/, /^let PENDING_COUNCIL=/, /^function councilMatch\(/, /^function refreshCouncils\(/]
     .map(p => extractSrcdocBlock('calc-iframe', p).text).join('\n');
   const mkSel = () => {
     const sel = { options: [], value: '', changes: 0, dispatchEvent() { this.changes++; },
@@ -535,6 +535,12 @@ test('a council the platform names before the rates file has loaded is applied w
   assert.equal(sel.value, 'northern_beaches_council', 'the pending council is selected once it exists');
   assert.equal(sel.changes, 1, 'and the calculator is told, so the table applies');
   assert.equal(C.pending(), '', 'applied once, then forgotten');
+  // 2026-11-02: the project stores the registry's name, the published list
+  // a shorter one — still the same council, never None
+  sel.options = [{ value: '', textContent: '— None —' }, { value: 'northern_beaches', textContent: 'Northern Beaches' }, { value: 'north_sydney', textContent: 'North Sydney' }];
+  assert.equal(C.councilMatch(sel, 'Northern Beaches Council'), 'northern_beaches');
+  assert.equal(C.councilMatch(sel, 'City of North Sydney'), 'north_sydney');
+  assert.equal(C.councilMatch(sel, 'Bayside Council'), '', 'a council not listed is still a miss');
   // the fill path records a miss instead of settling for None
   const fill = require('./extract.js').decodeSrcdoc('calc-iframe').html;
   assert.ok(/PENDING_COUNCIL = \(!hit && \(d\.council \|\| ''\)\.trim\(\)\) \? d\.council : '';/.test(fill));

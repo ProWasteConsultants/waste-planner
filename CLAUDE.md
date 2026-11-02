@@ -592,6 +592,29 @@ throws on zero or multiple matches, so a rename fails loudly rather than silentl
 testing stale code. This means top-level declarations should stay at column 0 with
 their opening brace on the declaration line.
 
+## Bin calculator: what it keeps, and how it reads (2026-11-02)
+
+- **Every results-table choice is saved with its room.** `serialiseRooms`
+  adds `ov` (`roomOvPack`: bin size, collections a week, a typed count and
+  its reason, the container and the plant, keyed `sec|stream`) to each
+  `bin_rooms` entry, and `restoreRooms` puts them back (`roomOvApply`; a save
+  without them leaves memory alone). They used to live in memory only and
+  reset on every re-entry. The collection method was already saved
+  (`method`).
+- **The council survives re-entry.** The project stores the registry's name
+  ("Northern Beaches Council"); the published list may say "Northern
+  Beaches". `councilMatch` now also compares by `councilKey`. While a council
+  is still pending (`PENDING_COUNCIL`), the results report it as itself,
+  never as a blank that would overwrite the project's. Only a person's own
+  pick (`event.isTrusted`) clears it.
+- **Readability pass** (an override block at the end of the calculator's
+  `ws-dark` style): nothing under 11px, stronger contrast, and a colour for
+  every stream pill (`CARD` and `SOFT` had none). The rates / residential
+  method / collection source lines are short, inside `.wsr-srcbox`, and
+  their explanations ride an ⓘ tooltip (`wsr-info`). The key words stay on
+  screen ("state fallback used", "no published rates for X"). Tested in
+  `tests/workspace-sync.test.js`.
+
 ## Bin calculator: library-driven sizes, collection method, council schedule
 
 Three layered constraints decide what a bin-size dropdown offers, in this order

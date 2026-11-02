@@ -2508,6 +2508,82 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
 .wsr-devtot-val{font-size:14px;font-weight:700;color:#00d4d4;font-variant-numeric:tabular-nums;}
 .wsr-devtot-lbl{font-size:9px;color:rgba(255,255,255,0.38);text-transform:uppercase;margin-top:1px;letter-spacing:.3px;}
 #results{overflow-y:auto;max-height:100%;}
+/* ── READABILITY PASS (2026-11-02) ───────────────────────────────────────
+   Bigger type, stronger contrast, nothing under 11px, and every stream pill
+   in its own colour (Paper &amp; Cardboard and Soft Plastics had none — black
+   text on the dark card). Overrides only; the rules above stay as written. */
+html{font-size:17px;}
+.ws-lbl{font-size:12.5px;color:rgba(255,255,255,.8);margin-bottom:4px;}
+.ws-sel{font-size:13.5px;padding:7px 9px;}
+.ws-vol-title{font-size:13px;}
+.ws-roomname{font-size:14px;padding:6px 9px;}
+.ws-roomdel{width:24px;height:24px;font-size:14px;}
+.ws-num{font-size:14px;padding:6px 8px;}
+.ws-kind,.wsr-kind{font-size:10.5px;padding:3px 7px;border-radius:4px;}
+.comRow,.ws-comhead{grid-template-columns:1fr 64px 44px 24px;gap:5px;}
+.comRow select,.comRow input{font-size:13px;padding:5px 6px;}
+.ws-comhead{font-size:11px;color:rgba(255,255,255,.62);}
+.ws-addcom,.ws-addroom{font-size:12.5px;padding:7px 10px;}
+.ws-chute input,.ws-chute select,.ws-chuterow select,.ws-splitrow select,.ws-splitpct{font-size:12.5px !important;padding:5px 6px !important;}
+.ws-chute [style*=&quot;font-size:9px&quot;]{font-size:11.5px !important;}
+.ws-chuteopen,.ws-splitof,.ws-splitpctnote,.ws-splitsub{font-size:11px;color:rgba(255,255,255,.62);}
+.ws-splitlbl{font-size:12.5px;}
+.pwPill{gap:6px;padding:4px 10px;font-size:12.5px;font-weight:700;white-space:nowrap;letter-spacing:.1px;line-height:1.2;}
+.pwPill-dot{width:8px;height:8px;flex:0 0 auto;}
+.pwPill-GW{background:rgba(239,68,68,.2);color:#FCA5A5}.pwPill-GW .pwPill-dot{background:#EF4444}
+.pwPill-REC{background:rgba(245,180,0,.2);color:#FCD34D}.pwPill-REC .pwPill-dot{background:#F5B400}
+.pwPill-ORG{background:rgba(34,197,94,.2);color:#86EFAC}.pwPill-ORG .pwPill-dot{background:#22C55E}
+.pwPill-GLS{background:rgba(139,92,246,.22);color:#C4B5FD}.pwPill-GLS .pwPill-dot{background:#8B5CF6}
+.pwPill-CARD{background:rgba(59,130,246,.22);color:#93C5FD}.pwPill-CARD .pwPill-dot{background:#3B82F6}
+.pwPill-SOFT{background:rgba(6,182,212,.2);color:#67E8F9}.pwPill-SOFT .pwPill-dot{background:#06B6D4}
+.pwPillCaret{font-size:10px;color:rgba(255,255,255,.55);}
+.wsr-title{font-size:13.5px;}
+.wsr-table{font-size:14.5px;}
+.wsr-table th{font-size:12px;color:rgba(255,255,255,.78);padding:6px 10px;}
+.wsr-table td{padding:10px;}
+.wsr-table select,.wsr-table input{font-size:14px !important;padding:6px 8px !important;}
+.wsr-table input[type=number]{width:66px;}
+.wsr-table small{font-size:11.5px;color:rgba(255,255,255,.62);}
+.wsr-derived{font-size:11.5px;color:rgba(255,255,255,.62);margin-top:3px;}
+.pwProvChip,.pwUnitChip,.pwViaChute{font-size:11.5px;margin-top:3px;}
+.wsr-eqrow td{font-size:12.5px;}
+.wsr-plantsel{font-size:12.5px;padding:4px 6px;}
+.wsr-warn{font-size:12.5px;}
+.wsr-splitmenu{padding:8px 10px;}
+.wsr-splitmenu-hd{font-size:11px;color:rgba(255,255,255,.62);}
+.wsr-splitmenu-ft{font-size:11.5px;color:rgba(255,255,255,.62);}
+.wsr-room{padding:10px 12px;margin-bottom:10px;}
+.wsr-roomname{font-size:15px;}
+.wsr-roommeta{font-size:12px;color:rgba(255,255,255,.62);}
+.wsr-sub{font-size:13px;color:rgba(255,255,255,.85);margin:14px 0 6px;}
+.wsr-srcbox{border:1px solid #2f3a3a;border-radius:8px;background:#1b2222;padding:8px 12px;margin:0 0 12px;display:flex;flex-direction:column;gap:6px;}
+.wsr-rates{font-size:13px;color:rgba(255,255,255,.88);margin:0;gap:10px;flex-wrap:nowrap;align-items:center;}
+.wsr-src-k{flex:0 0 96px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,.58);}
+.wsr-src-v{flex:1;min-width:0;line-height:1.4;}
+.wsr-rates-reload{font-size:12px;padding:4px 10px;flex:0 0 auto;color:rgba(255,255,255,.85);}
+.wsr-method{font-size:13px;color:rgba(255,255,255,.85);gap:10px;margin:0 0 10px;}
+.wsr-method .wsr-src-k{flex:0 0 auto;}
+.wsr-methodsel{font-size:13.5px;padding:5px 8px;}
+.wsr-method-src{color:rgba(255,255,255,.72);line-height:1.4;}
+.wsr-info{cursor:help;color:#7FD8D8;font-size:12.5px;margin-left:3px;}
+.wsr-eq-meta{opacity:.85;}
+.wsr-allowlbl{font-size:14px;}
+.wsr-allowbasis{font-size:12.5px;color:rgba(255,255,255,.72);}
+.wsr-allowsrc{font-size:10.5px;color:rgba(255,255,255,.58);}
+.wsr-allowarea,.wsr-allowarea input{font-size:13.5px;}
+.wsr-roomtotal{font-size:15px;}
+.wsr-roomtotal small{font-size:12.5px;color:rgba(255,255,255,.75);}
+.wsr-hidden{font-size:11.5px;}
+.wsr-hidden a{color:rgba(255,255,255,.62);}
+#notesToggle{font-size:13px !important;color:rgba(255,255,255,.75) !important;}
+#notesList,#notesList li{font-size:13px;color:rgba(255,255,255,.75);}
+.pwNotes-title{font-size:13px;}
+.wsr-devtot-lbl{font-size:11px;color:rgba(255,255,255,.62);}
+.pvd-metric-lbl{font-size:10.5px;color:rgba(255,255,255,.6);}
+.pvd-metric-val{font-size:13px;}
+.pvd-formula,.pvd-table{font-size:12px;color:rgba(255,255,255,.65);}
+.wsr-allowrow{color:rgba(255,255,255,.75);}
+.wsr-allowrow.on{color:#e8eeee;}
 &lt;/style&gt;
 
 &lt;div id=&quot;pwcalc&quot;&gt;
@@ -2538,7 +2614,7 @@ html,body{background:#1a1a1a!important;margin:0;padding:0;overflow:hidden!import
         &lt;div id=&quot;aiExtractMsg&quot; style=&quot;font-size:.72rem;color:rgba(255,255,255,0.6);margin:0 0 6px;min-height:13px;line-height:1.4;&quot;&gt;&lt;/div&gt;
         &lt;div class=&quot;ws-row&quot;&gt;
           &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;State&lt;/span&gt;&lt;select id=&quot;state&quot; class=&quot;ws-sel&quot;&gt;&lt;option value=&quot;VIC&quot;&gt;VIC&lt;/option&gt;&lt;option value=&quot;NSW&quot;&gt;NSW&lt;/option&gt;&lt;option value=&quot;QLD&quot;&gt;QLD&lt;/option&gt;&lt;option value=&quot;SA&quot;&gt;SA&lt;/option&gt;&lt;option value=&quot;WA&quot;&gt;WA&lt;/option&gt;&lt;option value=&quot;TAS&quot;&gt;TAS&lt;/option&gt;&lt;option value=&quot;ACT&quot;&gt;ACT&lt;/option&gt;&lt;option value=&quot;NT&quot;&gt;NT&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
-          &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;Council&lt;/span&gt;&lt;select id=&quot;council&quot; class=&quot;ws-sel&quot; onchange=&quot;renderRooms();wsCalcTrigger()&quot;&gt;&lt;option value=&quot;&quot;&gt;—&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
+          &lt;div&gt;&lt;span class=&quot;ws-lbl&quot;&gt;Council&lt;/span&gt;&lt;select id=&quot;council&quot; class=&quot;ws-sel&quot; onchange=&quot;if(event.isTrusted)PENDING_COUNCIL='';renderRooms();wsCalcTrigger()&quot;&gt;&lt;option value=&quot;&quot;&gt;—&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
         &lt;/div&gt;
         &lt;div id=&quot;roomList&quot; class=&quot;ws-roomsWrap&quot;&gt;&lt;/div&gt;
         &lt;div class=&quot;ws-addrow&quot;&gt;
@@ -2776,11 +2852,16 @@ function ratesSourceInfo(){
 }
 function ratesNoteHtml(){
   const i=ratesSourceInfo();
-  let src;
-  if(!i.remote)src='built-in state defaults — the published rates file could not be loaded';
-  else if(!i.value)src=`${g('state').value} state defaults (published rates)`;
-  else if(i.ov)src=`&lt;b&gt;${escAttr(i.label)}&lt;/b&gt; override (published rates${i.ovRes?'':'; residential inherits the state defaults'}${i.ownCom?'; commercial: the council’s own list — state uses are not offered':i.ovCom?'':'; commercial inherits the state defaults'})`;
-  else src=`${g('state').value} state defaults — &lt;b style=&quot;color:#EFB080&quot;&gt;no published override for ${escAttr(i.label)}&lt;/b&gt; (value ${escAttr(i.value)}). Save its rates and ⬆ Publish rates to calculator, then ↻`;
+  // READABILITY (2026-11-02): one short line per source; the explanation
+  // rides the ⓘ tooltip instead of filling the panel
+  let src,tip='';
+  if(!i.remote){src='built-in state defaults';tip='The published rates file could not be loaded — the built-in state defaults are used.';}
+  else if(!i.value)src=`${g('state').value} state defaults`;
+  else if(i.ov){src=`&lt;b&gt;${escAttr(i.label)}&lt;/b&gt;`;
+    tip=`${i.label}’s published rates.`+(i.ovRes?'':' Residential inherits the state defaults.')+(i.ownCom?' Commercial: the council’s own list — state uses are not offered.':i.ovCom?'':' Commercial inherits the state defaults.');}
+  else{src=`${g('state').value} state defaults &lt;b style=&quot;color:#FFB27A&quot;&gt;· no published rates for ${escAttr(i.label)}&lt;/b&gt;`;
+    tip=`No published override for ${i.label} (value ${i.value}). Save its rates and ⬆ Publish rates to calculator, then ↻.`;}
+  const info=t=&gt;t?` &lt;span class=&quot;wsr-info&quot; title=&quot;${escAttr(t)}&quot;&gt;ⓘ&lt;/span&gt;`:'';
   // The residential METHOD sits above the rates: a stepped-table council does
   // not use a generation rate for residential at all, so saying only which
   // rates loaded would describe numbers that are not being used.
@@ -2788,15 +2869,15 @@ function ratesNoteHtml(){
   let rmLine='';
   if(rm.entry&amp;&amp;rm.entry.method.type==='table'){
     const who=rm.scope==='state'?`the ${g('state').value} state fallback`:`&lt;b&gt;${escAttr(rm.entry.name||i.label)}&lt;/b&gt;`;
-    rmLine=`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Residential method&lt;/span&gt; stepped table from ${who}`+
-      (rm.entry.method.source?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· ${escAttr(rm.entry.method.source)}&lt;/span&gt;`:'')+
-      ` — shared bin numbers (kerbside or on-site council collection) come from the table, not from a generation rate&lt;/div&gt;`;
+    rmLine=`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-src-k&quot;&gt;Residential&lt;/span&gt;&lt;span class=&quot;wsr-src-v&quot;&gt;Stepped table · ${who}`+
+      info((rm.entry.method.source?rm.entry.method.source+'. ':'')+'Shared bin numbers (kerbside or on-site council collection) come from the table, not from a generation rate.')+`&lt;/span&gt;&lt;/div&gt;`;
   }else if(rm.scope==='state'){
-    rmLine=`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Residential method&lt;/span&gt; &lt;b style=&quot;color:#EFB080&quot;&gt;state fallback used&lt;/b&gt; — no council-specific method found for ${escAttr(i.label||'this council')}&lt;/div&gt;`;
+    rmLine=`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-src-k&quot;&gt;Residential&lt;/span&gt;&lt;span class=&quot;wsr-src-v&quot;&gt;&lt;b style=&quot;color:#FFB27A&quot;&gt;state fallback used&lt;/b&gt;`+
+      info('No council-specific method found for '+(i.label||'this council')+' — the state’s is used.')+`&lt;/span&gt;&lt;/div&gt;`;
   }
-  return rmLine+`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Generation rates&lt;/span&gt; ${src}`+
-    (i.when?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· published ${escAttr(new Date(i.when).toLocaleString('en-AU'))}&lt;/span&gt;`:'')+
-    ` &lt;button class=&quot;wsr-rates-reload&quot; onclick=&quot;reloadRates()&quot; title=&quot;Re-fetch the published rates, the bin library and the council kerbside services, then recalculate&quot;&gt;↻ reload rates &amp;amp; council data&lt;/button&gt;&lt;/div&gt;`;
+  return `&lt;div class=&quot;wsr-srcbox&quot;&gt;`+rmLine+`&lt;div class=&quot;wsr-rates&quot;&gt;&lt;span class=&quot;wsr-src-k&quot;&gt;Rates&lt;/span&gt;&lt;span class=&quot;wsr-src-v&quot;&gt;${src}`+
+    (i.when?` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· published ${escAttr(new Date(i.when).toLocaleDateString('en-AU'))}&lt;/span&gt;`:'')+info(tip)+`&lt;/span&gt;`+
+    `&lt;button class=&quot;wsr-rates-reload&quot; onclick=&quot;reloadRates()&quot; title=&quot;Re-fetch the published rates, the bin library and the council kerbside services, then recalculate&quot;&gt;↻ Reload&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;`;
 }
 async function reloadRates(){
   RATES_REMOTE=await loadRemoteRatesIfConfigured();
@@ -3731,7 +3812,26 @@ function devAlloc(){const t={apt_1br:0,apt_2br:0,apt_3br:0,townhouse:0};ROOMS.fo
 function escAttr(s){return String(s==null?'':s).replace(/&amp;/g,'&amp;amp;').replace(/&quot;/g,'&amp;quot;').replace(/&lt;/g,'&amp;lt;').replace(/&gt;/g,'&amp;gt;');}
 function serialiseRooms(){return ROOMS.map(r=&gt;({id:r.id,name:r.name,kind:r.kind||'res',component:r.component||DEFAULT_COMPONENT,
   alloc:{...r.alloc},com:r.com.map(c=&gt;({use:c.use,value:Number(c.value)||0,days:Number(c.days)||7})),
-  chute:normChute(r.chute),splits:normSplits(r.splits),allow:normAllow(r.allow),method:normMethod(r.method),equip:{..._eqSel}}));}
+  chute:normChute(r.chute),splits:normSplits(r.splits),allow:normAllow(r.allow),method:normMethod(r.method),equip:{..._eqSel},
+  ov:roomOvPack(r.id)}));}
+// The results-table choices of one room (bin size, collections a week, a
+// typed bin count and its reason, the container and the plant) are saved
+// WITH the room in bin_rooms, so leaving the tab and coming back shows them
+// again. Keys are sec|stream. (2026-11-02: they lived in memory only.)
+const OV_MAPS={sz:()=&gt;_szOv,cw:()=&gt;_cwOv,n:()=&gt;_binOv,why:()=&gt;_binOvWhy,eq:()=&gt;_eqSel,plant:()=&gt;_plantSel};
+function roomOvPack(id){
+  const out={};
+  Object.keys(OV_MAPS).forEach(f=&gt;{const m=OV_MAPS[f]();Object.keys(m).forEach(k=&gt;{if(k.indexOf(id+'|')===0&amp;&amp;m[k]!=null){(out[f]=out[f]||{})[k.slice(id.length+1)]=m[k];}});});
+  return out;
+}
+function roomOvApply(id,ov){
+  if(!ov||typeof ov!=='object')return;
+  Object.keys(OV_MAPS).forEach(f=&gt;{const m=OV_MAPS[f](),src=ov[f];if(!src||typeof src!=='object')return;
+    Object.keys(src).forEach(k=&gt;{if(!/^[rc][|][A-Z]+$/.test(k))return;const v=src[k];
+      if(f==='sz'||f==='n'){const x=Number(v);if(isFinite(x)&amp;&amp;x&gt;=0)m[id+'|'+k]=x;}
+      else if(f==='cw'){const x=Number(v);if(isFinite(x)&amp;&amp;x&gt;0)m[id+'|'+k]=x;}
+      else if(v!=null&amp;&amp;v!=='')m[id+'|'+k]=String(v);});});
+}
 function normChute(c){
   const t=CHUTE_SPECS[c&amp;&amp;c.type]?c.type:'SINGLE';
   const n=CHUTE_SPECS[t].openings;
@@ -3760,6 +3860,13 @@ function normChute(c){
 function restoreRooms(arr){
   if(!Array.isArray(arr)||!arr.length)return false;
   const first=Object.keys(COMM)[0];
+  // the saved rooms carry their own results-table choices (roomOvPack): a
+  // save that has them replaces what is in memory; a save from before they
+  // were kept leaves the in-memory choices as they were
+  if(arr.some(r=&gt;r&amp;&amp;r.ov)){
+    Object.keys(OV_MAPS).forEach(f=&gt;{const m=OV_MAPS[f]();Object.keys(m).forEach(k=&gt;delete m[k]);});
+    arr.forEach((r,i)=&gt;{if(r&amp;&amp;r.ov)roomOvApply((r&amp;&amp;r.id)||('R'+(i+1)),r.ov);});
+  }
   ROOMS=arr.map((r,i)=&gt;{
     const n=parseInt(String(r&amp;&amp;r.id||'').replace(/\D/g,''));
     if(isFinite(n))_roomSeq=Math.max(_roomSeq,n);else _roomSeq=Math.max(_roomSeq,i+1);
@@ -4017,6 +4124,15 @@ function councilMatch(sel,want){
     if(!o.value)continue;
     if(o.value.toLowerCase()===want||o.textContent.trim().toLowerCase()===want||o.textContent.toLowerCase().includes(want))return o.value;
   }
+  // The project stores the registry's name (&quot;Northern Beaches Council&quot;);
+  // the published list may say &quot;Northern Beaches&quot; — compare with the words
+  // &quot;council&quot;, &quot;city of&quot;, &quot;shire&quot; set aside (councilKey), so a saved council
+  // is found again instead of falling back to None (2026-11-02).
+  const wk=councilKey(want);if(!wk)return '';
+  for(const o of sel.options){
+    if(!o.value)continue;
+    if(councilKey(o.value)===wk||councilKey(o.textContent)===wk)return o.value;
+  }
   return '';
 }
 function refreshCouncils(){const st=g(&quot;state&quot;).value,sel=g(&quot;council&quot;),cur=sel.value;sel.innerHTML='&lt;option value=&quot;&quot;&gt;— None / use state defaults —&lt;/option&gt;';const list=(RATES_REMOTE?.COUNCILS?.[st])||COUNCILS_BY_STATE[st]||[];list.forEach(c=&gt;{const o=document.createElement(&quot;option&quot;);o.value=c.value;o.textContent=c.label;sel.appendChild(o);});sel.value=[...sel.options].some(o=&gt;o.value===cur)?cur:&quot;&quot;;
@@ -4264,7 +4380,7 @@ function eqRowHtml(rr,sec,s,p){
         plantOpts.map(e=&gt;`&lt;option value=&quot;${e.id}&quot;${cur===e.id?' selected':''}&gt;${e.label} — ${e.ratio}:1&lt;/option&gt;`).join('')+
         '&lt;/select&gt;';
     }else{
-      txt+='&lt;span style=&quot;opacity:.6&quot;&gt;none in the equipment library with a compaction ratio&lt;/span&gt;';
+      txt+='&lt;span style=&quot;opacity:.7&quot; title=&quot;No equipment library record with a compaction ratio serves this stream&quot;&gt;none available&lt;/span&gt;';
     }
     let m2=null;
     if(p.plant){
@@ -4367,16 +4483,18 @@ function methodLineHtml(rr,sec){
   const council=activeCouncilLabel();
   const ent=activeScheduleEntry(),sch=ent?ent.schedule:null;
   const hasKerb=!!(sch&amp;&amp;Object.keys(sch).some(k=&gt;k!=='bulk'));
-  let src;
-  if(COLLECT_METHODS[method].kerb&amp;&amp;hasKerb)src=`bin sizes and frequency from &lt;b&gt;${escAttr(ent.name||council||(g('state').value+' state'))}&lt;/b&gt;’s kerbside service (council database) — change a size or frequency if this development differs`;
-  else if(COLLECT_METHODS[method].kerb&amp;&amp;council&amp;&amp;!hasKerb)src=`no kerbside service recorded for ${escAttr(council)} (value ${escAttr(g('council').value)}) in the council database — Admin › Council &amp;amp; state database › Kerbside collection service; ${COUNCIL_SCHEDULES.length} council${COUNCIL_SCHEDULES.length===1?'':'s'} loaded, ↻ to refresh — library sizes shown`;
-  else if(!COLLECT_METHODS[method].kerb)src='any size and frequency — bulk and private collection are not tied to the council’s kerbside service'+(BIN_LIB.length?'':' (built-in sizes: equipment library not reached)');
-  else if(BIN_LIB.length)src='sizes from the equipment library';
-  else src='built-in sizes (equipment library not reached)';
-  return `&lt;div class=&quot;wsr-method&quot;&gt;&lt;span class=&quot;wsr-eq-meta&quot;&gt;Collection&lt;/span&gt; `+
+  // short on screen, the detail in the ⓘ tooltip (2026-11-02)
+  let src,tip;
+  if(COLLECT_METHODS[method].kerb&amp;&amp;hasKerb){src=`sizes &amp;amp; frequency from &lt;b&gt;${escAttr(ent.name||council||(g('state').value+' state'))}&lt;/b&gt;’s kerbside service`;tip='From the council database — change a size or frequency if this development differs.';}
+  else if(COLLECT_METHODS[method].kerb&amp;&amp;council&amp;&amp;!hasKerb){src=`&lt;span style=&quot;color:#FFB27A&quot;&gt;no kerbside service recorded for ${escAttr(council)}&lt;/span&gt; · library sizes shown`;
+    tip=`No kerbside service recorded for ${council} (value ${g('council').value}) in the council database — Admin › Council &amp; state database › Kerbside collection service; ${COUNCIL_SCHEDULES.length} council${COUNCIL_SCHEDULES.length===1?'':'s'} loaded, ↻ to refresh.`;}
+  else if(!COLLECT_METHODS[method].kerb){src='any size and frequency';tip='Bulk and private collection are not tied to the council’s kerbside service.'+(BIN_LIB.length?'':' Built-in sizes: equipment library not reached.');}
+  else if(BIN_LIB.length){src='sizes from the equipment library';tip='';}
+  else{src='built-in sizes';tip='Equipment library not reached.';}
+  return `&lt;div class=&quot;wsr-method&quot;&gt;&lt;span class=&quot;wsr-src-k&quot;&gt;Collection&lt;/span&gt;`+
     `&lt;select class=&quot;wsr-methodsel&quot; data-room=&quot;${rr.id}&quot; data-sec=&quot;${sec}&quot; onchange=&quot;onMethodPick(this)&quot; title=&quot;How this room’s bins are emptied — decides which sizes and equipment are offered&quot;&gt;${opts}&lt;/select&gt;`+
     `${explicit?'':' &lt;span class=&quot;wsr-eq-meta&quot;&gt;(assumed from the mix)&lt;/span&gt;'}`+
-    ` &lt;span class=&quot;wsr-eq-meta&quot;&gt;· ${src}&lt;/span&gt;&lt;/div&gt;`;
+    ` &lt;span class=&quot;wsr-method-src&quot;&gt;${src}${tip?` &lt;span class=&quot;wsr-info&quot; title=&quot;${escAttr(tip)}&quot;&gt;ⓘ&lt;/span&gt;`:''}&lt;/span&gt;&lt;/div&gt;`;
 }
 function onMethodPick(el){
   const room=roomById(el.dataset.room);if(!room)return;
@@ -4999,7 +5117,10 @@ function wsUpdateVolumes() {
       const _a = devAlloc();
       const summary = {
         state: document.getElementById('state')?.value || '',
-        council: document.getElementById('council')?.value || '',
+        // a council still waiting for its option (the rates file is loading)
+        // is reported as itself, never as a blank that would overwrite the
+        // project's saved council
+        council: document.getElementById('council')?.value || PENDING_COUNCIL || '',
         apt_1br: _a.apt_1br, apt_2br: _a.apt_2br, apt_3br: _a.apt_3br, townhouses: _a.townhouse,
         // the commercial mix, read back into the project's Development Summary
         com: ROOMS.filter(r =&gt; r.kind === 'com').flatMap(r =&gt; r.com.filter(c =&gt; Number(c.value) &gt; 0).map(c =&gt; ({ use: c.use, value: Number(c.value), days: Number(c.days) || 0 }))),
