@@ -251,8 +251,24 @@ test('the preview is the workspace: sections carry a hover control that reaches 
 test('layout: the generator opens full-screen with larger, higher-contrast controls', () => {
   const modal = extractBlock(/^function wmpgEnsureModal\(/).text;
   assert.ok(/#wmpg-overlay\{[^}]*padding:0;/.test(modal) && /\.wmpg-modal\{[^}]*width:100%;height:100%;/.test(modal), 'full screen, no boxed modal');
-  assert.ok(/\.wmpg-f input,\.wmpg-f select,\.wmpg-f textarea\{[^}]*font-size:14px/.test(modal), 'inputs are 14px, up from 12');
+  assert.ok(/\.wmpg-f input,\.wmpg-f select,\.wmpg-f textarea\{[^}]*font-size:15\.5px/.test(modal), 'inputs are 15.5px (12 → 14 → 15.5)');
+  assert.ok(/\.wmpg-form\{[^}]*width:50%;[^}]*font-size:15px;[^}]*zoom:var\(--wmpg-zoom,1\)/.test(modal), 'the form takes half the screen, larger type, scalable');
   assert.ok(!/ev\.target === el\) closeWmpGenerator/.test(modal), 'no backdrop to click-close on a full-screen tool');
+});
+
+test('layout: the divider drags, the text size scales, both remembered on this device', () => {
+  const modal = extractBlock(/^function wmpgEnsureModal\(/).text;
+  assert.ok(modal.includes('onpointerdown="wmpgSplitStart(event)"') && modal.includes('ondblclick="wmpgSplitSet(0.5, true)"'), 'drag, and double-click back to half');
+  assert.ok(modal.includes("wmpgSplitSet(wmpgPref('wmpg_form_w', 0.5), false);") && modal.includes("wmpgZoomApply(wmpgPref('wmpg_form_zoom', 1));"), 'restored on open');
+  assert.ok(modal.includes('.wmpg-body.dragging iframe{pointer-events:none;}'), 'the preview iframe cannot swallow the drag');
+  const clamp = new Function(extractBlock(/^function wmpgSplitClamp\(/).text + ';return wmpgSplitClamp;')();
+  assert.equal(clamp(0.5, 3000), 0.5);
+  assert.equal(clamp(0.05, 3000), 0.12, 'never narrower than 360px');
+  assert.equal(clamp(0.99, 3000), 0.88, 'and the preview keeps 360px');
+  assert.equal(clamp(0.2, 600), 0.5, 'a screen too narrow for both stays half and half');
+  assert.equal(clamp('x', 2000), 0.5);
+  const start = extractBlock(/^function wmpgSplitStart\(/).text;
+  assert.ok(start.includes('setPointerCapture') && start.includes('wmpgSplitSet(last, true)'), 'saved once, on release');
 });
 
 test('the presentation block is kept on the project, so apply-to-design can re-feed the layout with its cadence source', () => {
