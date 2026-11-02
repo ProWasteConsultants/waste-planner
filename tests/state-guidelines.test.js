@@ -109,11 +109,11 @@ test('every council reader refuses a state document; the state one is reached by
 test('the fallback is stated wherever it is used', () => {
   // WMP compliance document
   const lg = extractBlock(/^async function wmpgLoadGuideline\(/).text;
-  assert.ok(lg.includes("const stHit = hit ? null : wmpgPickStateGuideline(rows, d.state);") && lg.includes("kind: 'state'"));
+  assert.ok(lg.includes("const stList = hit ? [] : wmpgPickGuidelines(rows, null, kinds, d.state);") && lg.includes("kind: 'state'"));
   assert.ok(extractBlock(/^function wmpgComplianceNote\(/).text.includes('state fallback'));
   // WMP requirements pack
   const cl = extractBlock(/^async function creqLoad\(/).text;
-  assert.ok(cl.includes('wpGuideServing(own,') && cl.includes('scope: pick.scope'), 'the WMP pins which scope it checked against');
+  assert.ok(cl.includes('wpGuideMergeState(own,') && cl.includes('scope: pick.scope'), 'the WMP pins which scope it checked against');
   // checker: the bridge reply, the source card, the prompt
   assert.ok(SOURCE.includes("reply.scope = 'state';"));
   const gi = extractSrcdocBlock('compliance-iframe', /^function guidelineSourceInfo\(/).text;
@@ -142,25 +142,30 @@ test('State defaults is a scope: documents, list and extraction stay the state�
   const matchCouncil = m(fns.wpGuideStateOf, { name: 'Randwick', state: 'NSW' }, () => false, () => true);
   assert.equal(matchCouncil({ council_key: 'state:NSW', council_name: 'Randwick' }), false, 'the state’s document never lists under a council');
   assert.equal(matchCouncil({ council_key: 'randwick', council_name: 'Randwick' }), true);
-  assert.ok(extractBlock(/^async function crqServingDoc\(/).text.includes("if (stateKey) return (data || []).find(d => d.council_key === stateKey) || null;"),
+  assert.ok(extractBlock(/^async function crqServingDoc\(/).text.includes("if (stateKey) return wpGuidePrimary((data || []).filter(d => d.council_key === stateKey));"),
     'a hand-typed state requirement is pinned to the state document only');
   assert.ok(extractBlock(/^async function rdbResExtract\(/).text.includes('await glBridgeStateRow(st)'),
     'the residential table can be read from the state document too');
 });
 
-test('guard: a council with another document on record never loses commercial rates to an extraction', () => {
+test('guard: an extraction removes only what it may — the only document, or its own rates', () => {
   const may = new Function(extractBlock(/^function crqComSyncMayDelete\(/).text + ';return crqComSyncMayDelete;')();
-  const base = { stateScope: false, otherDocs: 0, cleanRead: true, read: 5, placed: 5 };
-  assert.deepStrictEqual(may(base), { clearAll: false, canDelete: true }, 'the only document, read in full: the list follows it');
-  assert.deepStrictEqual(may({ ...base, read: 0, placed: 0 }), { clearAll: true, canDelete: true }, '…and a document with no commercial rates clears it, as before');
-  assert.deepStrictEqual(may({ ...base, otherDocs: 1 }), { clearAll: false, canDelete: false }, 'another document on record: nothing removed');
-  assert.deepStrictEqual(may({ ...base, otherDocs: 2, read: 0, placed: 0 }), { clearAll: false, canDelete: false },
-    'a residential-only document never clears the commercial list of a council with other documents');
-  assert.deepStrictEqual(may({ ...base, otherDocs: -1 }), { clearAll: false, canDelete: false }, 'an uncountable library is treated as other documents');
-  assert.deepStrictEqual(may({ ...base, cleanRead: false }), { clearAll: false, canDelete: false }, 'an incomplete read never removes');
-  assert.deepStrictEqual(may({ ...base, stateScope: true }), { clearAll: false, canDelete: false }, 'a state read never removes');
+  const base = { stateScope: false, otherDocs: 0, cleanRead: true, read: 5, placed: 5, provenance: false };
+  assert.deepStrictEqual(may(base), { clearAll: false, canDelete: true, owned: false }, 'the only document, read in full: the list follows it');
+  assert.deepStrictEqual(may({ ...base, read: 0, placed: 0 }), { clearAll: true, canDelete: true, owned: false }, '…and a document with no commercial rates clears it, as before');
+  assert.deepStrictEqual(may({ ...base, otherDocs: 1 }), { clearAll: false, canDelete: false, owned: false }, 'another document, no record of where rates came from: nothing removed');
+  assert.deepStrictEqual(may({ ...base, otherDocs: 1, provenance: true }), { clearAll: false, canDelete: true, owned: true },
+    'another document, rates tagged: only this document’s own rates may go');
+  assert.deepStrictEqual(may({ ...base, otherDocs: 2, read: 0, placed: 0, provenance: true }), { clearAll: false, canDelete: true, owned: true },
+    'never a clear with other documents on record');
+  assert.deepStrictEqual(may({ ...base, otherDocs: -1, provenance: true }), { clearAll: false, canDelete: false, owned: false }, 'an uncountable library removes nothing');
+  assert.deepStrictEqual(may({ ...base, cleanRead: false }), { clearAll: false, canDelete: false, owned: false }, 'an incomplete read never removes');
+  assert.deepStrictEqual(may({ ...base, stateScope: true }), { clearAll: false, canDelete: false, owned: false }, 'a state read never removes');
   const wr = extractBlock(/^async function crqWriteRates\(/).text;
-  assert.ok(wr.includes("otherDocs = (data || []).filter(d => d.id !== doc.id).length;") && wr.includes('} catch (e) { otherDocs = -1; }'),
-    'the writer counts every other version or document the council has on record');
-  assert.ok(extractBlock(/^async function crqComSyncApply\(/).text.includes('they may come from another document'), 'and says what it kept and why');
+  assert.ok(wr.includes('new Set((data || []).map(wpGuideSlot).filter(sl => sl !== wpGuideSlot(doc))).size') && wr.includes('} catch (e) { otherDocs = -1; }'),
+    'with the per-document schema, other DOCUMENTS count (a new version of this one does not)');
+  assert.ok(wr.includes(": (data || []).filter(d => d.id !== doc.id).length;"), 'before it, every other row counts, as before');
+  const ap = extractBlock(/^async function crqComSyncApply\(/).text;
+  assert.ok(ap.includes('plan.remove = plan.remove.filter(e => e.source_doc === x.mine);'), 'owned: only this document’s rates are removed');
+  assert.ok(ap.includes('they may come from another document') && ap.includes('from another document or were entered by hand'), 'and it says what it kept and why');
 });

@@ -860,7 +860,7 @@ test('storing a guideline document does not depend on AI extraction', () => {
   const one = SOURCE.slice(SOURCE.indexOf('async function cgbUploadOne(r)'), SOURCE.indexOf('async function cgbUploadAll()'));
   assert.ok(fn.includes('if (await cgbUploadOne(r)) ok++;') &&
             one.includes("const path = `guidelines/${folder}/${Date.now()}_${safe}`;") &&
-            one.includes('await cgInsertVersion({'), 'it stores the PDF and creates the version through the shared path');
+            one.includes('await cgInsertVersion(Object.assign({'), 'it stores the PDF and creates the version through the shared path');
   assert.ok(one.includes('requirements: [],     // structured rows come from extraction + review (C3)'),
     'with no clauses — approval still gates what a scan may cite');
   assert.ok(fn.includes("_glBridgeAll = null;         // the serving row changed") &&
@@ -904,7 +904,7 @@ test('admin guidelines section is scoped to one council', () => {
     'the old council field is hidden, not duplicated');
   assert.ok(SOURCE.includes('function cgScopeMatches(name)') && SOURCE.includes('function cgRenderLibrary()'),
     'the library renders through the scope');
-  assert.ok(SOURCE.includes('.filter(k => cgScopeMatchesRow(byKey[k].live || byKey[k].any))'),
+  assert.ok(SOURCE.includes('const rows = (CG_LIB.rows || []).filter(r => cgScopeMatchesRow(r));'),
     'library entries are filtered by the selected scope (a council, or a state\'s own documents)');
   assert.ok(SOURCE.includes('const rows = listed.filter(r => cgScopeMatchesRow(CRQ_L.docs[r.council_guideline_id]));'),
     'the requirements list is filtered by the selected scope');

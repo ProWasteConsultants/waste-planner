@@ -57,16 +57,16 @@ test('C1: the WMP requirements check serves per-council versions and pins the on
   const fn = SOURCE.slice(SOURCE.indexOf('async function creqLoad'), SOURCE.indexOf('function creqEvaluate'));
   assert.ok(fn.includes(".order('version', { ascending: false })"),
     'versions are walked newest-first');
-  assert.ok(fn.includes('if (!r.superseded_at && !g.live) g.live = r;'),
-    'the live version is preferred');
+  assert.ok(fn.includes('const packs = Object.values(groups).map(wpGuidePickServing).filter(Boolean);'),
+    'the live (primary) version is preferred, by the one shared rule');
   assert.ok(fn.includes('d.creqSource = hit ? { guidelineId: hit.id || null'),
     'the WMP snapshot records guideline id + version (persists via p.wmp)');
   assert.ok(fn.includes("version: hit.version ?? null"), 'version is pinned, not re-derived later');
 });
 
 test('C1: the compliance checker fetches versions newest-first and stamps the scan', () => {
-  assert.ok(SOURCE.includes('superseded_at,requirements&amp;order=version.desc'),
-    'the iframe REST fetch carries the lifecycle column, newest first');
+  assert.ok(SOURCE.includes('council_guidelines?select=*&amp;order=version.desc'),
+    'the iframe REST fetch carries every column (lifecycle and document), newest first');
   assert.ok(SOURCE.includes('state.checkedAgainst = structuredGuidelines ? {'),
     'each AI check records which guideline version it ran against');
 });
@@ -83,7 +83,7 @@ test('C2: bulk upload — every file saves to the SCOPED council, versioned thro
     'Save document stamps the Scope council + the shared fields on every queued file and runs them through the one upload path');
   assert.ok(!SOURCE.includes("id=\"cg-file\"") && !SOURCE.includes('⇪ Upload assigned files') && !SOURCE.includes('id="cgb-actions"'),
     'the second upload path (single file picker + Upload assigned files) is gone');
-  assert.ok(fn.includes('await cgInsertVersion({'),
+  assert.ok(fn.includes('await cgInsertVersion(Object.assign({'),
     'bulk uploads version through the same supersede path as single saves');
   assert.ok(fn.includes('requirements: [],     // structured rows come from extraction + review (C3)'),
     'no structured requirements are invented at upload time');
@@ -206,10 +206,11 @@ test('the list migration: source column, proposed rows promoted, read policy unc
 // ── check-in amendments ─────────────────────────────────────────────────
 test('a live version with no requirements falls back — a fresh upload never blanks the checker', () => {
   const wmp = SOURCE.slice(SOURCE.indexOf('async function creqLoad'), SOURCE.indexOf('function creqEvaluate'));
-  assert.ok(wmp.includes('servedFallback'), 'the WMP check serves the newest version WITH requirements');
-  assert.ok(wmp.includes('g.withReqs'), 'fallback picks by content, not just by liveness');
-  assert.ok(SOURCE.includes('Object.assign({}, g.withReqs, { servedFallback:'),
-    'the compliance checker iframe applies the same fallback');
+  assert.ok(wmp.includes('servedFallback') && wmp.includes('wpGuidePickServing'), 'the WMP check serves the newest version WITH requirements');
+  const pick = extractFn('wpGuidePickServing');
+  assert.ok(pick.includes('servedFallback'), 'fallback picks by content, not just by liveness');
+  assert.ok(SOURCE.includes('state._cgAll = Object.values(groups).map(cgPickServing).filter(Boolean);'),
+    'the compliance checker iframe applies the same fallback (its mirror, pinned in tests/guideline-docs.test.js)');
   assert.ok(SOURCE.includes('serving this version until the new one has requirements in its list'),
     'fallback serving is visible on the WMP check, not silent');
 });
@@ -220,7 +221,7 @@ test('the list reaches consumers automatically — crqSyncServe projects the WHO
   assert.ok(!fn.includes('if (!confirm('), 'serving is automatic — the list is the live data');
   assert.ok(fn.includes(".in('council_guideline_id', docs.map(d => d.id)).eq('status', 'approved')"),
     'every version of the council document contributes — older-version rows and hand-typed rows survive a new upload');
-  assert.ok(fn.includes("const serving = byVersion.find(d => !d.superseded_at) || byVersion[0];"), 'projected onto the live version');
+  assert.ok(fn.includes("const serving = wpGuidePrimary(docs);"), 'projected onto the primary live version');
   assert.ok(fn.includes(".update({ requirements: legacy, updated_at: new Date().toISOString() }).eq('id', serving.id)"));
 });
 
@@ -289,7 +290,7 @@ test('extracted generation rates map onto the rate tables in their exact row for
   assert.ok(SOURCE.includes('function crqRatesReport(rr)') && SOURCE.includes('id="rdb-rates-note"'), 'the outcome is reported in the rates section, where the rows land');
   assert.ok(wr.includes('.insert(batch[table])') && !wr.includes('upsert'), 'insert only — never an upsert');
   const ex = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
-  assert.ok(ex.includes('const rr = await crqWriteRates(saved.filter(crqIsRate), doc, { sync: true, cleanRead });'), 'extraction writes the rates into the tables, syncing the commercial list');
+  assert.ok(ex.includes(': await crqWriteRates(saved.filter(crqIsRate), doc, { sync: true, cleanRead });'), 'extraction writes the rates into the tables, syncing the commercial list (a checklist excepted)');
   assert.ok(ex.includes('const cleanRead = !sweep.error && !sweep.missing.length && !truncated;'), 'removal waits on a complete read');
   assert.ok(ex.includes(".insert(rows).select();") && ex.includes('const saved = (ins && ins.length === rows.length) ? ins : rows;'),
     'the report is built from the SAVED rows, so its pick-a-use and split buttons address real row ids');
@@ -453,7 +454,7 @@ test('sync: the council list follows the guideline — new uses, updates, remova
   assert.deepStrictEqual(w.crqComSyncPlan([], existing, { canDelete: true }).remove.map(e => e.id), [1, 2, 3, 4]);
   // the wiring: residential stays add-only, the council list is marked its own
   const apply = extractFn('crqComSyncApply');
-  assert.ok(apply.includes("const { clearAll, canDelete } = crqComSyncMayDelete({ stateScope: x.stateScope, otherDocs: x.otherDocs, cleanRead: x.cleanRead, read: comRead.length, placed: placed.length });"),
+  assert.ok(apply.includes("const { clearAll, canDelete, owned } = crqComSyncMayDelete({ stateScope: x.stateScope, otherDocs: x.otherDocs, cleanRead: x.cleanRead, read: comRead.length, placed: placed.length, provenance: x.provenance });"),
     'a state document never trims or clears the state list');
   assert.ok(apply.includes(".update({ com_own: own })"), 'the synced list becomes the council\'s own');
   const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('async function crqComSyncApply('));
@@ -725,7 +726,7 @@ test('the rate table is TRANSCRIBED and parsed in code — every row, verified a
   assert.match(w.CRQ_SWEEP_TRANSCRIBE, /Do not skip, merge, rename, reorder or summarise any row/);
   // wiring: the sweep runs in the extraction, its rows join the same dedupe, coverage is reported
   const fn = SOURCE.slice(SOURCE.indexOf('async function crqExtract'), SOURCE.indexOf('// ── list rows → the checker'));
-  assert.ok(fn.includes('const sweep = await crqRateSweep(call,'), 'the extraction sweeps the rate table');
+  assert.ok(fn.includes(': await crqRateSweep(call,'), 'the extraction sweeps the rate table (a checklist excepted)');
   assert.ok(fn.includes('if (!key) return (resp.content?.[0]?.text || \'\').trim();'), 'the transcription pass reads raw text, not JSON');
   assert.ok(fn.includes('const k = seenKey(row);') && fn.includes('seen.add(k); cand.push(row);'), 'sweep rows go through the same dedupe as the general pass');
   assert.ok(fn.includes('rate table: ${sweep.rows.length} rate rows transcribed'), 'coverage is stated, not assumed');
@@ -766,7 +767,7 @@ test('extraction has exactly one entry point, and it requires a saved document',
   assert.ok(!SOURCE.includes('async function cgExtract()') && !SOURCE.includes('onclick="cgExtract()"'),
     'the upload-row extractor is gone — Save document is the row\'s only action');
   assert.ok(!SOURCE.includes('const CG_PROMPT'), 'its prompt went with it');
-  assert.ok(SOURCE.includes("onclick=\"crqExtract('${k}')\""),
+  assert.ok(SOURCE.includes("onclick=\"crqExtract('${k}', null, '${slot}')\""),
     'Extract to queue on the Library row is the one extract action');
   assert.ok(SOURCE.includes('function cgRenderReview()') && SOURCE.includes('async function cgEdit('),
     'the review pane survives for hand-editing stored versions');
