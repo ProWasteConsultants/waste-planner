@@ -1068,7 +1068,7 @@ body.wp-anon .ws-top-chip{display:none;}
               <button class="btn" style="padding:4px 8px;font-size:11px;background:var(--teal);color:#fff;" onclick="rdbAddCouncil()">Add</button>
               <button class="btn" style="padding:4px 8px;font-size:11px;" onclick="rdbAddCouncilToggle(false)">Cancel</button>
             </span>
-            <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Everything on this page follows this one selection: which council a saved guideline belongs to, what the library and requirements list show, and whose rates are edited below. Councils are added, renamed and removed right here — this list is the one every council picker reads (project setup, the compliance checker, the rate overrides). "State defaults" scopes the rates to the state-wide baseline that councils inherit from.</span></span>
+            <span class="adm-help" tabindex="0">?<span class="adm-help-pop">Everything on this page follows this one selection: which council a saved guideline belongs to, what the library and requirements list show, and whose rates are edited below. Councils are added, renamed and removed right here — this list is the one every council picker reads (project setup, the compliance checker, the rate overrides). "State defaults" scopes everything to the state itself: the state's own guideline documents, its requirements list and the state-wide rates councils inherit from. A council with no requirements of its own falls back to the state's (always labelled as a state fallback); the state's rates and requirements are never written under a council.</span></span>
           </div>
 
           <div class="adm-group adm-setup">
@@ -8026,7 +8026,14 @@ async function cgFetchStructured(councilName) {
     }
     const target = cgNorm(councilName);
     if (!target) return null;
-    return state._cgAll.find(r =&gt; { const n = cgNorm(r.council_name); return n === target || n.includes(target) || target.includes(n); }) || null;
+    // a state document (council_key &#x27;state:&lt;ST&gt;&#x27;) is never a council&#x27;s, however its name reads
+    const own = state._cgAll.find(r =&gt; { if (/^state:/.test(r.council_key || &#x27;&#x27;)) return false; const n = cgNorm(r.council_name); return n === target || n.includes(target) || target.includes(n); }) || null;
+    if (own &amp;&amp; (own.requirements || []).length) return own;
+    // no council requirements: the state&#x27;s own document, marked as the fallback
+    const st = String(cgCouncilState() || &#x27;&#x27;).toUpperCase();
+    const sr = st ? state._cgAll.find(r =&gt; r.council_key === &#x27;state:&#x27; + st) : null;
+    if (sr &amp;&amp; (sr.requirements || []).length) return Object.assign({}, sr, { stateFallback: true, fallbackState: st, councilDocPending: !!own });
+    return own;
   } catch (e) { return null; }
 }
 async function cgStructuredCheck() {
@@ -8034,6 +8041,7 @@ async function cgStructuredCheck() {
   const name = sel.options[sel.selectedIndex]?.text || &#x27;&#x27;;
   const hit = await cgFetchStructured(name);
   state.cgHit = hit || null;   // the source card reads this — served requirements count as council material even with no parent bridge
+  if (hit &amp;&amp; hit.stateFallback) { glCardRender(); return; }   // the card states the fallback
   if (hit &amp;&amp; state.council &amp;&amp; state.council !== &#x27;other&#x27;) {
     const meta = document.getElementById(&#x27;gmeta&#x27;), dot = document.getElementById(&#x27;gdot&#x27;), gname = document.getElementById(&#x27;gname&#x27;);
     if (dot) dot.style.background = &#x27;#4CAF50&#x27;;
@@ -8052,8 +8060,13 @@ async function cgStructuredCheck() {
 // else state fallback, else nothing.
 function guidelineSourceInfo() {
   const g = GUIDELINE_DB[state.council] || {};
-  const lib = (state.guidelineLib &amp;&amp; state.guidelineLib.ok) ? state.guidelineLib : null;
-  const cg = state.cgHit || null;   // the iframe&#x27;s own anon fetch of structured requirements
+  const libAny = (state.guidelineLib &amp;&amp; state.guidelineLib.ok) ? state.guidelineLib : null;
+  const cgAny = state.cgHit || null;   // the iframe&#x27;s own anon fetch of structured requirements
+  // a STATE document (the platform&#x27;s stated fallback) is never council material
+  const stLib = libAny &amp;&amp; libAny.scope === &#x27;state&#x27; ? libAny : null;
+  const stCg = cgAny &amp;&amp; cgAny.stateFallback ? cgAny : null;
+  const lib = stLib ? null : libAny;
+  const cg = stCg ? null : cgAny;
   const sessionUp = !!(state.guidelineFileName &amp;&amp; state.guidelineAllText &amp;&amp; state.guidelineAllText.length);
   const persisted = !!g.persistedText;
   const reqCount = (lib &amp;&amp; lib.reqCount) || (cg ? (cg.requirements || []).length : 0);
@@ -8101,6 +8114,24 @@ function guidelineSourceInfo() {
   // No council text at all: the check falls back. A library PDF still shows —
   // `label`/`short` name what the check uses, `pdfLabel` names what is on
   // screen, so neither one lies.
+  // The state&#x27;s own document from the shared library: a real document with
+  // clause-referenced requirements, so it is named — not the built-in name.
+  if (stLib || stCg) {
+    const nm = (stLib &amp;&amp; stLib.councilName) || (stCg &amp;&amp; stCg.council_name) || ((g.state || &#x27;State&#x27;) + &#x27; state guidelines&#x27;);
+    const ver = (stLib &amp;&amp; stLib.version) || (stCg &amp;&amp; stCg.version) || null;
+    const n = (stLib &amp;&amp; stLib.reqCount) || (stCg ? (stCg.requirements || []).length : 0);
+    const label = nm + (ver ? &#x27; v&#x27; + ver : &#x27;&#x27;);
+    const sdoc = (stLib &amp;&amp; stLib.url)
+      ? { pdf: &#x27;url&#x27;, url: stLib.url, thumb: stLib.thumb || null, pdfLabel: label, fileName: stLib.fileName || null }
+      : doc;
+    const pending = !!((stLib &amp;&amp; stLib.councilDocPending) || (stCg &amp;&amp; stCg.councilDocPending));
+    return Object.assign({ kind: &#x27;state&#x27;, label,
+      dateStr: (stLib &amp;&amp; stLib.effectiveDate) ? &#x27;effective &#x27; + stLib.effectiveDate : null,
+      short: label + &#x27; (state fallback)&#x27; }, sdoc,
+      { tag: &#x27;State fallback — no council requirements on file&#x27;,
+        note: n + &#x27; clause-referenced state requirement&#x27; + (n === 1 ? &#x27; applies&#x27; : &#x27;s apply&#x27;) +
+          (pending ? &#x27;. A council PDF is on file, but its clauses are not extracted yet — extract it in Admin for the check to cite the council instead.&#x27; : &#x27;.&#x27;) });
+  }
   const sf = g.state ? STATE_GUIDELINES[g.state] : null;
   const pendingBits = doc.pdf ? Object.assign({}, doc, {
     tag: &#x27;Requirements not extracted yet&#x27;,
@@ -8197,8 +8228,10 @@ function glRequestLib(councilName) {
   state.guidelineLib = null;
   state.cgHit = null;
   state.guidelineDoc = null;
-  try { parent.postMessage({ type: &#x27;wp-guideline-req&#x27;, reqId: state.glReqId, councilName: councilName || &#x27;&#x27; }, &#x27;*&#x27;); } catch (e) {}
+  try { parent.postMessage({ type: &#x27;wp-guideline-req&#x27;, reqId: state.glReqId, councilName: councilName || &#x27;&#x27;, councilState: cgCouncilState() }, &#x27;*&#x27;); } catch (e) {}
 }
+// The selected council&#x27;s state — what a state-document fallback keys on.
+function cgCouncilState() { return ((GUIDELINE_DB[state.council] || {}).state) || null; }
 
 // ── DOCUMENT PANES (WMP + guideline, shared engine) ───────────────────────
 // Lazy page rendering: placeholders for every page, canvases painted when
@@ -8817,6 +8850,7 @@ async function startScan() {
     councilName: structuredGuidelines.council_name,
     version: structuredGuidelines.version ?? null,
     versionLabel: structuredGuidelines.version_label || null,
+    scope: structuredGuidelines.stateFallback ? &#x27;state&#x27; : &#x27;council&#x27;,
     checkedAt: new Date().toISOString(),
   } : null;
 
@@ -8897,7 +8931,9 @@ async function startScan() {
     const reqText = structuredGuidelines.requirements.map((r, i) =&gt;
       `${i + 1}. ${r.clause ? &#x27;[Clause &#x27; + r.clause + (r.page ? &#x27;, p.&#x27; + r.page : &#x27;&#x27;) + &#x27;] &#x27; : &#x27;&#x27;}(${r.category || &#x27;other&#x27;}, ${r.applies_to || &#x27;all&#x27;}) ${r.requirement}${r.quantitative ? ` — ${r.quantitative.parameter}: ${r.quantitative.value} ${r.quantitative.unit}` : &#x27;&#x27;}`
     ).join(&#x27;\n&#x27;);
-    guidelineBlocks.push({type:&#x27;text&#x27;, text:`STRUCTURED COUNCIL REQUIREMENTS — ${structuredGuidelines.council_name} (v${structuredGuidelines.version || &#x27;current&#x27;}). These are the council&#x27;s enforceable requirements with clause references. When a finding relates to one of these, CITE THE CLAUSE NUMBER in your comment:\n\n${reqText}`});
+    guidelineBlocks.push({type:&#x27;text&#x27;, text: structuredGuidelines.stateFallback
+      ? `STRUCTURED STATE REQUIREMENTS — ${structuredGuidelines.council_name} (v${structuredGuidelines.version || &#x27;current&#x27;}). STATE FALLBACK: no council-specific requirements are on file for ${_cname}, so these state requirements are the benchmark. Say so in the summary. When a finding relates to one of these, CITE THE CLAUSE NUMBER in your comment:\n\n${reqText}`
+      : `STRUCTURED COUNCIL REQUIREMENTS — ${structuredGuidelines.council_name} (v${structuredGuidelines.version || &#x27;current&#x27;}). These are the council&#x27;s enforceable requirements with clause references. When a finding relates to one of these, CITE THE CLAUSE NUMBER in your comment:\n\n${reqText}`});
   }
   if (state.guidelineAllText &amp;&amp; state.guidelineAllText.length &gt; 0) {
     // Send full text of every guideline page
@@ -8933,6 +8969,8 @@ async function startScan() {
 Review this Waste Management Plan (WMP) for a development application in ${councilName}.
 ${(state.guidelineAllText &amp;&amp; state.guidelineAllText.length &gt; 0)
   ? `The full council WMP guidelines have been provided above — check the WMP against EVERY requirement in those guidelines, not just common ones.`
+  : (structuredGuidelines &amp;&amp; structuredGuidelines.stateFallback)
+    ? `No council-specific guidelines are loaded. The ${structuredGuidelines.fallbackState || &#x27;state&#x27;} state guideline document&#x27;s structured requirements provided above are the benchmark (state fallback) — say so in your assessment.`
   : (g &amp;&amp; g.state &amp;&amp; STATE_GUIDELINES[g.state])
     ? `No council-specific guidelines are loaded. Fall back to ${g.state} state guidelines: ${STATE_GUIDELINES[g.state].name} (${STATE_GUIDELINES[g.state].version}). Apply these state requirements as the benchmark.`
     : `No council or state guidelines are available. Apply general multi-unit development waste planning principles. Be clear in your assessment that no specific guidelines were available.`}
@@ -10999,9 +11037,31 @@ function cgStoredPdfPath(row) {
   return (typeof p === 'string' && p.indexOf('guidelines/') === 0) ? p : null;
 }
 function glBridgeNorm(s) { return String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, ''); }
-async function glBridgeServingRow(councilName) {
-  const t = glBridgeNorm(councilName);
-  if (!t) return null;
+// ── STATE-LEVEL GUIDELINE DOCUMENTS (2026-11-02) ────────────────────────────
+// A state's own document (an EPA guide, a state DCP standard) lives in the
+// same council_guidelines table under council_key 'state:<ST>'. cgSlug only
+// ever produces [a-z0-9_], so no council's key can be one — a state document
+// can never be read as a council's, and every council matcher refuses a row
+// for which wpGuideStateOf answers. Its requirements and rates stay the
+// state's (rates are written with council_value null, the state rows); a
+// council reaches them only through the stated fallback (wpGuideServing).
+function wpStateGuideKey(st) { const s = String(st || '').toUpperCase().replace(/[^A-Z]/g, ''); return s ? 'state:' + s : null; }
+function wpGuideStateOf(row) { const m = /^state:([A-Z]+)$/.exec(String((row && row.council_key) || '')); return m ? m[1] : null; }
+function wpStateGuideName(st) { return String(st || '').toUpperCase() + ' — state guidelines'; }
+// Which guideline serves a council, pure. The council's own document when
+// it serves requirements; else the state's when IT does (scope 'state',
+// carrying the council's requirement-less document as `councilDoc` so the
+// fallback can say a council PDF is on file); else whichever document
+// exists, council first. null when neither does.
+function wpGuideServing(councilRow, stateRow) {
+  const reqs = r => !!(r && (r.requirements || []).length);
+  if (reqs(councilRow)) return { row: councilRow, scope: 'council' };
+  if (reqs(stateRow)) return { row: stateRow, scope: 'state', councilDoc: councilRow || null };
+  if (councilRow) return { row: councilRow, scope: 'council' };
+  if (stateRow) return { row: stateRow, scope: 'state', councilDoc: null };
+  return null;
+}
+async function glBridgeAllRows() {
   if (!_glBridgeAll) {
     const { data, error } = await sb.from('council_guidelines').select('*').order('version', { ascending: false });
     if (error) return null;
@@ -11015,7 +11075,22 @@ async function glBridgeServingRow(councilName) {
     _glBridgeAll = Object.values(serving).map(g =>
       (g.live && (g.live.requirements || []).length) ? g.live : (g.withReqs || g.live)).filter(Boolean);
   }
-  return _glBridgeAll.find(r => { const n = glBridgeNorm(r.council_name); return n === t || n.includes(t) || t.includes(n); }) || null;
+  return _glBridgeAll;
+}
+// A COUNCIL's serving row — never a state document, however its name reads.
+async function glBridgeServingRow(councilName) {
+  const t = glBridgeNorm(councilName);
+  if (!t) return null;
+  const all = await glBridgeAllRows();
+  if (!all) return null;
+  return all.find(r => { if (wpGuideStateOf(r)) return false; const n = glBridgeNorm(r.council_name); return n === t || n.includes(t) || t.includes(n); }) || null;
+}
+// A state's own serving row, by key only.
+async function glBridgeStateRow(st) {
+  const key = wpStateGuideKey(st);
+  if (!key) return null;
+  const all = await glBridgeAllRows();
+  return (all || []).find(r => r.council_key === key) || null;
 }
 function glBridgeDataUrl(buf) {
   const bytes = new Uint8Array(buf);
@@ -11099,7 +11174,16 @@ window.addEventListener('message', async (e) => {
   const reply = { type: 'wp-guideline-doc', reqId: e.data.reqId, ok: false };
   try {
     if (typeof sb !== 'undefined' && sb && currentUser) {
-      const row = await glBridgeServingRow(e.data.councilName);
+      // the council's own document, else — stated — the state's (wpGuideServing)
+      const own = await glBridgeServingRow(e.data.councilName);
+      const st = e.data.councilState || (typeof CGB_COUNCIL_STATE !== 'undefined' && CGB_COUNCIL_STATE[e.data.councilName]) || null;
+      const pick = wpGuideServing(own, st ? await glBridgeStateRow(st) : null);
+      const row = pick ? pick.row : null;
+      if (pick && pick.scope === 'state') {
+        reply.scope = 'state';
+        reply.state = wpGuideStateOf(row);
+        reply.councilDocPending = !!pick.councilDoc;   // a council PDF is on file, its clauses not extracted yet
+      }
       if (row) {
         reply.ok = true;
         reply.councilName = row.council_name;
@@ -11648,13 +11732,14 @@ async function rdbLoad() {
 // exists.
 // One card, two mount points (the rates panel and the guidelines section), so
 // both always describe the same document in the same words.
-async function glCouncilCard(label, mountId, emptyHint) {
+async function glCouncilCard(label, mountId, emptyHint, opts) {
   const wrap = document.getElementById(mountId);
   if (!wrap) return;
   if (!label) { wrap.innerHTML = ''; return; }
+  const stCode = opts && opts.state ? opts.state : null;   // a state's own document, by key
   wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Checking guidelines for ' + cgbEsc(label) + '…</div>';
   let row = null;
-  try { row = await glBridgeServingRow(label); } catch (e) {}
+  try { row = stCode ? await glBridgeStateRow(stCode) : await glBridgeServingRow(label); } catch (e) {}
   if (!row) {
     wrap.innerHTML = '<div style="display:flex;align-items:center;gap:10px;border:1px dashed var(--border);border-radius:8px;padding:10px 12px;background:#182121;">' +
       '<span style="font-size:18px;opacity:.6;">📋</span>' +
@@ -11682,7 +11767,9 @@ async function glCouncilCard(label, mountId, emptyHint) {
     '<div style="min-width:0;">' +
       '<div style="font-size:12px;font-weight:600;color:var(--text);">' + cgbEsc(row.council_name) + (row.version ? ' — v' + row.version : '') + '</div>' +
       '<div style="font-size:11px;color:' + (reqs ? '#3DD68C' : 'var(--flag)') + ';">' +
-        (reqs ? reqs + ' requirements in the list, serving the checker' : 'PDF on file — no requirements in the list yet, so the checker still falls back to state guidelines. Fix: 🧾 Extract to list on this document (Library), or + Add requirement.') + '</div>' +
+        (stCode
+          ? (reqs ? reqs + ' state requirements in the list — they serve every ' + cgbEsc(stCode) + ' council with no requirements of its own (stated as a state fallback)' : 'PDF on file — no requirements in the list yet. Fix: 🧾 Extract to list on this document (Library), or + Add requirement.')
+          : (reqs ? reqs + ' requirements in the list, serving the checker' : 'PDF on file — no requirements in the list yet, so the checker falls back to the state’s requirements. Fix: 🧾 Extract to list on this document (Library), or + Add requirement.')) + '</div>' +
       (file || when ? '<div style="font-size:11px;color:var(--muted);">' + cgbEsc([file, when].filter(Boolean).join(' · ')) + '</div>' : '') +
       (stored ? '' : '<div style="font-size:11px;color:var(--flag);">PDF not stored for this version — re-upload it above to get the thumbnail, View PDF and the checker\'s side-by-side pane.</div>') +
       (url ? '<a href="' + url + '" target="_blank" rel="noopener" class="btn" style="display:inline-block;margin-top:6px;padding:3px 10px;font-size:10.5px;text-decoration:none;">View PDF</a>' : '') +
@@ -11749,8 +11836,11 @@ async function glCouncilReqs(row, mountId) {
 async function rdbGuidelineCard() {
   const sel = document.getElementById('rdb-council');
   const label = sel && sel.value ? (sel.options[sel.selectedIndex]?.text || '') : '';
+  const st = document.getElementById('rdb-state')?.value || '';
+  if (!label && st) return glCouncilCard(wpStateGuideName(st), 'rdb-guideline-card',
+    'No state document yet — save one in <b>Council Guidelines</b> above with Scope on State defaults. Its rates go into these state rows.', { state: st });
   return glCouncilCard(label, 'rdb-guideline-card',
-    'The compliance checker will fall back to state guidelines. Upload a PDF in <b>Council Guidelines</b> above.');
+    'The compliance checker will fall back to the state’s document and requirements. Upload a PDF in <b>Council Guidelines</b> above.');
 }
 
 async function rdbLoadRates() {
@@ -12377,11 +12467,13 @@ Output only the pipe-delimited lines (or NO TABLE).`;
 async function rdbResExtract() {
   const label = document.getElementById('rdb-council')?.selectedOptions?.[0]?.textContent || '';
   const cv = document.getElementById('rdb-council')?.value || '';
-  if (!cv) { rdbMsg('Pick a council first — a state row has no document to read.', true); return; }
-  rdbMsg('Finding this council’s guideline document…');
+  // State defaults read the state's own document (state:<ST>) — never a council's
+  const st = document.getElementById('rdb-state')?.value || '';
+  const who = cv ? label : wpStateGuideName(st);
+  rdbMsg('Finding ' + (cv ? 'this council’s' : 'the state’s') + ' guideline document…');
   let doc = null;
-  try { doc = await glBridgeServingRow(label); } catch (e) { doc = null; }
-  if (!doc) { rdbMsg(`No guideline document on file for ${label}. Upload it in the Guidelines library first, or use “Extract from a PDF on this computer”.`, true); return; }
+  try { doc = cv ? await glBridgeServingRow(label) : await glBridgeStateRow(st); } catch (e) { doc = null; }
+  if (!doc) { rdbMsg(`No guideline document on file for ${who}. Upload it in the Guidelines library first (Scope on ${cv ? 'the council' : 'State defaults'}), or use “Extract from a PDF on this computer”.`, true); return; }
   if (!doc.source_file || doc.source_file.indexOf('guidelines/') !== 0) {
     rdbMsg(`${doc.council_name} v${doc.version} predates stored PDFs, so there is nothing to read. Re-upload the PDF in the Guidelines library, use a PDF on this computer, or type the bands in by hand.`, true); return;
   }
@@ -12749,16 +12841,38 @@ function cgSlug(name) { return String(name).toLowerCase().replace(/[^a-z0-9]+/g,
 // library and its 49-row requirements list while you are typing a different
 // name invites editing rows against the wrong document. Nothing council-specific
 // renders until a council is chosen; counts still show, so nothing is hidden.
-const CG_SCOPE = { name: '' };
+// "State defaults" (no council) is a scope of its own since 2026-11-02: the
+// state's documents, requirements list and rates — keyed 'state:<ST>'
+// (wpStateGuideKey), so nothing of the state's lands under a council, and
+// nothing of a council's lands under the state.
+const CG_SCOPE = { name: '', state: '' };
 function cgScopeChanged(v) {
   CG_SCOPE.name = (v || '').trim();
+  CG_SCOPE.state = (document.getElementById('rdb-state') || {}).value || (document.getElementById('cg-state') || {}).value || '';
   const st = CGB_COUNCIL_STATE[CG_SCOPE.name];
   const stSel = document.getElementById('cg-state');
   if (st && stSel && !stSel.value) stSel.value = st;
-  glCouncilCard(CG_SCOPE.name, 'cg-council-card',
+  if (CG_SCOPE.name) glCouncilCard(CG_SCOPE.name, 'cg-council-card',
     'Nothing on file yet — pick the PDF above and extract it to create v1.');
+  else glCouncilCard(cgScopeLabel(), 'cg-council-card',
+    'No state document yet — drop the state’s guideline PDF above and ⇪ Save document. Councils with no requirements of their own fall back to it.', { state: CG_SCOPE.state });
   cgRenderLibrary();
   crqRender();
+}
+// Is anything scoped (a council, or a state's defaults)? What is it called?
+function cgScopeActive() { return !!(CG_SCOPE.name || CG_SCOPE.state); }
+function cgScopeIsState() { return !CG_SCOPE.name && !!CG_SCOPE.state; }
+function cgScopeLabel() { return CG_SCOPE.name || (CG_SCOPE.state ? wpStateGuideName(CG_SCOPE.state) : ''); }
+// "Randwick City Council’s list" / "the NSW state list"
+function cgScopeListName() { return cgScopeIsState() ? 'the ' + String(CG_SCOPE.state).toUpperCase() + ' state list' : cgScopeLabel() + '’s list'; }
+// Does a guideline row belong to the scope? A state scope takes only that
+// state's own documents (by key); a council scope never takes a state's.
+function cgScopeMatchesRow(row) {
+  if (!row) return false;
+  const st = wpGuideStateOf(row);
+  if (cgScopeIsState()) return st === String(CG_SCOPE.state).toUpperCase();
+  if (st) return false;
+  return cgScopeMatches(row.council_name);
 }
 function cgScopeMatches(name) {
   if (!CG_SCOPE.name) return false;
@@ -12784,7 +12898,7 @@ function cgRenderLibrary() {
   const scopeLbl = document.getElementById('cg-scope-label');
   if (!wrap || !CG_LIB.rows) return;
   const data = CG_LIB.rows;
-  if (!data.length) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No councils in the library yet — extract one above.</div>'; if (scopeLbl) scopeLbl.textContent = ''; return; }
+  if (!data.length && !cgScopeActive()) { wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">No councils in the library yet — extract one above.</div>'; if (scopeLbl) scopeLbl.textContent = ''; return; }
   // One card per council: its latest LIVE version, with the history counted.
   const byKey = {};
   data.forEach(r => {
@@ -12794,11 +12908,12 @@ function cgRenderLibrary() {
     g.any = g.any || r;
   });
   const keys = Object.keys(byKey).sort()
-    .filter(k => cgScopeMatches((byKey[k].live || byKey[k].any).council_name));
-  if (scopeLbl) scopeLbl.textContent = CG_SCOPE.name ? '— ' + CG_SCOPE.name : '';
-  if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing council-specific, no prompt
+    .filter(k => cgScopeMatchesRow(byKey[k].live || byKey[k].any));
+  if (scopeLbl) scopeLbl.textContent = cgScopeActive() ? '— ' + cgScopeLabel() : '';
+  if (!cgScopeActive()) { wrap.innerHTML = ''; return; }   // nothing scoped → nothing, no prompt
   if (!keys.length) {
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Nothing on file for ' + ssxEsc(CG_SCOPE.name) + ' yet — extract a PDF above to create v1.</div>';
+    wrap.innerHTML = '<div style="font-size:11px;color:var(--muted);">Nothing on file for ' + ssxEsc(cgScopeLabel()) + ' yet — ⇪ Save a PDF above to create v1.' +
+      (cgScopeIsState() ? ' A state document serves the councils that have no requirements of their own, and its rates go into the state rows — never a council’s.' : '') + '</div>';
     return;
   }
   wrap.innerHTML = keys.map(k => {
@@ -12892,8 +13007,8 @@ async function cgbCouncilList() {
     (data || []).forEach(r => add(r.label, r.state));
   } catch (e) { /* registry unreachable — the other sources still fill the list */ }
   try {
-    const { data } = await sb.from('council_guidelines').select('council_name,state').is('superseded_at', null);
-    (data || []).forEach(r => add(r.council_name, r.state));
+    const { data } = await sb.from('council_guidelines').select('council_key,council_name,state').is('superseded_at', null);
+    (data || []).filter(r => !wpGuideStateOf(r)).forEach(r => add(r.council_name, r.state));
   } catch (e) { /* ditto */ }
   Object.entries(COUNCILS_BY_STATE_P).forEach(([st, list]) =>
     (list || []).forEach(c => add(c.label, st)));
@@ -12940,11 +13055,13 @@ async function cgbUploadOne(r) {
   // must version n, n+1 — parallel inserts would race the max(version) read.
   const name = (r.council || '').trim();
   if (!name) { r.status = 'pick a council in Scope above'; return false; }
-  const key = cgSlug(name);
+  // a state document carries its own key (wpStateGuideKey) — never a slug a council could share
+  const key = (r.councilKey && wpGuideStateOf({ council_key: r.councilKey })) ? r.councilKey : cgSlug(name);
+  const folder = wpGuideStateOf({ council_key: key }) ? '_state/' + wpGuideStateOf({ council_key: key }) : key;
   r.busy = true; r.status = 'uploading…'; cgbRender();
   try {
     const safe = r.file.name.replace(/[^A-Za-z0-9._-]+/g, '_');
-    const path = `guidelines/${key}/${Date.now()}_${safe}`;
+    const path = `guidelines/${folder}/${Date.now()}_${safe}`;
     const { error: upErr } = await sb.storage.from(PLANS_BUCKET)
       .upload(path, r.file, { contentType: 'application/pdf' });
     if (upErr) throw upErr;
@@ -13613,7 +13730,7 @@ async function crqSyncServe(councilKey, councilName) {
   const { data: all, error } = await q;
   if (error) { crqMsg('Sync failed: ' + error.message, true); return 0; }
   const want = glBridgeNorm(councilName || '');
-  const docs = (all || []).filter(d => councilKey ? true : (want && glBridgeNorm(d.council_name) === want));
+  const docs = (all || []).filter(d => councilKey ? true : (!wpGuideStateOf(d) && want && glBridgeNorm(d.council_name) === want));
   if (!docs.length) return 0;
   const byVersion = docs.slice().sort((a, b) => (b.version || 0) - (a.version || 0));
   const serving = byVersion.find(d => !d.superseded_at) || byVersion[0];
@@ -13712,7 +13829,8 @@ function crqRateToTable(r, ctx) {
   if (!r || r.requirement_type !== 'generation_rate') return no('not a generation rate');
   if (!(r.value_num === 0 || r.value_num) || isNaN(+r.value_num)) return no('no numeric value');
   if (!ctx || !ctx.state) return no('the document has no state recorded');
-  if (!ctx.councilValue) return no('the council is not in the councils list — add it in Scope first');
+  if (!ctx.councilValue && !ctx.stateScope) return no('the council is not in the councils list — add it in Scope first');
+  if (ctx.councilValue && ctx.stateScope) return no('a state document cannot write a council’s rates');
   const streamKey = r.stream ? CRX_STREAM_TO_RATES[r.stream] : null;
   // GUARDRAIL 1: a combined figure is REFUSED here and never divided,
   // apportioned, or assigned to one stream on the engine's own initiative.
@@ -13843,13 +13961,19 @@ function crqComSyncPlan(placed, existing, opts) {
 async function crqWriteRates(rateRows, doc, opts) {
   const o = opts || {};
   const out = { added: [], kept: [], unplaced: [], clashes: [], updated: [], removed: [], newUses: [],
-    sync: !!o.sync, own: null, cleared: 0, noDelete: '', council: doc.council_name, state: null, councilValue: null };
+    sync: !!o.sync, own: null, cleared: 0, noDelete: '', council: doc.council_name, state: null, councilValue: null,
+    stateScope: !!wpGuideStateOf(doc) };
   if (!rateRows.length && !(o.sync && o.cleanRead)) return out;
+  // A STATE document writes the state rows (council_value null) and nothing
+  // else: its state comes from its key, no council is looked up, so its rates
+  // can never land under a council. A council document never writes a state
+  // row: crqRateToTable refuses it without a council value.
+  const stateScope = wpGuideStateOf(doc);
   // council value: the Scope bar's selection when it IS this council,
   // otherwise the registry row whose label matches (any state — an older
   // document may carry no state at all; the registry row supplies it)
-  let councilValue = null, state = doc.state || null;
-  try {
+  let councilValue = null, state = stateScope || doc.state || null;
+  if (!stateScope) try {
     const sel = document.getElementById('rdb-council');
     const selLabel = sel && sel.value ? (sel.options[sel.selectedIndex]?.text || '') : '';
     const want = crxNorm(doc.council_name);
@@ -13865,7 +13989,7 @@ async function crqWriteRates(rateRows, doc, opts) {
   out.state = state; out.councilValue = councilValue;
   let uses = RDB.uses && RDB.uses.length ? RDB.uses : [];
   if (!uses.length) { try { const { data } = await sb.from('com_uses').select('use_code,label'); uses = data || []; } catch (e) {} }
-  const ctx = { state, councilValue, uses, createUses: !!o.sync };
+  const ctx = { state, councilValue, uses, createUses: !!o.sync, stateScope: !!stateScope };
   out.uses = uses;
   const plans = rateRows.map(r => ({ r, plan: crqRateToTable(r, ctx) }));
   plans.filter(x => !x.plan.ok).forEach(x => out.unplaced.push({ r: x.r, why: x.plan.why }));
@@ -13873,14 +13997,18 @@ async function crqWriteRates(rateRows, doc, opts) {
   // commercial rows the run read, placed or not — residential-looking rows aside
   const isResRow = r => !!crxResUnit(r.use_class) || /resid|dwelling|apartment|townhouse|multi.?unit/i.test(String(r.use_class || ''));
   const comRead = plans.filter(x => x.plan.ok ? x.plan.table === 'com_rates' : !isResRow(x.r));
-  const syncCom = !!(o.sync && councilValue && state);
+  // a state document syncs the state list too — but never removes from it
+  // (every council without its own list leans on those rows) and never
+  // touches a council's com_own flag
+  const syncCom = !!(o.sync && state && (councilValue || stateScope));
   if (!want.length && !(syncCom && o.cleanRead && !comRead.length)) return out;
   const existing = { res_rates: new Set(), com_rates: new Set() };
   let comRows = [];
   try {
-    const { data: res } = await sb.from('res_rates').select('unit_type,stream').eq('state', state).eq('council_value', councilValue);
+    const scoped = q => councilValue ? q.eq('council_value', councilValue) : q.is('council_value', null);
+    const { data: res } = await scoped(sb.from('res_rates').select('unit_type,stream').eq('state', state));
     (res || []).forEach(x => existing.res_rates.add(x.unit_type + '|' + x.stream));
-    const { data: com } = await sb.from('com_rates').select('id,use_code,stream,rate,unit_value,unit').eq('state', state).eq('council_value', councilValue);
+    const { data: com } = await scoped(sb.from('com_rates').select('id,use_code,stream,rate,unit_value,unit').eq('state', state));
     comRows = com || [];
     comRows.forEach(x => existing.com_rates.add(x.use_code + '|' + x.stream));
   } catch (e) {}
@@ -13908,7 +14036,7 @@ async function crqWriteRates(rateRows, doc, opts) {
     const comBatch = batch.com_rates;
     batch.com_rates = [];
     await crqComSyncApply(out, comBatch, comRows, {
-      cleanRead: !!o.cleanRead, comRead, plans: want.filter(x => x.plan.table === 'com_rates'), uses, state, councilValue });
+      cleanRead: !!o.cleanRead, comRead, plans: want.filter(x => x.plan.table === 'com_rates'), uses, state, councilValue, stateScope: !!stateScope });
   }
   for (const table of ['res_rates', 'com_rates']) {
     if (!batch[table].length) continue;
@@ -13942,9 +14070,11 @@ async function crqComSyncApply(out, placed, existing, x) {
   });
   // a clean read with no commercial rate at all: the guideline publishes
   // none, so the council's list is cleared and the state's applies
-  const clearAll = x.cleanRead && !comRead.length;
-  const canDelete = x.cleanRead && (clearAll || placed.length > 0);
-  if (!x.cleanRead) out.noDelete = 'the document was not read in full (a rate row did not come through, or the reply hit its length cap), so no use was removed — re-run to finish the sync';
+  // the STATE list is never cleared or trimmed by a read: councils fall back to it
+  const clearAll = !x.stateScope && x.cleanRead && !comRead.length;
+  const canDelete = !x.stateScope && x.cleanRead && (clearAll || placed.length > 0);
+  if (x.stateScope) { /* add + update only */ }
+  else if (!x.cleanRead) out.noDelete = 'the document was not read in full (a rate row did not come through, or the reply hit its length cap), so no use was removed — re-run to finish the sync';
   // new uses, once each
   const fresh = new Map();
   plans.forEach(p => { if (p.plan.newUse && !fresh.has(p.plan.newUse.use_code)) fresh.set(p.plan.newUse.use_code, p.plan.newUse); });
@@ -13982,7 +14112,7 @@ async function crqComSyncApply(out, placed, existing, x) {
     else out.removed = plan.remove;
   }
   // the council's own list from now on — or, cleared, back to the state's
-  const own = clearAll ? false : (out.added.length + out.updated.length + plan.same.length > 0 ? true : null);
+  const own = x.stateScope ? null : clearAll ? false : (out.added.length + out.updated.length + plan.same.length > 0 ? true : null);
   if (own !== null) {
     try {
       const { error } = await sb.from('councils').update({ com_own: own }).eq('state', state).eq('value', councilValue);
@@ -14040,7 +14170,7 @@ function crqRatesReport(rr) {
   };
   el.innerHTML = '<div style="border:1px solid var(--border);border-radius:8px;background:#141c1c;padding:8px 12px;max-height:360px;overflow:auto;">' +
     li(cgbEsc(wpDesignAid()), '#EFB080') +
-    li('<b>Generation rates from ' + cgbEsc(rr.council || 'the guideline') + '</b>' + (rr.councilValue ? '' : ' — <b style="color:#EF8080;">not in the councils list for ' + cgbEsc(rr.state || 'this state') + ' (Scope → + Add council), so nothing could be placed</b>'), 'var(--text)') +
+    li('<b>Generation rates from ' + cgbEsc(rr.council || 'the guideline') + '</b>' + (rr.stateScope ? ' — into the <b>' + cgbEsc(rr.state || 'state') + ' state rows</b> (State defaults) only; no council’s rates are touched, and nothing is removed from the state list' : rr.councilValue ? '' : ' — <b style="color:#EF8080;">not in the councils list for ' + cgbEsc(rr.state || 'this state') + ' (Scope → + Add council), so nothing could be placed</b>'), 'var(--text)') +
     rr.added.map(a => li('✓ added · ' + cgbEsc(cell(a)) + ' <span style="color:var(--muted);">(' + cgbEsc(a.r.clause_ref || '') + ')</span>', '#3DD68C')).join('') +
     (rr.newUses || []).map(u => li('＋ new use · ' + cgbEsc(u.label) + ' <span style="color:var(--muted);">(' + cgbEsc(u.metric) + ', ' + u.default_days + ' days/wk — the guideline names it and the uses list did not have it)</span>', '#3DD68C')).join('') +
     (rr.updated || []).map(u => li('↻ updated · ' + cgbEsc(u.row.use_code + ' · ' + u.row.stream) + ' ' + cgbEsc(u.from.rate + ' ' + u.from.unit) + ' → <b>' + cgbEsc(u.row.rate + ' ' + u.row.unit) + '</b> — to match the guideline', '#3DD68C')).join('') +
@@ -14140,14 +14270,18 @@ async function crqPlaceFixed(rowId) {
 // generation_rate row across its document versions — without re-running
 // the extraction. Add-only, like the extraction itself.
 async function crqPullRatesForScope() {
-  const name = (document.getElementById('cg-name') || {}).value || CG_SCOPE.name;
-  if (!name) { rdbMsg('Pick a council in Scope first.', false); return; }
+  const council = (document.getElementById('cg-name') || {}).value || CG_SCOPE.name;
+  const stKey = council ? null : wpStateGuideKey(document.getElementById('rdb-state')?.value || CG_SCOPE.state);
+  const name = council || (stKey ? wpStateGuideName(wpGuideStateOf({ council_key: stKey })) : '');
+  if (!name) { rdbMsg('Pick a state or a council in Scope first.', false); return; }
   rdbMsg('Reading the guideline’s generation rates…');
   try {
     const { data: docs, error } = await sb.from('council_guidelines').select('id, council_key, council_name, state, version, superseded_at');
     if (error) throw error;
     const want = crxNorm(name);
-    const mine = (docs || []).filter(d => { const n = crxNorm(d.council_name); return n && (n === want || n.includes(want) || want.includes(n)); });
+    // the state's documents by key only; a council's never include a state's
+    const mine = (docs || []).filter(d => stKey ? d.council_key === stKey
+      : (!wpGuideStateOf(d) && (n => n && (n === want || n.includes(want) || want.includes(n)))(crxNorm(d.council_name))));
     if (!mine.length) { rdbMsg('No guideline document on file for ' + name + '.', false); crqRatesReport(null); return; }
     const { data: rows, error: e2 } = await sb.from('council_requirements').select('*')
       .in('council_guideline_id', mine.map(d => d.id)).eq('status', 'approved').eq('requirement_type', 'generation_rate');
@@ -14238,12 +14372,13 @@ function crqIsRate(r) { return CRQ_RATE_TYPES.includes((r || {}).requirement_typ
 function crqRender() {
   const wrap = document.getElementById('crq-wrap'); if (!wrap) return;
   const scopeLbl = document.getElementById('crq-scope-label');
-  if (scopeLbl) scopeLbl.textContent = CG_SCOPE.name ? '— ' + CG_SCOPE.name : '';
+  if (scopeLbl) scopeLbl.textContent = cgScopeActive() ? '— ' + cgScopeLabel() : '';
   const listed = CRQ_L.rows.filter(r => !crqIsRate(r));
   // Scoped to the chosen council: the list is per council, so another
   // council's rows must never show while you edit this one.
-  if (!CG_SCOPE.name) { wrap.innerHTML = ''; return; }   // no council → nothing, no prompt
-  const rows = listed.filter(r => cgScopeMatches((CRQ_L.docs[r.council_guideline_id] || {}).council_name));
+  if (!cgScopeActive()) { wrap.innerHTML = ''; return; }   // nothing scoped → nothing, no prompt
+  // a council's list never shows the state's rows, and the state's never a council's
+  const rows = listed.filter(r => cgScopeMatchesRow(CRQ_L.docs[r.council_guideline_id]));
   const dups = crqDupFlags(rows);
   const latest = crqLatestBatch(rows);
   const manual = rows.filter(r => r.source === 'manual');
@@ -14257,7 +14392,7 @@ function crqRender() {
   const nSel = CRQ_L.sel.size;
   const toolbar = `
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-      <span style="font-size:11px;color:rgba(255,255,255,0.75);"><b>${rows.length}</b> requirement${rows.length === 1 ? '' : 's'} in ${cgbEsc(CG_SCOPE.name)}’s list — live in the checker and WMP as shown</span>
+      <span style="font-size:11px;color:rgba(255,255,255,0.75);"><b>${rows.length}</b> requirement${rows.length === 1 ? '' : 's'} in ${cgbEsc(cgScopeListName())} — ${cgScopeIsState() ? 'served to every council with no requirements of its own, as a stated state fallback' : 'live in the checker and WMP as shown'}</span>
       ${nSel ? `<button class="btn" style="padding:3px 9px;font-size:11px;color:#EF8080;border-color:#5a2a2a;" title="Delete every ticked row from the database — the checker and WMP stop citing them" onclick="crqRemoveSelected()">✕ Remove ${nSel} selected</button><button class="btn" style="padding:3px 9px;font-size:11px;" onclick="CRQ_L.sel.clear();crqRender();">clear selection</button>` : ''}
       <select class="wsl-sel" style="font-size:11px;padding:4px 6px;" onchange="CRQ_L.filter=this.value;crqRender();" title="Narrow the list — the rows stay in the list either way">
         ${opt('all', 'Show all')}${opt('latest', 'Added by the latest extraction', latest.size)}${opt('dups', '≈ possible duplicates', Object.keys(dups).length)}${opt('manual', 'Added by hand', manual.length)}${opt('nostream', '⚠ stream to set', noStream.length)}
@@ -14266,7 +14401,7 @@ function crqRender() {
       <button class="btn" style="background:var(--teal);color:#fff;font-weight:700;" title="Add a requirement that is in no document — e.g. something council told you. It joins the list immediately and survives every future extraction. (Rates are typed straight into the rate tables below.)" onclick="crqAdd()">+ Add requirement</button>
     </div>`;
   if (!rows.length) {
-    wrap.innerHTML = toolbar + '<div style="font-size:11px;color:var(--muted);">Nothing in ' + cgbEsc(CG_SCOPE.name) + '’s list yet — 🧾 Extract to list on its document in the Library, or + Add requirement.</div>';
+    wrap.innerHTML = toolbar + '<div style="font-size:11px;color:var(--muted);">Nothing in ' + cgbEsc(cgScopeListName()) + ' yet — 🧾 Extract to list on its document in the Library, or + Add requirement.</div>';
     return;
   }
   const types = CRQ_TYPES.filter(t => !CRQ_RATE_TYPES.includes(t));
@@ -14322,21 +14457,22 @@ async function crqSave(id) {
   if (error) { crqMsg('Save failed: ' + error.message, true); return; }
   Object.assign(r, patch);
   const d = CRQ_L.docs[r.council_guideline_id] || {};
-  const n = await crqSyncServe(d.council_key || null, d.council_name || CG_SCOPE.name);
+  const n = await crqSyncServe(d.council_key || null, d.council_name || cgScopeLabel());
   crqMsg(`✓ Saved — ${n} item${n === 1 ? '' : 's'} serving the checker and WMP.`);
 }
 // The council's serving document version — where a hand-typed row is pinned.
-async function crqServingDoc(name) {
+async function crqServingDoc(name, stateKey) {
   const { data } = await sb.from('council_guidelines')
     .select('id, council_key, council_name, version, version_label, superseded_at, requirements')
     .is('superseded_at', null).order('version', { ascending: false });
+  if (stateKey) return (data || []).find(d => d.council_key === stateKey) || null;   // the state's own, by key only
   const key = cgSlug(name || '');
-  return (data || []).find(d => d.council_key === key) || (data || []).find(d => cgScopeMatches(d.council_name)) || null;
+  return (data || []).find(d => d.council_key === key) || (data || []).find(d => !wpGuideStateOf(d) && cgScopeMatches(d.council_name)) || null;
 }
 async function crqAdd() {
-  if (!CG_SCOPE.name) { crqMsg('Pick a council in Scope first.', true); return; }
-  const doc = await crqServingDoc(CG_SCOPE.name);
-  if (!doc) { crqMsg(`${CG_SCOPE.name} has no guideline document on file — ⇪ Save one above first (a council letter or email saved as PDF is fine); every requirement belongs to a document version.`, true); return; }
+  if (!cgScopeActive()) { crqMsg('Pick a state or a council in Scope first.', true); return; }
+  const doc = await crqServingDoc(CG_SCOPE.name, cgScopeIsState() ? wpStateGuideKey(CG_SCOPE.state) : null);
+  if (!doc) { crqMsg(`${cgScopeLabel()} has no guideline document on file — ⇪ Save one above first (a council letter or email saved as PDF is fine); every requirement belongs to a document version.`, true); return; }
   const row = { council_guideline_id: doc.id, requirement_type: 'other', use_class: null, stream: null, value_num: null, unit: null,
     value_text: '', clause_ref: 'Manual — ' + new Date().toISOString().slice(0, 10), status: 'approved', source: 'manual',
     reviewed_by: currentUser?.id || null, reviewed_at: new Date().toISOString() };
@@ -14365,7 +14501,7 @@ async function crqRemoveRows(ids) {
   const rows = (ids || []).map(id => CRQ_L.rows.find(x => x.id === id)).filter(Boolean);
   if (!rows.length) return;
   const named = rows.slice(0, 6).map(r => '• ' + (CRQ_TYPE_LABEL[r.requirement_type] || r.requirement_type) + (r.clause_ref ? ' — ' + r.clause_ref : '')).join('\n') + (rows.length > 6 ? '\n• … and ' + (rows.length - 6) + ' more' : '');
-  if (!confirm(`Delete ${rows.length === 1 ? 'this requirement' : rows.length + ' requirements'} from ${CG_SCOPE.name}’s list?\n\n${named}\n\nThey are deleted from the database — not kept — and the checker and WMP stop citing them.`)) return;
+  if (!confirm(`Delete ${rows.length === 1 ? 'this requirement' : rows.length + ' requirements'} from ${cgScopeListName()}?\n\n${named}\n\nThey are deleted from the database — not kept — and the checker and WMP stop citing them.`)) return;
   const { error } = await sb.from('council_requirements').delete().in('id', rows.map(r => r.id));
   if (error) { crqMsg('Remove failed: ' + error.message, true); return; }
   const gone = new Set(rows.map(r => r.id));
@@ -14376,9 +14512,9 @@ async function crqRemoveRows(ids) {
   const seen = new Set(); let n = 0;
   for (const r of rows) {
     const d = CRQ_L.docs[r.council_guideline_id] || {};
-    const k = (d.council_key || '') + '|' + (d.council_name || CG_SCOPE.name);
+    const k = (d.council_key || '') + '|' + (d.council_name || cgScopeLabel());
     if (seen.has(k)) continue; seen.add(k);
-    n = await crqSyncServe(d.council_key || null, d.council_name || CG_SCOPE.name);
+    n = await crqSyncServe(d.council_key || null, d.council_name || cgScopeLabel());
   }
   crqMsg(`Deleted ${rows.length} — ${n} requirement${n === 1 ? '' : 's'} serving the checker and WMP.`);
 }
@@ -14411,8 +14547,11 @@ async function cgStoreDocument() {
   // there is no per-file assignment anywhere. Sequential on purpose: two
   // files for the same council must version n, n+1 — parallel inserts would
   // race the max(version) read.
-  const name = document.getElementById('cg-name').value.trim();
-  if (!name) { cgMsg('Pick a council in Scope above first — documents are saved to the scoped council.', true); return; }
+  // No council in Scope = the state's own document ('state:<ST>'), never a council's.
+  const stScope = document.getElementById('cg-state').value || CG_SCOPE.state || '';
+  const name = document.getElementById('cg-name').value.trim() || (stScope ? wpStateGuideName(stScope) : '');
+  const stateKey = document.getElementById('cg-name').value.trim() ? null : wpStateGuideKey(stScope);
+  if (!name) { cgMsg('Pick a state or a council in Scope above first — documents are saved to the scope.', true); return; }
   const queue = CGB.rows.filter(r => r.mode !== 'equipment' && !r.done && !r.dead);
   if (!queue.length) { cgMsg('Drop or choose a guideline PDF first.', true); return; }
   if (!currentUser) { cgMsg('Sign in to store documents in the shared library.', true); return; }
@@ -14425,7 +14564,7 @@ async function cgStoreDocument() {
   cgMsg(`Storing ${queue.length} document${queue.length === 1 ? '' : 's'} for ${name}…`);
   let ok = 0, lastErr = '';
   for (const r of queue) {
-    Object.assign(r, { council: name }, meta);
+    Object.assign(r, { council: name, councilKey: stateKey }, meta);
     // cgbUploadOne stores the PDF (`guidelines/${key}/${Date.now()}_${safe}`)
     // and creates the version through cgInsertVersion with no clauses —
     // requirements: [],          // clauses come from extraction + approval (C3)
@@ -14442,7 +14581,7 @@ async function cgStoreDocument() {
         ? ' — this account may not be permitted to write guideline documents (see sql/2026-08-30-guideline-upload-by-council-officers.sql).'
         : ''), true);
   }
-  cgScopeChanged(name);
+  cgScopeChanged(stateKey ? '' : name);
   await cgLoad();
   rdbGuidelineCard();
 }
@@ -26857,16 +26996,22 @@ async function wsCouncilReqsRefresh() {
     if (reqs?.length) {
       const gids = [...new Set(reqs.map(r => r.council_guideline_id))];
       const { data: docs } = await sb.from('council_guidelines')
-        .select('id, council_name, version').in('id', gids);
+        .select('id, council_key, council_name, version').in('id', gids);
       const byId = {}; (docs || []).forEach(d => { byId[d.id] = d; });
       const norm = s => String(s || '').toLowerCase().replace(/\b(city of|city|council|shire|municipality|of)\b/g, '').replace(/[^a-z0-9]+/g, '');
       const want = norm(council);
-      WS_CREQ5.rows = reqs.filter(r => {
+      const tag = r => ({ ...r, _version: (byId[r.council_guideline_id] || {}).version ?? null });
+      // the council's own rows; a state document's rows only as the stated
+      // fallback when the council has none (wpGuideServing's rule)
+      const own = reqs.filter(r => {
         const d = byId[r.council_guideline_id];
-        if (!d) return false;
+        if (!d || wpGuideStateOf(d)) return false;
         const n = norm(d.council_name);
         return n === want || n.includes(want) || want.includes(n);
-      }).map(r => ({ ...r, _version: (byId[r.council_guideline_id] || {}).version ?? null }));
+      });
+      const stKey = wpStateGuideKey((WS.extractData || {}).state);
+      const st = own.length || !stKey ? [] : reqs.filter(r => (byId[r.council_guideline_id] || {}).council_key === stKey);
+      WS_CREQ5.rows = own.length ? own.map(tag) : st.map(r => ({ ...tag(r), _state: wpGuideStateOf(byId[r.council_guideline_id]) }));
     }
   } catch (e) { /* advisory only — a failed fetch warns about nothing */ }
   wsCouncilWarnRender();
@@ -26889,7 +27034,8 @@ function wsCouncilWarnRender() {
   const warns = wsCouncilLayoutWarnings(rows, facts);
   if (!warns.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
   el.style.display = 'flex';
-  el.innerHTML = `<div style="font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#FFB74D;">Council requirements — advisory</div>` +
+  const stFb = rows[0] && rows[0]._state;   // the state's requirements, standing in for a council with none
+  el.innerHTML = `<div style="font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#FFB74D;">${stFb ? stFb + ' state requirements (state fallback) — advisory' : 'Council requirements — advisory'}</div>` +
     warns.slice(0, 8).map(w => `<div>⚠ ${w.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`).join('') +
     (warns.length > 8 ? `<div style="color:rgba(255,255,255,0.5);">+ ${warns.length - 8} more</div>` : '');
 }
@@ -33327,6 +33473,7 @@ function wmpgPickGuideline(rows, council) {
   const want = norm(council);
   if (!want) return null;
   const mine = (rows || []).filter(r => {
+    if (/^state:/.test(String(r.council_key || ''))) return false;   // a state document is never a council's
     const k = norm(r.council_key || ''), n = norm(r.council_name || '');
     return k === want || n === want || (n && (n.includes(want) || want.includes(n)));
   });
@@ -33335,8 +33482,25 @@ function wmpgPickGuideline(rows, council) {
   const pool = live.length ? live : mine;
   return pool.slice().sort((a, b) => (+b.version || 0) - (+a.version || 0))[0] || null;
 }
+// The state's own document (council_key 'state:<ST>'), newest live version
+// first — the stated fallback when the council has none. Pure.
+function wmpgPickStateGuideline(rows, st) {
+  const key = 'state:' + String(st || '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (key === 'state:') return null;
+  const mine = (rows || []).filter(r => r.council_key === key);
+  if (!mine.length) return null;
+  const live = mine.filter(r => !r.superseded_at);
+  return (live.length ? live : mine).slice().sort((a, b) => (+b.version || 0) - (+a.version || 0))[0] || null;
+}
 function wmpgGuidelineLabel(row) {
   if (!row) return '';
+  if (/^state:/.test(String(row.council_key || ''))) {
+    // a state document reads as itself, never as "<council> — waste management guidelines"
+    const ver = row.version != null ? 'v' + row.version + (row.version_label ? ' ' + row.version_label : '') : (row.version_label || '');
+    const up = row.created_at || row.updated_at;
+    const when = row.effective_date ? 'effective ' + row.effective_date : (up ? 'uploaded ' + String(up).slice(0, 10) : '');
+    return [row.council_name || 'State guidelines', ver, when].filter(Boolean).join(', ');
+  }
   const ver = row.version != null ? 'v' + row.version + (row.version_label ? ' ' + row.version_label : '') : (row.version_label || '');
   const up = row.created_at || row.updated_at || row.uploaded_at;
   const when = row.effective_date ? 'effective ' + row.effective_date : (up ? 'uploaded ' + String(up).slice(0, 10) : '');
@@ -33370,10 +33534,17 @@ async function wmpgLoadGuideline(d) {
     }
   }
   const hit = wmpgPickGuideline(rows, d.council);
+  // no council document: the state's own, stated as the fallback
+  const stHit = hit ? null : wmpgPickStateGuideline(rows, d.state);
   if (hit) {
     d.compliance = wmpgGuidelineLabel(hit);
     d.complianceSrc = { kind: 'library', guidelineId: hit.id || null, councilName: hit.council_name,
                         version: hit.version ?? null, versionLabel: hit.version_label || null, council: d.council };
+  } else if (stHit) {
+    d.compliance = wmpgGuidelineLabel(stHit);
+    d.complianceSrc = { kind: 'state', guidelineId: stHit.id || null, councilName: stHit.council_name,
+                        version: stHit.version ?? null, versionLabel: stHit.version_label || null, council: d.council, state: d.state };
+    return stHit;
   } else {
     // No document in the library is an explicit state, not a blank. (The
     // council card's free-text Guidelines field used to stand in here; it was
@@ -33397,6 +33568,7 @@ async function wmpgCouncilChanged() {
 function wmpgComplianceNote(d) {
   const s = d.complianceSrc || {};
   if (s.kind === 'library') return `<span class="wmpg-pill">from guidelines library</span> ${s.versionLabel || s.version != null ? 'v' + (s.version ?? '') + (s.versionLabel ? ' ' + wmpgEsc(s.versionLabel) : '') + ' — ' : ''}the version the compliance checker uses. Type over it to cite something else.`;
+  if (s.kind === 'state') return `<span class="wmpg-pill warn">state fallback</span> no guideline for ${wmpgEsc(d.council)} in the library, so the ${wmpgEsc(s.state || d.state || 'state')} document is used — upload the council’s in the Guidelines library to cite it instead, or type over this.`;
   if (s.kind === 'unread') return `<span class="wmpg-pill bad">guidelines library could not be read</span> ${wmpgEsc(s.error || '')} — reopen the WMP to try again, or name the document here.`;
   if (s.kind === 'council_db') return `<span class="wmpg-pill warn">council database text</span> no document in the guidelines library for ${wmpgEsc(d.council)} — this wording comes from the council card.`;
   if (s.kind === 'manual') return `<span class="wmpg-pill warn">entered by hand</span> replaces the library document. <a href="#" onclick="WMPG.data.complianceSrc=null;wmpgCouncilChanged();return false;" style="color:#4FC3C3;">↺ use the library document</a>`;
@@ -34460,7 +34632,7 @@ function wmpgCouncilLabel(remote, state, council) {
 function wmpgCouncilChoices(remote, guidelineRows, state) {
   const out = new Set();
   ((remote && remote.COUNCILS && remote.COUNCILS[state]) || []).forEach(c => { if (c && c.label) out.add(String(c.label).trim()); });
-  (guidelineRows || []).forEach(r => { if (r && r.council_name && (!r.state || !state || r.state === state)) out.add(String(r.council_name).trim()); });
+  (guidelineRows || []).forEach(r => { if (r && r.council_name && !/^state:/.test(String(r.council_key || '')) && (!r.state || !state || r.state === state)) out.add(String(r.council_name).trim()); });
   return [...out].sort((a, b) => a.localeCompare(b));
 }
 // Pure: has the bin calculator produced a schedule after the one this WMP
@@ -39682,15 +39854,20 @@ async function creqLoad(d) {
         : g.withReqs ? { ...g.withReqs, servedFallback: !!g.live }
         : g.live).filter(Boolean);
     const want = d.council.trim().toLowerCase();
-    const hit = packs.find(r => (r.council_name || '').trim().toLowerCase() === want)
-             || packs.find(r => want.includes((r.council_name || '').trim().toLowerCase()) && r.council_name)
+    // council documents only — a state document is the stated fallback below
+    const cPacks = packs.filter(r => !wpGuideStateOf(r));
+    const own = cPacks.find(r => (r.council_name || '').trim().toLowerCase() === want)
+             || cPacks.find(r => want.includes((r.council_name || '').trim().toLowerCase()) && r.council_name)
              || null;
+    const stKey = wpStateGuideKey(d.state);
+    const pick = wpGuideServing(own, stKey ? packs.find(r => r.council_key === stKey) || null : null);
+    const hit = pick ? (pick.scope === 'state' ? { ...pick.row, stateFallback: true } : pick.row) : null;
     CREQ.pack = hit;
     // Record WHICH document this WMP is being checked against. p.wmp saves
     // WMPG.data wholesale, so the pin persists with the generated WMP.
     d.creqSource = hit ? { guidelineId: hit.id || null, councilKey: hit.council_key,
       councilName: hit.council_name, version: hit.version ?? null,
-      versionLabel: hit.version_label || null, checkedAt: new Date().toISOString() } : null;
+      versionLabel: hit.version_label || null, scope: pick.scope, checkedAt: new Date().toISOString() } : null;
   } catch(e) { CREQ.pack = null; }
   return CREQ.pack;
 }
@@ -39750,7 +39927,7 @@ async function creqRun() {
     </li>`;
   el.innerHTML = `
     <div style="font-size:11px;color:#9BB0B0;margin-bottom:6px;">
-      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''}${pack.version_label ? ' (' + wmpgEsc(pack.version_label) + ')' : ''}${pack.servedFallback ? ' · <span style="color:#EFB080;">a newer upload exists — serving this version until the new one has requirements in its list</span>' : ''} — ${f.length} requirements
+      ${wmpgEsc(pack.council_name)}${pack.version ? ' · v' + wmpgEsc(pack.version) : ''}${pack.version_label ? ' (' + wmpgEsc(pack.version_label) + ')' : ''}${pack.servedFallback ? ' · <span style="color:#EFB080;">a newer upload exists — serving this version until the new one has requirements in its list</span>' : ''}${pack.stateFallback ? ' · <span style="color:#EFB080;">state fallback — no requirements on file for ' + wmpgEsc(d.council || 'this council') + '</span>' : ''} — ${f.length} requirements
       <span style="color:#EF8080;">${fails.length} not met</span> ·
       <span style="color:#EFB080;">${unk.length} unstated</span> ·
       <span style="color:#81C784;">${pass.length} met</span> ·

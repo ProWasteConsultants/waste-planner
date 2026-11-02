@@ -568,6 +568,7 @@ labels illegible at 1:500 and cartoonish on detail plans.
 | `tests/publish-rates.test.js` | Publish rates: the brief's JSON shape from the tables, draft councils excluded, every validation refusal, removal guard, R2 SigV4 against AWS vectors, COMM/unit mirrors, the landing backup script; per-council commercial lists (`comList`), typed-in uses (`USES`) in the calculator and WMP |
 | `tests/legal.test.js` | Terms / Privacy: one config, sign-up consent, server-side record, re-acceptance rule + modal, the notice email's guards, the design-aid notice on results and every export |
 | `tests/workspace-sync.test.js` | The Personal / organisation workspace follows the account; what follows a project to another device (WMP draft, schedule, title block, cover / site figure), newer-copy-wins, local-only upload and deleted-elsewhere drop, flush on leave |
+| `tests/state-guidelines.test.js` | State-level guideline documents: the `state:<ST>` key, the council-first fallback, state rates into state rows only, every council reader refusing a state document, the fallback stated in the checker / WMP / layout |
 | `tests/syntax.test.js` | Parses every `<script>` block; convention checks |
 
 **Extract test subjects from `index.html`; never duplicate them.** `tests/extract.js`
@@ -1316,6 +1317,56 @@ purges those and nothing writes the status any more. Rules, all tested in
   clause still serves the checker's citations via `crqSyncServe`; the
   Requirements list never shows it (`CRQ_RATE_TYPES`, `crqIsRate`). Not
   built: version-to-version diffing.
+
+### State-level guideline documents (2026-11-02, Lachy)
+
+Admin › Rates & Councils with Scope on **State defaults** is a scope of its
+own: the state's guideline documents, its requirements list and the state
+rates. Tested in `tests/state-guidelines.test.js`.
+
+- **Same table, a key no council can have.** A state document is a
+  `council_guidelines` row with `council_key = 'state:<ST>'`
+  (`wpStateGuideKey` / `wpGuideStateOf`, pure). `council_name` is
+  `"<ST> — state guidelines"`. `cgSlug` only makes `[a-z0-9_]`, so no council
+  key can collide. Files go to `guidelines/_state/<ST>/`. No SQL was needed.
+- **Every council reader refuses a state row**, whatever its name reads:
+  - the platform bridge `glBridgeServingRow` (`glBridgeStateRow` reads the
+    state by key);
+  - the checker's `cgFetchStructured`, the WMP's `wmpgPickGuideline` /
+    `creqLoad` / `wmpgCouncilChoices`;
+  - the admin council picker, `crqSyncServe`'s name fallback and the layout
+    warnings (`wsCouncilReqsRefresh`).
+
+  The admin library and requirements list filter through `cgScopeMatchesRow`:
+  a state scope shows only that state's rows, and a council scope never shows
+  them.
+- **Rates.** A state document's extraction writes the state rows
+  (`council_value` null) and nothing else. `crqWriteRates` takes the state
+  from the key and does no council lookup. `crqRateToTable` refuses a state
+  document a council value, and still refuses a council document without
+  one. Residential stays add-only. The state commercial list takes adds and
+  updates, but is **never trimmed or cleared** by a read (every council
+  without its own list leans on it) and never touches `com_own`. *⤓ Extract
+  from the guideline PDF* (residential table) reads the state document at
+  State defaults.
+- **The fallback is one rule, `wpGuideServing` (pure):**
+  1. the council's own document when it serves requirements;
+  2. else the state's when IT does (carrying a requirement-less council PDF
+     as `councilDoc`, so it can be said);
+  3. else whichever document exists, council first.
+
+  Rates already fell back to state rows and are unchanged.
+- **The fallback is stated wherever it is used:**
+  - the checker card ("State fallback — no council requirements on file") and
+    the scan prompt ("STRUCTURED STATE REQUIREMENTS … STATE FALLBACK"), with
+    `checkedAgainst.scope`;
+  - the WMP compliance document (`complianceSrc.kind = 'state'`,
+    `wmpgPickStateGuideline`, used only when the council has no document) and
+    the requirements pack (`creqSource.scope`);
+  - the layout's advisory header.
+
+  The built-in `STATE_GUIDELINES` names remain the last resort when a state
+  has no document.
 
 ### Two guardrails on rate extraction (2026-09-14)
 

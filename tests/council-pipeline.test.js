@@ -79,7 +79,7 @@ test('C2: bulk upload — every file saves to the SCOPED council, versioned thro
   assert.ok(!fn.includes('function cgbSetCouncil(') && !SOURCE.includes('list="cgb-councils"') && !SOURCE.includes('<datalist id="cgb-councils">'),
     'the per-file council picker is gone');
   const store = SOURCE.slice(SOURCE.indexOf('async function cgStoreDocument()'), SOURCE.indexOf('async function cgSave()'));
-  assert.ok(store.includes("Object.assign(r, { council: name }, meta);") && store.includes('if (await cgbUploadOne(r)) ok++;'),
+  assert.ok(store.includes("Object.assign(r, { council: name, councilKey: stateKey }, meta);") && store.includes('if (await cgbUploadOne(r)) ok++;'),
     'Save document stamps the Scope council + the shared fields on every queued file and runs them through the one upload path');
   assert.ok(!SOURCE.includes("id=\"cg-file\"") && !SOURCE.includes('⇪ Upload assigned files') && !SOURCE.includes('id="cgb-actions"'),
     'the second upload path (single file picker + Upload assigned files) is gone');
@@ -87,7 +87,7 @@ test('C2: bulk upload — every file saves to the SCOPED council, versioned thro
     'bulk uploads version through the same supersede path as single saves');
   assert.ok(fn.includes('requirements: [],     // structured rows come from extraction + review (C3)'),
     'no structured requirements are invented at upload time');
-  assert.ok(fn.includes('guidelines/${key}/'),
+  assert.ok(fn.includes('guidelines/${folder}/'),
     'files land under the guidelines/ prefix of the existing bucket');
   assert.ok(fn.includes('sequential on purpose'),
     'same-council files take sequential versions instead of racing max(version)');
@@ -453,8 +453,9 @@ test('sync: the council list follows the guideline — new uses, updates, remova
   assert.deepStrictEqual(w.crqComSyncPlan([], existing, { canDelete: true }).remove.map(e => e.id), [1, 2, 3, 4]);
   // the wiring: residential stays add-only, the council list is marked its own
   const apply = extractFn('crqComSyncApply');
-  assert.ok(apply.includes("const clearAll = x.cleanRead && !comRead.length;"));
-  assert.ok(apply.includes("const canDelete = x.cleanRead && (clearAll || placed.length > 0);"));
+  assert.ok(apply.includes("const clearAll = !x.stateScope && x.cleanRead && !comRead.length;"));
+  assert.ok(apply.includes("const canDelete = !x.stateScope && x.cleanRead && (clearAll || placed.length > 0);"),
+    'a state document never trims or clears the state list');
   assert.ok(apply.includes(".update({ com_own: own })"), 'the synced list becomes the council\'s own');
   const wr = SOURCE.slice(SOURCE.indexOf('async function crqWriteRates('), SOURCE.indexOf('async function crqComSyncApply('));
   assert.ok(wr.includes("if (existing[plan.table].has(keys[i])) { kept++; return; }   // add-only: the table's value stands"), 'residential still add-only');
