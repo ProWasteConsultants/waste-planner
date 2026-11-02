@@ -73,7 +73,7 @@ test('the rate writer: state from the key, no council lookup, state list never t
   assert.ok(wr.includes("const scoped = q => councilValue ? q.eq('council_value', councilValue) : q.is('council_value', null);"),
     'existing state rows are read with IS NULL, not = NULL');
   const ap = extractBlock(/^async function crqComSyncApply\(/).text;
-  assert.ok(ap.includes('const canDelete = !x.stateScope &&') && ap.includes('const clearAll = !x.stateScope &&'),
+  assert.ok(ap.includes('crqComSyncMayDelete({ stateScope: x.stateScope'),
     'a state read adds and updates; it never removes or clears the list councils fall back to');
   assert.ok(ap.includes('const own = x.stateScope ? null :'), 'and never touches a council’s com_own flag');
 });
@@ -146,4 +146,21 @@ test('State defaults is a scope: documents, list and extraction stay the state�
     'a hand-typed state requirement is pinned to the state document only');
   assert.ok(extractBlock(/^async function rdbResExtract\(/).text.includes('await glBridgeStateRow(st)'),
     'the residential table can be read from the state document too');
+});
+
+test('guard: a council with another document on record never loses commercial rates to an extraction', () => {
+  const may = new Function(extractBlock(/^function crqComSyncMayDelete\(/).text + ';return crqComSyncMayDelete;')();
+  const base = { stateScope: false, otherDocs: 0, cleanRead: true, read: 5, placed: 5 };
+  assert.deepStrictEqual(may(base), { clearAll: false, canDelete: true }, 'the only document, read in full: the list follows it');
+  assert.deepStrictEqual(may({ ...base, read: 0, placed: 0 }), { clearAll: true, canDelete: true }, '…and a document with no commercial rates clears it, as before');
+  assert.deepStrictEqual(may({ ...base, otherDocs: 1 }), { clearAll: false, canDelete: false }, 'another document on record: nothing removed');
+  assert.deepStrictEqual(may({ ...base, otherDocs: 2, read: 0, placed: 0 }), { clearAll: false, canDelete: false },
+    'a residential-only document never clears the commercial list of a council with other documents');
+  assert.deepStrictEqual(may({ ...base, otherDocs: -1 }), { clearAll: false, canDelete: false }, 'an uncountable library is treated as other documents');
+  assert.deepStrictEqual(may({ ...base, cleanRead: false }), { clearAll: false, canDelete: false }, 'an incomplete read never removes');
+  assert.deepStrictEqual(may({ ...base, stateScope: true }), { clearAll: false, canDelete: false }, 'a state read never removes');
+  const wr = extractBlock(/^async function crqWriteRates\(/).text;
+  assert.ok(wr.includes("otherDocs = (data || []).filter(d => d.id !== doc.id).length;") && wr.includes('} catch (e) { otherDocs = -1; }'),
+    'the writer counts every other version or document the council has on record');
+  assert.ok(extractBlock(/^async function crqComSyncApply\(/).text.includes('they may come from another document'), 'and says what it kept and why');
 });

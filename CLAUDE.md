@@ -331,7 +331,15 @@ and `tests/council-pipeline.test.js`.
     transcription missed, no length cap hit. A use the run read but could
     not place (a combined figure, a contested cell) keeps its rows;
   - a complete read that finds no commercial rate at all clears the
-    council's list, so the state list applies.
+    council's list, so the state list applies;
+  - **guard (2026-11-02):** removing and clearing happen only when this
+    document is the council's **only** document on record
+    (`crqComSyncMayDelete`, pure). Rates carry no record of which document
+    they came from, so with any other document or version on record (a
+    separate commercial guideline, an appendix, an earlier upload) the read
+    adds and updates only. It names what it kept and says to remove a
+    dropped rate by hand. A count that fails is treated as "other
+    documents".
 
   Residential stays add-only. *⇩ Pull rates from guideline* stays add-only
   for both. Guardrail 1 (combined figures are never split) is unchanged.

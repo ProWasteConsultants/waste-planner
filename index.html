@@ -14036,8 +14036,22 @@ async function crqWriteRates(rateRows, doc, opts) {
   if (syncCom) {
     const comBatch = batch.com_rates;
     batch.com_rates = [];
+    // GUARD (2026-11-02): rates carry no record of which document they came
+    // from, so a council with any OTHER document on record (a separate
+    // commercial guideline, an appendix, an earlier upload) may hold rates
+    // this document never mentions. Then nothing is removed or cleared —
+    // adds and updates only. A failed count is treated as "other documents".
+    let otherDocs = 0;
+    if (!stateScope && doc.council_key) {
+      try {
+        const { data, error } = await sb.from('council_guidelines').select('id').eq('council_key', doc.council_key);
+        if (error) throw error;
+        otherDocs = (data || []).filter(d => d.id !== doc.id).length;
+      } catch (e) { otherDocs = -1; }
+    }
     await crqComSyncApply(out, comBatch, comRows, {
-      cleanRead: !!o.cleanRead, comRead, plans: want.filter(x => x.plan.table === 'com_rates'), uses, state, councilValue, stateScope: !!stateScope });
+      cleanRead: !!o.cleanRead, comRead, plans: want.filter(x => x.plan.table === 'com_rates'), uses, state, councilValue, stateScope: !!stateScope,
+      otherDocs });
   }
   for (const table of ['res_rates', 'com_rates']) {
     if (!batch[table].length) continue;
@@ -14072,9 +14086,18 @@ async function crqComSyncApply(out, placed, existing, x) {
   // a clean read with no commercial rate at all: the guideline publishes
   // none, so the council's list is cleared and the state's applies
   // the STATE list is never cleared or trimmed by a read: councils fall back to it
-  const clearAll = !x.stateScope && x.cleanRead && !comRead.length;
-  const canDelete = !x.stateScope && x.cleanRead && (clearAll || placed.length > 0);
+  // a council with other documents on record keeps what this one does not
+  // mention (crqWriteRates' guard) — nothing removed, nothing cleared
+  const keepOthers = !!x.otherDocs;
+  const { clearAll, canDelete } = crqComSyncMayDelete({ stateScope: x.stateScope, otherDocs: x.otherDocs, cleanRead: x.cleanRead, read: comRead.length, placed: placed.length });
   if (x.stateScope) { /* add + update only */ }
+  else if (keepOthers && x.cleanRead) {
+    const would = crqComSyncPlan(placed, existing, { canDelete: true, protect: [...protect] }).remove.length;
+    const noneHere = !comRead.length && (existing || []).length;
+    if (would || noneHere) out.noDelete = (x.otherDocs > 0 ? 'the council has ' + x.otherDocs + ' other guideline document' + (x.otherDocs === 1 ? '' : 's') + ' on record'
+      : 'the council’s other documents could not be counted') + ', so ' + (would || (existing || []).length) + ' commercial rate' + ((would || (existing || []).length) === 1 ? '' : 's') +
+      ' this document does not give ' + ((would || (existing || []).length) === 1 ? 'was' : 'were') + ' kept — they may come from another document. If the council has dropped one, remove it by hand in Commercial rates';
+  }
   else if (!x.cleanRead) out.noDelete = 'the document was not read in full (a rate row did not come through, or the reply hit its length cap), so no use was removed — re-run to finish the sync';
   // new uses, once each
   const fresh = new Map();
@@ -14123,6 +14146,16 @@ async function crqComSyncApply(out, placed, existing, x) {
     } catch (e) { out.noDelete = (out.noDelete ? out.noDelete + '; ' : '') + 'could not mark the list as the council’s own (' + (e.message || e) + ') — run sql/2026-10-19-council-commercial-lists.sql, then tick “Council\'s own commercial list”'; }
   }
   if (clearAll) out.cleared = plan.remove.length;
+}
+// May this extraction REMOVE commercial rates (or clear the list)? Pure.
+// Only a complete read of a COUNCIL document that is the council's only
+// document on record: a state read never trims the list councils lean on,
+// and with another document on record (or an uncountable one, -1) a rate
+// this document omits may well come from that other document.
+function crqComSyncMayDelete(o) {
+  const ok = !o.stateScope && !o.otherDocs && !!o.cleanRead;
+  const clearAll = ok && !o.read;
+  return { clearAll, canDelete: ok && (clearAll || o.placed > 0) };
 }
 // GUARDRAIL 1: a row the council states as ONE combined garbage+recycling
 // figure. It is neither a garbage rate nor a recycling rate, so it is never
