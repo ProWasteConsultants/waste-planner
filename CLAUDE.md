@@ -1071,6 +1071,65 @@ Not built: per-user overrides on top of the org preset baseline (add only on
 demand), and access-path facts beyond the manual travel-path token and ramp
 gradient.
 
+### Generator revisions after the Barrenjoey WMP (2026-11-02, Lachy)
+
+Tested in `tests/wmp-generator.test.js`, `tests/wmp-commercial.test.js` and
+`tests/guideline-docs.test.js`.
+
+- **A bin row's count has a source** (`wmpgBinQtyMode`):
+  - `design`: the bin calculator's figure, the default for a hydrated row;
+  - `here`: calculated from this WMP's volumes (`wmpgBinCalcQty`);
+  - `typed`: the author's number.
+
+  `wmpgBinsRecalc` brings every row to its source after each edit, including
+  dwellings and rates through `wmpgLiveNotes`, patching the inputs in place.
+  Changing a calculator row's size or frequency moves it to `here`; typing a
+  count makes it `typed`. A draft from before sources existed is read once:
+  a row on its calculator figure → `design`, one edited → `typed`, and an
+  estimate that no longer matches its calculation → `typed`, so a typed
+  number is never lost. Each row shows capacity against volume
+  (`wmpgBinVolCap`), with a shortfall flagged.
+- **Apply to bin calculator** writes the calculator's own saved choices:
+  `wmpgOvWrite` (pure) sets `bin_rooms[].ov` (sz / cw / n / why) and the
+  method, per row or per room (`wmpgApplyAllToDesign`). It also updates the
+  schedule. An open Design tab is re-fed (`wsPushSummaryToCalc`), so the
+  calculator restores and keeps them. This replaces the old write to the
+  schedule only, which the next calculator run discarded (and which only
+  ever matched residential rows).
+- **One source for the collection process.** Each room's **Collection text**
+  (`wmpgNarrative`, built from its data, ✎ editable, ↺ rebuild) is §5. The
+  text-library panel lists only the groups the document prints
+  (`WMPG_TB_PRINTED`, `tbGroupPrinted`); other library groups are counted
+  and named in a tooltip, never shown as if live.
+- **§1.2 surrounding land uses** is ONE AI sentence (`wmpgGenerateLandUse`,
+  `WMPG_LANDUSE_SYSTEM`, `wmpgLandUseGuard`: one sentence, no invented
+  numbers, unknown area → placeholder), stored as `d.siteLandUse`.
+  `wmpgLandUseInto` (pure) places it over the library's surroundings / "xxx"
+  sentence, the same way in the preview and the .docx. A full hand-written
+  §1.2 (`siteContext`) still wins. Previous site use, land uses and Figure 1
+  sit in **Site & development**; the old "Narrative overrides" section is
+  "Document text & values".
+- **Figure 1 accepts a pasted image**: 📋 Paste image
+  (`navigator.clipboard.read`), or click the figure box and Ctrl/Cmd+V.
+  `WMPG.pasteTarget` routes a paste to the last image box clicked, and
+  `wmpgSiteFigAccept` is the one path shared with the upload.
+- **§1.5 lists the state's library documents** (`d.stateDocs`, read even when
+  the compliance document is typed by hand), each once. The built-in state
+  reference in `wmpgDefaultGuidelines` prints only when the state has none.
+- **§3.1 / §3.2 sorting editor** (`wmpgSortSectionHtml`; rows from
+  `wmpgSortRows` → `wmpgSortRow` → `wmpgSortDefaults`, the same for preview
+  and .docx). Per stream:
+  - **colour**: residential from the council card, else the state's
+    (`wmpgApplyMetaColours`, `d.colourSrc`; reset on a council change), else
+    the standard. Commercial is AS 4123.7 (`WMPG_COM_COLOURS`) unless every
+    bin of that stream is council-collected, when the council's colours
+    apply;
+  - **receptacle**: `WMPG_RECEPT_OPTS`;
+  - **disposal**: `WMPG_DISPOSAL_OPTS`, defaulting to the chute-aware wording;
+  - **notes**: editable.
+
+  Edits sit in `d.sort[kind][stream]`; an edit back to the default is dropped.
+
 ### Commercial rooms, components and Job No. (2026-09-22)
 
 The generator used to keep only `kind: 'res'` rooms and `sec: 'r'` schedule
