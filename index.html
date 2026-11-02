@@ -11596,7 +11596,10 @@ const RDB = { councils: [], resRates: [], comRates: [], uses: [], meta: {}, resM
 const RDB_META_FIELDS = [
   ['officer_name','Council waste officer'], ['officer_phone','Officer contact no.'], ['officer_email','Officer email'],
   ['data_last_updated','Data last updated by PWC'],
-  ['guidelines','Guidelines'], ['other_guidelines','Other state guidelines'],
+  // guidelines and other_guidelines retired 2026-11-02 (Lachy): guideline
+  // documents live in the Guidelines library, which the WMP and the checker
+  // read; the free text was only the WMP's fallback (and other_guidelines
+  // was read by nothing). Stored values stay in waste_meta, unread.
   // bin_sizes and coll_freq_townhouse retired 2026-09-14: the structured
   // Kerbside collection service grid above is the data now, and no tool
   // ever read the free text (the WMP takes guidelines, colours and the truck).
@@ -11608,7 +11611,7 @@ const RDB_META_FIELDS = [
   ['coll_freq_apartments','Collection frequency — Apartments'],
   ['notes','Notes'],
 ];
-const RDB_META_LONG = new Set(['guidelines','other_guidelines','chutes','coll_freq_apartments','notes']);
+const RDB_META_LONG = new Set(['chutes','coll_freq_apartments','notes']);
 const RDB_UNITS = ['townhouse','apt_1br','apt_2br','apt_3br'];
 const RDB_UNIT_LABELS = { townhouse:'Townhouse', apt_1br:'1-bed apt', apt_2br:'2-bed apt', apt_3br:'3-bed apt' };
 const RDB_STREAMS = ['GW','REC','ORG','GLS'];
@@ -33372,11 +33375,11 @@ async function wmpgLoadGuideline(d) {
     d.complianceSrc = { kind: 'library', guidelineId: hit.id || null, councilName: hit.council_name,
                         version: hit.version ?? null, versionLabel: hit.version_label || null, council: d.council };
   } else {
-    // Council database free text is the second source — typed by someone who
-    // knows it. Nothing at all is an explicit state, not a blank.
-    const metaTxt = WMPG.meta && WMPG.meta.guidelines;
-    if (metaTxt) { d.compliance = metaTxt; d.complianceSrc = { kind: 'council_db', council: d.council }; }
-    else { if (!d.compliance || (d.complianceSrc && d.complianceSrc.kind !== 'manual')) d.compliance = ''; d.complianceSrc = { kind: 'none', council: d.council }; }
+    // No document in the library is an explicit state, not a blank. (The
+    // council card's free-text Guidelines field used to stand in here; it was
+    // retired 2026-11-02 so nothing hidden can name a WMP's document.)
+    if (!d.compliance || (d.complianceSrc && d.complianceSrc.kind !== 'manual')) d.compliance = '';
+    d.complianceSrc = { kind: 'none', council: d.council };
   }
   return hit;
 }
@@ -34224,7 +34227,6 @@ async function wmpgLoadMeta(d) {
     if (!data?.length) return;
     const m = {}; data.forEach(r => m[r.field_key] = r.value);
     WMPG.meta = m;
-    if (m.guidelines && !d.compliance) d.compliance = m.guidelines;
     if (m.bin_colour_gw)  d.colours.GW  = m.bin_colour_gw;
     if (m.bin_colour_org) d.colours.ORG = m.bin_colour_org;
     if (m.bin_colour_rec) d.colours.REC = m.bin_colour_rec;
@@ -34501,9 +34503,8 @@ async function openWmpGenerator() {
     WMPG.data.council = wmpgCouncilLabel(WMPG.remote, WMPG.data.state, WMPG.data.council);
     const ok = wmpgApplyRates(WMPG.data);
     await wmpgLoadMeta(WMPG.data);
-    // the compliance document fills itself from the guidelines library —
-    // the council card's free text is the fallback wmpgLoadMeta just set
-    WMPG.data.complianceSrc = WMPG.data.compliance ? { kind: 'council_db', council: WMPG.data.council } : null;
+    // the compliance document fills itself from the guidelines library
+    WMPG.data.complianceSrc = null;
     await wmpgLoadGuideline(WMPG.data);
     WMPG.data.rooms.forEach(room => { if (!room.bins.length) room.bins = wmpgAutoBins(WMPG.data, room); });
     WMPG.data.guidelines = wmpgDefaultGuidelines(WMPG.data);
