@@ -444,7 +444,7 @@ test('the equipment library reaches the calculator as `bins`, with the two selec
   assert.ok(calc.includes('differs from the council service'), 'departing from the council service is stated, never silent');
   // generation-rate provenance: which rates the volumes are built on is on screen, with a reload
   assert.ok(calc.includes("g('roomResults').innerHTML=ratesNoteHtml()+"), 'the results open with the rates source');
-  assert.ok(calc.includes('no published override for ${escAttr(i.label)}'), 'a council with no published override is named, not silently defaulted');
+  assert.ok(calc.includes('no published rates for ${escAttr(i.label)}') && calc.includes('No published override for ${i.label}'), 'a council with no published override is named on screen (and explained in the tooltip), not silently defaulted');
   assert.ok(calc.includes('onclick="reloadRates()"'), 'a publish made while the page is open can be pulled in without a reload');
   // the council card lists the approved clauses on file
   const reqs = extractBlock(/^async function glCouncilReqs\(row, mountId\)/).text;
