@@ -614,6 +614,13 @@ their opening brace on the declaration line.
   their explanations ride an ⓘ tooltip (`wsr-info`). The key words stay on
   screen ("state fallback used", "no published rates for X"). Tested in
   `tests/workspace-sync.test.js`.
+- **The stream table fits the panel** (no sideways scroll): `table-layout:
+  fixed` with percentage `colgroup` widths, inputs filling their cells, and a
+  `#ws-right` container query that tightens type and switches the headers to
+  short forms (`.hl` / `.hs`) under 560px. The stream's name is a
+  full-height tinted block down the left of its row and its sub-rows (the
+  sub-rows carry `data-stream`), not a small round pill. The manual-count
+  chip is "manual · calc N ✎ ↺"; the reason is in its tooltip and the WMP.
 
 ## Bin calculator: library-driven sizes, collection method, council schedule
 
