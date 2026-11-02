@@ -758,8 +758,11 @@ Rules, all tested in `tests/wmp-generator.test.js`:
   matched through `glBridgeNorm`). Fills on open and on council change
   (`wmpgCouncilChanged`, which also re-loads the requirements pack). A
   hand-typed entry is `complianceSrc.kind = 'manual'` and is never overwritten;
-  no document on file is an explicit *"no guideline on file for X"* state, with
-  the council card's free text as the second source (`council_db`).
+  no document on file is an explicit *"no guideline on file for X"* state.
+  The council card's free-text *Guidelines* / *Other state guidelines* fields
+  were retired 2026-11-02 (Lachy): the library is the one place guideline
+  documents live, and nothing hidden names a WMP's document. A library that
+  cannot be read is its own state (`unread`), never "no guideline".
 - **The document title is editable** (`d.title`, default
   `"<project> — Waste Management Plan"` via `wmpgTitleDefault`); it prints on
   the cover and lands in the .docx as `BM_DocTitle`.

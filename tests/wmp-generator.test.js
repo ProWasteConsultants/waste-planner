@@ -1092,3 +1092,12 @@ test('the guidelines library query asks only for columns the table has, and a fa
   assert.match(label({ council_name: 'Northern Beaches Council', version: 2, created_at: '2026-09-14T00:00:00Z' }), /v2, uploaded 2026-09-14/,
     'the label reads the admin library’s own date column');
 });
+
+test('the council card no longer carries free-text guidelines, and the WMP reads only the library', () => {
+  const { extractBlock } = require('./extract.js');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8');
+  const fields = src.slice(src.indexOf('const RDB_META_FIELDS = ['), src.indexOf('const RDB_META_LONG'));
+  assert.ok(!/\['guidelines',/.test(fields) && !/\['other_guidelines',/.test(fields), 'both fields are off the council card');
+  assert.ok(!/meta\.guidelines|m\.guidelines/.test(extractBlock(/^async function wmpgLoadGuideline\(/).text + extractBlock(/^async function wmpgLoadMeta\(/).text),
+    'and nothing in the WMP reads them');
+});
