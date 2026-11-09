@@ -171,7 +171,8 @@ test('wiring: tab order, panel, mode plumbing, shared render/DXF assembler, libr
     assert.ok(new RegExp("code: '" + code + "'.*excl:").test(SOURCE), code + ' is a shared library fixture with a default exclusion width');
   assert.ok(SOURCE.includes("SPLAY:     { id: 'SPLAY'"), 'sight splays are a drawn zone type — they scale with the frontage');
   // plain words on screen; assumptions flagged; area mode left open
-  assert.ok(SOURCE.includes('On your busiest collection week'), 'the verdict speaks plain language');
+  assert.ok(SOURCE.includes('<b>It fits</b> — ${a.reqM.toFixed(1)} m needed, ${a.netM.toFixed(1)} m clear.'), 'the verdict speaks plain language, in one line');
+  assert.ok(!SOURCE.includes('The bins come from the Bin Calculator. Kerbside rooms:'), 'no standing explainer paragraph (2026-11-09: self-explanatory)');
   assert.ok(SOURCE.includes('Standard alternating pattern assumed'), 'the default cycle is flagged as an assumption');
   assert.ok(SOURCE.includes('verify against the council’s collection guidelines'), 'clearance defaults are flagged in the report numbers');
   assert.ok(SOURCE.includes("kind: 'line'"), 'kerb entries carry their kind — holding bays pack an AREA later, not this line logic');
