@@ -27634,9 +27634,12 @@ function wsDoorThumb(kind, wM, wallM, col, box) {
 function wsRenderFixturePalette() {
   const el = document.getElementById('ws-layout-fixtures'); if (!el) return;
   // Thumbnail + short name only; the full name and size live in the tooltip.
+  // Obstacles are DRAGGED onto the plan, never clicked into a placement mode
+  // (2026-11-09, Lachy) — a click only says so.
   // Fixtures take the plan's fixture grey, doors their real plan symbol.
   el.innerHTML = WS_FIXTURES.map(f =>
-    `<button class="wsl-fx wsl-tile" onclick="wsFixtureMode('${f.code}')" title="${f.label} — ${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)} mm">` +
+    `<button class="wsl-fx wsl-tile" draggable="true" ondragstart="wsPaletteDragStart(event,'fx:${f.code}','fixture')" ondragend="wsPickerDragEnd()" ` +
+    `onclick="wsPaletteDragHint('${f.label.replace(/'/g, "\\'")}')" title="${f.label} — ${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)} mm — drag onto the plan">` +
     (f.door ? wsDoorThumb(f.door, f.w, f.d, '#607D8B', 36) : wsShapeThumb(f.code, f.w, f.d, f.round, '#546E7A', 36)) +
     `<span class="wsl-fx-nm">${f.pal || f.label}</span></button>`
   ).join('');
@@ -27741,7 +27744,7 @@ function wsPickerStreamVis() {
   if (sw) sw.style.display = ss.style.display === 'none' ? 'none' : '';
 }
 function wsPickerPlace() {
-  if (WS_LAYOUT._pickerKind === 'fixture' && WS_LAYOUT._pickerFixture) { wsFixtureMode(WS_LAYOUT._pickerFixture); return; }
+  if (WS_LAYOUT._pickerKind === 'fixture') { wsPaletteDragHint('Fixtures'); return; }   // fixtures are drag-only
   wsLayoutPlaceMode();
 }
 // Drag a tile onto the plan. HTML5 drag-and-drop, like the room cards, so it
@@ -27752,6 +27755,14 @@ function wsPickerDragStart(e, id, kind) {
   try { e.dataTransfer.setData('text/plain', 'wspick:' + id); e.dataTransfer.effectAllowed = 'copy'; } catch (err) {}
 }
 function wsPickerDragEnd() { WS_LAYOUT._dragPick = null; }
+// The Obstacles & fixtures and Zones palettes drag through the same drop.
+function wsPaletteDragStart(e, id, kind) {
+  WS_LAYOUT._dragPick = { id: String(id), kind };
+  try { e.dataTransfer.setData('text/plain', 'wspick:' + id); e.dataTransfer.effectAllowed = 'copy'; } catch (err) {}
+}
+function wsPaletteDragHint(label) {
+  wsLayoutStatus(`${label}: drag the tile onto the plan to place it.`);
+}
 // One item lands where it was dropped, then is selected — the click-to-place
 // path's own functions, so a dropped item is identical to a clicked one.
 function wsPickerDropAt(pick, x, y) {
@@ -27762,6 +27773,13 @@ function wsPickerDropAt(pick, x, y) {
   if (pick.kind === 'fixture') {
     WS_LAYOUT._fixture = WS_FIXTURES.find(f => f.code === pick.id.slice(3)) || null;
     if (WS_LAYOUT._fixture) wsFixtureAt(x, y);
+    return;
+  }
+  // A zone picks its type exactly as a click does (W×D offered, typed size
+  // kept, custom caption read), then lands at the drop point.
+  if (pick.kind === 'zone') {
+    wsZoneMode(pick.id);
+    if (WS._mode === 'layoutfixture' && WS_LAYOUT._fixture && WS_LAYOUT._fixture.zoneType) wsFixtureAt(x, y);
     return;
   }
   wsEquipPaletteMode(pick.id, pick.kind);
@@ -27801,7 +27819,8 @@ function wsRenderZonePalette() {
   el.innerHTML = Object.keys(WS_ZONE_TYPES).map(k => {
     const t = WS_ZONE_TYPES[k];
     const dim = Math.round(t.w * 1000) + '×' + Math.round(t.d * 1000);
-    return `<button class="wsl-fx" onclick="wsZoneMode('${k}')" title="${esc(t.label)} — ${dim} mm default, drag an edge handle to resize">` +
+    return `<button class="wsl-fx" draggable="true" ondragstart="wsPaletteDragStart(event,'${k}','zone')" ondragend="wsPickerDragEnd()" ` +
+      `onclick="wsZoneMode('${k}')" title="${esc(t.label)} — ${dim} mm default; drag onto the plan, or click then ▱ Draw to trace it. Drag an edge handle to resize">` +
       `<span style="display:block;flex:0 0 20px;height:15px;border-radius:3px;border:1.5px dashed ${t.col};` +
       `background:repeating-linear-gradient(45deg,${t.col}66 0 1px,${t.col}1a 1px 5px);"></span>` +
       `<span class="wsl-fx-nm">${esc(t.label)}</span></button>`;

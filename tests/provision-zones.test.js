@@ -515,3 +515,16 @@ test('wiring: the palette keeps typed dimensions, reads the custom label, and do
   assert.ok(ren.includes('if (!eq || !wsIsZone(eq)) return false;'), 'only zones rename this way');
   assert.ok(ren.includes('wsLayoutSnapshot();'), 'undoable');
 });
+
+test('zones can be dragged onto the plan; obstacles are drag-only (2026-11-09)', () => {
+  const zp = SOURCE.slice(SOURCE.indexOf('function wsRenderZonePalette'), SOURCE.indexOf('function wsZoneMode'));
+  assert.ok(zp.includes(`draggable="true" ondragstart="wsPaletteDragStart(event,'\${k}','zone')"`), 'zone tiles drag');
+  const drop = SOURCE.slice(SOURCE.indexOf('function wsPickerDropAt('), SOURCE.indexOf('function wsPickerFilter('));
+  assert.ok(drop.includes("if (pick.kind === 'zone') {") && drop.includes('wsZoneMode(pick.id);'),
+    'a dropped zone picks its type through wsZoneMode — typed W×D and custom caption honoured');
+  const fp = SOURCE.slice(SOURCE.indexOf('function wsRenderFixturePalette'), SOURCE.indexOf('function wsRenderEquipPalette'));
+  assert.ok(fp.includes(`ondragstart="wsPaletteDragStart(event,'fx:\${f.code}','fixture')"`), 'obstacle tiles drag');
+  assert.ok(!fp.includes('wsFixtureMode('), 'obstacle tiles never arm a click-to-place mode');
+  const pp = SOURCE.slice(SOURCE.indexOf('function wsPickerPlace()'), SOURCE.indexOf('function wsPickerDragStart('));
+  assert.ok(!pp.includes('wsFixtureMode('), 'library fixture tiles are drag-only too');
+});
