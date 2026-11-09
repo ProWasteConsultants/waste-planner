@@ -387,8 +387,9 @@ test('the bin set is summarised per stream and size, in stream order, with borro
   // the panel draws that list for the kerb set AND the bulk set from the same helper
   const panel = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
   assert.ok(panel.includes("wsCollectSetHtml(cp.worst.bins, null)"), 'the design-week bins are listed under the scenario chips');
-  assert.ok(panel.includes("wsCollectSetHtml(b.bins, 'all streams at once')"), 'the bulk set lists every stream together');
-  assert.ok(panel.includes('the weekly bins plus the larger of the two alternating fortnights set the kerb'), 'the choice between alternating weeks is explained');
+  assert.ok(panel.includes("wsCollectSetHtml(b.bins, '')"), 'the bulk set lists every stream together');
+  assert.ok(panel.includes('the weekly bins plus the larger of the two alternating fortnights set the kerb') && panel.includes('title="${why.replace('),
+    'the choice between alternating weeks is explained — on hover, not as standing text');
   assert.ok(SOURCE.includes('id="ws-collect-set"'), 'the set has its own element in section 3');
   const setHtml = extractBlock(/^function wsCollectSetHtml\(/).text;
   assert.ok(setHtml.includes('add width × depth to that size'), 'a borrowed footprint names the fix');
@@ -416,8 +417,11 @@ test('only kerbside-method bins present at the kerb; pre-method payloads keep pr
   assert.ok(fn.includes("WS_CALC_TARGETS.some(t => t.method)"), 'typed payload detection');
   assert.ok(fn.includes("/^kerbside/.test(String(t.method || ''))"), 'bulk collection point and private shared bin collection never line the frontage');
   assert.ok(fn.includes('bulkOnly: typed && !kerb.length'), 'an all-bulk site is reported, not shown as "no bins"');
-  assert.ok(SOURCE.includes('Nothing presents at the kerb — every stream is collected from a bulk collection point'), 'the verdict names the reason');
-  assert.ok(SOURCE.includes('Standard alternating pattern assumed'), 'the default cadence stays flagged');
+  assert.ok(SOURCE.includes("['Nothing at the kerb.', 'Every room is a bulk collection point or private shared bin collection"), 'the reason is named (detail on hover)');
+  const view = extractBlock(/^function wsCollectPanelRefresh\(\)/).text;
+  assert.ok(view.includes('const bulkView = !!cp.tg.bulkOnly && !cp.kerbs.length && !WS_COLLECT.trace;') && SOURCE.includes('function wsCollectBulkOnlyView(on)'),
+    'an all-bulk site with no kerb drawn shows the collection point alone');
+  assert.ok(SOURCE.includes('Standard alternating pattern assumed') && SOURCE.includes('⚠ Assumed weeks — check with council.'), 'the default cadence stays flagged');
   assert.ok(SOURCE.includes('’s schedule (guidelines library, via the calculator)'), 'a council cadence names its source');
   assert.ok(SOURCE.includes('const types = (typeof wsLayoutBinList === \'function\') ? wsLayoutBinList().concat(WS_BIN_TYPES) : WS_BIN_TYPES;'),
     'the assembler resolves against the live bin list');
