@@ -792,3 +792,35 @@ test('the project snapshot publishes the reconciliation for the generator', () =
   assert.match(SOURCE, /const slot = wsOccupancySlot\(\);\s*return wsReconcileSnapshot\(slot\.rooms, WS_CALC_ROOMS, slot,/);
   assert.match(SOURCE, /reconciliation snapshot skipped/, 'and must never break saving if it fails');
 });
+
+// ── 2026-11-09: the stream filters the picker; tiles are dragged onto the plan ──
+test('wsPickerServes: the picker shows what serves the selected stream', () => {
+  assert.equal(ws.wsPickerServes(rec('generic', { streams: [] }), 'glass', ALL), true, 'empty = serves every stream');
+  assert.equal(ws.wsPickerServes(rec('crusher', { streams: ['glass'] }), 'glass', ALL), true);
+  assert.equal(ws.wsPickerServes(rec('crusher', { streams: ['glass'] }), 'fogo', ALL), false,
+    'a glass crusher is never a food-waste option');
+  assert.equal(ws.wsPickerServes(rec('baler', { streams: ['Paper & cardboard'] }), 'paper', ALL), true,
+    'calculator-vocabulary streams resolve, same as placement');
+  assert.equal(ws.wsPickerServes(rec('bad', { streams: ['nonsense'] }), 'fogo', ALL), true,
+    'unreadable metadata is unrestricted, never hidden');
+  assert.equal(ws.wsPickerServes({ id: 'b240', kind: 'bin', streams: ['recycling'] }, 'garbage', ALL), false,
+    'bins follow the same rule');
+  assert.equal(ws.wsPickerServes({ id: 'fx', kind: 'fixture', streams: ['glass'] }, 'garbage', ALL), true,
+    'fixtures carry no stream and always show');
+  assert.match(ws.wsPickerShade('#ffffff'), /^#a6a6a6$/);
+  assert.equal(ws.wsPickerShade('bogus'), '#546E7A', 'a bad colour falls back to the neutral edge');
+});
+
+test('picker tiles drag onto the plan and equipment takes the selected stream', () => {
+  assert.ok(SOURCE.includes(`draggable="true" ondragstart="wsPickerDragStart(event,'`), 'tiles are draggable');
+  const wire = SOURCE.slice(SOURCE.indexOf('function wsWireCanvasDrop()'), SOURCE.indexOf('function wsCardDragStart('));
+  assert.ok(wire.includes('if (!WS_LAYOUT._dragRoom && !WS_LAYOUT._dragPick) return;'), 'the canvas accepts a dragged tile');
+  assert.ok(wire.includes('wsPickerDropAt(pick, p.x, p.y)'), 'the drop places at the drop point');
+  const drop = SOURCE.slice(SOURCE.indexOf('function wsPickerDropAt('), SOURCE.indexOf('function wsPickerFilter('));
+  assert.ok(drop.includes('wsLayoutPlaceAt(x, y)') && drop.includes('wsFixtureAt(x, y)'),
+    'a dropped item goes through the same placement functions as a clicked one');
+  assert.ok(drop.includes('if (!wsNeedScale()) return;'), 'no drop before the scale is set');
+  const place = SOURCE.slice(SOURCE.indexOf('function wsLayoutPlaceAt('), SOURCE.indexOf('function wsRoomPts('));
+  assert.ok(place.includes('const st = wsLayoutCurStream();') && !place.includes("s.id === 'equip'"),
+    'equipment is assigned the selected stream (within its allowable set), not its first one');
+});

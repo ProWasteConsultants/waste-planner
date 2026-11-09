@@ -168,6 +168,8 @@ const LAYOUT_BLOCKS = [
   ['wsEquipStreamIssues', /^function wsEquipStreamIssues\(/],
   ['wsEquipAssignStream', /^function wsEquipAssignStream\(/],
   ['wsEquipPickerGroups', /^function wsEquipPickerGroups\(/],
+  ['wsPickerServes', /^function wsPickerServes\(/],
+  ['wsPickerShade', /^function wsPickerShade\(/],
   ['wsMigrateEquipInstance', /^function wsMigrateEquipInstance\(/],
   ['wsMigrateEquipList', /^function wsMigrateEquipList\(/],
   ['wsWmpEquipmentText', /^function wsWmpEquipmentText\(/],

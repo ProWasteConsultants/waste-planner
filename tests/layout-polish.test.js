@@ -1105,7 +1105,7 @@ test('equipment and fixture pickers are compact square labelled tiles', () => {
   assert.ok(SOURCE.includes('.wsl-fx.wsl-tile{flex-direction:column'), 'tile layout: thumb above, label below');
   assert.ok(SOURCE.includes(`'#546E7A', 36)`) && SOURCE.includes(`'#607D8B', 36)`),
     'fixture thumbs at the round-2 size — round 1 overshot');
-  assert.ok(SOURCE.includes('wsShapeThumb(code, w, d, round, col, 36)'), 'picker tiles too');
+  assert.ok(SOURCE.includes('wsShapeThumb(code, w, d, round, col, 36, solid)'), 'picker tiles too, solid in the stream colour');
   assert.ok((SOURCE.match(/minmax\(88px,1fr\)/g) || []).length >= 2,
     'tile grids give each tile room — no crowding or icon overlap');
   assert.match(SOURCE, /\.wsl-fx\.wsl-tile\{[^}]*min-height:62px;overflow:hidden;/s,
@@ -1120,15 +1120,20 @@ test('one BINS & EQUIPMENT picker: searchable, scrollable, select-then-place', (
     'the bins dropdown is HIDDEN — it remains the selection state holder only');
   const fn = SOURCE.slice(SOURCE.indexOf('function wsEquipPaletteMode'), SOURCE.indexOf('function wsPickerStreamVis'));
   assert.ok(!fn.includes('wsLayoutPlaceMode()'), 'a tile click SELECTS — it never arms placement by itself');
-  assert.ok(SOURCE.includes('function wsPickerPlace()'), 'Place on plan (or double-click) arms placement');
+  assert.ok(SOURCE.includes('function wsPickerPlace()'), 'a double-click arms click-to-place');
+  assert.ok(!SOURCE.includes('onclick="wsPickerPlace()"'), 'the Place on plan button is gone — tiles are dragged onto the plan');
   assert.ok(SOURCE.includes("ss.style.display = WS_LAYOUT._pickerKind === 'fixture' ? 'none' : '';"),
     'the stream selector shows only for stream-carrying items');
   assert.ok(SOURCE.includes('id="ws-layout-equipment" style="flex:1 1 auto;min-height:40px;'),
     'the picker scrolls internally within its flex share of the panel');
-  // patch 3: picker artwork is NEUTRAL — stream colour is for the plan only
-  assert.ok(SOURCE.includes("tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#607D8B'"),
-    'bin tiles never recolour with the selected stream');
-  assert.ok(!SOURCE.includes('stSel.col, b.label'), 'the stream-coloured tile path is gone');
+  // 2026-11-09 (Lachy): the stream FILTERS the picker and colours its tiles,
+  // reversing patch 3's neutral artwork — what shows is what serves the stream.
+  assert.ok(SOURCE.includes("const bins = wsLayoutBinList().filter(b => wsPickerServes(b, st.id, order));"),
+    'bin tiles are filtered to the selected stream');
+  assert.ok(SOURCE.includes("const items = g.items.filter(it => it.streams.indexOf(st.id) >= 0);"),
+    'equipment tiles are filtered to the selected stream');
+  assert.ok(SOURCE.includes("tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, edge, b.label,"),
+    'bin tiles draw in the stream colour');
   assert.ok(SOURCE.includes('id="ws-stream-swatch"'),
     'a small swatch beside the stream selector shows the colour the placed object will get');
   assert.ok(SOURCE.includes('sw.style.background = st.col;'), 'the swatch tracks the selected stream');
