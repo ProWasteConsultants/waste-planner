@@ -1103,13 +1103,15 @@ test('section headings are enlarged teal; room cards are wide, short and minimal
 
 test('equipment and fixture pickers are compact square labelled tiles', () => {
   assert.ok(SOURCE.includes('.wsl-fx.wsl-tile{flex-direction:column'), 'tile layout: thumb above, label below');
-  assert.ok(SOURCE.includes(`'#78909C', 36)`) && SOURCE.includes(`'#B0BEC5', 36)`),
+  assert.ok(SOURCE.includes(`'#546E7A', 36)`) && SOURCE.includes(`'#607D8B', 36)`),
     'fixture thumbs at the round-2 size — round 1 overshot');
   assert.ok(SOURCE.includes('wsShapeThumb(code, w, d, round, col, 36)'), 'picker tiles too');
   assert.ok((SOURCE.match(/minmax\(88px,1fr\)/g) || []).length >= 2,
     'tile grids give each tile room — no crowding or icon overlap');
   assert.match(SOURCE, /\.wsl-fx\.wsl-tile\{[^}]*min-height:62px;overflow:hidden;/s,
     'tiles reserve their height and clip — icons can never bleed into a neighbour');
+  assert.ok(SOURCE.includes('.wsl-fx{background:#fff;'),
+    'obstacle, bin/equipment and zone tiles sit on a white background');
 });
 
 test('one BINS & EQUIPMENT picker: searchable, scrollable, select-then-place', () => {
@@ -1124,7 +1126,7 @@ test('one BINS & EQUIPMENT picker: searchable, scrollable, select-then-place', (
   assert.ok(SOURCE.includes('id="ws-layout-equipment" style="flex:1 1 auto;min-height:40px;'),
     'the picker scrolls internally within its flex share of the panel');
   // patch 3: picker artwork is NEUTRAL — stream colour is for the plan only
-  assert.ok(SOURCE.includes("tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#90A4AE'"),
+  assert.ok(SOURCE.includes("tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#607D8B'"),
     'bin tiles never recolour with the selected stream');
   assert.ok(!SOURCE.includes('stSel.col, b.label'), 'the stream-coloured tile path is gone');
   assert.ok(SOURCE.includes('id="ws-stream-swatch"'),
