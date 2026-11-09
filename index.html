@@ -2151,9 +2151,9 @@ body.wp-anon .ws-top-chip{display:none;}
                     <option value="b660">660L Bin</option>
                     <option value="b1100">1100L Bin</option>
                   </select>
-                  <!-- swatch = the colour the PLACED object gets; picker tiles stay neutral -->
-                  <span id="ws-stream-swatch" title="Stream colour — applied to the placed object on the plan, never to the picker tiles" style="width:12px;height:12px;border-radius:3px;flex-shrink:0;display:inline-block;background:#888;"></span>
-                  <select id="ws-layout-stream" class="wsl-sel" onchange="wsRenderBinThumb();wsRenderEquipPalette();" title="Stream for the selected item">
+                  <!-- the stream FILTERS the tiles and colours them: what shows is what serves it -->
+                  <span id="ws-stream-swatch" title="Stream colour — the tiles below are the bins and equipment that serve this stream, drawn in its colour" style="width:12px;height:12px;border-radius:3px;flex-shrink:0;display:inline-block;background:#888;"></span>
+                  <select id="ws-layout-stream" class="wsl-sel" onchange="wsRenderBinThumb();wsRenderEquipPalette();" title="Waste stream — shows only the bins and equipment that serve it, and places them in it">
                     <option value="garbage" selected>Garbage</option>
                     <option value="recycling">Recycling</option>
                     <option value="fogo">FOGO</option>
@@ -2162,7 +2162,6 @@ body.wp-anon .ws-top-chip{display:none;}
                     <option value="soft">Soft Plastics</option>
                   </select>
                   <span id="ws-bin-thumb" style="display:none;align-items:center;"></span>
-                  <button class="wsl-btn" onclick="wsPickerPlace()" title="Place the selected tile on the plan">Place on plan</button>
                 </div>
                 <div class="wsl-scroll" id="ws-layout-equipment" style="flex:1 1 auto;min-height:40px;display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px;align-items:start;align-content:start;"></div>
               </div>
@@ -22218,7 +22217,9 @@ function wsLayoutEndMode() {
 function wsLayoutPlaceAt(x, y) {
   const mpp = wsLayoutMpp(); if (!mpp) return;
   const bt = wsLayoutCurBin();
-  const st = (bt.kind === 'equipment') ? WS_STREAMS.find(s => s.id === 'equip') : wsLayoutCurStream();
+  // Equipment takes the selected stream too: the picker shows only what serves
+  // it, so a baler dragged in under Recycling is recycling's baler.
+  const st = wsLayoutCurStream();
   wsLayoutSnapshot();
   const slotA = wsLayoutSlot();
   const cr = wsLayoutCalcRoomAt(x, y) || WS_LAYOUT.activeCalcRoom || null;
@@ -27422,11 +27423,17 @@ function wsWireCanvasDrop() {
   if (!area || area._wsDropWired) return;
   area._wsDropWired = true;
   area.addEventListener('dragover', e => {
-    if (!WS_LAYOUT._dragRoom) return;
+    if (!WS_LAYOUT._dragRoom && !WS_LAYOUT._dragPick) return;
     e.preventDefault();
     try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
   });
   area.addEventListener('drop', e => {
+    if (WS_LAYOUT._dragPick) {
+      const pick = WS_LAYOUT._dragPick; WS_LAYOUT._dragPick = null;
+      e.preventDefault();
+      const p = wsCanvasXY(e); if (p) wsPickerDropAt(pick, p.x, p.y);
+      return;
+    }
     const id = WS_LAYOUT._dragRoom || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
     WS_LAYOUT._dragRoom = null;
     if (!id) return;
@@ -27577,21 +27584,22 @@ const WS_FIXTURES = [
 // and name together — the outlines alone are too similar to tell apart, so the
 // detail linework (swing arc, ribs, forks, wheels) is drawn too: it is what
 // distinguishes two same-footprint items at 26 px.
-function wsShapeThumb(code, wM, dM, round, col, box) {
+function wsShapeThumb(code, wM, dM, round, col, box, fill) {
   const B = box || 26, pad = 2;
+  const fl = fill || (col + '33');   // a stream tile passes its solid fill
   const shp = wsShapeFor(code);
   const k = (B - pad * 2) / Math.max(wM, dM, 0.9); // 900mm fills the box
   const w = wM * k, d = dM * k;
   let inner;
   if (shp && shp.outline) {
     const pth = wsShapeSvgPath(shp.outline, wM, dM, 1 / k);
-    inner = `<path d="${pth}" transform="translate(${B / 2},${B / 2})" fill="${col}33" stroke="${col}" stroke-width="1.2"/>`;
+    inner = `<path d="${pth}" transform="translate(${B / 2},${B / 2})" fill="${fl}" stroke="${col}" stroke-width="1.2"/>`;
     if (shp.detail) inner += `<path d="${wsShapeSvgPath(shp.detail, wM, dM, 1 / k)}" ` +
       `transform="translate(${B / 2},${B / 2})" fill="none" stroke="${col}" stroke-width="0.8" opacity="0.75"/>`;
   } else if (round) {
-    inner = `<circle cx="${B / 2}" cy="${B / 2}" r="${Math.max(w, d) / 2}" fill="${col}33" stroke="${col}" stroke-width="1.2"/>`;
+    inner = `<circle cx="${B / 2}" cy="${B / 2}" r="${Math.max(w, d) / 2}" fill="${fl}" stroke="${col}" stroke-width="1.2"/>`;
   } else {
-    inner = `<rect x="${(B - w) / 2}" y="${(B - d) / 2}" width="${w}" height="${d}" fill="${col}33" stroke="${col}" stroke-width="1.2"/>`;
+    inner = `<rect x="${(B - w) / 2}" y="${(B - d) / 2}" width="${w}" height="${d}" fill="${fl}" stroke="${col}" stroke-width="1.2"/>`;
   }
   return `<svg width="${B}" height="${B}" viewBox="0 0 ${B} ${B}" style="flex:0 0 auto;">${inner}</svg>`;
 }
@@ -27639,43 +27647,64 @@ function wsRenderFixturePalette() {
 // Fixtures (item_kind), 3–4 tiles per row. Tiles draw through wsShapeThumb →
 // wsShapeFor, the single geometry source, so the picker and the plan can
 // never disagree; size, stream restrictions and pairing stay in the tooltip.
-// A click SELECTS (the hidden #ws-layout-bin select remains the single state
-// holder); Place on plan — or a double-click — arms placement.
+// The STREAM selector filters (2026-11-09, Lachy): only the bins and
+// equipment whose library `streams` allow it are shown (empty = serves every
+// stream, wsEquipAllowedStreams — the same rule placement assigns by), drawn
+// solid in the stream's colour, as they land on the plan. Fixtures carry no
+// stream and always show. A tile is DRAGGED onto the plan (wsPickerDragStart →
+// the canvas drop in wsWireCanvasDrop); a click selects, a double-click arms
+// click-to-place for several in a row.
+// Pure: does this library record serve the stream? Fixtures always do.
+function wsPickerServes(rec, streamId, allStreams) {
+  if (!rec || rec.kind === 'fixture') return true;
+  return wsEquipAllowedStreams(rec, allStreams).indexOf(streamId) >= 0;
+}
+// Pure: the darker outline a solid stream fill takes — the plan's wsShade.
+function wsPickerShade(hex) {
+  const f = i => Math.max(0, Math.round(parseInt(String(hex).slice(i, i + 2), 16) * 0.65)).toString(16).padStart(2, '0');
+  return /^#[0-9a-f]{6}$/i.test(String(hex)) ? '#' + f(1) + f(3) + f(5) : '#546E7A';
+}
 function wsRenderEquipPalette() {
   const el = document.getElementById('ws-layout-equipment');
   if (!el) return;
   const esc = v => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const selId = document.getElementById('ws-layout-bin')?.value || null;
-  const tile = (id, kind, code, w, d, round, col, label, tip) =>
+  const st = wsLayoutCurStream();
+  const order = WS_STREAMS.map(x => x.id);
+  const fill = st.col, edge = wsPickerShade(st.col);
+  const tile = (id, kind, code, w, d, round, col, label, tip, solid) =>
     `<button class="wsl-fx wsl-tile${id === selId ? ' sel' : ''}" data-pick="${esc(id)}" data-kind="${kind}" data-label="${esc(String(label).toLowerCase())}" ` +
-    `onclick="wsEquipPaletteMode('${esc(id)}','${kind}')" ondblclick="wsPickerPlace()" title="${esc(tip)}">` +
-    wsShapeThumb(code, w, d, round, col, 36) +
+    `draggable="true" ondragstart="wsPickerDragStart(event,'${esc(id)}','${kind}')" ondragend="wsPickerDragEnd()" ` +
+    `onclick="wsEquipPaletteMode('${esc(id)}','${kind}')" ondblclick="wsPickerPlace()" title="${esc(tip)} — drag onto the plan">` +
+    wsShapeThumb(code, w, d, round, col, 36, solid) +
     `<span class="wsl-fx-nm">${esc(label)}</span></button>`;
   let html = '';
-  // Bins — NEUTRAL tiles: stream colour belongs to the PLACED object on the
-  // plan (and the little swatch by the stream selector), never to the picker.
-  const bins = wsLayoutBinList();
+  // Bins — only those serving the selected stream, in its colour
+  const bins = wsLayoutBinList().filter(b => wsPickerServes(b, st.id, order));
   if (bins.length) {
     html += `<div class="wsl-fx-cat">Bins</div>` + bins.map(b =>
-      tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#607D8B', b.label,
-        `${b.label} — ${Math.round(b.w * 1000)}×${Math.round(b.d * 1000)} mm`)).join('');
+      tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, edge, b.label,
+        `${b.label} — ${Math.round(b.w * 1000)}×${Math.round(b.d * 1000)} mm`, fill)).join('');
   }
-  // Equipment — grouped by category; detail lives in the tooltip
+  // Equipment — grouped by category, filtered to the stream; detail in the tooltip
   const lib = wsEquipLibrary(WS_EQUIP_DB);
-  const order = WS_STREAMS.map(x => x.id);
   wsEquipPickerGroups(WS_EQUIP_DB, order).forEach(g => {
-    html += `<div class="wsl-fx-cat">${esc(g.category)}</div>` + g.items.map(it => {
+    const items = g.items.filter(it => it.streams.indexOf(st.id) >= 0);
+    if (!items.length) return;
+    html += `<div class="wsl-fx-cat">${esc(g.category)}</div>` + items.map(it => {
       const r = lib[it.id] || {};
       const streams = it.restricted && it.streams.length
-        ? it.streams.map(sid => { const st = WS_STREAMS.find(x => x.id === sid); return st ? st.label : sid; }).join(', ')
+        ? it.streams.map(sid => { const sx = WS_STREAMS.find(x => x.id === sid); return sx ? sx.label : sid; }).join(', ')
         : 'any stream';
       const tag = it.receiver ? 'receiver' : it.pairingType || null;
       const tip = [it.label, it.dims ? it.dims + ' mm' : 'no size in library', streams, tag]
         .filter(Boolean).join(' — ');
-      return tile(it.id, 'equip', r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, '#607D8B', it.label, tip);
+      return tile(it.id, 'equip', r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, edge, it.label, tip, fill);
     }).join('');
   });
-  // Library fixture rows (item_kind Fixture) that map onto placeable fixtures
+  if (!html) html = `<div class="wsl-fx-cat" style="text-transform:none;font-weight:400;font-size:10px;color:rgba(255,255,255,0.55);">` +
+    `Nothing in the equipment library serves ${esc(st.label)} — add or tag a record in Admin › Equipment.</div>`;
+  // Library fixture rows (item_kind Fixture) that map onto placeable fixtures — no stream, always shown
   const fxRows = (WS_EQUIP_DB || []).filter(x => x.kind === 'fixture' &&
     typeof WS_FIXTURES !== 'undefined' && WS_FIXTURES.some(f => f.code === x.code));
   if (fxRows.length) {
@@ -27714,6 +27743,40 @@ function wsPickerStreamVis() {
 function wsPickerPlace() {
   if (WS_LAYOUT._pickerKind === 'fixture' && WS_LAYOUT._pickerFixture) { wsFixtureMode(WS_LAYOUT._pickerFixture); return; }
   wsLayoutPlaceMode();
+}
+// Drag a tile onto the plan. HTML5 drag-and-drop, like the room cards, so it
+// cannot interfere with the pointer handlers that move placed bins.
+function wsPickerDragStart(e, id, kind) {
+  wsEquipPaletteMode(id, kind);
+  WS_LAYOUT._dragPick = { id: String(id), kind: kind || 'equip' };
+  try { e.dataTransfer.setData('text/plain', 'wspick:' + id); e.dataTransfer.effectAllowed = 'copy'; } catch (err) {}
+}
+function wsPickerDragEnd() { WS_LAYOUT._dragPick = null; }
+// One item lands where it was dropped, then is selected — the click-to-place
+// path's own functions, so a dropped item is identical to a clicked one.
+function wsPickerDropAt(pick, x, y) {
+  if (!pick) return;
+  if (!WS.pdfDoc) { alert('Upload a PDF plan first.'); return; }
+  if (!wsNeedScale()) return;
+  if (WS._mode) wsLayoutEndMode();
+  if (pick.kind === 'fixture') {
+    WS_LAYOUT._fixture = WS_FIXTURES.find(f => f.code === pick.id.slice(3)) || null;
+    if (WS_LAYOUT._fixture) wsFixtureAt(x, y);
+    return;
+  }
+  wsEquipPaletteMode(pick.id, pick.kind);
+  const slot = wsLayoutSlot(), n = slot.bins.length;
+  wsLayoutPlaceAt(x, y);
+  if (slot.bins.length > n) {
+    const b = slot.bins[slot.bins.length - 1];
+    WS_LAYOUT.sel = b.id; WS_LAYOUT.selKind = 'bin';
+    wsRenderLayoutLayer();
+    const lbl = (wsBinType(b.type) || {}).label || 'Item';
+    const sx = WS_STREAMS.find(t => t.id === b.stream);
+    const rec = (WS_EQUIP_DB || []).find(r => r.id === b.type);
+    if (!(rec && wsEquipStreamIssues(rec).length))   // keep the library-row warning on screen
+      wsLayoutStatus(`${lbl} placed${sx ? ' (' + sx.label + ')' : ''} and selected — drag to move, R rotates, Del deletes.`);
+  }
 }
 function wsPickerFilter() {
   const q = (document.getElementById('ws-picker-search')?.value || '').trim().toLowerCase();
