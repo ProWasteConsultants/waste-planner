@@ -146,6 +146,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .wsl-fx-nm{font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .wsl-fx-dim{font-size:8px;color:rgba(255,255,255,0.3);white-space:nowrap;}
 .wsl-fx-cat{grid-column:1/-1;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,0.28);margin-top:3px;}
+/* Palette tiles (obstacles & fixtures, bins & equipment, zones) sit on WHITE
+   so each item's thumbnail reads as it will on the plan's paper ground; the
+   panel around them stays dark. Thumb strokes are the darker greys for that. */
+.wsl-fx{background:#fff;border-color:#d0d7dc;color:#1f2a30;}
+.wsl-fx .wsl-fx-nm,.wsl-fx.wsl-tile .wsl-fx-nm{color:#1f2a30;}
+.wsl-fx .wsl-fx-dim{color:#607080;}
+.wsl-fx:hover{border-color:#008080;background:#f4fbfb;}
+.wsl-fx.wsl-tile.sel{border-color:#008080;background:#e0f4f4;box-shadow:0 0 0 1px #008080 inset;}
 .wsl-cards{display:flex;gap:6px;flex-wrap:wrap;flex-basis:100%;}
 /* Room cards run full panel width so they stay SHORT; secondary lines (area
    note, drag hint, extra units) reveal on hover instead of always printing. */
@@ -27621,7 +27629,7 @@ function wsRenderFixturePalette() {
   // Fixtures take the plan's fixture grey, doors their real plan symbol.
   el.innerHTML = WS_FIXTURES.map(f =>
     `<button class="wsl-fx wsl-tile" onclick="wsFixtureMode('${f.code}')" title="${f.label} — ${Math.round(f.w * 1000)}×${Math.round(f.d * 1000)} mm">` +
-    (f.door ? wsDoorThumb(f.door, f.w, f.d, '#B0BEC5', 36) : wsShapeThumb(f.code, f.w, f.d, f.round, '#78909C', 36)) +
+    (f.door ? wsDoorThumb(f.door, f.w, f.d, '#607D8B', 36) : wsShapeThumb(f.code, f.w, f.d, f.round, '#546E7A', 36)) +
     `<span class="wsl-fx-nm">${f.pal || f.label}</span></button>`
   ).join('');
 }
@@ -27649,7 +27657,7 @@ function wsRenderEquipPalette() {
   const bins = wsLayoutBinList();
   if (bins.length) {
     html += `<div class="wsl-fx-cat">Bins</div>` + bins.map(b =>
-      tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#90A4AE', b.label,
+      tile(b.id, 'bin', b.code || b.id, b.w, b.d, false, '#607D8B', b.label,
         `${b.label} — ${Math.round(b.w * 1000)}×${Math.round(b.d * 1000)} mm`)).join('');
   }
   // Equipment — grouped by category; detail lives in the tooltip
@@ -27664,7 +27672,7 @@ function wsRenderEquipPalette() {
       const tag = it.receiver ? 'receiver' : it.pairingType || null;
       const tip = [it.label, it.dims ? it.dims + ' mm' : 'no size in library', streams, tag]
         .filter(Boolean).join(' — ');
-      return tile(it.id, 'equip', r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, '#90A4AE', it.label, tip);
+      return tile(it.id, 'equip', r.code || it.id, r.w > 0 ? r.w : 1, r.d > 0 ? r.d : 1, !!r.roundShape, '#607D8B', it.label, tip);
     }).join('');
   });
   // Library fixture rows (item_kind Fixture) that map onto placeable fixtures
@@ -27673,7 +27681,7 @@ function wsRenderEquipPalette() {
   if (fxRows.length) {
     html += `<div class="wsl-fx-cat">Fixtures</div>` + fxRows.map(x =>
       tile('fx:' + x.code, 'fixture', x.code, x.w > 0 ? x.w : 0.4, x.d > 0 ? x.d : 0.4,
-        !!x.roundShape, '#78909C', x.label, `${x.label} — fixture, placed single-shot`)).join('');
+        !!x.roundShape, '#546E7A', x.label, `${x.label} — fixture, placed single-shot`)).join('');
   }
   el.innerHTML = html;
   wsPickerFilter();
